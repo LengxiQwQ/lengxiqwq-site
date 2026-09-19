@@ -198,6 +198,32 @@ const visibleTags = tags || [];
           <Content />
         </Markdown>
       </div>
+
+      <!-- 打赏支持 -->
+      {siteConfig.pages.sponsor && (
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-4 p-5 my-6 rounded-xl bg-(--card-bg-transparent) border border-(--line-divider)">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-full bg-(--primary)/10 flex items-center justify-center text-(--primary) shrink-0">
+              <Icon name="material-symbols:favorite" class="text-xl" />
+            </div>
+            <div>
+              <div class="font-bold text-neutral-900 dark:text-neutral-100">
+                喜欢这个项目吗？
+              </div>
+              <div class="text-xs text-neutral-500 dark:text-neutral-400">
+                如果它对你有所帮助，欢迎打赏支持作者持续维护！
+              </div>
+            </div>
+          </div>
+          <a
+            href={url("/sponsor/")}
+            class="inline-flex items-center gap-2 px-5 py-2.5 bg-(--primary) text-white dark:text-black/80 rounded-lg font-medium hover:bg-(--primary)/80 active:scale-95 transition-all text-sm shrink-0"
+          >
+            <span>打赏支持</span>
+            <Icon name="fa7-solid:arrow-right" class="text-xs" />
+          </a>
+        </div>
+      )}
     </div>
   </div>
 </MainGridLayout>

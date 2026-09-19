@@ -20,6 +20,7 @@ import { getFallbackFormat, getImageFormats } from "@/utils/image-utils";
 import { isHomePage } from "@/utils/layout-utils";
 import { resolveNavMenuLinks } from "@/utils/nav-menu-utils";
 import { url } from "@/utils/url-utils";
+import DropdownItem from "@/components/common/DropdownItem.astro";
 import DropdownMenu from "./DropdownMenu.astro";
 
 const className = Astro.props.class;
@@ -160,35 +161,83 @@ const logoVariants = await Promise.all(
         "overflow-visible! h-18 px-4"
     ]}>
         <div class="mx-auto h-full w-full max-w-(--page-width) grid grid-cols-[auto_minmax(0,1fr)_auto] items-center">
-            <a href={url('/')} class="btn-plain scale-animation rounded-lg h-13 px-3 md:px-5 font-bold active:scale-95">
-                <div class:list={[
-                    "flex flex-row items-center text-md",
-                    siteConfig.navbar.followTheme ? "text-(--primary)" : "dark:text-white text-black"
-                ]} style="font-family: var(--font-navbar-title, inherit)">
-                                    {logoConfig?.type === "icon" ? (
-                                        <Icon name={logoConfig.value || "material-symbols:home-pin-outline"} class="navbar-logo text-[1.75rem] mb-1 mr-2" />
-                                    ) : logoIsImage && logoVariants.length > 0 ? (
-                                        logoVariants.map((variant) => variant.image ? (
-                                            <Picture
-                                                src={variant.image}
-                                                alt={logoAlt}
-                                                class={variant.class}
-                                                data-logo-theme={variant.theme}
-                                                formats={getImageFormats()}
-                                                fallbackFormat={getFallbackFormat()}
-                                                widths={[28, 56]}
-                                                loading="eager"
-                                                fetchpriority="high"
-                                            />
-                                        ) : (
-                                            <img src={variant.src} alt={logoAlt} class={variant.class} data-logo-theme={variant.theme} fetchpriority="high" width="28" height="28" />
-                                        ))
-                                    ) : (
-                                        <Icon name="material-symbols:home-pin-outline" class="navbar-logo text-[1.75rem] mb-1 mr-2" />
-                                    )}
-                    {navbarTitle}
+            <!-- 站点 Logo、标题与站点切换下拉菜单 -->
+            <div class="relative site-switcher-container" id="site-switcher-container">
+                <button
+                    type="button"
+                    id="site-switcher-trigger"
+                    aria-expanded="false"
+                    aria-haspopup="true"
+                    aria-label="切换站点"
+                    class="btn-plain scale-animation rounded-lg h-13 px-3 md:px-5 font-bold active:scale-95 flex items-center gap-1 cursor-pointer select-none"
+                >
+                    <div class:list={[
+                        "flex flex-row items-center text-md text-[16px]",
+                        siteConfig.navbar.followTheme ? "text-(--primary)" : "dark:text-white text-black"
+                    ]} style="font-family: var(--font-navbar-title, inherit)">
+                        {logoConfig?.type === "icon" ? (
+                            <Icon name={logoConfig.value || "material-symbols:home-pin-outline"} class="navbar-logo text-[1.75rem] mb-1 mr-2" />
+                        ) : logoIsImage && logoVariants.length > 0 ? (
+                            logoVariants.map((variant) => variant.image ? (
+                                <Picture
+                                    src={variant.image}
+                                    alt={logoAlt}
+                                    class={variant.class}
+                                    data-logo-theme={variant.theme}
+                                    formats={getImageFormats()}
+                                    fallbackFormat={getFallbackFormat()}
+                                    widths={[28, 56]}
+                                    loading="eager"
+                                    fetchpriority="high"
+                                />
+                            ) : (
+                                <img src={variant.src} alt={logoAlt} class={variant.class} data-logo-theme={variant.theme} fetchpriority="high" width="28" height="28" />
+                            ))
+                        ) : (
+                            <Icon name="material-symbols:home-pin-outline" class="navbar-logo text-[1.75rem] mb-1 mr-2" />
+                        )}
+                        <span class="tracking-tight">{navbarTitle}</span>
+                    </div>
+                    <Icon name="material-symbols:keyboard-arrow-down-rounded" class="site-switcher-arrow text-[1.25rem] transition-transform duration-200 text-black/50 dark:text-white/50 ml-1" />
+                </button>
+
+                <!-- 下拉菜单：全方位对标 header 其他下拉菜单规格 -->
+                <div class="dropdown-menu" id="site-switcher-menu" data-dropdown-menu>
+                    <div class="float-panel p-2 dropdown-content min-w-48" role="none">
+                        <DropdownItem
+                            href={url('/')}
+                            class="dropdown-item focus-ring-inset h-10 site-option-item"
+                            data-site="site"
+                        >
+                            <span>冷汐的杂货铺</span>
+                            <Icon name="material-symbols:check-rounded" class="site-check-icon text-[1.1rem] text-(--primary) ml-auto shrink-0" />
+                        </DropdownItem>
+                        <DropdownItem
+                            href="https://blog.lengxiqwq.com"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="dropdown-item focus-ring-inset h-10 site-option-item"
+                            data-site="nest"
+                        >
+                            <span>冷汐的小站</span>
+                            <Icon name="material-symbols:check-rounded" class="site-check-icon text-[1.1rem] text-(--primary) ml-auto shrink-0 hidden" />
+                            <Icon name="fa7-solid:arrow-up-right-from-square" class="site-external-icon text-[0.75rem] text-black/25 dark:text-white/25 ml-auto shrink-0" />
+                        </DropdownItem>
+                        <DropdownItem
+                            href="https://room.lengxiqwq.com"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            isLast={true}
+                            class="dropdown-item focus-ring-inset h-10 site-option-item"
+                            data-site="room"
+                        >
+                            <span>冷汐的小屋</span>
+                            <Icon name="material-symbols:check-rounded" class="site-check-icon text-[1.1rem] text-(--primary) ml-auto shrink-0 hidden" />
+                            <Icon name="fa7-solid:arrow-up-right-from-square" class="site-external-icon text-[0.75rem] text-black/25 dark:text-white/25 ml-auto shrink-0" />
+                        </DropdownItem>
+                    </div>
                 </div>
-            </a>
+            </div>
             <div class:list={[
                 "hidden lg:flex items-center space-x-1 col-start-2",
                 isNavbarMenuCentered
@@ -328,7 +377,76 @@ function loadButtonScript() {
         };
     }
 
+    // 站点切换下拉菜单交互
+    const siteSwitcherContainer = document.getElementById("site-switcher-container");
+    const siteSwitcherBtn = document.getElementById("site-switcher-trigger");
+
+    if (siteSwitcherContainer && siteSwitcherBtn) {
+        // 仅点击按钮展开/收起下拉菜单，鼠标放上去不会触发
+        siteSwitcherBtn.onclick = function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            const isOpen = siteSwitcherContainer.classList.toggle("is-open");
+            siteSwitcherBtn.setAttribute("aria-expanded", String(isOpen));
+            if (isOpen) {
+                ["display-setting", "music-nav-panel", "theme-mode-panel"].forEach((id) => {
+                    document.getElementById(id)?.classList.add("float-panel-closed");
+                });
+            }
+        };
+
+        const siteOptions = siteSwitcherContainer.querySelectorAll(".site-option-item");
+        siteOptions.forEach((opt) => {
+            opt.addEventListener("click", (e) => {
+                siteSwitcherContainer.classList.remove("is-open");
+                siteSwitcherBtn.setAttribute("aria-expanded", "false");
+
+                // 点击下拉选项中的“冷汐的杂货铺”，直接重新访问/刷新网页
+                const site = opt.getAttribute("data-site");
+                if (site === "site") {
+                    e.preventDefault();
+                    window.location.reload();
+                }
+            });
+        });
+    }
+
+    // 根据当前访问的主机名自动标注对勾（默认不预设高亮背景，仅保留对勾及鼠标悬停样式）
+    function updateSiteSwitcherActive() {
+        const hostname = window.location.hostname;
+        let currentSite = "site";
+        if (hostname === "blog.lengxiqwq.com" || hostname.startsWith("blog.")) {
+            currentSite = "nest";
+        } else if (hostname === "room.lengxiqwq.com" || hostname.startsWith("room.")) {
+            currentSite = "room";
+        }
+
+        const options = document.querySelectorAll("#site-switcher-container .site-option-item");
+        options.forEach((opt) => {
+            const site = opt.getAttribute("data-site");
+            const isCurrent = site === currentSite;
+            const checkIcon = opt.querySelector(".site-check-icon");
+            const extIcon = opt.querySelector(".site-external-icon");
+
+            if (isCurrent) {
+                checkIcon?.classList.remove("hidden");
+                extIcon?.classList.add("hidden");
+            } else {
+                checkIcon?.classList.add("hidden");
+                extIcon?.classList.remove("hidden");
+            }
+        });
+    }
+    updateSiteSwitcherActive();
+
     document.addEventListener("click", function(event) {
+        if (siteSwitcherContainer && siteSwitcherContainer.classList.contains("is-open")) {
+            if (event.target instanceof Node && !siteSwitcherContainer.contains(event.target)) {
+                siteSwitcherContainer.classList.remove("is-open");
+                siteSwitcherBtn?.setAttribute("aria-expanded", "false");
+            }
+        }
+
         // nav-menu-panel 不再走点击外部关闭：面板现在覆盖全屏（inset-0），任意点击都在面板内，
         // 该监听永不触发；关闭由抽屉自己的遮罩点击/Document 委托负责。
         const panels = ["display-setting", "music-nav-panel", "theme-mode-panel"];
@@ -462,3 +580,38 @@ if (document.readyState === 'loading') {
         </script>
     )
 }
+
+<style is:global>
+    @reference "../../styles/main.css";
+
+    .site-switcher-container {
+        position: relative !important;
+        display: flex !important;
+        align-items: center !important;
+    }
+
+    .site-switcher-container .dropdown-menu {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        padding-top: 0.5rem;
+        pointer-events: none;
+        z-index: 50;
+    }
+
+    /* 仅当点击触发添加 is-open 后才展开，鼠标放上去 (:hover) 绝不触发展开 */
+    .site-switcher-container.is-open .dropdown-menu {
+        pointer-events: auto !important;
+    }
+
+    .site-switcher-container.is-open .site-switcher-arrow {
+        transform: rotate(180deg) !important;
+    }
+
+    .site-switcher-container.is-open .dropdown-content {
+        opacity: 1 !important;
+        transform: translateY(0) !important;
+        pointer-events: auto !important;
+        visibility: visible !important;
+    }
+</style>

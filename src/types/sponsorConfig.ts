@@ -14,6 +14,7 @@ export type SponsorItem = {
 	avatar?: string; // 打赏者头像图片路径(可选,相对于 public 目录 或者 网络图片)
 	amount?: string; // 打赏金额（可选）
 	date?: string; // 打赏日期（可选，ISO 格式）
+	message?: string; // 付款方留言（可选）
 };
 
 // 打赏配置

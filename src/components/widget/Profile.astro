@@ -92,15 +92,106 @@ const className = Astro.props.class;
                     }
             })(profileConfig.links[0])}
         </div>
-        <div class="mt-2 text-center">
-            <a
-                href="mailto:lengxi@lengxiqwq.com"
-                class="inline-flex items-center justify-center gap-1.5 text-xs text-neutral-500 hover:text-(--primary) dark:text-neutral-400 dark:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10"
-                title="发送邮件至 lengxi@lengxiqwq.com"
-            >
-                <Icon name="material-symbols:mail-outline-rounded" class="text-[1.1rem]" />
-                <span class="font-medium select-all tracking-wide">lengxi@lengxiqwq.com</span>
-            </a>
+        <div class="mt-2 flex flex-col gap-1 items-center">
+            <!-- 邮箱 -->
+            <div class="flex items-center justify-between w-[218px] text-xs text-neutral-500 dark:text-neutral-400 py-1 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors group">
+                <div class="flex items-center gap-2 min-w-0">
+                    <div class="w-4.5 flex items-center justify-center shrink-0">
+                        <Icon name="material-symbols:mail-outline-rounded" class="text-[1.1rem] text-neutral-400 dark:text-neutral-500 select-none" />
+                    </div>
+                    <span class="font-medium tracking-wide select-text truncate">lengxi@lengxiqwq.com</span>
+                </div>
+                <button
+                    type="button"
+                    data-copy-target="lengxi@lengxiqwq.com"
+                    class="profile-copy-btn shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-neutral-400 hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/10 dark:text-neutral-500 dark:hover:text-(--primary) transition-all active:scale-90 cursor-pointer"
+                    title="复制邮箱"
+                    aria-label="复制邮箱"
+                >
+                    <Icon name="material-symbols:content-copy-outline-rounded" class="copy-icon text-[0.85rem] transition-transform" />
+                    <Icon name="material-symbols:check-rounded" class="check-icon hidden text-[0.95rem] text-(--primary)" />
+                </button>
+            </div>
+
+            <!-- QQ -->
+            <div class="flex items-center justify-between w-[218px] text-xs text-neutral-500 dark:text-neutral-400 py-1 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors group">
+                <div class="flex items-center gap-2 min-w-0">
+                    <div class="w-4.5 flex items-center justify-center shrink-0">
+                        <Icon name="mingcute:qq-line" class="text-[1.1rem] text-neutral-400 dark:text-neutral-500 select-none" />
+                    </div>
+                    <span class="font-medium tracking-wide select-text truncate">3197635836</span>
+                </div>
+                <button
+                    type="button"
+                    data-copy-target="3197635836"
+                    class="profile-copy-btn shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-neutral-400 hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/10 dark:text-neutral-500 dark:hover:text-(--primary) transition-all active:scale-90 cursor-pointer"
+                    title="复制QQ"
+                    aria-label="复制QQ"
+                >
+                    <Icon name="material-symbols:content-copy-outline-rounded" class="copy-icon text-[0.85rem] transition-transform" />
+                    <Icon name="material-symbols:check-rounded" class="check-icon hidden text-[0.95rem] text-(--primary)" />
+                </button>
+            </div>
         </div>
   </div>
 </div>
+
+<script>
+    function copyText(text: string): Promise<void> {
+        if (navigator.clipboard && window.isSecureContext) {
+            return navigator.clipboard.writeText(text);
+        }
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-9999px";
+        textArea.style.top = "-9999px";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        return new Promise((resolve, reject) => {
+            try {
+                const successful = document.execCommand("copy");
+                document.body.removeChild(textArea);
+                successful ? resolve() : reject(new Error("Copy command failed"));
+            } catch (err) {
+                document.body.removeChild(textArea);
+                reject(err);
+            }
+        });
+    }
+
+    document.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement | null;
+        const btn = target?.closest(".profile-copy-btn") as HTMLButtonElement | null;
+        if (!btn) return;
+
+        const content = btn.getAttribute("data-copy-target");
+        if (!content) return;
+
+        copyText(content).then(() => {
+            const copyIcon = btn.querySelector(".copy-icon");
+            const checkIcon = btn.querySelector(".check-icon");
+            if (!copyIcon || !checkIcon) return;
+
+            const btnObj = btn as unknown as { _copyTimeout?: ReturnType<typeof setTimeout> };
+            if (btnObj._copyTimeout) {
+                clearTimeout(btnObj._copyTimeout);
+            }
+
+            copyIcon.classList.add("hidden");
+            checkIcon.classList.remove("hidden");
+            const originalTitle = btn.getAttribute("title") || "复制";
+            btn.setAttribute("title", "已复制！");
+
+            btnObj._copyTimeout = setTimeout(() => {
+                copyIcon.classList.remove("hidden");
+                checkIcon.classList.add("hidden");
+                btn.setAttribute("title", originalTitle);
+                btnObj._copyTimeout = undefined;
+            }, 2000);
+        }).catch((err) => {
+            console.error("Failed to copy content:", err);
+        });
+    });
+</script>

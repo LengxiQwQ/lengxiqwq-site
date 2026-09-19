@@ -38,6 +38,7 @@ const mappings = [
 	{
 		src: path.join(resolvedContentDir, "content"),
 		dest: path.resolve("src/content"),
+		cleanSubdirs: true,
 	},
 	{
 		src: path.join(resolvedContentDir, "config"),
@@ -51,8 +52,22 @@ const mappings = [
 
 let syncedCount = 0;
 
-for (const { src, dest } of mappings) {
+for (const { src, dest, cleanSubdirs } of mappings) {
 	if (fs.existsSync(src)) {
+		if (cleanSubdirs) {
+			// For list collections where user items completely replace demo items (e.g. projects, posts)
+			const cleanableCollections = new Set(["projects", "posts"]);
+			const entries = fs.readdirSync(src, { withFileTypes: true });
+			for (const entry of entries) {
+				if (entry.isDirectory() && cleanableCollections.has(entry.name)) {
+					const targetDir = path.join(dest, entry.name);
+					if (fs.existsSync(targetDir)) {
+						console.log(`[content:sync] Cleaning preset directory: ${targetDir}`);
+						fs.rmSync(targetDir, { recursive: true, force: true });
+					}
+				}
+			}
+		}
 		console.log(`[content:sync] Materializing ${src} -> ${dest}`);
 		fs.cpSync(src, dest, { recursive: true, force: true });
 		syncedCount++;

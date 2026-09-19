@@ -16,6 +16,9 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 	// 主页
 	links.push(LinkPresets.Home);
 
+	// 项目
+	links.push(LinkPresets.Projects);
+
 	// 文章及其子菜单
 	links.push({
 		name: "文章",
@@ -36,7 +39,7 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 		],
 	});
 
-	//社交及其子菜单
+	// 社交及其子菜单
 	links.push({
 		name: "社交",
 		url: "#",
@@ -58,9 +61,6 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 		children: [
 			// 动态
 			LinkPresets.Dynamic,
-
-			// 项目
-			LinkPresets.Projects,
 
 			// 相册
 			LinkPresets.Gallery,
@@ -95,42 +95,6 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 			LinkPresets.About,
 		],
 	});
-
-	// 自定义导航栏链接
-	links.push({
-		name: "链接",
-		url: "#",
-		icon: "material-symbols:link",
-		// 子菜单
-		children: [
-			{
-				name: "GitHub",
-				url: "https://github.com/CuteLeaf/Firefly",
-				external: true,
-				icon: "fa7-brands:github",
-			},
-			{
-				name: "Gitee",
-				url: "https://gitee.com/CuteLeaf/Firefly",
-				external: true,
-				icon: "fa7-brands:gitee",
-			},
-			{
-				name: "Firefly文档",
-				url: "https://docs-firefly.cuteleaf.cn",
-				external: true,
-				icon: "material-symbols:docs",
-			},
-		],
-	});
-
-	// 文档链接
-	// links.push({
-	// 	name: "文档",
-	// 	url: "https://docs-firefly.cuteleaf.cn",
-	// 	external: true,
-	// 	icon: "material-symbols:docs",
-	// });
 
 	return { links } as NavBarConfig;
 };
