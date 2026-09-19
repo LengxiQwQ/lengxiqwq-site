@@ -1,13 +1,22 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const contentDir = process.env.CONTENT_DIR;
+let contentDir = process.env.CONTENT_DIR;
 
+// 本地开发友好支持：如果未指定 CONTENT_DIR，自动检测上级目录是否存在内容仓
 if (!contentDir) {
-	console.log(
-		"[content:sync] CONTENT_DIR not set. Using upstream default content.",
-	);
-	process.exit(0);
+	const localSiblingContent = path.resolve("../lengxiqwq-site-content");
+	if (fs.existsSync(localSiblingContent)) {
+		contentDir = localSiblingContent;
+		console.log(
+			`[content:sync] Automatically detected local content repo at: ${contentDir}`,
+		);
+	} else {
+		console.log(
+			"[content:sync] CONTENT_DIR not set and ../lengxiqwq-site-content not found. Using upstream default content.",
+		);
+		process.exit(0);
+	}
 }
 
 const resolvedContentDir = path.resolve(contentDir);

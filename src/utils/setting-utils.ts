@@ -258,9 +258,18 @@ export function getStoredTheme(): LIGHT_DARK_MODE {
 	) {
 		return getDefaultTheme();
 	}
-	return (
-		(localStorage.getItem("theme") as LIGHT_DARK_MODE) || getDefaultTheme()
-	);
+	const stored = localStorage.getItem("theme");
+	// 兼容旧站 Shirone 遗留在 localStorage 中的 "auto" 模式，自动迁移为 Firefly 的 "system"
+	if (stored === "auto") {
+		try {
+			localStorage.setItem("theme", SYSTEM_MODE);
+		} catch {}
+		return SYSTEM_MODE;
+	}
+	if (stored === LIGHT_MODE || stored === DARK_MODE || stored === SYSTEM_MODE) {
+		return stored;
+	}
+	return getDefaultTheme();
 }
 
 // 初始化主题监听器（用于页面加载后）

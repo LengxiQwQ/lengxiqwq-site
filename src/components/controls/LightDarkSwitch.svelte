@@ -34,14 +34,16 @@ function switchScheme(newMode: LIGHT_DARK_MODE) {
 
 // 更新显示的主题（用于显示当前实际主题）
 function updateDisplayedMode() {
-	if (mode === SYSTEM_MODE) {
+	if (mode === SYSTEM_MODE || (mode as string) === "auto") {
 		// 如果是system模式，显示实际的系统主题
 		const isSystemDark = window.matchMedia(
 			"(prefers-color-scheme: dark)",
 		).matches;
 		displayedMode = isSystemDark ? DARK_MODE : LIGHT_MODE;
+	} else if (mode === DARK_MODE) {
+		displayedMode = DARK_MODE;
 	} else {
-		displayedMode = mode;
+		displayedMode = LIGHT_MODE;
 	}
 }
 
