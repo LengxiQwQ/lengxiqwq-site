@@ -4,13 +4,17 @@ import path from "node:path";
 const contentDir = process.env.CONTENT_DIR;
 
 if (!contentDir) {
-	console.log("[content:sync] CONTENT_DIR not set. Using upstream default content.");
+	console.log(
+		"[content:sync] CONTENT_DIR not set. Using upstream default content.",
+	);
 	process.exit(0);
 }
 
 const resolvedContentDir = path.resolve(contentDir);
 if (!fs.existsSync(resolvedContentDir)) {
-	console.error(`[content:sync] Error: CONTENT_DIR does not exist: ${resolvedContentDir}`);
+	console.error(
+		`[content:sync] Error: CONTENT_DIR does not exist: ${resolvedContentDir}`,
+	);
 	process.exit(1);
 }
 
@@ -22,9 +26,18 @@ console.log(`[content:sync] Syncing content from: ${resolvedContentDir}`);
 // CONTENT_DIR/public  -> public
 
 const mappings = [
-	{ src: path.join(resolvedContentDir, "content"), dest: path.resolve("src/content") },
-	{ src: path.join(resolvedContentDir, "config"), dest: path.resolve("src/config") },
-	{ src: path.join(resolvedContentDir, "public"), dest: path.resolve("public") },
+	{
+		src: path.join(resolvedContentDir, "content"),
+		dest: path.resolve("src/content"),
+	},
+	{
+		src: path.join(resolvedContentDir, "config"),
+		dest: path.resolve("src/config"),
+	},
+	{
+		src: path.join(resolvedContentDir, "public"),
+		dest: path.resolve("public"),
+	},
 ];
 
 let syncedCount = 0;
@@ -37,4 +50,6 @@ for (const { src, dest } of mappings) {
 	}
 }
 
-console.log(`[content:sync] Content sync complete. Materialized ${syncedCount} directory tree(s).`);
+console.log(
+	`[content:sync] Content sync complete. Materialized ${syncedCount} directory tree(s).`,
+);

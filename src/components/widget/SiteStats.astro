@@ -53,20 +53,37 @@ function formatNumber(num: number): string {
 	return num.toLocaleString();
 }
 
-// 获取「最后活动」时间：取每篇文章 published 与 updated 中较新的那个，再从全站所有文章里取最大值。这样新发文章和修改老文章都会刷新该字段。
+// 获取「最后活动」时间：取每篇文章 published 与 updated 中较新的那个，再从全站所有文章里取最大值。
+// 过滤 1970 占位年份；若无有效文章日期或早于建站时间，则以建站日期为准。
 const getActivityDate = (post: (typeof posts)[number]): Date => {
 	const { published, updated } = post.data;
 	if (updated && updated > published) return updated;
 	return published;
 };
 
-const lastActivityDate = posts.reduce<Date | null>((latest, post) => {
-	const current = getActivityDate(post);
-	if (!latest || current > latest) return current;
-	return latest;
-}, null);
+const validPosts = posts.filter(
+	(p) => new Date(p.data.published).getFullYear() > 1970,
+);
+const lastArticleActivityDate = validPosts.reduce<Date | null>(
+	(latest, post) => {
+		const current = getActivityDate(post);
+		if (!latest || current > latest) return current;
+		return latest;
+	},
+	null,
+);
 
-const lastPostDate = lastActivityDate ? lastActivityDate.toISOString() : null;
+const startDate = siteConfig.siteStartDate
+	? new Date(siteConfig.siteStartDate)
+	: null;
+const effectiveActivityDate =
+	!lastArticleActivityDate || (startDate && lastArticleActivityDate < startDate)
+		? startDate
+		: lastArticleActivityDate;
+
+const lastPostDate = effectiveActivityDate
+	? effectiveActivityDate.toISOString()
+	: null;
 
 const todayText = i18n(I18nKey.today);
 
