@@ -31,7 +31,7 @@ declare global {
 }
 
 export function getDefaultHue(): number {
-	const fallback = "250";
+	const fallback = String(siteConfig.themeColor.hue ?? 280);
 	// 检查是否在浏览器环境中
 	if (typeof document === "undefined") {
 		return Number.parseInt(fallback, 10);
@@ -517,11 +517,11 @@ export function getDefaultOverlayOpacity(): number {
 }
 
 export function getDefaultOverlayBlur(): number {
-	return backgroundWallpaper.overlay?.blur ?? 0;
+	return backgroundWallpaper.overlay?.blur ?? 3;
 }
 
 export function getDefaultOverlayCardOpacity(): number {
-	return backgroundWallpaper.overlay?.cardOpacity ?? 0.6;
+	return backgroundWallpaper.overlay?.cardOpacity ?? 0.8;
 }
 
 export function getStoredOverlayOpacity(): number {
@@ -906,7 +906,7 @@ export function applyBannerCarouselEnabledToDocument(enabled: boolean): void {
 
 // Card border functions
 export function getDefaultCardBorderEnabled(): boolean {
-	return siteConfig.card?.border ?? false;
+	return siteConfig.card?.border ?? true;
 }
 
 export function getStoredCardBorderEnabled(): boolean {
@@ -937,7 +937,7 @@ export function setCardBorderEnabled(enabled: boolean): void {
 
 // Card follow theme functions
 export function getDefaultCardFollowThemeEnabled(): boolean {
-	return siteConfig.card?.followTheme ?? false;
+	return siteConfig.card?.followTheme ?? true;
 }
 
 export function getStoredCardFollowThemeEnabled(): boolean {

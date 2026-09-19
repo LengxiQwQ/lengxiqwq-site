@@ -354,7 +354,7 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
         darkTheme: expressiveCodeConfig.darkTheme,
         lightTheme: expressiveCodeConfig.lightTheme,
         baseUrl: import.meta.env.BASE_URL,
-        cardTransparentOpacity: backgroundWallpaper.overlay?.cardOpacity ?? 0.6,
+        cardTransparentOpacity: backgroundWallpaper.overlay?.cardOpacity ?? 0.8,
         fullscreenLayout,
       }}
     >
@@ -535,8 +535,8 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
 
     {/* 卡片样式：根据 localStorage 覆盖默认配置 */}
     <script is:inline define:vars={{
-      defaultBorder: siteConfig.card?.border ?? false,
-      defaultFollowTheme: siteConfig.card?.followTheme ?? false,
+      defaultBorder: siteConfig.card?.border ?? true,
+      defaultFollowTheme: siteConfig.card?.followTheme ?? true,
     }}>
       (function() {
         var stored = localStorage.getItem("cardBorderEnabled");
