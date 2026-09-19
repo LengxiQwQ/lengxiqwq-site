@@ -47,3 +47,7 @@ package/
 .codex*
 .claude
 .mimocode
+
+# dual-repo content working copy
+.content-src/
+.env.local
