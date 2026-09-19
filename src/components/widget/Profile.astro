@@ -92,49 +92,79 @@ const className = Astro.props.class;
                     }
             })(profileConfig.links[0])}
         </div>
-        <div class="mt-2 flex flex-col gap-1 items-center">
-            <!-- 邮箱 -->
-            <div class="flex items-center justify-between w-[218px] text-xs text-neutral-500 dark:text-neutral-400 py-1 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors group">
-                <div class="flex items-center gap-2 min-w-0">
-                    <div class="w-4.5 flex items-center justify-center shrink-0">
-                        <Icon name="material-symbols:mail-outline-rounded" class="text-[1.1rem] text-neutral-400 dark:text-neutral-500 select-none" />
+        <div class="mt-2.5 flex flex-col items-center">
+            <div class="flex flex-col items-start w-fit max-w-full space-y-0.5">
+                <!-- 邮箱项 -->
+                <div class="copy-contact-row relative flex items-center w-full">
+                    <div
+                        role="button"
+                        tabindex="0"
+                        data-copy="lengxi@lengxiqwq.com"
+                        class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 hover:text-(--primary) dark:text-neutral-400 dark:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
+                        title="点击复制"
+                        aria-label="邮箱：lengxi@lengxiqwq.com"
+                    >
+                        <div class="w-4.5 flex items-center justify-center shrink-0 select-none pointer-events-none">
+                            <Icon name="material-symbols:mail-outline-rounded" class="text-[1.1rem]" />
+                        </div>
+                        <span class="font-medium tracking-wide select-text">lengxi@lengxiqwq.com</span>
                     </div>
-                    <span class="font-medium tracking-wide select-text truncate">lengxi@lengxiqwq.com</span>
-                </div>
-                <button
-                    type="button"
-                    data-copy-target="lengxi@lengxiqwq.com"
-                    class="profile-copy-btn shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-neutral-400 hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/10 dark:text-neutral-500 dark:hover:text-(--primary) transition-all active:scale-90 cursor-pointer"
-                    title="复制邮箱"
-                    aria-label="复制邮箱"
-                >
-                    <Icon name="material-symbols:content-copy-outline-rounded" class="copy-icon text-[0.85rem] transition-transform" />
-                    <Icon name="material-symbols:check-rounded" class="check-icon hidden text-[0.95rem] text-(--primary)" />
-                </button>
-            </div>
 
-            <!-- QQ -->
-            <div class="flex items-center justify-between w-[218px] text-xs text-neutral-500 dark:text-neutral-400 py-1 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors group">
-                <div class="flex items-center gap-2 min-w-0">
-                    <div class="w-4.5 flex items-center justify-center shrink-0">
-                        <Icon name="mingcute:qq-line" class="text-[1.1rem] text-neutral-400 dark:text-neutral-500 select-none" />
+                    <!-- 打勾效果：放在小框外面，绝对定位零位移，上下垂直对齐 -->
+                    <div class="copy-check-badge absolute left-full ml-1.5 flex items-center justify-center pointer-events-none select-none text-(--primary)" aria-hidden="true">
+                        <Icon name="material-symbols:check-rounded" class="text-[1.15rem]" />
                     </div>
-                    <span class="font-medium tracking-wide select-text truncate">3197635836</span>
                 </div>
-                <button
-                    type="button"
-                    data-copy-target="3197635836"
-                    class="profile-copy-btn shrink-0 w-6 h-6 flex items-center justify-center rounded-md text-neutral-400 hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/10 dark:text-neutral-500 dark:hover:text-(--primary) transition-all active:scale-90 cursor-pointer"
-                    title="复制QQ"
-                    aria-label="复制QQ"
-                >
-                    <Icon name="material-symbols:content-copy-outline-rounded" class="copy-icon text-[0.85rem] transition-transform" />
-                    <Icon name="material-symbols:check-rounded" class="check-icon hidden text-[0.95rem] text-(--primary)" />
-                </button>
+
+                <!-- QQ 项 -->
+                <div class="copy-contact-row relative flex items-center w-full">
+                    <div
+                        role="button"
+                        tabindex="0"
+                        data-copy="3197635836"
+                        class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 hover:text-(--primary) dark:text-neutral-400 dark:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
+                        title="点击复制"
+                        aria-label="QQ：3197635836"
+                    >
+                        <div class="w-4.5 flex items-center justify-center shrink-0 select-none pointer-events-none">
+                            <Icon name="mingcute:qq-line" class="text-[1.1rem]" />
+                        </div>
+                        <span class="font-medium tracking-wide select-text">3197635836</span>
+                    </div>
+
+                    <!-- 打勾效果：放在小框外面，绝对定位零位移，上下垂直对齐 -->
+                    <div class="copy-check-badge absolute left-full ml-1.5 flex items-center justify-center pointer-events-none select-none text-(--primary)" aria-hidden="true">
+                        <Icon name="material-symbols:check-rounded" class="text-[1.15rem]" />
+                    </div>
+                </div>
             </div>
         </div>
   </div>
 </div>
+
+<style>
+    .copy-contact-btn {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+    }
+
+    .copy-contact-btn *::selection {
+        background-color: color-mix(in oklch, var(--primary) 30%, transparent);
+        color: inherit;
+    }
+
+    /* 打勾效果放在小框外面：绝对定位 + 零位移平滑微动效 */
+    .copy-contact-row .copy-check-badge {
+        opacity: 0;
+        transform: scale(0.6) translateX(-4px);
+        transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    .copy-contact-row.is-copied .copy-check-badge {
+        opacity: 1;
+        transform: scale(1) translateX(0);
+    }
+</style>
 
 <script>
     function copyText(text: string): Promise<void> {
@@ -161,37 +191,100 @@ const className = Astro.props.class;
         });
     }
 
-    document.addEventListener("click", (e) => {
-        const target = e.target as HTMLElement | null;
-        const btn = target?.closest(".profile-copy-btn") as HTMLButtonElement | null;
-        if (!btn) return;
+    function showCopiedFeedback(row: HTMLElement) {
+        const rowObj = row as unknown as { _copyTimeout?: ReturnType<typeof setTimeout> };
+        if (rowObj._copyTimeout) {
+            clearTimeout(rowObj._copyTimeout);
+        }
 
-        const content = btn.getAttribute("data-copy-target");
-        if (!content) return;
-
-        copyText(content).then(() => {
-            const copyIcon = btn.querySelector(".copy-icon");
-            const checkIcon = btn.querySelector(".check-icon");
-            if (!copyIcon || !checkIcon) return;
-
-            const btnObj = btn as unknown as { _copyTimeout?: ReturnType<typeof setTimeout> };
-            if (btnObj._copyTimeout) {
-                clearTimeout(btnObj._copyTimeout);
-            }
-
-            copyIcon.classList.add("hidden");
-            checkIcon.classList.remove("hidden");
-            const originalTitle = btn.getAttribute("title") || "复制";
+        row.classList.add("is-copied");
+        const btn = row.querySelector(".copy-contact-btn") as HTMLElement | null;
+        if (btn) {
             btn.setAttribute("title", "已复制！");
 
-            btnObj._copyTimeout = setTimeout(() => {
-                copyIcon.classList.remove("hidden");
-                checkIcon.classList.add("hidden");
-                btn.setAttribute("title", originalTitle);
-                btnObj._copyTimeout = undefined;
+            rowObj._copyTimeout = setTimeout(() => {
+                row.classList.remove("is-copied");
+                btn.setAttribute("title", "点击复制");
+                rowObj._copyTimeout = undefined;
             }, 2000);
+        }
+    }
+
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+
+    document.addEventListener("mousedown", (e) => {
+        const row = (e.target as HTMLElement | null)?.closest(".copy-contact-row");
+        if (row) {
+            isDragging = false;
+            startX = e.clientX;
+            startY = e.clientY;
+        }
+    });
+
+    document.addEventListener("mousemove", (e) => {
+        if (!isDragging) {
+            const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
+            if (dist > 5) {
+                isDragging = true;
+            }
+        }
+    });
+
+    // 1. 点击直接复制对应内容（非划词框选时触发）
+    document.addEventListener("click", (e) => {
+        const target = e.target as HTMLElement | null;
+        const row = target?.closest(".copy-contact-row") as HTMLElement | null;
+        if (!row) return;
+
+        // 如果用户正在框选、或者当前已有选中的文本，说明用户在进行文本选择操作，不触发整项覆盖复制
+        const selection = window.getSelection();
+        const selectedText = selection ? selection.toString().trim() : "";
+        if (isDragging || selectedText.length > 0) {
+            return;
+        }
+
+        const btn = row.querySelector(".copy-contact-btn") as HTMLElement | null;
+        const textToCopy = btn?.getAttribute("data-copy") || "";
+        if (!textToCopy) return;
+
+        copyText(textToCopy).then(() => {
+            showCopiedFeedback(row);
         }).catch((err) => {
-            console.error("Failed to copy content:", err);
+            console.error("Failed to copy text:", err);
         });
+    });
+
+    // 2. 支持键盘 Enter / Space 激活复制
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+            const activeEl = document.activeElement as HTMLElement | null;
+            if (activeEl?.classList.contains("copy-contact-btn")) {
+                const row = activeEl.closest(".copy-contact-row") as HTMLElement | null;
+                if (!row) return;
+                e.preventDefault();
+                const textToCopy = activeEl.getAttribute("data-copy") || "";
+                if (textToCopy) {
+                    copyText(textToCopy).then(() => {
+                        showCopiedFeedback(row);
+                    });
+                }
+            }
+        }
+    });
+
+    // 3. 用户框选文本并复制（Ctrl+C 或右键复制）时，同样在框外触发对勾反馈
+    document.addEventListener("copy", () => {
+        const selection = window.getSelection();
+        if (selection && selection.rangeCount > 0) {
+            const anchorNode = selection.anchorNode;
+            const row = anchorNode instanceof Element
+                ? anchorNode.closest(".copy-contact-row")
+                : anchorNode?.parentElement?.closest(".copy-contact-row");
+            if (row) {
+                showCopiedFeedback(row as HTMLElement);
+            }
+        }
     });
 </script>
