@@ -261,7 +261,7 @@ Firefly 应保留在 Credits，而不是作为个人站主要 SEO 定位关键�
 ## P5 — 已准备好但尚未接到网站的个人内容
 
 ### 29. Devices / 我的设备
-私有仓 `docs/PENDING_MIGRATION.md` 已有完整设备数据：
+Devices 已完成从旧 Shirone 数据迁移，并由私有 config/devicesConfig.ts 接管正式设备数据：
 - [x] Devices 已从旧站数据迁移。
 - [x] 已建立独立 `/devices/` 页面。
 - [x] 已按轻量卡片展示。
@@ -271,7 +271,7 @@ Firefly 应保留在 Credits，而不是作为个人站主要 SEO 定位关键�
 **说明：**
 已建立独立 `/devices/` 页面，按轻量卡片与三大分类（主力设备、桌面日常、音乐角落）展示，设备数据由私有内容仓接管，导航栏已加入入口。
 
-### 29. Timeline / 个人时间线
+### 30. Timeline / 个人时间线
 私有仓已记录并正式上线：
 - [x] GitHub 起点。
 - [x] 大学项目。
@@ -302,9 +302,9 @@ Firefly 应保留在 Credits，而不是作为个人站主要 SEO 定位关键�
 - [x] README 清楚说明本站身份，同时保留 Firefly / Fuwari Credits。
 - [x] 未启用模块不存在他人的真实账号和 ID。
 - [x] 私有内容仓成为文章、动态、项目、个人页面和个人媒体的主要内容源。
-- [ ] `pnpm check` 通过。
-- [ ] `pnpm type-check` 通过。
-- [ ] `pnpm build` 通过。
+- [x] `pnpm check` 通过。
+- [x] `pnpm type-check` 通过。
+- [x] `pnpm build` 通过。
 - [ ] GitHub Pages 正式站逐页人工检查。
 - [ ] 移动端再检查一遍导航、壁纸、相册、评论、音乐和布局。
 

@@ -31,10 +31,7 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 	<div class="relative flex flex-col items-center shrink-0 w-8 sm:w-11" aria-hidden="true">
 		<!-- 轨道线 -->
 		<div
-			class:list={[
-				"absolute left-1/2 -translate-x-1/2 w-0.5 bg-(--line-divider) transition-colors duration-300",
-				isLast ? "top-0 h-4 sm:h-5" : "top-0 -bottom-6",
-			]}
+			class="timeline-card__track absolute left-1/2 -translate-x-1/2 w-0.5 bg-(--line-divider) transition-colors duration-300"
 		></div>
 
 		<!-- 节点圆形标记 -->
@@ -155,3 +152,19 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 		)}
 	</div>
 </article>
+
+<style>
+	.timeline-card__track {
+		top: 0;
+		bottom: -1.5rem;
+	}
+	:global(.timeline-card--last) .timeline-card__track {
+		bottom: auto;
+		height: 1rem;
+	}
+	@media (min-width: 640px) {
+		:global(.timeline-card--last) .timeline-card__track {
+			height: 1.25rem;
+		}
+	}
+</style>

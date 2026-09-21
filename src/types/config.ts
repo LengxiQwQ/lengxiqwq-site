@@ -21,13 +21,6 @@ export type { DisplaySettingsConfig } from "./displaySettingsConfig";
 export type { DynamicConfig } from "./dynamicConfig";
 export type { SakuraConfig } from "./effectsConfig";
 export type {
-	TimelineCategory,
-	TimelineConfig,
-	TimelineItem,
-	TimelineLink,
-} from "./timelineConfig";
-
-export type {
 	ExpressiveCodeConfig,
 	PluginCollapsibleConfig,
 	PluginLanguageBadgeConfig,
@@ -68,6 +61,12 @@ export type {
 	SponsorItem,
 	SponsorMethod,
 } from "./sponsorConfig";
+export type {
+	TimelineCategory,
+	TimelineConfig,
+	TimelineItem,
+	TimelineLink,
+} from "./timelineConfig";
 
 // 响应式图像布局类型
 export type ResponsiveImageLayout = "constrained" | "full-width" | "none";

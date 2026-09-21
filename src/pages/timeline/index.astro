@@ -16,9 +16,15 @@ const title = timelineConfig.title || i18n(I18nKey.timeline);
 const description =
 	timelineConfig.description || i18n(I18nKey.timelineDescription);
 
-const items = (timelineConfig.items || []).filter(
+const rawItems = (timelineConfig.items || []).filter(
 	(item) => item.enable !== false,
 );
+
+const order = timelineConfig.order || "desc";
+const items = [...rawItems].sort((a, b) => {
+	const cmp = a.date.localeCompare(b.date);
+	return order === "asc" ? cmp : -cmp;
+});
 
 // 构建分类映射与实际有内容的分类
 const categories = timelineConfig.categories || [];
@@ -100,7 +106,11 @@ const totalCount = items.length;
 					</div>
 				)}
 
-				<p id="timeline-count-display" class="text-xs text-neutral-500 dark:text-neutral-400 self-start sm:self-auto m-0">
+				<p
+					id="timeline-count-display"
+					class="text-xs text-neutral-500 dark:text-neutral-400 self-start sm:self-auto m-0"
+					data-unit={i18n(I18nKey.timelineCounts)}
+				>
 					{totalCount} {i18n(I18nKey.timelineCounts)}
 				</p>
 			</div>
@@ -149,9 +159,28 @@ const totalCount = items.length;
 		const emptyMessage = document.getElementById("timeline-empty-message");
 
 		if (!filterBar || !itemsList) return;
+		if (filterBar.dataset.bound === "true") return;
+		filterBar.dataset.bound = "true";
 
 		const buttons = filterBar.querySelectorAll<HTMLButtonElement>(".timeline-filter-btn");
 		const wrappers = itemsList.querySelectorAll<HTMLElement>(".timeline-item-wrapper");
+
+		function updateLastVisibleItem() {
+			if (!itemsList) return;
+			const allCards = itemsList.querySelectorAll<HTMLElement>(".timeline-card");
+			allCards.forEach((card) => card.classList.remove("timeline-card--last"));
+
+			const visibleWrappers = Array.from(wrappers).filter(
+				(w) => !w.classList.contains("hidden"),
+			);
+			if (visibleWrappers.length > 0) {
+				const lastWrapper = visibleWrappers[visibleWrappers.length - 1];
+				const lastCard = lastWrapper.querySelector<HTMLElement>(".timeline-card");
+				if (lastCard) {
+					lastCard.classList.add("timeline-card--last");
+				}
+			}
+		}
 
 		buttons.forEach((btn) => {
 			btn.addEventListener("click", () => {
@@ -183,9 +212,13 @@ const totalCount = items.length;
 					}
 				});
 
+				// 动态更新最后一个可见节点的尾线
+				updateLastVisibleItem();
+
 				// 更新显示计数与空状态
 				if (countDisplay) {
-					countDisplay.textContent = `${visibleCount} 个节点`;
+					const unit = countDisplay.dataset.unit || "个节点";
+					countDisplay.textContent = `${visibleCount} ${unit}`;
 				}
 
 				if (emptyMessage) {
@@ -197,6 +230,9 @@ const totalCount = items.length;
 				}
 			});
 		});
+
+		// 确保初始状态尾线正确（与 SSR 保持一致）
+		updateLastVisibleItem();
 	}
 
 	// 支持首屏与 Swup 切页后重新绑定
