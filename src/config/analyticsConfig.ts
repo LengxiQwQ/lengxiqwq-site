@@ -3,15 +3,39 @@ import type { AnalyticsConfig } from "../types/analyticsConfig";
 // 读取 Clarity Project ID 环境变量（优先读取 PUBLIC_MICROSOFT_CLARITY_ID）
 function readClarityIdEnv(): string {
 	try {
-		const raw = (import.meta.env as Record<string, unknown>)
-			?.PUBLIC_MICROSOFT_CLARITY_ID;
-		return typeof raw === "string" ? raw.trim() : "";
-	} catch {
-		return typeof process !== "undefined" &&
+		const raw = import.meta.env.PUBLIC_MICROSOFT_CLARITY_ID;
+		if (typeof raw === "string" && raw.trim() !== "") {
+			return raw.trim();
+		}
+	} catch {}
+	try {
+		if (
+			typeof process !== "undefined" &&
 			process.env?.PUBLIC_MICROSOFT_CLARITY_ID
-			? process.env.PUBLIC_MICROSOFT_CLARITY_ID.trim()
-			: "";
-	}
+		) {
+			return process.env.PUBLIC_MICROSOFT_CLARITY_ID.trim();
+		}
+	} catch {}
+	return "";
+}
+
+// 读取 Umami Website ID 环境变量（优先读取 PUBLIC_UMAMI_WEBSITE_ID）
+function readUmamiWebsiteIdEnv(): string {
+	try {
+		const raw = import.meta.env.PUBLIC_UMAMI_WEBSITE_ID;
+		if (typeof raw === "string" && raw.trim() !== "") {
+			return raw.trim();
+		}
+	} catch {}
+	try {
+		if (
+			typeof process !== "undefined" &&
+			process.env?.PUBLIC_UMAMI_WEBSITE_ID
+		) {
+			return process.env.PUBLIC_UMAMI_WEBSITE_ID.trim();
+		}
+	} catch {}
+	return "";
 }
 
 export const analyticsConfig: AnalyticsConfig = {
@@ -29,7 +53,9 @@ export const analyticsConfig: AnalyticsConfig = {
 	// Umami 统计配置
 	umamiAnalytics: {
 		// Umami Website ID
-		websiteId: "",
+		// 统一配置入口：在此填写你的 Umami Website ID（例如："xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"），
+		// 或在部署平台/环境变量中配置 PUBLIC_UMAMI_WEBSITE_ID
+		websiteId: readUmamiWebsiteIdEnv(),
 		// Umami JS地址，支持使用自建
 		scriptUrl: "https://cloud.umami.is/script.js",
 		// Umami 会话回放脚本地址，支持使用自建

@@ -39,6 +39,7 @@ jobs:
     env:
       CI: true
       CONTENT_DIR: .content-src
+      PUBLIC_UMAMI_WEBSITE_ID: ${{ vars.PUBLIC_UMAMI_WEBSITE_ID }}
 
     steps:
       - name: Resolve content ref

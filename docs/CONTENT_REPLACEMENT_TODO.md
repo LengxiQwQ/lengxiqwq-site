@@ -252,7 +252,7 @@ Firefly / Astro 继续保留在 Credits 与技术说明中，不再作为个人�
 
 ### 28. Analytics 其他平台
 - [ ] Google Analytics：保持未启用，除非以后明确需要。
-- [ ] Umami：保持未启用，除非以后需要自托管/第二统计源。
+- [x] Umami Cloud：已接入，作为 Clarity 的长期流量统计补充。
 - [ ] 51la：保持未启用，除非以后需要国内访问分析。
 
 ---
