@@ -55,14 +55,21 @@ let syncedCount = 0;
 for (const { src, dest, cleanSubdirs } of mappings) {
 	if (fs.existsSync(src)) {
 		if (cleanSubdirs) {
-			// For list collections where user items completely replace demo items (e.g. projects, posts)
-			const cleanableCollections = new Set(["projects", "posts"]);
+			// For list collections where user items completely replace demo items (e.g. projects, posts, dynamic, spec)
+			const cleanableCollections = new Set([
+				"projects",
+				"posts",
+				"dynamic",
+				"spec",
+			]);
 			const entries = fs.readdirSync(src, { withFileTypes: true });
 			for (const entry of entries) {
 				if (entry.isDirectory() && cleanableCollections.has(entry.name)) {
 					const targetDir = path.join(dest, entry.name);
 					if (fs.existsSync(targetDir)) {
-						console.log(`[content:sync] Cleaning preset directory: ${targetDir}`);
+						console.log(
+							`[content:sync] Cleaning preset directory: ${targetDir}`,
+						);
 						fs.rmSync(targetDir, { recursive: true, force: true });
 					}
 				}
@@ -71,6 +78,16 @@ for (const { src, dest, cleanSubdirs } of mappings) {
 		console.log(`[content:sync] Materializing ${src} -> ${dest}`);
 		fs.cpSync(src, dest, { recursive: true, force: true });
 		syncedCount++;
+	}
+}
+
+// 清理 Astro 本地内容缓存，避免旧文章/资源残留在 data-store 中引起找不到资源的构建错误
+for (const cachePath of [
+	path.resolve(".astro"),
+	path.resolve("node_modules/.astro"),
+]) {
+	if (fs.existsSync(cachePath)) {
+		fs.rmSync(cachePath, { recursive: true, force: true });
 	}
 }
 
