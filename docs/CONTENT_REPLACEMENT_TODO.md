@@ -103,17 +103,9 @@ Firefly Docs 如果你确实日常使用，可以放进“书签导航”，但�
 二次元收藏、游戏截图、马来西亚/校园日常、桌搭与数码、吉他与音乐、项目开发过程截图。
 
 ### 8. 书签导航
-当前仍主要是 Firefly 原始示例：
-- [ ] GitHub / MDN / Astro / Svelte / Tailwind 示例组合
-- [ ] Firefly
-- [ ] Iconify / iconfont
-- [ ] TinyPNG / Squoosh / Carbon
-- [ ] Firefly Docs / 夏夜流萤
-
-需要：
-- [ ] 按自己的真实浏览器书签重建 `booknavConfig.ts`。
-- [ ] 调整分类与排序。
-- [ ] 删除不实际使用的示例站点。
+- [x] 按自己的真实浏览器书签重建 `booknavConfig.ts`（接入音乐与吉他乐谱工具 ChordU / Chordify / Songsterr）。
+- [x] 调整分类与排序。
+- [x] 清理模板演示站点与示例链接。
 
 **建议分类：**
 开发、AI、开源项目、设计、图片与媒体、音乐、游戏、云服务、站长工具、常用工具。
