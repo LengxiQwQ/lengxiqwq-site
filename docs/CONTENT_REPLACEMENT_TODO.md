@@ -89,13 +89,15 @@ dynamic
 Firefly Docs 如果你确实日常使用，可以放进“书签导航”，但不应该作为“朋友”留在友链列表。
 
 ### 7. 相册
-当前仍为：
-- [ ] “可爱流萤”
-- [ ] “加密相册示例”
-- [ ] 删除示例密码 `123456` 和示例密码提示。
-- [ ] 清理 `public/gallery/firefly-2026/`。
-- [ ] 清理 `public/gallery/encrypted-test/`。
-- [ ] 建立自己的相册目录和 `galleryConfig.ts`。
+当前状态：
+- [x] “可爱流萤”示例相册已清理
+- [x] “加密相册示例”已清理
+- [x] 示例密码 123456 / passwordHint 已清理
+- [x] public/gallery/firefly-2026 已清理
+- [x] public/gallery/encrypted-test 已清理
+- [x] 私有仓已建立 Gallery 配置和媒体目录
+- [x] 当前没有正式相册，因此保持 0 相册空状态
+
 
 **建议分类：**
 二次元收藏、游戏截图、马来西亚/校园日常、桌搭与数码、吉他与音乐、项目开发过程截图。

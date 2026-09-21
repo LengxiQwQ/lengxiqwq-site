@@ -39,6 +39,12 @@ const mappings = [
 		src: path.join(resolvedContentDir, "content"),
 		dest: path.resolve("src/content"),
 		cleanSubdirs: true,
+		cleanableDirs: new Set([
+			"projects",
+			"posts",
+			"dynamic",
+			"spec",
+		]),
 	},
 	{
 		src: path.join(resolvedContentDir, "config"),
@@ -47,24 +53,22 @@ const mappings = [
 	{
 		src: path.join(resolvedContentDir, "public"),
 		dest: path.resolve("public"),
+		cleanSubdirs: true,
+		cleanableDirs: new Set([
+			"gallery",
+		]),
 	},
 ];
 
 let syncedCount = 0;
 
-for (const { src, dest, cleanSubdirs } of mappings) {
+for (const { src, dest, cleanSubdirs, cleanableDirs } of mappings) {
 	if (fs.existsSync(src)) {
-		if (cleanSubdirs) {
-			// For list collections where user items completely replace demo items (e.g. projects, posts, dynamic, spec)
-			const cleanableCollections = new Set([
-				"projects",
-				"posts",
-				"dynamic",
-				"spec",
-			]);
+		if (cleanSubdirs && cleanableDirs) {
+			// For collections / directories where user items completely replace demo items
 			const entries = fs.readdirSync(src, { withFileTypes: true });
 			for (const entry of entries) {
-				if (entry.isDirectory() && cleanableCollections.has(entry.name)) {
+				if (entry.isDirectory() && cleanableDirs.has(entry.name)) {
 					const targetDir = path.join(dest, entry.name);
 					if (fs.existsSync(targetDir)) {
 						console.log(
