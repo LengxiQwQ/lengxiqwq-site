@@ -30,41 +30,63 @@ const { clarityId, enableCustomEvents = true } = Astro.props;
 			y.parentNode.insertBefore(t, y);
 		})(window, document, "clarity", "script", clarityId);
 
-		// 2. 页面浏览与 Swup SPA 无刷新切页统计
+		// 2. 页面浏览与 Swup SPA 无刷新切页统计（精确单次上报）
+		var lastTrackedUrl = "";
 		function trackPageView() {
-			if (typeof window.clarity === "function") {
-				window.clarity("set", "page_path", window.location.pathname);
-				window.clarity("set", "page_title", document.title);
-				window.clarity("event", "page_view");
-			}
+			if (typeof window.clarity !== "function") return;
+			var currentUrl = window.location.href;
+			// 严格防重锁：同一 URL 绝不上报两次
+			if (currentUrl === lastTrackedUrl) return;
+			lastTrackedUrl = currentUrl;
+
+			window.clarity("set", "page_path", window.location.pathname);
+			window.clarity("set", "page_title", document.title);
+			window.clarity("event", "page_view");
 		}
 
-		// 记录首屏访问标签与事件
+		// 首屏加载有且仅打点 1 次
 		trackPageView();
 
-		// 监听 Swup 切页机制，确保 SPA 无刷新跳转统计不丢失且不会重新初始化 Clarity
+		// 仅使用 Swup 官方 hooks 监听切页，移除冗余的 DOM 事件监听，彻底消除重复触发
 		function setupSwupTracking() {
-			if (window.swup && window.swup.hooks) {
+			var isHookRegistered = false;
+			function registerHook() {
+				if (isHookRegistered || !window.swup || !window.swup.hooks) return;
+				isHookRegistered = true;
 				window.swup.hooks.on("page:view", trackPageView);
-			} else {
-				document.addEventListener(
-					"swup:enable",
-					function () {
-						if (window.swup && window.swup.hooks) {
-							window.swup.hooks.on("page:view", trackPageView);
-						}
-					},
-					{ once: true },
-				);
 			}
-			document.addEventListener("swup:page:view", trackPageView);
+
+			if (window.swup && window.swup.hooks) {
+				registerHook();
+			} else {
+				document.addEventListener("swup:enable", registerHook, {
+					once: true,
+				});
+			}
 		}
 
 		setupSwupTracking();
 
-		// 3. 高价值交互自定义事件（若开启）
+		// 3. 高价值交互自定义事件（匿名会话友好，不含任何敏感 PII）
 		if (enableCustomEvents) {
-			// 事件委托：处理链接与卡片点击
+			// 复制事件去重锁（1000ms 内同一类型只记录 1 次，防止点击+原生复制双发）
+			var lastEmailCopyTime = 0;
+			function trackEmailCopy() {
+				var now = Date.now();
+				if (now - lastEmailCopyTime < 1000) return;
+				lastEmailCopyTime = now;
+				window.clarity("event", "email_copy");
+			}
+
+			var lastQqCopyTime = 0;
+			function trackQqCopy() {
+				var now = Date.now();
+				if (now - lastQqCopyTime < 1000) return;
+				lastQqCopyTime = now;
+				window.clarity("event", "qq_copy");
+			}
+
+			// 全局点击事件委托
 			document.addEventListener(
 				"click",
 				function (event) {
@@ -72,11 +94,33 @@ const { clarityId, enableCustomEvents = true } = Astro.props;
 					var target = event.target;
 					if (!target || !(target instanceof Element)) return;
 
+					// A. 程序化一键复制（如 Profile 侧边栏中的邮箱/QQ 点击复制）
+					var copyBtn = target.closest(".copy-contact-btn, [data-copy]");
+					if (copyBtn) {
+						var copyVal = copyBtn.getAttribute("data-copy") || "";
+						var copyLabel = copyBtn.getAttribute("aria-label") || "";
+						if (
+							copyVal.indexOf("@") !== -1 ||
+							copyLabel.indexOf("邮箱") !== -1
+						) {
+							trackEmailCopy();
+							return;
+						}
+						if (
+							/^\d{5,12}$/.test(copyVal) ||
+							copyLabel.indexOf("QQ") !== -1
+						) {
+							trackQqCopy();
+							return;
+						}
+					}
+
+					// B. 链接点击分类
 					var anchor = target.closest("a");
 					if (anchor && anchor.href) {
 						var href = anchor.href;
 
-						// 邮箱点击（mailto 协议或 data-encoded-email 保护链接）
+						// 1. 邮箱协议点击（mailto: 或 base64 加密链接）
 						if (
 							href.startsWith("mailto:") ||
 							anchor.hasAttribute("data-encoded-email")
@@ -85,7 +129,7 @@ const { clarityId, enableCustomEvents = true } = Astro.props;
 							return;
 						}
 
-						// 外部链接与 GitHub 点击
+						// 2. 外部链接与 GitHub 点击
 						try {
 							var urlObj = new URL(href, window.location.href);
 							if (urlObj.origin !== window.location.origin) {
@@ -100,10 +144,10 @@ const { clarityId, enableCustomEvents = true } = Astro.props;
 								return;
 							}
 						} catch (_) {
-							// 忽略无效 URL
+							// 忽略格式异常 URL
 						}
 
-						// 导航栏主要入口
+						// 3. 导航栏主要入口
 						if (
 							anchor.closest("#navbar, #nav-menu-panel, .nav-menu-panel")
 						) {
@@ -111,23 +155,45 @@ const { clarityId, enableCustomEvents = true } = Astro.props;
 							return;
 						}
 
-						// 项目卡片点击
+						// 4. 项目卡片点击
 						if (anchor.closest(".project-card, [data-project-card]")) {
 							window.clarity("event", "project_card_click");
 							return;
 						}
 
-						// 文章卡片点击打开
+						// 5. 文章打开（精准收窄：仅标题、封面图、进入箭头按钮或归档项，彻底排除标签与分类）
+						var isPostOpen = false;
 						if (
+							anchor.matches(
+								".post-card-title, .post-card-image, .post-card-enter-btn, .archive-post, .recommend-post-item",
+							) ||
 							anchor.closest(
-								".post-card-wrapper, .post-card-title, #post-list-container a",
+								".post-card-title, .post-card-image, .post-card-enter-btn, .archive-post, .recommend-post-item",
 							)
 						) {
+							isPostOpen = true;
+						} else if (anchor.closest(".post-card-wrapper")) {
+							// 若在文章卡片内但非上述类名，显式排除标签、分类等辅助链接
+							var isAuxiliary = anchor.closest(
+								".tag-item, .post-card-bottom-tags, .post-meta, .card-header-meta, .stats, [class*='tag-'], [class*='category-']",
+							);
+							if (!isAuxiliary) {
+								try {
+									var urlPath = new URL(href, window.location.href)
+										.pathname;
+									if (urlPath.indexOf("/posts/") !== -1) {
+										isPostOpen = true;
+									}
+								} catch (_) {}
+							}
+						}
+
+						if (isPostOpen) {
 							window.clarity("event", "post_open");
 							return;
 						}
 
-						// 相册卡片点击访问
+						// 6. 相册卡片点击访问
 						if (anchor.closest(".album-card, a[href*='/gallery/']")) {
 							window.clarity("event", "album_access");
 							return;
@@ -137,30 +203,68 @@ const { clarityId, enableCustomEvents = true } = Astro.props;
 				{ passive: true },
 			);
 
-			// 邮箱复制事件（正则匹配邮箱格式文本复制）
+			// 手动框选文本并复制（Ctrl+C / 右键复制）
 			document.addEventListener(
 				"copy",
 				function () {
 					if (typeof window.clarity !== "function") return;
 					var sel = window.getSelection();
-					var text = (sel ? sel.toString() : "").trim();
-					if (text && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
-						window.clarity("event", "email_copy");
+					if (!sel) return;
+					var text = sel.toString().trim();
+					if (!text) return;
+
+					// 1. 邮箱划词复制
+					if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
+						trackEmailCopy();
+						return;
+					}
+
+					// 2. QQ 划词复制（通过父级容器限定在 QQ 联系行内，避免页面上普通数字误触发）
+					var anchorNode = sel.anchorNode;
+					var row =
+						anchorNode instanceof Element
+							? anchorNode.closest(".copy-contact-row")
+							: anchorNode && anchorNode.parentElement
+								? anchorNode.parentElement.closest(".copy-contact-row")
+								: null;
+					if (row) {
+						var rowBtn = row.querySelector(".copy-contact-btn");
+						var rowLabel =
+							(rowBtn && rowBtn.getAttribute("aria-label")) || "";
+						var rowCopy =
+							(rowBtn && rowBtn.getAttribute("data-copy")) || "";
+						if (
+							/^\d{5,12}$/.test(text) &&
+							(rowLabel.indexOf("QQ") !== -1 ||
+								/^\d{5,12}$/.test(rowCopy))
+						) {
+							trackQqCopy();
+						}
 					}
 				},
 				{ passive: true },
 			);
 
-			// 音乐播放事件（监听站点背景音乐播放器状态改变）
+			// 音乐播放事件（带 500ms 防抖，监听背景音乐播放器播放触发）
+			var lastMusicPlayTime = 0;
 			window.addEventListener("fm:play-state", function (e) {
 				if (typeof window.clarity !== "function") return;
 				if (e && e.detail && e.detail.isPlaying) {
+					var now = Date.now();
+					if (now - lastMusicPlayTime < 500) return;
+					lastMusicPlayTime = now;
 					window.clarity("event", "music_play");
 				}
 			});
 
-			// 搜索事件（防抖检测搜索框有效输入）
+			// 搜索事件（防抖检测搜索输入，或按 Enter 回车确认，绝不发送搜索词明文）
 			var searchDebounceTimer = null;
+			function triggerSearchEvent(el) {
+				if (el && el.value && el.value.trim().length >= 2) {
+					window.clarity("event", "search");
+				}
+			}
+
 			document.addEventListener(
 				"input",
 				function (e) {
@@ -173,10 +277,27 @@ const { clarityId, enableCustomEvents = true } = Astro.props;
 					) {
 						clearTimeout(searchDebounceTimer);
 						searchDebounceTimer = setTimeout(function () {
-							if (el.value && el.value.trim().length >= 2) {
-								window.clarity("event", "search");
-							}
+							triggerSearchEvent(el);
 						}, 800);
+					}
+				},
+				{ passive: true },
+			);
+
+			document.addEventListener(
+				"keydown",
+				function (e) {
+					if (typeof window.clarity !== "function") return;
+					if (e.key === "Enter") {
+						var el = e.target;
+						if (
+							el instanceof HTMLInputElement &&
+							(el.id.indexOf("search") !== -1 ||
+								el.closest("#search-bar, #search-panel, .search-panel"))
+						) {
+							clearTimeout(searchDebounceTimer);
+							triggerSearchEvent(el);
+						}
 					}
 				},
 				{ passive: true },
