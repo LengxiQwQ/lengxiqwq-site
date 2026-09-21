@@ -72,9 +72,9 @@ dynamic
 当前：
 > 欢迎来到我的博客！这是一则示例公告。
 
-- [ ] 替换 `announcementConfig.ts` 的示例公告。
-- [ ] 决定公告组件长期开启还是只在有重要消息时开启。
-- [ ] 将个人化后的 `announcementConfig.ts` 放入私有内容仓配置层。
+- [x] 替换 `announcementConfig.ts` 的示例公告。
+- [x] 决定公告组件长期开启还是只在有重要消息时开启。
+- [x] 将个人化后的 `announcementConfig.ts` 放入私有内容仓配置层。
 
 **建议：**
 如果近期没有真正公告，直接关闭公告卡片比长期放“欢迎公告”更自然。
