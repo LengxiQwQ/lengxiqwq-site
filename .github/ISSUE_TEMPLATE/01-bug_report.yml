@@ -1,44 +1,42 @@
 name: Bug Report
-description: Create a report to help us improve
+description: 提交网站运行中的异常或问题报告
 title: "[Bug]: "
 labels: ["bug"]
-assignees:
-  - CuteLeaf
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to fill out this bug report!
+        感谢反馈问题！请尽量详细填写以下内容，帮助定位和修复。
   - type: textarea
     id: bug-description
     attributes:
-      label: Describe the bug
-      description: A clear and concise description of what the bug is.
+      label: 问题描述
+      description: 请清晰简要地描述遇到的 Bug。
     validations:
       required: true
   - type: textarea
     id: to-reproduce
     attributes:
-      label: To Reproduce
-      description: Steps to reproduce the behavior.
+      label: 复现步骤
+      description: 请提供复现该问题的具体步骤。
       placeholder: |
-        1. Go to '...'
-        2. Click on '....'
-        3. Scroll down to '....'
-        4. See error
+        1. 打开页面 '...'
+        2. 点击 '....'
+        3. 滚动至 '....'
+        4. 出现异常
     validations:
       required: true
   - type: textarea
     id: expected-behavior
     attributes:
-      label: Expected behavior
-      description: A clear and concise description of what you expected to happen.
+      label: 预期行为
+      description: 请描述你期望的正常行为。
     validations:
       required: true
   - type: dropdown
     id: os
     attributes:
-      label: OS
+      label: 操作系统
       multiple: true
       options:
         - Windows
@@ -49,10 +47,10 @@ body:
   - type: input
     id: browser
     attributes:
-      label: Browser
-      placeholder: e.g. chrome, safari
+      label: 浏览器与版本
+      placeholder: 例如 Chrome 134, Safari 18, Edge, Firefox 等
   - type: textarea
     id: additional-context
     attributes:
-      label: Additional context
-      description: Add any other context about the problem here.
+      label: 补充说明与截图
+      description: 可在此粘贴截图、控制台报错信息或其它补充内容。

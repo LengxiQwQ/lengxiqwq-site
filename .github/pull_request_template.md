@@ -1,37 +1,29 @@
-## Type of change
+## 变更类型
 
-- [ ] Bug fix (a non-breaking change that fixes an issue)
-- [ ] New feature (a non-breaking change that adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] Other (please describe):
+- [ ] 功能开发 (feat)
+- [ ] 缺陷修复 (fix)
+- [ ] 样式/UI 调整 (style)
+- [ ] 重构/优化 (refactor/perf)
+- [ ] 构建/CI/依赖更新 (chore)
+- [ ] 文档说明 (docs)
 
-## Checklist
+## 改动说明
 
-- [ ] I have read the [**CONTRIBUTING**](https://github.com/CuteLeaf/Firefly/blob/master/CONTRIBUTING.md) document.
-- [ ] I have checked to ensure that this Pull Request is not for personal changes.
-- [ ] I have performed a self-review of my own code.
-- [ ] My changes generate no new warnings.
+<!-- 简要说明本次 PR 的修改内容与原因 -->
 
-## Related Issue
+## 检查清单
 
-<!-- Please link to the issue that this pull request addresses. e.g. #123 -->
+- [ ] 本次改动符合“公开代码仓 / 私有内容仓”边界原则，未将个人独占内容写入公开仓
+- [ ] 未提交任何 API Token、个人隐私、Secret 或服务私钥
+- [ ] 本地已运行并成功通过 `pnpm check`
+- [ ] 本地已运行并成功通过 `pnpm type-check`
+- [ ] 本地已运行并成功通过 `pnpm build`
+- [ ] 若涉及 UI/交互改动，已在下方提供效果截图或录屏
 
+## 相关 Issue
 
-## Changes
+<!-- 例如：Fixes #12 -->
 
-<!-- Please describe the changes you made in this pull request. -->
+## 效果截图 / 验证结果（如有）
 
-
-## How To Test
-
-<!-- Please describe how you tested your changes. -->
-
-
-## Screenshots (if applicable)
-
-<!-- If you made any UI changes, please include screenshots. -->
-
-
-## Additional Notes
-
-<!-- Any additional information that you want to share with the reviewer. -->
+<!-- 可在此粘贴截图或说明验证步骤 -->

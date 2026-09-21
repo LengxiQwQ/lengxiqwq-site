@@ -1,5 +1,5 @@
 {
-  "name": "firefly",
+  "name": "lengxiqwq-site",
   "type": "module",
   "version": "6.16.8",
   "engines": {
@@ -17,7 +17,7 @@
     "type-check": "tsc --noEmit --isolatedDeclarations",
     "new-dynamic": "tsx scripts/new-dynamic.js",
     "new-d": "tsx scripts/new-dynamic.js",
-    "new-post": "node scripts/new-post.js",
+    "new-post": "tsx scripts/new-post.js",
     "format": "biome format --write ./src ./scripts",
     "lint": "biome check --write ./src ./scripts",
     "preinstall": "npx only-allow pnpm",
