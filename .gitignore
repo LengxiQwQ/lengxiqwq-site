@@ -51,3 +51,9 @@ package/
 # dual-repo content working copy
 .content-src/
 .env.local
+
+# project agent rules
+AGENTS.md
+CLAUDE.md
+.cursorrules
+.windsurfrules
