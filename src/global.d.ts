@@ -11,6 +11,10 @@ declare global {
 	interface Window {
 		// biome-ignore lint/suspicious/noExplicitAny: External library
 		swup: any;
+		/** Microsoft Clarity API */
+		clarity?: ((...args: unknown[]) => void) & { q?: unknown[] };
+		/** Clarity 初始化单例标记，防止 Swup 切页脚本重复加载 */
+		__clarityInitialized?: boolean;
 		spineModelInitialized?: boolean;
 		floatingTOCListenersInitialized?: boolean;
 		// biome-ignore lint/suspicious/noExplicitAny: External library

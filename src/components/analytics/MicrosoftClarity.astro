@@ -1,15 +1,186 @@
 ---
 interface Props {
 	clarityId: string;
+	enableCustomEvents?: boolean;
 }
 
-const { clarityId } = Astro.props;
+const { clarityId, enableCustomEvents = true } = Astro.props;
 ---
 
-<script is:inline data-swup-ignore-script define:vars={{ clarityId }}>
-    (function(c,l,a,r,i,t,y){
-        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
-        t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
-        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
-    })(window, document, "clarity", "script", clarityId);
+<script
+	is:inline
+	data-swup-ignore-script
+	define:vars={{ clarityId, enableCustomEvents }}
+>
+	(function () {
+		if (!clarityId || window.__clarityInitialized) return;
+		window.__clarityInitialized = true;
+
+		// 1. 初始化 Microsoft Clarity 官方加载器
+		(function (c, l, a, r, i, t, y) {
+			c[a] =
+				c[a] ||
+				function () {
+					(c[a].q = c[a].q || []).push(arguments);
+				};
+			t = l.createElement(r);
+			t.async = 1;
+			t.src = "https://www.clarity.ms/tag/" + i;
+			y = l.getElementsByTagName(r)[0];
+			y.parentNode.insertBefore(t, y);
+		})(window, document, "clarity", "script", clarityId);
+
+		// 2. 页面浏览与 Swup SPA 无刷新切页统计
+		function trackPageView() {
+			if (typeof window.clarity === "function") {
+				window.clarity("set", "page_path", window.location.pathname);
+				window.clarity("set", "page_title", document.title);
+				window.clarity("event", "page_view");
+			}
+		}
+
+		// 记录首屏访问标签与事件
+		trackPageView();
+
+		// 监听 Swup 切页机制，确保 SPA 无刷新跳转统计不丢失且不会重新初始化 Clarity
+		function setupSwupTracking() {
+			if (window.swup && window.swup.hooks) {
+				window.swup.hooks.on("page:view", trackPageView);
+			} else {
+				document.addEventListener(
+					"swup:enable",
+					function () {
+						if (window.swup && window.swup.hooks) {
+							window.swup.hooks.on("page:view", trackPageView);
+						}
+					},
+					{ once: true },
+				);
+			}
+			document.addEventListener("swup:page:view", trackPageView);
+		}
+
+		setupSwupTracking();
+
+		// 3. 高价值交互自定义事件（若开启）
+		if (enableCustomEvents) {
+			// 事件委托：处理链接与卡片点击
+			document.addEventListener(
+				"click",
+				function (event) {
+					if (typeof window.clarity !== "function") return;
+					var target = event.target;
+					if (!target || !(target instanceof Element)) return;
+
+					var anchor = target.closest("a");
+					if (anchor && anchor.href) {
+						var href = anchor.href;
+
+						// 邮箱点击（mailto 协议或 data-encoded-email 保护链接）
+						if (
+							href.startsWith("mailto:") ||
+							anchor.hasAttribute("data-encoded-email")
+						) {
+							window.clarity("event", "email_click");
+							return;
+						}
+
+						// 外部链接与 GitHub 点击
+						try {
+							var urlObj = new URL(href, window.location.href);
+							if (urlObj.origin !== window.location.origin) {
+								if (
+									urlObj.hostname === "github.com" ||
+									urlObj.hostname.endsWith(".github.com")
+								) {
+									window.clarity("event", "github_click");
+								} else {
+									window.clarity("event", "external_link_click");
+								}
+								return;
+							}
+						} catch (_) {
+							// 忽略无效 URL
+						}
+
+						// 导航栏主要入口
+						if (
+							anchor.closest("#navbar, #nav-menu-panel, .nav-menu-panel")
+						) {
+							window.clarity("event", "nav_click");
+							return;
+						}
+
+						// 项目卡片点击
+						if (anchor.closest(".project-card, [data-project-card]")) {
+							window.clarity("event", "project_card_click");
+							return;
+						}
+
+						// 文章卡片点击打开
+						if (
+							anchor.closest(
+								".post-card-wrapper, .post-card-title, #post-list-container a",
+							)
+						) {
+							window.clarity("event", "post_open");
+							return;
+						}
+
+						// 相册卡片点击访问
+						if (anchor.closest(".album-card, a[href*='/gallery/']")) {
+							window.clarity("event", "album_access");
+							return;
+						}
+					}
+				},
+				{ passive: true },
+			);
+
+			// 邮箱复制事件（正则匹配邮箱格式文本复制）
+			document.addEventListener(
+				"copy",
+				function () {
+					if (typeof window.clarity !== "function") return;
+					var sel = window.getSelection();
+					var text = (sel ? sel.toString() : "").trim();
+					if (text && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)) {
+						window.clarity("event", "email_copy");
+					}
+				},
+				{ passive: true },
+			);
+
+			// 音乐播放事件（监听站点背景音乐播放器状态改变）
+			window.addEventListener("fm:play-state", function (e) {
+				if (typeof window.clarity !== "function") return;
+				if (e && e.detail && e.detail.isPlaying) {
+					window.clarity("event", "music_play");
+				}
+			});
+
+			// 搜索事件（防抖检测搜索框有效输入）
+			var searchDebounceTimer = null;
+			document.addEventListener(
+				"input",
+				function (e) {
+					if (typeof window.clarity !== "function") return;
+					var el = e.target;
+					if (
+						el instanceof HTMLInputElement &&
+						(el.id.indexOf("search") !== -1 ||
+							el.closest("#search-bar, #search-panel, .search-panel"))
+					) {
+						clearTimeout(searchDebounceTimer);
+						searchDebounceTimer = setTimeout(function () {
+							if (el.value && el.value.trim().length >= 2) {
+								window.clarity("event", "search");
+							}
+						}, 800);
+					}
+				},
+				{ passive: true },
+			);
+		}
+	})();
 </script>

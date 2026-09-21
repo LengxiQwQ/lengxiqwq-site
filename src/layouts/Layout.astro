@@ -165,7 +165,10 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
             <GoogleAnalytics analyticsId={analyticsConfig.googleAnalyticsId} />
     )}
     {analyticsConfig?.microsoftClarityId && (
-            <MicrosoftClarity clarityId={analyticsConfig.microsoftClarityId} />
+            <MicrosoftClarity
+              clarityId={analyticsConfig.microsoftClarityId}
+              enableCustomEvents={analyticsConfig.clarityAnalytics?.enableCustomEvents ?? true}
+            />
     )}
         {analyticsConfig?.umamiAnalytics?.websiteId && (
           <UmamiAnalytics

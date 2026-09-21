@@ -1,10 +1,31 @@
 import type { AnalyticsConfig } from "../types/analyticsConfig";
 
+// 读取 Clarity Project ID 环境变量（优先读取 PUBLIC_MICROSOFT_CLARITY_ID）
+function readClarityIdEnv(): string {
+	try {
+		const raw = (import.meta.env as Record<string, unknown>)
+			?.PUBLIC_MICROSOFT_CLARITY_ID;
+		return typeof raw === "string" ? raw.trim() : "";
+	} catch {
+		return typeof process !== "undefined" &&
+			process.env?.PUBLIC_MICROSOFT_CLARITY_ID
+			? process.env.PUBLIC_MICROSOFT_CLARITY_ID.trim()
+			: "";
+	}
+}
+
 export const analyticsConfig: AnalyticsConfig = {
 	// Google Analytics ID
 	googleAnalyticsId: "",
 	// Microsoft Clarity ID
-	microsoftClarityId: "",
+	// 统一配置入口：在此填写你的 Microsoft Clarity Project ID（例如："xxxxxxxxxx"），
+	// 或在部署平台/环境变量中配置 PUBLIC_MICROSOFT_CLARITY_ID
+	microsoftClarityId: readClarityIdEnv() || "ylmp70p0eu",
+	// Microsoft Clarity 增强配置
+	clarityAnalytics: {
+		// 是否开启高价值交互事件统计（项目卡片、外链/GitHub、文章打开、相册、搜索、音乐、邮箱等）
+		enableCustomEvents: true,
+	},
 	// Umami 统计配置
 	umamiAnalytics: {
 		// Umami Website ID

@@ -1,6 +1,9 @@
 export type AnalyticsConfig = {
 	googleAnalyticsId?: string; // Google Analytics ID
 	microsoftClarityId?: string; // Microsoft Clarity ID
+	clarityAnalytics?: {
+		enableCustomEvents?: boolean; // 是否开启高价值交互事件统计，默认 true
+	};
 	umamiAnalytics?: {
 		websiteId?: string; // Umami Website ID
 		scriptUrl?: string; // Umami JS地址，支持使用自建

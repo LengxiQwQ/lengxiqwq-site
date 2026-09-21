@@ -37,7 +37,7 @@ let commentService: string = commentConfig?.type || "none";
 
 {
   commentService !== "none" && (
-    <div id="post-comments" class="card-base p-8 mb-6 relative overflow-x-clip overflow-y-visible">
+    <div id="post-comments" class="card-base p-8 mb-6 relative overflow-x-clip overflow-y-visible" data-clarity-mask="true">
       <!-- 装饰性背景（单独裁剪层，卡片本体放开纵向 overflow 以免裁掉评论区浮层） -->
       <div class="absolute inset-0 overflow-hidden rounded-(--radius-large) pointer-events-none">
         <div class="absolute top-0 right-0 w-32 h-32 opacity-5">
