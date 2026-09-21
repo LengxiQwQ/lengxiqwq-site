@@ -1,7 +1,6 @@
 ---
 import fs from "node:fs";
 import path from "node:path";
-import { profileConfig } from "@/config";
 import { url } from "@/utils/url-utils";
 
 const currentYear = new Date().getFullYear();
@@ -41,20 +40,20 @@ try {
 			</div>
 			<div class="mx-0.5 my-2.5 flex gap-x-2 gap-y-2.5 justify-center flex-wrap">
 				&copy; <span id="copyright-year">{currentYear}</span>
-				{profileConfig.name}. All Rights Reserved.
-				<span aria-hidden="true">/</span>
+				LengxiQwQ. All Rights Reserved.
+				<span aria-hidden="true">·</span>
 				<a
 					class="transition link text-(--primary) font-medium"
 					target="_blank"
 					href={url("rss.xml")}>RSS</a
 				>
-				<span aria-hidden="true">/</span>
+				<span aria-hidden="true">·</span>
 				<a
 					class="transition link text-(--primary) font-medium"
 					target="_blank"
 					href={url("atom.xml")}>Atom</a
 				>
-				<span aria-hidden="true">/</span>
+				<span aria-hidden="true">·</span>
 				<a
 					class="transition link text-(--primary) font-medium"
 					target="_blank"
@@ -83,6 +82,12 @@ try {
 					target="_blank"
 					href="https://github.com/CuteLeaf/Firefly">Firefly</a
 				>
+				<span aria-hidden="true">·</span>
+				<span>Customized &amp; Maintained with <span style="color: #ef4444; display: inline-block;">❤️</span> by <a
+					class="transition link text-(--primary) font-medium"
+					target="_blank"
+					rel="noopener noreferrer"
+					href="https://github.com/LengxiQwQ">LengxiQwQ</a></span>
 			</div>
 		</div>
 	</div>
