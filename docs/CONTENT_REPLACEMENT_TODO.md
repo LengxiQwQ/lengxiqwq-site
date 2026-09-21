@@ -238,12 +238,11 @@ Asia/Shanghai
 如果网站的动态、RSS、构建时间想对应当前学习生活所在地，使用 `Asia/Kuala_Lumpur`；如果你希望始终按中国时间展示，则继续保留上海时区。
 
 ### 26. SEO Keywords
-当前关键词中包含 `Firefly`：
-- [ ] 评估是否从主要 SEO Keywords 中移除 `Firefly`。
-- [ ] 补充更符合个人站的关键词。
+- [x] 已从主要 SEO Keywords 中移除 `Firefly` / `Astro` 等主题技术栈定位。
+- [x] 已调整为更符合个人站身份与真实项目的关键词：`LengxiQwQ`、`冷汐`、`冷汐的杂货铺`、`个人网站`、`独立开发`、`开源项目`、`Live Photo Box`、`PlaylistOut`。
 
-**建议：**
-Firefly 应保留在 Credits，而不是作为个人站主要 SEO 定位关键词。
+**说明：**
+Firefly / Astro 继续保留在 Credits 与技术说明中，不再作为个人站主要关键词。
 
 ### 27. Microsoft Clarity
 当前状态：
