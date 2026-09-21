@@ -102,6 +102,13 @@ export const ru: Translation = {
 	[Key.projectStatusDeveloping]: "В разработке",
 	[Key.projectStatusPublished]: "Опубликовано",
 	[Key.projectStatusArchived]: "В архиве",
+
+	// Мои устройства
+	[Key.devices]: "Мои устройства",
+	[Key.devicesDescription]:
+		"Устройства, которые ежедневно помогают мне писать код, играть, слушать музыку и экспериментировать.",
+	[Key.devicesEmpty]: "Данные об устройствах отсутствуют",
+
 	[Key.guestbook]: "Гостевая книга",
 	[Key.guestbookDescription]:
 		"Добро пожаловать, оставьте свой след здесь, поделитесь своими мыслями и предложениями",

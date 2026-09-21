@@ -1,0 +1,82 @@
+---
+import { Icon } from "astro-icon/components";
+import { siteConfig } from "@/config";
+import type { DeviceItem } from "@/types/devicesConfig";
+
+interface Props extends DeviceItem {}
+
+const {
+	name,
+	brand,
+	alias,
+	description,
+	image,
+	icon = "material-symbols:devices-rounded",
+	tags = [],
+} = Astro.props;
+
+// 网格封面是否撑满贴边，跟随全局设置
+const gridCoverFullWidth =
+	siteConfig.postListLayout.grid.coverFullWidth ?? false;
+
+const coverClass = gridCoverFullWidth
+	? "device-card-image group relative block aspect-2/1 overflow-hidden"
+	: "device-card-image group relative block aspect-2/1 overflow-hidden mx-4 mt-4 rounded-xl";
+---
+
+<div class="device-card card-base flex flex-col w-full rounded-(--radius-large) overflow-hidden relative group transition-all duration-300 hover:shadow-lg">
+	<!-- 封面区域 -->
+	<div class={coverClass}>
+		{image ? (
+			<img
+				src={image}
+				alt={name}
+				class="w-full h-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
+				loading="lazy"
+				decoding="async"
+			/>
+		) : (
+			<div class="w-full h-full bg-neutral-100 dark:bg-neutral-800/60 flex items-center justify-center transition-colors">
+				<Icon
+					name={icon}
+					class="text-neutral-400 dark:text-neutral-500 text-5xl transition-transform duration-300 group-hover:scale-110"
+				/>
+			</div>
+		)}
+	</div>
+
+	<!-- 内容区域 -->
+	<div class="p-4 flex flex-col flex-1 min-h-0">
+		{brand && (
+			<span class="text-xs font-semibold uppercase tracking-wider text-(--primary) mb-1">
+				{brand}
+			</span>
+		)}
+
+		<h4 class="font-bold text-[1.15rem] leading-snug text-black/90 dark:text-white/90 line-clamp-1" title={name}>
+			{name}
+		</h4>
+
+		{alias && (
+			<p class="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-1 mt-0.5" title={alias}>
+				{alias}
+			</p>
+		)}
+
+		{description && (
+			<p class="text-sm text-neutral-600 dark:text-neutral-400 line-clamp-2 leading-relaxed mt-2" title={description}>
+				{description}
+			</p>
+		)}
+
+		{tags && tags.length > 0 && (
+			<div class="mt-auto pt-3 flex flex-wrap items-center gap-1.5">
+				{tags.slice(0, 3).map((tag) => (
+					<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 border border-black/5 dark:border-white/5">
+						{tag}
+					</span>
+				))}
+			</div>
+		)}
+	</div>
+</div>

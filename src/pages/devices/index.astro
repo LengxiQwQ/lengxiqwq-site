@@ -1,0 +1,76 @@
+---
+import { Icon } from "astro-icon/components";
+import DeviceCard from "@/components/pages/devices/DeviceCard.astro";
+import { devicesConfig, siteConfig } from "@/config";
+import I18nKey from "@/i18n/i18nKey";
+import { i18n } from "@/i18n/translation";
+import MainGridLayout from "@/layouts/MainGridLayout.astro";
+import "@/styles/pages/common.css";
+import "@/styles/pages/card-grid.css";
+
+// 检查页面是否启用（若明确设为 false 则 404）
+if (siteConfig.pages.devices === false) {
+	return Astro.redirect("/404/");
+}
+
+const title = i18n(I18nKey.devices);
+const description = i18n(I18nKey.devicesDescription);
+
+const groups = devicesConfig.groups || [];
+const totalDevicesCount = groups.reduce(
+	(acc, g) => acc + (g.devices?.length || 0),
+	0,
+);
+---
+
+<MainGridLayout title={title} description={description}>
+	<section class="page-shell">
+		<!-- 标题面板 -->
+		<header class="card-base page-header">
+			<div class="page-heading">
+				<div class="page-icon" aria-hidden="true">
+					<Icon name="material-symbols:devices-rounded" />
+				</div>
+				<div>
+					<h2>{title}</h2>
+					{description && <p>{description}</p>}
+				</div>
+			</div>
+			<div class="page-count" aria-label={title}>
+				<Icon name="material-symbols:devices-rounded" />
+				<strong>{totalDevicesCount}</strong>
+				<span>{title}</span>
+			</div>
+		</header>
+
+		<!-- 分组设备列表 -->
+		{totalDevicesCount > 0 ? (
+			<div class="flex flex-col gap-8">
+				{groups.map((group) => (
+					<section id={group.id} class="device-group">
+						<div class="flex items-baseline gap-2 mb-4 pb-2 border-b border-(--line-divider)">
+							<h3 class="text-xl font-bold text-neutral-900 dark:text-neutral-100 shrink-0">
+								{group.title}
+							</h3>
+							{group.description && (
+								<span class="text-xs text-neutral-500 dark:text-neutral-400 truncate">
+									{group.description}
+								</span>
+							)}
+						</div>
+						<div class="card-grid" style="--card-grid-min-width: 240px">
+							{group.devices.map((device) => (
+								<DeviceCard {...device} />
+							))}
+						</div>
+					</section>
+				))}
+			</div>
+		) : (
+			<div class="card-base flex flex-col items-center justify-center py-16 text-neutral-400 dark:text-neutral-500">
+				<Icon name="material-symbols:devices-rounded" class="text-6xl mb-4 opacity-50" />
+				<p class="text-lg">{i18n(I18nKey.devicesEmpty)}</p>
+			</div>
+		)}
+	</section>
+</MainGridLayout>

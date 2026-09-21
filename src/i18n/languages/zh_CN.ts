@@ -100,6 +100,13 @@ export const zh_CN: Translation = {
 	[Key.projectStatusDeveloping]: "开发中",
 	[Key.projectStatusPublished]: "已发布",
 	[Key.projectStatusArchived]: "已归档",
+
+	// 我的设备
+	[Key.devices]: "我的设备",
+	[Key.devicesDescription]:
+		"一些每天陪我写代码、打游戏、听歌和折腾东西的家伙。",
+	[Key.devicesEmpty]: "暂无设备数据",
+
 	[Key.guestbook]: "留言",
 	[Key.guestbookDescription]: "欢迎在这里留下你的足迹，分享你的想法和建议",
 	[Key.untitled]: "无标题",

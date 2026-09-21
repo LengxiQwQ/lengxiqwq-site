@@ -101,6 +101,13 @@ export const ko: Translation = {
 	[Key.projectStatusDeveloping]: "개발 중",
 	[Key.projectStatusPublished]: "출시됨",
 	[Key.projectStatusArchived]: "보관됨",
+
+	// 내 기기
+	[Key.devices]: "내 기기",
+	[Key.devicesDescription]:
+		"코딩, 게임, 음악, 만들기를 함께하는 매일의 기기들.",
+	[Key.devicesEmpty]: "기기 정보가 없습니다",
+
 	[Key.guestbook]: "방명록",
 	[Key.guestbookDescription]:
 		"이곳에 흔적을 남기고 생각과 제안을 공유해 주세요",

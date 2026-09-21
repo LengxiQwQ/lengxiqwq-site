@@ -134,6 +134,11 @@ enum I18nKey {
 	projectStatusPublished = "projectStatusPublished",
 	projectStatusArchived = "projectStatusArchived",
 
+	// 我的设备
+	devices = "devices",
+	devicesDescription = "devicesDescription",
+	devicesEmpty = "devicesEmpty",
+
 	// 番组计划筛选和状态文本
 	bangumiTitle = "bangumiTitle",
 	bangumiSubtitle = "bangumiSubtitle",

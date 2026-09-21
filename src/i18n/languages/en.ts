@@ -102,6 +102,13 @@ export const en: Translation = {
 	[Key.projectStatusDeveloping]: "In Development",
 	[Key.projectStatusPublished]: "Published",
 	[Key.projectStatusArchived]: "Archived",
+
+	// Devices
+	[Key.devices]: "Devices",
+	[Key.devicesDescription]:
+		"The daily gear I use for coding, gaming, music, and tinkering.",
+	[Key.devicesEmpty]: "No devices yet",
+
 	[Key.guestbook]: "Guestbook",
 	[Key.guestbookDescription]:
 		"Welcome to leave your mark here, share your thoughts and suggestions",

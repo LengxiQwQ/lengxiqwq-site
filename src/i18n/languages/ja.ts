@@ -101,6 +101,13 @@ export const ja: Translation = {
 	[Key.projectStatusDeveloping]: "開発中",
 	[Key.projectStatusPublished]: "公開済み",
 	[Key.projectStatusArchived]: "アーカイブ",
+
+	// デバイス
+	[Key.devices]: "私のデバイス",
+	[Key.devicesDescription]:
+		"コーディング、ゲーム、音楽、日々の試行錯誤を共にする愛用デバイスたち。",
+	[Key.devicesEmpty]: "デバイス情報がありません",
+
 	[Key.guestbook]: "ゲストブック",
 	[Key.guestbookDescription]:
 		"ここに足跡を残して、あなたの考えや提案を共有してください",
