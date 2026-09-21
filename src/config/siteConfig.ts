@@ -23,6 +23,10 @@ const pages = resolvePageToggles({
 	projects: true,
 	// 相册页面开关
 	gallery: true,
+	// 我的设备页面开关
+	devices: true,
+	// 时间线页面开关
+	timeline: true,
 	// 书签导航页面开关
 	booknav: true,
 	// 哔哩哔哩追番页面开关

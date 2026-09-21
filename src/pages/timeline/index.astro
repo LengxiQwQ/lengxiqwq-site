@@ -1,0 +1,205 @@
+---
+import { Icon } from "astro-icon/components";
+import TimelineCard from "@/components/pages/timeline/TimelineCard.astro";
+import { siteConfig, timelineConfig } from "@/config";
+import I18nKey from "@/i18n/i18nKey";
+import { i18n } from "@/i18n/translation";
+import MainGridLayout from "@/layouts/MainGridLayout.astro";
+import "@/styles/pages/common.css";
+
+// 页面开关检查：若明确设为 false 或 config 停用则 404
+if (siteConfig.pages.timeline === false || !timelineConfig.enable) {
+	return Astro.redirect("/404/");
+}
+
+const title = timelineConfig.title || i18n(I18nKey.timeline);
+const description =
+	timelineConfig.description || i18n(I18nKey.timelineDescription);
+
+const items = (timelineConfig.items || []).filter(
+	(item) => item.enable !== false,
+);
+
+// 构建分类映射与实际有内容的分类
+const categories = timelineConfig.categories || [];
+const categoryMap = new Map(
+	categories.map((c) => [c.key, { label: c.label, icon: c.icon }]),
+);
+
+const activeCategories = categories.filter((category) =>
+	items.some((item) => item.category === category.key),
+);
+
+const totalCount = items.length;
+---
+
+<MainGridLayout title={title} description={description}>
+	<section class="page-shell">
+		<!-- 标题面板 -->
+		<header class="card-base page-header">
+			<div class="page-heading">
+				<div class="page-icon" aria-hidden="true">
+					<Icon name="material-symbols:timeline-rounded" />
+				</div>
+				<div>
+					<h2>{title}</h2>
+					{description && <p>{description}</p>}
+				</div>
+			</div>
+			<div
+				class="flex items-center justify-center self-center text-(--primary) px-2"
+				aria-label={`共 ${totalCount} 个节点`}
+			>
+				<span id="timeline-total-count" class="text-3xl font-bold leading-none">{totalCount}</span>
+			</div>
+		</header>
+
+		<!-- 分类筛选器与计数条 -->
+		{totalCount > 0 && (
+			<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6 pb-4 border-b border-(--line-divider)">
+				{activeCategories.length > 1 && (
+					<div
+						id="timeline-filter-bar"
+						class="flex flex-wrap gap-2"
+						role="tablist"
+						aria-label={i18n(I18nKey.timelineCategories)}
+					>
+						<button
+							type="button"
+							class="timeline-filter-btn px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 bg-(--primary) text-white shadow-xs"
+							data-category="all"
+							role="tab"
+							aria-selected="true"
+						>
+							{i18n(I18nKey.timelineAll)} ({totalCount})
+						</button>
+						{activeCategories.map((category) => {
+							const catCount = items.filter(
+								(it) => it.category === category.key,
+							).length;
+							return (
+								<button
+									type="button"
+									class="timeline-filter-btn px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 bg-(--btn-regular-bg) text-(--btn-content) hover:bg-(--btn-regular-bg-hover)"
+									data-category={category.key}
+									role="tab"
+									aria-selected="false"
+								>
+									{category.icon && (
+										<Icon
+											name={category.icon}
+											class="inline-block mr-1 text-xs align-text-bottom"
+											aria-hidden="true"
+										/>
+									)}
+									<span>{category.label}</span>
+									<span class="ml-1 opacity-70">({catCount})</span>
+								</button>
+							);
+						})}
+					</div>
+				)}
+
+				<p id="timeline-count-display" class="text-xs text-neutral-500 dark:text-neutral-400 self-start sm:self-auto m-0">
+					{totalCount} {i18n(I18nKey.timelineCounts)}
+				</p>
+			</div>
+		)}
+
+		<!-- 时间线条目列表 -->
+		{totalCount > 0 ? (
+			<div id="timeline-list" class="flex flex-col" aria-live="polite">
+				{items.map((item, index) => {
+					const cat = item.category ? categoryMap.get(item.category) : undefined;
+					return (
+						<div class="timeline-item-wrapper" data-category={item.category || ""}>
+							<TimelineCard
+								item={item}
+								categoryLabel={cat?.label}
+								categoryIcon={cat?.icon}
+								isLast={index === items.length - 1}
+							/>
+						</div>
+					);
+				})}
+			</div>
+		) : (
+			<div class="card-base flex flex-col items-center justify-center py-16 text-neutral-400 dark:text-neutral-500">
+				<Icon name="material-symbols:event-busy-outline-rounded" class="text-6xl mb-4 opacity-50" />
+				<p class="text-lg">{i18n(I18nKey.timelineNoResults)}</p>
+			</div>
+		)}
+
+		<!-- 筛选无结果时的空状态提示 -->
+		<div
+			id="timeline-empty-message"
+			class="hidden card-base flex flex-col items-center justify-center py-16 text-neutral-400 dark:text-neutral-500"
+		>
+			<Icon name="material-symbols:event-busy-outline-rounded" class="text-6xl mb-4 opacity-50" />
+			<p class="text-lg">{i18n(I18nKey.timelineNoResults)}</p>
+		</div>
+	</section>
+</MainGridLayout>
+
+<script>
+	function initTimelineFilter() {
+		const filterBar = document.getElementById("timeline-filter-bar");
+		const itemsList = document.getElementById("timeline-list");
+		const countDisplay = document.getElementById("timeline-count-display");
+		const emptyMessage = document.getElementById("timeline-empty-message");
+
+		if (!filterBar || !itemsList) return;
+
+		const buttons = filterBar.querySelectorAll<HTMLButtonElement>(".timeline-filter-btn");
+		const wrappers = itemsList.querySelectorAll<HTMLElement>(".timeline-item-wrapper");
+
+		buttons.forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const selectedCat = btn.getAttribute("data-category") || "all";
+
+				// 更新按钮高亮
+				buttons.forEach((b) => {
+					const isSelected = b === btn;
+					b.setAttribute("aria-selected", isSelected ? "true" : "false");
+					if (isSelected) {
+						b.classList.remove("bg-(--btn-regular-bg)", "text-(--btn-content)", "hover:bg-(--btn-regular-bg-hover)");
+						b.classList.add("bg-(--primary)", "text-white", "shadow-xs");
+					} else {
+						b.classList.remove("bg-(--primary)", "text-white", "shadow-xs");
+						b.classList.add("bg-(--btn-regular-bg)", "text-(--btn-content)", "hover:bg-(--btn-regular-bg-hover)");
+					}
+				});
+
+				// 过滤条目
+				let visibleCount = 0;
+				wrappers.forEach((wrap) => {
+					const itemCat = wrap.getAttribute("data-category") || "";
+					const shouldShow = selectedCat === "all" || itemCat === selectedCat;
+					if (shouldShow) {
+						wrap.classList.remove("hidden");
+						visibleCount++;
+					} else {
+						wrap.classList.add("hidden");
+					}
+				});
+
+				// 更新显示计数与空状态
+				if (countDisplay) {
+					countDisplay.textContent = `${visibleCount} 个节点`;
+				}
+
+				if (emptyMessage) {
+					if (visibleCount === 0) {
+						emptyMessage.classList.remove("hidden");
+					} else {
+						emptyMessage.classList.add("hidden");
+					}
+				}
+			});
+		});
+	}
+
+	// 支持首屏与 Swup 切页后重新绑定
+	initTimelineFilter();
+	document.addEventListener("swup:contentReplaced", initTimelineFilter);
+</script>

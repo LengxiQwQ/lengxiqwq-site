@@ -94,6 +94,12 @@ jobs:
       - name: Materialize content
         run: pnpm content:sync
 
+      - name: Run Astro check
+        run: pnpm check
+
+      - name: Run TypeScript type-check
+        run: pnpm type-check
+
       - name: Build site
         run: pnpm build
 

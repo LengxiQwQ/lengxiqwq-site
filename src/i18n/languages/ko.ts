@@ -108,6 +108,14 @@ export const ko: Translation = {
 		"코딩, 게임, 음악, 만들기를 함께하는 매일의 기기들.",
 	[Key.devicesEmpty]: "기기 정보가 없습니다",
 
+	// 타임라인
+	[Key.timeline]: "타임라인",
+	[Key.timelineDescription]: "프로젝트, 시도와 걸어온 발자취의 기록.",
+	[Key.timelineCounts]: "개",
+	[Key.timelineCategories]: "카테고리",
+	[Key.timelineAll]: "전체",
+	[Key.timelineNoResults]: "해당 카테고리에 타임라인 항목이 없습니다",
+
 	[Key.guestbook]: "방명록",
 	[Key.guestbookDescription]:
 		"이곳에 흔적을 남기고 생각과 제안을 공유해 주세요",

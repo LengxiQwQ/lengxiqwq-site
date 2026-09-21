@@ -107,6 +107,14 @@ export const zh_CN: Translation = {
 		"一些每天陪我写代码、打游戏、听歌和折腾东西的家伙。",
 	[Key.devicesEmpty]: "暂无设备数据",
 
+	// 时间线
+	[Key.timeline]: "时间线",
+	[Key.timelineDescription]: "一些项目、折腾和一路走来的记录。",
+	[Key.timelineCounts]: "个节点",
+	[Key.timelineCategories]: "时间线分类",
+	[Key.timelineAll]: "全部",
+	[Key.timelineNoResults]: "暂无该分类下的时间线节点",
+
 	[Key.guestbook]: "留言",
 	[Key.guestbookDescription]: "欢迎在这里留下你的足迹，分享你的想法和建议",
 	[Key.untitled]: "无标题",

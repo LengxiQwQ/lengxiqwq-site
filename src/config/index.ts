@@ -48,6 +48,10 @@ export type {
 	SponsorConfig,
 	SponsorItem,
 	SponsorMethod,
+	TimelineCategory,
+	TimelineConfig,
+	TimelineItem,
+	TimelineLink,
 	WidgetComponentConfig,
 	WidgetComponentType,
 	WidgetSpecificConfig,
@@ -87,3 +91,4 @@ export { sidebarLayoutConfig } from "./sidebarConfig"; // 侧边栏布局配置
 // 核心配置
 export { siteConfig } from "./siteConfig"; // 站点基础配置
 export { sponsorConfig } from "./sponsorConfig"; // 打赏配置
+export { timelineConfig } from "./timelineConfig"; // 时间线配置

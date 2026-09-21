@@ -139,6 +139,14 @@ enum I18nKey {
 	devicesDescription = "devicesDescription",
 	devicesEmpty = "devicesEmpty",
 
+	// 时间线
+	timeline = "timeline",
+	timelineDescription = "timelineDescription",
+	timelineCounts = "timelineCounts",
+	timelineCategories = "timelineCategories",
+	timelineAll = "timelineAll",
+	timelineNoResults = "timelineNoResults",
+
 	// 番组计划筛选和状态文本
 	bangumiTitle = "bangumiTitle",
 	bangumiSubtitle = "bangumiSubtitle",

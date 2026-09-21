@@ -178,10 +178,10 @@ Twikoo 已经工作正常，其他评论系统保持关闭即可。
 - [x] 保留广告组件能力与代码，清除模板广告数据。
 
 ### 17. 原模板视觉残留资源
-- [ ] 检查 `src/assets/images/avatar.avif` 是否仍被引用。
-- [ ] 检查 `src/assets/images/logo/firefly-dark.png` 是否仍被引用。
-- [ ] 检查 `src/assets/images/logo/firefly-light.png` 是否仍被引用。
-- [ ] 清理不再使用的 `public/favicon/firefly-*.png`。
+- [x] 检查 `src/assets/images/avatar.avif` 是否仍被引用（已确认无引用并删除）。
+- [x] 检查 `src/assets/images/logo/firefly-dark.png` 是否仍被引用（已确认无引用并删除）。
+- [x] 检查 `src/assets/images/logo/firefly-light.png` 是否仍被引用（已确认无引用并删除）。
+- [x] 清理不再使用的 `public/favicon/firefly-*.png`（已清理）。
 - [x] 清理因为 README 替换后不再需要的模板截图/文档图片（`docs/images/` 已清理）。
 
 **建议：**
@@ -216,12 +216,7 @@ Twikoo 已经工作正常，其他评论系统保持关闭即可。
 - [x] 将 `name: "firefly"` 改成 `lengxiqwq-site`。
 - [x] 保留当前版本策略，同步 lockfile。
 
-### 23. Agent / AI 开发说明
-- [ ] `AGENTS.md` 从“Firefly 项目”改为“LengxiQwQ Site，基于 Firefly”。
-- [ ] `CLAUDE.md` 同步调整项目身份。
-- [ ] 明确双仓架构和“个人内容优先放私有内容仓”的边界。
-
-### 24. 仓库元信息
+### 23. 仓库元信息
 - [x] 确认 GitHub Repository Description 为 `Personal site of LengxiQwQ, powered by Firefly`。
 - [x] 修正 Homepage URL 为 `https://lengxiqwq.com`。
 - [x] 配置 Topics：`astro`, `personal-website`, `blog`, `typescript`, `svelte`, `firefly`。
@@ -276,17 +271,17 @@ Firefly 应保留在 Credits，而不是作为个人站主要 SEO 定位关键�
 **说明：**
 已建立独立 `/devices/` 页面，按轻量卡片与三大分类（主力设备、桌面日常、音乐角落）展示，设备数据由私有内容仓接管，导航栏已加入入口。
 
-### 30. Timeline / 个人时间线
-私有仓已记录：
-- [ ] GitHub 起点。
-- [ ] 大学项目。
-- [ ] CapsLock IME Switcher。
-- [ ] Live Photo Box。
-- [ ] PlaylistOut。
-- [ ] 个人网站上线。
+### 29. Timeline / 个人时间线
+私有仓已记录并正式上线：
+- [x] GitHub 起点。
+- [x] 大学项目。
+- [x] CapsLock IME Switcher。
+- [x] Live Photo Box。
+- [x] PlaylistOut。
+- [x] 个人网站上线。
 
-**建议：**
-优先并入 About 页面，形成“关于我 → 项目 → 时间线”的自然结构。
+**说明：**
+已迁移至独立 `/timeline/` 页面，遵循 Firefly 设计体系，提供分类筛选、纵向轨道、Marker 与卡片展示，正式数据由私有内容仓接管，导航栏已加入入口。
 
 ---
 

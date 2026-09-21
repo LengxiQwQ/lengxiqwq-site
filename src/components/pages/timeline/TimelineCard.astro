@@ -1,0 +1,157 @@
+---
+import { Icon } from "astro-icon/components";
+import type { TimelineItem } from "@/types/timelineConfig";
+
+interface Props {
+	item: TimelineItem;
+	categoryLabel?: string;
+	categoryIcon?: string;
+	isLast?: boolean;
+}
+
+const {
+	item,
+	categoryLabel = "",
+	categoryIcon = "",
+	isLast = false,
+} = Astro.props;
+
+const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
+---
+
+<article
+	class:list={[
+		"timeline-card group flex gap-3 sm:gap-5 items-stretch min-w-0",
+		item.featured && "timeline-card--featured",
+		isLast && "timeline-card--last",
+	]}
+	data-category={item.category || ""}
+>
+	<!-- 左侧轨道与节点图标 -->
+	<div class="relative flex flex-col items-center shrink-0 w-8 sm:w-11" aria-hidden="true">
+		<!-- 轨道线 -->
+		<div
+			class:list={[
+				"absolute left-1/2 -translate-x-1/2 w-0.5 bg-(--line-divider) transition-colors duration-300",
+				isLast ? "top-0 h-4 sm:h-5" : "top-0 -bottom-6",
+			]}
+		></div>
+
+		<!-- 节点圆形标记 -->
+		<div
+			class:list={[
+				"relative z-10 flex items-center justify-center w-8 h-8 sm:w-11 sm:h-11 rounded-full border-2 transition-all duration-300 mt-1",
+				item.featured
+					? "border-(--primary) bg-(--primary)/15 text-(--primary) ring-4 ring-(--primary)/20 group-hover:scale-110 shadow-sm"
+					: "border-(--line-divider) bg-(--card-bg) text-neutral-600 dark:text-neutral-400 group-hover:border-(--primary) group-hover:text-(--primary) group-hover:scale-110 shadow-xs",
+			]}
+		>
+			<Icon name={markerIcon} class="text-sm sm:text-lg" />
+		</div>
+	</div>
+
+	<!-- 右侧内容卡片主体 -->
+	<div
+		class:list={[
+			"card-base flex-1 flex flex-col gap-2.5 min-w-0 mb-6 p-4 sm:p-5 transition-all duration-300",
+			item.featured
+				? "border-(--primary)/40 hover:border-(--primary)"
+				: "hover:border-(--line-divider)",
+		]}
+	>
+		<!-- 头部元数据栏：日期、分类标签、重点里程碑徽标 -->
+		<div class="flex flex-wrap items-center gap-2">
+			<time class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold tabular-nums bg-(--btn-regular-bg) text-neutral-800 dark:text-neutral-200">
+				{item.date}
+			</time>
+
+			{categoryLabel && (
+				<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-(--primary)/10 text-(--primary)">
+					{categoryIcon && <Icon name={categoryIcon} class="text-xs" aria-hidden="true" />}
+					<span>{categoryLabel}</span>
+				</span>
+			)}
+
+			{item.featured && (
+				<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+					<Icon name="material-symbols:star-rounded" class="text-xs" aria-hidden="true" />
+					<span>Featured</span>
+				</span>
+			)}
+		</div>
+
+		<!-- 标题与副标题/地点 -->
+		<div class="flex flex-col gap-1 min-w-0">
+			<h2 class="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 break-words group-hover:text-(--primary) transition-colors">
+				{item.title}
+			</h2>
+
+			{(item.subtitle || item.location) && (
+				<div class="flex flex-wrap items-center gap-3 text-xs text-neutral-500 dark:text-neutral-400">
+					{item.subtitle && (
+						<span class="inline-flex items-center gap-1">
+							<Icon name="material-symbols:domain-rounded" class="text-xs shrink-0" aria-hidden="true" />
+							<span>{item.subtitle}</span>
+						</span>
+					)}
+					{item.location && (
+						<span class="inline-flex items-center gap-1">
+							<Icon name="material-symbols:location-on-outline-rounded" class="text-xs shrink-0" aria-hidden="true" />
+							<span>{item.location}</span>
+						</span>
+					)}
+				</div>
+			)}
+		</div>
+
+		<!-- 详细描述正文 -->
+		{item.description && (
+			<p class="text-xs sm:text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed break-words">
+				{item.description}
+			</p>
+		)}
+
+		<!-- 关键要点 / 成就列表 -->
+		{item.highlights && item.highlights.length > 0 && (
+			<ul class="flex flex-col gap-1.5 my-1 pl-0 list-none text-xs sm:text-sm text-neutral-600 dark:text-neutral-400">
+				{item.highlights.map((highlight) => (
+					<li class="relative pl-4 leading-relaxed before:content-[''] before:absolute before:left-1 before:top-2 before:w-1.5 before:h-1.5 before:rounded-full before:bg-(--primary)">
+						{highlight}
+					</li>
+				))}
+			</ul>
+		)}
+
+		<!-- 技术栈 / 关联标签 -->
+		{item.tags && item.tags.length > 0 && (
+			<ul class="flex flex-wrap gap-1.5 mt-0.5 list-none p-0" aria-label="Tags">
+				{item.tags.map((tag) => (
+					<li class="px-2 py-0.5 rounded-sm text-xs bg-(--btn-regular-bg) text-neutral-600 dark:text-neutral-400 font-mono">
+						{tag}
+					</li>
+				))}
+			</ul>
+		)}
+
+		<!-- 外部关联链接 -->
+		{item.links && item.links.length > 0 && (
+			<div class="flex flex-wrap gap-3 pt-2.5 mt-1 border-t border-(--line-divider)">
+				{item.links.map((link) => (
+					<a
+						href={link.url}
+						target="_blank"
+						rel="noopener noreferrer"
+						class="inline-flex items-center gap-1 text-xs font-medium text-(--primary) hover:underline"
+					>
+						<Icon
+							name={link.icon || "material-symbols:open-in-new-rounded"}
+							class="text-xs shrink-0"
+							aria-hidden="true"
+						/>
+						<span>{link.label}</span>
+					</a>
+				))}
+			</div>
+		)}
+	</div>
+</article>

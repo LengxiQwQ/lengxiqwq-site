@@ -68,6 +68,9 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 			// 我的设备
 			LinkPresets.Devices,
 
+			// 时间线
+			LinkPresets.Timeline,
+
 			// 书签导航
 			LinkPresets.Booknav,
 
@@ -172,6 +175,12 @@ export const LinkPresets: Record<string, NavBarLink> = {
 		url: "/devices/",
 		icon: "material-symbols:devices-rounded",
 		pageKey: "devices",
+	},
+	Timeline: {
+		name: "时间线",
+		url: "/timeline/",
+		icon: "material-symbols:timeline-rounded",
+		pageKey: "timeline",
 	},
 	Booknav: {
 		name: "书签导航",

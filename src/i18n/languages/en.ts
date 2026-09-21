@@ -106,8 +106,16 @@ export const en: Translation = {
 	// Devices
 	[Key.devices]: "Devices",
 	[Key.devicesDescription]:
-		"The daily gear I use for coding, gaming, music, and tinkering.",
+		"The daily companions I use for coding, gaming, music, and tinkering.",
 	[Key.devicesEmpty]: "No devices yet",
+
+	// Timeline
+	[Key.timeline]: "Timeline",
+	[Key.timelineDescription]: "Projects, tinkering, and steps along the way.",
+	[Key.timelineCounts]: "items",
+	[Key.timelineCategories]: "Categories",
+	[Key.timelineAll]: "All",
+	[Key.timelineNoResults]: "No timeline items in this category",
 
 	[Key.guestbook]: "Guestbook",
 	[Key.guestbookDescription]:

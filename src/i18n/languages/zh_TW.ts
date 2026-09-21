@@ -104,8 +104,16 @@ export const zh_TW: Translation = {
 	// 我的設備
 	[Key.devices]: "我的設備",
 	[Key.devicesDescription]:
-		"一些每天陪我寫程式碼、打遊戲、聽歌和折騰東西的傢伙。",
+		"一些每天陪我寫代碼、打遊戲、聽歌和折騰東西的傢伙。",
 	[Key.devicesEmpty]: "暫無設備資料",
+
+	// 時間線
+	[Key.timeline]: "時間線",
+	[Key.timelineDescription]: "一些項目、折騰和一路走來的記錄。",
+	[Key.timelineCounts]: "個節點",
+	[Key.timelineCategories]: "時間線分類",
+	[Key.timelineAll]: "全部",
+	[Key.timelineNoResults]: "暫無該分類下的時間線節點",
 
 	[Key.guestbook]: "留言",
 	[Key.guestbookDescription]: "歡迎在這裡留下你的足跡，分享你的想法和建議",

@@ -108,6 +108,14 @@ export const ja: Translation = {
 		"コーディング、ゲーム、音楽、日々の試行錯誤を共にする愛用デバイスたち。",
 	[Key.devicesEmpty]: "デバイス情報がありません",
 
+	// タイムライン
+	[Key.timeline]: "タイムライン",
+	[Key.timelineDescription]: "プロジェクト、試行錯誤、歩んできた道のりの記録。",
+	[Key.timelineCounts]: "件",
+	[Key.timelineCategories]: "カテゴリ",
+	[Key.timelineAll]: "すべて",
+	[Key.timelineNoResults]: "このカテゴリのタイムラインはありません",
+
 	[Key.guestbook]: "ゲストブック",
 	[Key.guestbookDescription]:
 		"ここに足跡を残して、あなたの考えや提案を共有してください",

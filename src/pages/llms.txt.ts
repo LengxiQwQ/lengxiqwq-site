@@ -52,6 +52,18 @@ const KEY_PAGES: KeyPage[] = [
 		pageKey: "gallery",
 	},
 	{
+		labelKey: I18nKey.devices,
+		path: "/devices/",
+		descKey: I18nKey.devicesDescription,
+		pageKey: "devices",
+	},
+	{
+		labelKey: I18nKey.timeline,
+		path: "/timeline/",
+		descKey: I18nKey.timelineDescription,
+		pageKey: "timeline",
+	},
+	{
 		labelKey: I18nKey.booknav,
 		path: "/booknav/",
 		descKey: I18nKey.booknavDescription,

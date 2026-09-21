@@ -20,6 +20,12 @@ export type {
 export type { DisplaySettingsConfig } from "./displaySettingsConfig";
 export type { DynamicConfig } from "./dynamicConfig";
 export type { SakuraConfig } from "./effectsConfig";
+export type {
+	TimelineCategory,
+	TimelineConfig,
+	TimelineItem,
+	TimelineLink,
+} from "./timelineConfig";
 
 export type {
 	ExpressiveCodeConfig,

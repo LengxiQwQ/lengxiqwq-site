@@ -109,6 +109,14 @@ export const ru: Translation = {
 		"Устройства, которые ежедневно помогают мне писать код, играть, слушать музыку и экспериментировать.",
 	[Key.devicesEmpty]: "Данные об устройствах отсутствуют",
 
+	// Хронология
+	[Key.timeline]: "Хронология",
+	[Key.timelineDescription]: "Проекты, эксперименты и пройденный путь.",
+	[Key.timelineCounts]: "событий",
+	[Key.timelineCategories]: "Категории",
+	[Key.timelineAll]: "Все",
+	[Key.timelineNoResults]: "Нет событий в этой категории",
+
 	[Key.guestbook]: "Гостевая книга",
 	[Key.guestbookDescription]:
 		"Добро пожаловать, оставьте свой след здесь, поделитесь своими мыслями и предложениями",
