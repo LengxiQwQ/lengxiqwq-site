@@ -38,7 +38,26 @@ const minutes = dateParts.minute;
 const seconds = dateParts.second;
 const timestamp = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 const fileName = `${year}-${month}-${day}-${hours}${minutes}${seconds}.md`;
-const targetDir = path.resolve("src/content/dynamic");
+let contentDir = process.env.CONTENT_DIR;
+if (!contentDir) {
+	const localSiblingContent = path.resolve("../lengxiqwq-site-content");
+	if (fs.existsSync(localSiblingContent)) {
+		contentDir = localSiblingContent;
+	} else {
+		console.error(
+			"Error: Private content repository not found.\nPlease set CONTENT_DIR or ensure ../lengxiqwq-site-content exists.\n(Dynamic is private owned content and cannot be created in the public code repo)",
+		);
+		process.exit(1);
+	}
+}
+
+const resolvedContentDir = path.resolve(contentDir);
+if (!fs.existsSync(resolvedContentDir)) {
+	console.error(`Error: CONTENT_DIR does not exist: ${resolvedContentDir}`);
+	process.exit(1);
+}
+
+const targetDir = path.join(resolvedContentDir, "content/dynamic");
 const fullPath = path.join(targetDir, fileName);
 
 fs.mkdirSync(targetDir, { recursive: true });
