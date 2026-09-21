@@ -85,8 +85,26 @@ const replaysBlockSelector = replays?.blockSelector?.trim();
 					applyOutboundTracking();
 				}
 
+				function setupSwupTracking() {
+					let registered = false;
+
+					function register() {
+						if (registered || !window.swup?.hooks) return;
+						registered = true;
+						window.swup.hooks.on("content:replace", applyOutboundTracking);
+					}
+
+					if (window.swup?.hooks) {
+						register();
+					} else {
+						document.addEventListener("swup:enable", register, {
+							once: true,
+						});
+					}
+				}
+
+				setupSwupTracking();
 				document.addEventListener("astro:page-load", applyOutboundTracking);
-				document.addEventListener("swup:contentReplaced", applyOutboundTracking);
 			})();
 		</script>
 	)
