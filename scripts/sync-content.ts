@@ -39,12 +39,7 @@ const mappings = [
 		src: path.join(resolvedContentDir, "content"),
 		dest: path.resolve("src/content"),
 		cleanSubdirs: true,
-		cleanableDirs: new Set([
-			"projects",
-			"posts",
-			"dynamic",
-			"spec",
-		]),
+		cleanableDirs: new Set(["projects", "posts", "dynamic", "spec"]),
 	},
 	{
 		src: path.join(resolvedContentDir, "config"),
@@ -54,18 +49,20 @@ const mappings = [
 		src: path.join(resolvedContentDir, "public"),
 		dest: path.resolve("public"),
 		cleanSubdirs: true,
-		cleanableDirs: new Set([
-			"gallery",
-		]),
-		cleanSubpaths: [
-			path.join("assets", "music"),
-		],
+		cleanableDirs: new Set(["gallery"]),
+		cleanSubpaths: [path.join("assets", "music")],
 	},
 ];
 
 let syncedCount = 0;
 
-for (const { src, dest, cleanSubdirs, cleanableDirs, cleanSubpaths } of mappings) {
+for (const {
+	src,
+	dest,
+	cleanSubdirs,
+	cleanableDirs,
+	cleanSubpaths,
+} of mappings) {
 	if (fs.existsSync(src)) {
 		if (cleanSubdirs && cleanableDirs) {
 			// For collections / directories where user items completely replace demo items
@@ -87,9 +84,7 @@ for (const { src, dest, cleanSubdirs, cleanableDirs, cleanSubpaths } of mappings
 				const srcSub = path.join(src, subpath);
 				const destSub = path.join(dest, subpath);
 				if (fs.existsSync(srcSub) && fs.existsSync(destSub)) {
-					console.log(
-						`[content:sync] Cleaning preset subpath: ${destSub}`,
-					);
+					console.log(`[content:sync] Cleaning preset subpath: ${destSub}`);
 					fs.rmSync(destSub, { recursive: true, force: true });
 				}
 			}

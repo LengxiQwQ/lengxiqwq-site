@@ -3,6 +3,7 @@ import { Picture } from "astro:assets";
 import * as path from "node:path";
 import type { ImageMetadata } from "astro";
 import { Icon } from "astro-icon/components";
+import DropdownItem from "@/components/common/DropdownItem.astro";
 import DisplaySettings from "@/components/controls/DisplaySettingsIntegrated.svelte";
 import LightDarkSwitch from "@/components/controls/LightDarkSwitch.svelte";
 import Search from "@/components/controls/Search.svelte";
@@ -20,7 +21,6 @@ import { getFallbackFormat, getImageFormats } from "@/utils/image-utils";
 import { isHomePage } from "@/utils/layout-utils";
 import { resolveNavMenuLinks } from "@/utils/nav-menu-utils";
 import { url } from "@/utils/url-utils";
-import DropdownItem from "@/components/common/DropdownItem.astro";
 import DropdownMenu from "./DropdownMenu.astro";
 
 const className = Astro.props.class;
