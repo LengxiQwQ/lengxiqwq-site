@@ -36,10 +36,8 @@ const totalDevicesCount = groups.reduce(
 					{description && <p>{description}</p>}
 				</div>
 			</div>
-			<div class="page-count" aria-label={title}>
-				<Icon name="material-symbols:devices-rounded" />
-				<strong>{totalDevicesCount}</strong>
-				<span>{title}</span>
+			<div class="flex items-center justify-center self-center text-(--primary) px-2" aria-label={`共 ${totalDevicesCount} 个设备`}>
+				<span class="text-3xl font-bold leading-none">{totalDevicesCount}</span>
 			</div>
 		</header>
 
