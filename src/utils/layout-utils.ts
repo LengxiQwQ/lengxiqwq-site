@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { backgroundWallpaper } from "../config";
 
 export type BackgroundImages = {
@@ -13,35 +15,56 @@ const toArray = (src: string | string[] | undefined): string[] => {
 	return [src];
 };
 
+// 自动扫描壁纸目录（仅扫描 desktop 与 mobile，backup 纯备份绝不包含）
+const scanWallpaperDir = (subDir: "desktop" | "mobile"): string[] => {
+	try {
+		const dirPath = path.resolve("public/wallpapers", subDir);
+		if (!fs.existsSync(dirPath)) return [];
+		const files = fs.readdirSync(dirPath);
+		const validExts = new Set([".webp", ".png", ".jpg", ".jpeg", ".avif"]);
+		return files
+			.filter((f) => validExts.has(path.extname(f).toLowerCase()))
+			.map((f) => `/wallpapers/${subDir}/${f}`);
+	} catch {
+		return [];
+	}
+};
+
 // 背景图片处理工具函数
 // 返回所有配置的图片（用于构建时渲染所有图片）
 export const getBackgroundImages = (): BackgroundImages => {
-	const bgSrc = backgroundWallpaper.src;
+	const autoDesktop = scanWallpaperDir("desktop");
+	const autoMobile = scanWallpaperDir("mobile");
 
-	if (
-		typeof bgSrc === "object" &&
-		bgSrc !== null &&
-		!Array.isArray(bgSrc) &&
-		("desktop" in bgSrc || "mobile" in bgSrc)
-	) {
-		const srcObj = bgSrc as {
-			desktop?: string | string[];
-			mobile?: string | string[];
-		};
-		const desktopImages = toArray(srcObj.desktop);
-		const mobileImages = toArray(srcObj.mobile);
-		return {
-			desktop: desktopImages.length > 0 ? desktopImages : mobileImages,
-			mobile: mobileImages.length > 0 ? mobileImages : desktopImages,
-			isMultiple: desktopImages.length > 1 || mobileImages.length > 1,
-		};
+	let desktopImages = autoDesktop.length > 0 ? autoDesktop : [];
+	let mobileImages = autoMobile.length > 0 ? autoMobile : [];
+
+	// 若目录扫描为空，回退到 backgroundWallpaper.ts 配置文件中的手动指定项
+	if (desktopImages.length === 0 || mobileImages.length === 0) {
+		const bgSrc = backgroundWallpaper.src;
+		if (
+			typeof bgSrc === "object" &&
+			bgSrc !== null &&
+			!Array.isArray(bgSrc) &&
+			("desktop" in bgSrc || "mobile" in bgSrc)
+		) {
+			const srcObj = bgSrc as {
+				desktop?: string | string[];
+				mobile?: string | string[];
+			};
+			if (desktopImages.length === 0) desktopImages = toArray(srcObj.desktop);
+			if (mobileImages.length === 0) mobileImages = toArray(srcObj.mobile);
+		} else {
+			const images = toArray(bgSrc as string | string[]);
+			if (desktopImages.length === 0) desktopImages = images;
+			if (mobileImages.length === 0) mobileImages = images;
+		}
 	}
-	// 如果是字符串或数组，同时用于桌面端和移动端
-	const images = toArray(bgSrc as string | string[]);
+
 	return {
-		desktop: images,
-		mobile: images,
-		isMultiple: images.length > 1,
+		desktop: desktopImages.length > 0 ? desktopImages : mobileImages,
+		mobile: mobileImages.length > 0 ? mobileImages : desktopImages,
+		isMultiple: desktopImages.length > 1 || mobileImages.length > 1,
 	};
 };
 

@@ -49,7 +49,7 @@ const mappings = [
 		src: path.join(resolvedContentDir, "public"),
 		dest: path.resolve("public"),
 		cleanSubdirs: true,
-		cleanableDirs: new Set(["gallery"]),
+		cleanableDirs: new Set(["gallery", "wallpapers"]),
 		cleanSubpaths: [path.join("assets", "music")],
 	},
 ];
