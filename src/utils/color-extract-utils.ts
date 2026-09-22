@@ -57,6 +57,17 @@ export async function extractDominantHue(
 		return getHue();
 	}
 
+	// 横屏（桌面端）：裁剪掉上下各 30%，取中间 40% 的视野核心大横条
+	// 竖屏（移动端）：裁剪掉上下各 15%，取中间 70% 的核心视野
+	const isLandscape = img.naturalWidth >= img.naturalHeight;
+	const yStartRatio = isLandscape ? 0.3 : 0.15;
+	const yEndRatio = isLandscape ? 0.7 : 0.85;
+
+	const sx = 0;
+	const sy = img.naturalHeight * yStartRatio;
+	const sw = img.naturalWidth;
+	const sh = img.naturalHeight * (yEndRatio - yStartRatio);
+
 	// 离屏 Canvas，降采样为 64x64 以兼顾极快分析速度与色彩准确性
 	const sampleSize = 64;
 	const canvas = document.createElement("canvas");
@@ -67,13 +78,12 @@ export async function extractDominantHue(
 	if (!ctx) return getHue();
 
 	try {
-		ctx.drawImage(img, 0, 0, sampleSize, sampleSize);
+		ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sampleSize, sampleSize);
 		const imageData = ctx.getImageData(0, 0, sampleSize, sampleSize).data;
 
-		// 将 360° 分为 36 个区间（每区 10°）
-		const binCount = 36;
+		// 将 360° 分为 72 个区间（每区 5°，提升精准度）
+		const binCount = 72;
 		const binWeights = new Float64Array(binCount);
-		const binHueSums = new Float64Array(binCount);
 		let validPixelCount = 0;
 
 		for (let i = 0; i < imageData.length; i += 4) {
@@ -95,9 +105,8 @@ export async function extractDominantHue(
 			const lightnessWeight = 1 - Math.abs(l - 0.5) * 2;
 			const weight = s * lightnessWeight;
 
-			const binIndex = Math.min(Math.floor(h / 10), binCount - 1);
+			const binIndex = Math.min(Math.floor(h / 5), binCount - 1);
 			binWeights[binIndex] += weight;
-			binHueSums[binIndex] += h * weight;
 			validPixelCount++;
 		}
 
@@ -105,20 +114,37 @@ export async function extractDominantHue(
 			return getHue();
 		}
 
-		// 寻找最高权重的色相区间
-		let maxWeight = -1;
-		let bestBin = 0;
-		for (let b = 0; b < binCount; b++) {
-			if (binWeights[b] > maxWeight) {
-				maxWeight = binWeights[b];
-				bestBin = b;
+		// 环形滑动窗口（±15°，即 ±3 个 bin）：解决 0°/360° 红粉交界断裂及相邻色相聚集问题
+		const windowSize = 3;
+		let maxScore = -1;
+		let bestHue = 0;
+
+		for (let i = 0; i < binCount; i++) {
+			let score = 0;
+			let weightedHueDiffSum = 0;
+			let totalW = 0;
+
+			for (let offset = -windowSize; offset <= windowSize; offset++) {
+				const binIdx = (i + offset + binCount) % binCount;
+				const w = binWeights[binIdx];
+				score += w;
+
+				const binCenterHue = binIdx * 5 + 2.5;
+				const centerHue = i * 5 + 2.5;
+				const diff = ((binCenterHue - centerHue + 540) % 360) - 180;
+				weightedHueDiffSum += diff * w;
+				totalW += w;
+			}
+
+			if (score > maxScore) {
+				maxScore = score;
+				const centerHue = i * 5 + 2.5;
+				const avgOffset = totalW > 0 ? weightedHueDiffSum / totalW : 0;
+				bestHue = (centerHue + avgOffset + 360) % 360;
 			}
 		}
 
-		if (binWeights[bestBin] > 0) {
-			return Math.round(binHueSums[bestBin] / binWeights[bestBin]);
-		}
-		return getHue();
+		return Math.round(bestHue);
 	} catch (e) {
 		// 跨域或读取失败兜底
 		console.warn("[color-extract] Failed to extract hue from image:", e);
