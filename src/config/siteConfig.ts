@@ -48,6 +48,9 @@ export const siteConfig: SiteConfig = {
 	// 站点标题
 	title: "冷汐的杂货铺",
 
+	// 站点备用名称（供搜索引擎识别 Site name）
+	alternateNames: ["冷汐", "LengxiQwQ"],
+
 	// 站点副标题
 	subtitle: "",
 
@@ -90,8 +93,12 @@ export const siteConfig: SiteConfig = {
 	},
 
 	// Favicon 配置
-	// 如果启用了OpenGraph图片功能，数组中需要包含png格式的favicon图标
+	// 192x192 提供给搜索引擎等场景作为稳定的大尺寸站点图标；32x32 供浏览器标签页使用；180x180 供 Apple Touch Icon 使用。
 	favicon: [
+		{
+			src: "/favicon/favicon-light-192.png",
+			sizes: "192x192",
+		},
 		{
 			src: "/favicon/favicon-light-32.png",
 			theme: "light",
@@ -101,6 +108,10 @@ export const siteConfig: SiteConfig = {
 			src: "/favicon/favicon-dark-32.png",
 			theme: "dark",
 			sizes: "32x32",
+		},
+		{
+			src: "/favicon/favicon-light-180.png",
+			sizes: "180x180",
 		},
 	],
 

@@ -182,6 +182,9 @@ export function buildSiteGraph(opts: {
 				"@id": `${siteUrl}#website`,
 				url: siteUrl,
 				name: opts.siteConfig.title,
+				...(opts.siteConfig.alternateNames?.length
+					? { alternateName: opts.siteConfig.alternateNames }
+					: {}),
 				description: opts.siteConfig.description,
 				inLanguage: opts.lang,
 				publisher: { "@id": `${siteUrl}#person` },

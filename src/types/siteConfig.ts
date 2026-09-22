@@ -31,6 +31,7 @@ export type NavbarMode = "static" | "fixed" | "dynamic";
 
 export type SiteConfig = {
 	title: string;
+	alternateNames?: string[]; // 站点备用名称，用于 WebSite structured data / 搜索引擎站点名称识别
 	subtitle: string;
 	site_url: string;
 	description?: string; // 网站描述，用于生成 <meta name="description">
