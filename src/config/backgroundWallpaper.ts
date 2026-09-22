@@ -72,7 +72,7 @@ export const backgroundWallpaper: BackgroundWallpaperConfig = {
 			mode: "description",
 		},
 		navbar: {
-			transparentMode: "semi",
+			transparentMode: "semifull",
 			blur: 12,
 		},
 	},
