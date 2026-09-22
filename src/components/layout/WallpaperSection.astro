@@ -342,6 +342,7 @@ const wallpaperPosition = state.isFullscreenMode
                 if (!slideEl) return;
                 var img = slideEl.querySelector('img');
                 if (!img) return;
+                window.__currentWallpaperImg = img;
                 window.dispatchEvent(new CustomEvent('wallpaperChange', {
                     detail: { img: img, smooth: smooth !== false }
                 }));
@@ -502,6 +503,7 @@ const wallpaperPosition = state.isFullscreenMode
                 slot.appendChild(frag);
                 tpl.remove();
                 if (img) {
+                    window.__currentWallpaperImg = img;
                     window.dispatchEvent(new CustomEvent('wallpaperChange', {
                         detail: { img: img, smooth: false }
                     }));

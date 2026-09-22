@@ -230,12 +230,38 @@ export async function handleWallpaperChange(
 }
 
 /**
+ * 获取当前页面中处于激活/可见状态的壁纸 <img> 元素
+ */
+export function getActiveWallpaperImg(): HTMLImageElement | null {
+	if (typeof document === "undefined") return null;
+	const active =
+		(window as unknown as { __currentWallpaperImg?: HTMLImageElement })
+			.__currentWallpaperImg ||
+		document.querySelector("#banner-images-container .slide-item.active img") ||
+		document.querySelector("#banner-images-container .banner-image-slot img") ||
+		document.querySelector("#dev-wallpaper-overlay-img") ||
+		document.querySelector("#wallpaper-wrapper img");
+	return active instanceof HTMLImageElement ? active : null;
+}
+
+/**
+ * 提取并应用当前壁纸的主题色
+ */
+export async function applyCurrentWallpaperHue(smooth = false): Promise<void> {
+	if (!getFollowWallpaperHue()) return;
+	const img = getActiveWallpaperImg();
+	if (img) {
+		await handleWallpaperChange(img, smooth);
+	}
+}
+
+/**
  * 全局初始化壁纸色调跟随监听器
  */
 export function initWallpaperHueFollower(): void {
 	if (typeof window === "undefined") return;
 
-	// 监听壁纸切换自定义事件
+	// 1. 监听壁纸切换自定义事件
 	window.addEventListener("wallpaperChange", ((
 		e: CustomEvent<{ img: HTMLImageElement; smooth?: boolean }>,
 	) => {
@@ -244,21 +270,42 @@ export function initWallpaperHueFollower(): void {
 		}
 	}) as EventListener);
 
-	// 监听跟随模式启用事件（当用户在设置面板重新开启时，立即提取当前壁纸颜色）
+	// 2. 监听跟随模式启用事件（当用户在设置面板重新开启时，立即提取当前壁纸颜色）
 	window.addEventListener("followWallpaperHueChange", ((
 		e: CustomEvent<{ enable: boolean }>,
 	) => {
 		if (e.detail?.enable) {
-			// 查找当前活跃的壁纸 img
-			const activeSlide =
-				document.querySelector(
-					"#banner-images-container .slide-item.active img",
-				) ||
-				document.querySelector("#dev-wallpaper-overlay-img") ||
-				document.querySelector("#wallpaper-wrapper img");
-			if (activeSlide instanceof HTMLImageElement) {
-				handleWallpaperChange(activeSlide, true);
-			}
+			applyCurrentWallpaperHue(true);
 		}
 	}) as EventListener);
+
+	// 3. 监听 Swup 切页 / Astro 页面换入事件
+	document.addEventListener("astro:page-load", () => {
+		applyCurrentWallpaperHue(false);
+	});
+	document.addEventListener("swup:content:replace", () => {
+		applyCurrentWallpaperHue(false);
+	});
+
+	// 4. 首屏立即执行一次自适应提取
+	if (getFollowWallpaperHue()) {
+		const img = getActiveWallpaperImg();
+		if (img) {
+			applyCurrentWallpaperHue(false);
+		} else {
+			// 若当前图片节点尚未挂载进 DOM，使用 MutationObserver 监听首个壁纸节点的插入
+			const wrapper = document.getElementById("wallpaper-wrapper");
+			if (wrapper) {
+				const observer = new MutationObserver(() => {
+					const found = getActiveWallpaperImg();
+					if (found) {
+						observer.disconnect();
+						applyCurrentWallpaperHue(false);
+					}
+				});
+				observer.observe(wrapper, { childList: true, subtree: true });
+				setTimeout(() => observer.disconnect(), 3000);
+			}
+		}
+	}
 }
