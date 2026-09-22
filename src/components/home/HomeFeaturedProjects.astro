@@ -1,0 +1,73 @@
+---
+import type { CollectionEntry } from "astro:content";
+import { Icon } from "astro-icon/components";
+import ProjectCard from "@/components/pages/projects/ProjectCard.astro";
+import I18nKey from "@/i18n/i18nKey";
+import { i18n } from "@/i18n/translation";
+import {
+	getFileDirFromPath,
+	removeFileExtension,
+	url,
+} from "@/utils/url-utils";
+
+interface Props {
+	projects: CollectionEntry<"projects">[];
+	title?: string;
+}
+
+const { projects, title } = Astro.props;
+
+const projectMeta = projects.map((p) => ({
+	id: removeFileExtension(p.id),
+	title: p.data.title,
+	description: p.data.description,
+	image: p.data.image,
+	basePath: getFileDirFromPath(p.filePath || ""),
+	tags: p.data.tags,
+	published: p.data.published,
+	link: p.data.link,
+	status: p.data.status,
+}));
+
+const displayTitle = title || i18n(I18nKey.projects);
+---
+
+<section class="home-featured-projects mb-8 onload-animation">
+	<div class="flex items-center justify-between mb-3.5 px-1">
+		<div class="flex items-center gap-2.5">
+			<div class="flex items-center justify-center w-8 h-8 rounded-lg bg-(--primary)/10 text-(--primary)">
+				<Icon name="material-symbols:rocket-launch-rounded" class="text-xl" />
+			</div>
+			<h2 class="font-bold text-lg text-neutral-800 dark:text-neutral-100">
+				{displayTitle}
+			</h2>
+		</div>
+		<a
+			href={url("/projects/")}
+			class="inline-flex items-center gap-1 text-sm font-medium text-neutral-500 dark:text-neutral-400 hover:text-(--primary) dark:hover:text-(--primary) transition-colors group"
+			aria-label={`${i18n(I18nKey.more)} ${displayTitle}`}
+		>
+			<span>{i18n(I18nKey.more)}</span>
+			<Icon
+				name="material-symbols:arrow-forward-rounded"
+				class="text-base transition-transform duration-200 group-hover:translate-x-0.5"
+			/>
+		</a>
+	</div>
+
+	<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+		{projectMeta.map((p) => (
+			<ProjectCard
+				id={p.id}
+				title={p.title}
+				description={p.description}
+				image={p.image}
+				basePath={p.basePath}
+				tags={p.tags}
+				published={p.published}
+				link={p.link}
+				status={p.status}
+			/>
+		))}
+	</div>
+</section>

@@ -1,13 +1,15 @@
 ---
 import type { GetStaticPaths } from "astro";
+import { Icon } from "astro-icon/components";
 import Pagination from "@/components/common/Pagination.astro";
+import HomeFeaturedProjects from "@/components/home/HomeFeaturedProjects.astro";
 import PostPage from "@/components/layout/PostPage.astro";
 import { siteConfig } from "@/config";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
 import "@/styles/banner-home.css";
-import { getSortedPosts } from "@/utils/content-utils";
+import { getSortedPosts, getSortedProjects } from "@/utils/content-utils";
 export const getStaticPaths = (async ({ paginate }) => {
 	const allBlogPosts = await getSortedPosts();
 	// 使用配置中的文章数量
@@ -25,9 +27,28 @@ const heading =
 	page.currentPage === 1
 		? siteConfig.title
 		: `${i18n(I18nKey.home)} · ${page.currentPage}`;
+
+const showFeaturedProjects =
+	page.currentPage === 1 && siteConfig.pages.projects;
+const featuredProjects = showFeaturedProjects
+	? (await getSortedProjects()).slice(0, 2)
+	: [];
 ---
 
 <MainGridLayout heading={heading}>
+  {
+    showFeaturedProjects && featuredProjects.length > 0 && (
+      <HomeFeaturedProjects projects={featuredProjects} />
+      <div class="flex items-center gap-2.5 mb-3.5 px-1 onload-animation">
+        <div class="flex items-center justify-center w-8 h-8 rounded-lg bg-(--primary)/10 text-(--primary)">
+          <Icon name="material-symbols:article-outline-rounded" class="text-xl" />
+        </div>
+        <h2 class="font-bold text-lg text-neutral-800 dark:text-neutral-100">
+          {i18n(I18nKey.recentPosts)}
+        </h2>
+      </div>
+    )
+  }
   <PostPage page={page} />
   {
     page.total > page.size && (
