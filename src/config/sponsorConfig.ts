@@ -9,7 +9,7 @@ export const sponsorConfig: SponsorConfig = {
 
 	// 打赏用途说明
 	usage:
-		"您的打赏将用于服务器维护、内容创作和开源项目持续迭代，非常感谢您的支持与鼓励！",
+		"如果这里的项目或内容刚好帮到了你，也可以请我喝杯饮料。打赏会用在域名、网站服务和开源项目相关支出上；量力而行，能来逛逛就已经很开心了 OωO！",
 
 	// 是否显示打赏者列表
 	showSponsorsList: true,
@@ -27,7 +27,7 @@ export const sponsorConfig: SponsorConfig = {
 			icon: "fa7-brands:weixin",
 			qrCode: "/assets/images/sponsor/wechat.png",
 			link: "",
-			description: "使用 微信 扫码打赏",
+			description: "微信扫码",
 			enabled: true,
 		},
 		{
@@ -35,7 +35,7 @@ export const sponsorConfig: SponsorConfig = {
 			icon: "fa7-brands:alipay",
 			qrCode: "/assets/images/sponsor/alipay.png",
 			link: "",
-			description: "使用 支付宝 扫码打赏",
+			description: "支付宝扫码",
 			enabled: true,
 		},
 		{
@@ -43,7 +43,7 @@ export const sponsorConfig: SponsorConfig = {
 			icon: "simple-icons:afdian",
 			qrCode: "",
 			link: "https://afdian.com/a/lengxiqwq",
-			description: "通过 爱发电 进行赞助支持",
+			description: "在爱发电支持我",
 			enabled: true,
 		},
 		{
@@ -51,7 +51,7 @@ export const sponsorConfig: SponsorConfig = {
 			icon: "simple-icons:kofi",
 			qrCode: "",
 			link: "https://ko-fi.com/lengxiqwq",
-			description: "Buy a Coffee for Lengxi",
+			description: "在 Ko-fi 支持我",
 			enabled: true,
 		},
 	],

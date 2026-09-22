@@ -64,11 +64,12 @@ export const siteConfig: SiteConfig = {
 	keywords: [
 		"LengxiQwQ",
 		"冷汐",
-		"博客",
-		"技术博客",
+		"冷汐的杂货铺",
+		"个人网站",
 		"独立开发",
-		"Astro",
-		"Firefly",
+		"开源项目",
+		"Live Photo Box",
+		"PlaylistOut",
 	],
 
 	// 主题色
@@ -202,7 +203,7 @@ export const siteConfig: SiteConfig = {
 			// 是否显示标签
 			showTags: true,
 			// 标签数量，设为 0 则不限制
-			tagCount: 3,
+			tagCount: 0,
 			// 是否显示字数
 			showWords: false,
 			// 是否显示阅读时间

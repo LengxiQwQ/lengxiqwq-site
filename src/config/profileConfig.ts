@@ -5,10 +5,10 @@ export const profileConfig: ProfileConfig = {
 	avatar: "/assets/images/avatar.webp",
 
 	// 名字
-	name: "LengxiQwQ",
+	name: "冷汐OωO",
 
 	// 个人签名
-	bio: "你好呀，我是冷汐 (´• ω •`)",
+	bio: "你好谢谢小笼包再见！",
 
 	// 链接配置
 	links: [

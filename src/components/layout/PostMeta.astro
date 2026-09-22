@@ -58,7 +58,7 @@ const {
 
 const path = customPath || (id ? `/posts/${id}` : "");
 const visibleTags =
-	typeof maxTags === "number" ? tags?.slice(0, maxTags) : tags;
+	typeof maxTags === "number" && maxTags > 0 ? tags?.slice(0, maxTags) : tags;
 ---
 
 <div

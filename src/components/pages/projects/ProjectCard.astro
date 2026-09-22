@@ -37,9 +37,10 @@ const detailUrl = url(`/projects/${id}/`);
 // 状态元数据（标准 key → 本地化 + 配色）
 const statusMeta = status ? getProjectStatusMeta(status) : null;
 
-// 标签：只显示前 N 个，超出折叠成 +N
-const maxTags = 2;
-const visibleTags = (tags || []).slice(0, maxTags);
+// 标签：全部显示，设为 0 则不限制
+const maxTags = 0;
+const visibleTags =
+	maxTags > 0 ? (tags || []).slice(0, maxTags) : tags || [];
 const hiddenTagCount = (tags || []).length - visibleTags.length;
 
 // 网格封面是否撑满贴边，跟随文章列表设置（postListLayout.grid.coverFullWidth）
@@ -114,7 +115,7 @@ const coverClass = gridCoverFullWidth
           <div class="meta-icon">
             <Icon name="material-symbols:tag-rounded" class="text-xl" />
           </div>
-          <span class="flex flex-row flex-nowrap items-center">
+          <span class="flex flex-row flex-wrap items-center">
             {visibleTags.map((tag, i) => (
               <span class="flex items-center">
                 {i !== 0 && (

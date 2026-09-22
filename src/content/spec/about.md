@@ -1,23 +1,26 @@
-# 关于我 (About LengxiQwQ)
+# 关于我
 
-嗨，很高兴遇见你！我是 **冷汐OωO (LengxiQwQ)**。
+Hi，我是 **冷汐OωO（LengxiQwQ）**。
 
-目前是一名就读于 **INTI International University（英迪国际大学）** 的 IT 专业在读大学生，坐标马来西亚（森美兰州）。
+大学牲一枚。平时最常干的事大概就是写点工具、折腾电脑和网站，然后在代码、游戏、音乐和吉他之间来回切换。
 
-平日里穿梭于技术开发、独立项目与数码游戏之间，喜欢尝试用代码解决生活与开发中的实际痛点。
+我做项目基本都是自己碰到了一个麻烦，比如实况照片跨设备不好处理，就有了 **Live Photo Box**；歌单很难完整导出来，就慢慢做出了 **Playlist Out**；输入法切换不顺手，我就想做个小工具解决一下。
 
----
-
-## ✦ What I Do / 探索与钻研
-
-- **桌面端应用开发**：使用 C#、C++、WinUI 3、Windows App SDK 构建现代、原生体验的 Windows 桌面工具。
-- **全栈与 Web 工具**：使用 TypeScript、React、Cloudflare Workers 开发轻巧高效的实用 Web 服务。
-- **游戏开发探索**：热爱游戏，梦想是打造出自由度拉满的游戏作品。
-- **开源与折腾**：喜欢写点趁手的小脚本和工具，并在 GitHub 上与大家交流。
+很多东西也都在边学边做，这里就是拿来记录自己折腾的过程。
 
 ---
 
-## ✦ Featured Projects / 核心项目
+## ✦ 最近在折腾什么
+
+- **Windows 桌面工具**：C#、C++、WinUI 3、Windows App SDK，主要在继续做 Live Photo Box。
+- **Web / 小工具**：TypeScript、React、Cloudflare Workers，本网站还有 Live Photo Box 官网。
+- **开源项目**：能整理出来的项目基本都会丢到 GitHub，Bug、想法和 PR 都欢迎。
+- **游戏**：Minecraft、COC、还有一些 3A 大作和一些联机小游戏，[欢迎 Steam 扩列](https://steamcommunity.com/id/lengxiya/)！
+- **音乐和吉他**：喜欢 Lofi、Blues、日摇，在努力成为吉他高手的一天！
+
+---
+
+## ✦ Projects
 
 ::github{repo="LengxiQwQ/live-photo-box"}
 
@@ -25,27 +28,27 @@
 
 ::github{repo="LengxiQwQ/capslock-ime-switcher"}
 
-::github{repo="LengxiQwQ/car-rental-management-system"}
+---
+
+## ✦ 关于这个网站
+
+这里叫 **冷汐的杂货铺**。
+
+我会时不时放一些项目内容，遇到的一些问题。当然还有音乐，游戏还有一些乱七八糟的日常。所以叫杂货铺😂
+
+网站基于 [Firefly](https://github.com/CuteLeaf/Firefly) 继续定制，底层使用 Astro / Svelte。代码放在[公开仓库](https://github.com/LengxiQwQ/lengxiqwq-site)，个人内容单独放在私有内容仓里；这样改主题和写内容时不会全搅在一起。
+
+本站原创文章与内容默认采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)；网站代码部分则按对应仓库中的开源许可证处理。
 
 ---
 
-## ✦ 关于本站 (About This Site)
+## ✦ 找到我
 
-本站是我的个人主页与技术博客空间，承载我的项目沉淀、日常碎碎念与学习记录。
+想扩列或者是聊项目、反馈 Bug，单纯丢点有意思的东西给我，都可以：
 
-- **网站架构**：采用双仓解耦分离模式（公开代码仓 [LengxiQwQ/lengxiqwq-site](https://github.com/LengxiQwQ/lengxiqwq-site) 与私有内容仓分离，保障数据隐私与安全）
-- **主题基底**：基于 [CuteLeaf](https://github.com/CuteLeaf) 开发的开源博客主题 [Firefly](https://github.com/CuteLeaf/Firefly) 构建（灵感与基底源自 [saicaca](https://github.com/saicaca) 的 [Fuwari](https://github.com/saicaca/fuwari) 开源项目，遵循 MIT 开源许可协议）
-- **框架引擎**：由 [Astro](https://astro.build) 现代静态内容驱动引擎与 Svelte 驱动构建
-- **内容协议**：本站原创文章与内容遵循 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) 知识共享协议
-- **托管加速**：全站静态构建托管于 GitHub Pages，由 Cloudflare DNS 提供全球网络加速与安全防护
+- **GitHub**：[LengxiQwQ](https://github.com/LengxiQwQ)
+- **Bilibili**：[冷汐QwQ](https://space.bilibili.com/477811145)
+- **Steam**：[冷汐OωO](https://steamcommunity.com/id/lengxiya/)
 
 ---
 
-## ✦ 找到我 (Contact)
-
-如果你对我的项目感兴趣，或者有任何好玩的想法想要交流，欢迎通过以下方式与我联系：
-
-- **GitHub**: [@LengxiQwQ](https://github.com/LengxiQwQ)
-- **Email**: [lengxi@lengxiqwq.com](mailto:lengxi@lengxiqwq.com)
-- **Bilibili**: [冷汐在B站](https://space.bilibili.com/477811145)
-- **Steam**: [Steam 个人主页](https://steamcommunity.com/id/lengxiya/)

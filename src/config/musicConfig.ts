@@ -41,6 +41,22 @@ export const musicPlayerConfig: MusicPlayerConfig = {
 
 	// 本地音乐配置（当 mode 为 'local' 时使用）
 	local: {
-		playlist: [],
+		playlist: [
+			{
+				name: "birthday song -「め」弾き語りver.-",
+				artist: "酸欠少女 さユり",
+				url: "/assets/music/birthday-song-me-hikigatari.mp3",
+				cover: "/assets/music/cover/birthday-song.webp",
+				lrc: "",
+			},
+			// 备用曲目（资源保留于仓库中，暂不在站点前端展示）
+			// {
+			// 	name: "ミカヅキ -「め」弾き語りver.-",
+			// 	artist: "酸欠少女 さユり",
+			// 	url: "/assets/music/mikazuki-me-hikigatari.mp3",
+			// 	cover: "/assets/music/cover/mikazuki.webp",
+			// 	lrc: "",
+			// },
+		],
 	},
 };
