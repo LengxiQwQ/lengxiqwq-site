@@ -83,7 +83,7 @@ export const backgroundWallpaper: BackgroundWallpaperConfig = {
 		cardOpacity: 0.8,
 	},
 	fullscreen: {
-		layout: "classic",
+		layout: "hero",
 		position: "center",
 		navbar: {
 			transparentMode: "semifull",

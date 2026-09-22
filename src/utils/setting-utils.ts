@@ -328,7 +328,7 @@ export function syncBannerHomeTextVisibility(): void {
 }
 
 export function getDefaultFullscreenLayout(): FullscreenWallpaperLayout {
-	return backgroundWallpaper.fullscreen?.layout ?? "classic";
+	return backgroundWallpaper.fullscreen?.layout ?? "hero";
 }
 
 export function getStoredFullscreenLayout(): FullscreenWallpaperLayout {
