@@ -35,25 +35,53 @@ function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
 }
 
 /**
+ * 健壮地等待图片加载与解码完成，防止 Promise 永远挂起
+ */
+async function waitForImage(img: HTMLImageElement): Promise<boolean> {
+	// 1. 如果已经完成加载且已有尺寸，直接返回成功
+	if (img.complete && img.naturalWidth > 0) {
+		return true;
+	}
+
+	// 2. 尝试使用现代浏览器支持的 img.decode()
+	try {
+		if (typeof img.decode === "function") {
+			await img.decode();
+			if (img.naturalWidth > 0) return true;
+		}
+	} catch {
+		// decode 失败（或正在加载中）降级到事件监听
+	}
+
+	// 3. 再次检查，避免在 decode 尝试期间图片已就绪
+	if (img.complete && img.naturalWidth > 0) {
+		return true;
+	}
+
+	// 4. 若仍未完成，监听 load/error，并设置 1500ms 超时保护，确保绝不挂起
+	return new Promise<boolean>((resolve) => {
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		const done = () => {
+			if (timer) clearTimeout(timer);
+			img.removeEventListener("load", done);
+			img.removeEventListener("error", done);
+			resolve(img.naturalWidth > 0);
+		};
+
+		img.addEventListener("load", done, { once: true });
+		img.addEventListener("error", done, { once: true });
+		timer = setTimeout(done, 1500);
+	});
+}
+
+/**
  * 从 HTMLImageElement 中提取最具代表性的主色调色相 Hue (0 ~ 360)
  */
 export async function extractDominantHue(
 	img: HTMLImageElement,
 ): Promise<number> {
-	// 等待图片加载完成
-	if (!img.complete || img.naturalWidth === 0) {
-		await new Promise<void>((resolve) => {
-			const onLoad = () => {
-				img.removeEventListener("load", onLoad);
-				img.removeEventListener("error", onLoad);
-				resolve();
-			};
-			img.addEventListener("load", onLoad, { once: true });
-			img.addEventListener("error", onLoad, { once: true });
-		});
-	}
-
-	if (!img.naturalWidth || !img.naturalHeight) {
+	const ready = await waitForImage(img);
+	if (!ready || !img.naturalWidth || !img.naturalHeight) {
 		return getHue();
 	}
 
