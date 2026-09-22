@@ -1,14 +1,20 @@
 {
-	"cuteleaf/firefly": {
-		"description": "🍀Firefly, fresh and aesthetic Astro blog theme template. ",
-		"language": "Astro",
-		"avatarUrl": "https://avatars.githubusercontent.com/u/43440669?v=4",
+	"lengxiqwq/capslock-ime-switcher": {
+		"description": "按下 CapsLock，轻松切换中英文输入法，支持多输入法，多种软件兼容，快乐编码！🎉 Press CapsLock to switch between Chinese and English IMEs with ease. Multi-IME support, compatible with many apps, happy coding! ",
+		"language": "AutoHotkey",
+		"avatarUrl": "https://avatars.githubusercontent.com/u/97082679?v=4",
 		"license": "MIT"
 	},
-	"saicaca/fuwari": {
-		"description": "✨A static blog template built with Astro. ",
-		"language": "Astro",
-		"avatarUrl": "https://avatars.githubusercontent.com/u/25200299?v=4",
+	"lengxiqwq/live-photo-box": {
+		"description": "Live Photo Box（实况照片工具箱） — A Windows desktop solution for processing Live Photos across different devices, brands, and platforms, with powerful conversion and editing capabilities. | 面向 Windows 的实况照片处理工具，帮助不同设备、品牌与平台之间自由转换和处理实况照片，并尽可能保留原始照片的细节与信息。",
+		"language": "C#",
+		"avatarUrl": "https://avatars.githubusercontent.com/u/97082679?v=4",
+		"license": "GPL-3.0"
+	},
+	"lengxiqwq/playlistout": {
+		"description": "Playlist Out（歌单导出助手）— 主流音乐平台歌单解析与多格式导出工具，支持 TXT / CSV / Excel / JSON 等格式｜Playlist parser and multi-format exporter for major music platforms, supporting TXT, CSV, Excel, JSON, and more.",
+		"language": "TypeScript",
+		"avatarUrl": "https://avatars.githubusercontent.com/u/97082679?v=4",
 		"license": "MIT"
 	}
 }
