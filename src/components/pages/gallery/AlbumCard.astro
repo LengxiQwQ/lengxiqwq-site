@@ -37,8 +37,7 @@ const lqipProps = cover ? getLqipProps(cover, undefined, true) : { style: "" };
 
 // 标签：全部显示，设为 0 则不限制
 const maxTags = 0;
-const visibleTags =
-	maxTags > 0 ? (tags || []).slice(0, maxTags) : tags || [];
+const visibleTags = maxTags > 0 ? (tags || []).slice(0, maxTags) : tags || [];
 const hiddenTagCount = (tags || []).length - visibleTags.length;
 
 // 网格封面是否撑满贴边，跟随文章列表设置（postListLayout.grid.coverFullWidth）

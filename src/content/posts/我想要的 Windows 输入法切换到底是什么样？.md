@@ -7,7 +7,6 @@ tags:
   - Windows
   - 输入法
   - CapsLock
-  - 独立开发
   - CapsLock IME Switcher
 category: "开发"
 sourceLink: "https://github.com/LengxiQwQ/capslock-ime-switcher"

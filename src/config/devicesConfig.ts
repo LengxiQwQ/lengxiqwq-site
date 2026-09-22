@@ -16,8 +16,7 @@ export const devicesConfig: DevicesConfig = {
 				},
 				{
 					name: "iPhone 16 Pro Max",
-					description:
-						"现在的主力手机，拍照片和日常测试最常用的设备之一。",
+					description: "现在的主力手机，拍照片和日常测试最常用的设备之一。",
 					tags: ["A18 Pro", "256GB", "白色钛金属"],
 					icon: "fa7-solid:mobile-screen",
 				},
@@ -25,7 +24,7 @@ export const devicesConfig: DevicesConfig = {
 					name: "iPad Pro 2021",
 					description:
 						"平时拿来看资料、影音和当副屏，偶尔也会折腾些音乐相关的东西。",
-					tags: ["Apple M1", "256GB", "11\""],
+					tags: ["Apple M1", "256GB", '11"'],
 					icon: "material-symbols:tablet-mac",
 				},
 				{
@@ -43,8 +42,7 @@ export const devicesConfig: DevicesConfig = {
 			devices: [
 				{
 					name: "Logitech G903 HERO",
-					description:
-						"用了很顺手的一只无线鼠标，无极滚轮是真的回不去了。",
+					description: "用了很顺手的一只无线鼠标，无极滚轮是真的回不去了。",
 					tags: ["HERO 25K", "LIGHTSPEED", "双模滚轮"],
 					icon: "material-symbols:mouse",
 				},
@@ -57,8 +55,7 @@ export const devicesConfig: DevicesConfig = {
 				},
 				{
 					name: "Bose QuietComfort 45",
-					description:
-						"平时听歌、学习和出门都会用，主要还是图它戴着舒服。",
+					description: "平时听歌、学习和出门都会用，主要还是图它戴着舒服。",
 					tags: ["消噪 / 通透", "蓝牙无线", "TriPort"],
 					icon: "material-symbols:headphones-rounded",
 				},
@@ -77,8 +74,7 @@ export const devicesConfig: DevicesConfig = {
 				},
 				{
 					name: "YAMAHA THR10II Wireless",
-					description:
-						"桌面练琴音箱，体积不大，平时在房间里练琴刚刚好。",
+					description: "桌面练琴音箱，体积不大，平时在房间里练琴刚刚好。",
 					tags: ["THR10II", "VCM 模拟", "内置无线"],
 					icon: "material-symbols:speaker",
 				},

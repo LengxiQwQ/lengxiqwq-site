@@ -90,6 +90,24 @@ export function setHue(hue: number): void {
 	r.style.setProperty("--hue", String(hue));
 }
 
+export function getFollowWallpaperHue(): boolean {
+	if (typeof window === "undefined" || !window.localStorage) {
+		return true;
+	}
+	const stored = localStorage.getItem("followWallpaperHue");
+	return stored === null ? true : stored === "true";
+}
+
+export function setFollowWallpaperHue(enable: boolean): void {
+	if (typeof window === "undefined" || !window.localStorage) {
+		return;
+	}
+	localStorage.setItem("followWallpaperHue", String(enable));
+	window.dispatchEvent(
+		new CustomEvent("followWallpaperHueChange", { detail: { enable } }),
+	);
+}
+
 export function applyThemeToDocument(theme: LIGHT_DARK_MODE): void {
 	// 检查是否在浏览器环境中
 	if (typeof document === "undefined") {

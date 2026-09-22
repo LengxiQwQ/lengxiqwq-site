@@ -8,21 +8,20 @@ export const backgroundWallpaper: BackgroundWallpaperConfig = {
 	src: {
 		// 桌面背景图片
 		desktop: [
-			"assets/images/DesktopWallpaper/d1.avif",
-			"assets/images/DesktopWallpaper/d2.avif",
-			"assets/images/DesktopWallpaper/d3.avif",
-			"assets/images/DesktopWallpaper/d4.avif",
-			"assets/images/DesktopWallpaper/d5.avif",
-			"assets/images/DesktopWallpaper/d6.avif",
+			"/wallpapers/desktop/inugami-korone.webp",
+			"/wallpapers/desktop/dragon-maid.webp",
+			"/wallpapers/desktop/lovelive-nijigasaki.webp",
+			"/wallpapers/desktop/miku-love-letter.webp",
+			"/wallpapers/desktop/wuthering-waves-encore.webp",
 		],
 		// 移动背景图片
 		mobile: [
-			"assets/images/MobileWallpaper/m1.avif",
-			"assets/images/MobileWallpaper/m2.avif",
-			"assets/images/MobileWallpaper/m3.avif",
-			"assets/images/MobileWallpaper/m4.avif",
-			"assets/images/MobileWallpaper/m5.avif",
-			"assets/images/MobileWallpaper/m6.avif",
+			"/wallpapers/mobile/uehara-sei-lily-girl.webp",
+			"/wallpapers/mobile/yanno-chan.webp",
+			"/wallpapers/mobile/hydrangea-girl.webp",
+			"/wallpapers/mobile/kinako-catgirl.webp",
+			"/wallpapers/mobile/miku-desk.webp",
+			"/wallpapers/mobile/miku-heart.webp",
 		],
 	},
 	// 横幅壁纸和全屏壁纸共享配置

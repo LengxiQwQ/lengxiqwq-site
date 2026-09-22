@@ -1,0 +1,179 @@
+---
+// 仅在本地开发模式（pnpm dev）下运行：无任何 UI 元素，纯拖拽即替换壁纸
+---
+
+<script>
+	function setupDevWallpaperPreview() {
+		let currentBlobUrl: string | null = null;
+
+		function getWallpaperWrapper(): HTMLElement | null {
+			return document.getElementById("wallpaper-wrapper");
+		}
+
+		// 获取或创建专用预览覆盖层
+		function getOrCreateOverlayLayer(): HTMLElement | null {
+			const wrapper = getWallpaperWrapper();
+			if (!wrapper) return null;
+
+			let layer = document.getElementById("dev-wallpaper-overlay-layer");
+			if (!layer) {
+				layer = document.createElement("div");
+				layer.id = "dev-wallpaper-overlay-layer";
+				layer.style.position = "absolute";
+				layer.style.inset = "0";
+				layer.style.zIndex = "15"; // 高于背景轮播容器(5)与暗化层(10)，低于标题文字(20)
+				layer.style.pointerEvents = "none";
+				layer.style.overflow = "hidden";
+				layer.style.transition = "opacity 0.2s ease";
+
+				const img = document.createElement("img");
+				img.id = "dev-wallpaper-overlay-img";
+				img.style.width = "100%";
+				img.style.height = "100%";
+				img.style.objectFit = "cover";
+				img.style.objectPosition = "center";
+
+				const existingImg = wrapper.querySelector("img");
+				if (existingImg) {
+					img.style.objectPosition =
+						window.getComputedStyle(existingImg).objectPosition || "center";
+				}
+
+				layer.appendChild(img);
+				wrapper.appendChild(layer);
+			}
+			return layer;
+		}
+
+		// 替换壁纸
+		function applyPreviewImage(file: File) {
+			if (!file || !file.type.startsWith("image/")) return;
+
+			if (currentBlobUrl) {
+				URL.revokeObjectURL(currentBlobUrl);
+			}
+
+			currentBlobUrl = URL.createObjectURL(file);
+
+			const wrapper = getWallpaperWrapper();
+			if (!wrapper) return;
+
+			// 1. 更新独立覆盖层
+			const layer = getOrCreateOverlayLayer();
+			const overlayImg = document.getElementById(
+				"dev-wallpaper-overlay-img",
+			) as HTMLImageElement | null;
+			if (layer && overlayImg) {
+				overlayImg.src = currentBlobUrl;
+				layer.style.display = "block";
+				layer.style.opacity = "1";
+				overlayImg.onload = () => {
+					window.dispatchEvent(
+						new CustomEvent("wallpaperChange", {
+							detail: { img: overlayImg, smooth: true },
+						}),
+					);
+				};
+			}
+
+			// 2. 同步替换已有 picture/source 和 img
+			wrapper.querySelectorAll("picture").forEach((pic) => {
+				pic.querySelectorAll("source").forEach((source) => {
+					if (!source.dataset.devOriginalSrcset) {
+						source.dataset.devOriginalSrcset = source.srcset;
+					}
+					source.srcset = currentBlobUrl!;
+				});
+			});
+
+			wrapper.querySelectorAll("img").forEach((img) => {
+				if (img.id !== "dev-wallpaper-overlay-img") {
+					if (!img.dataset.devOriginalSrc) {
+						img.dataset.devOriginalSrc = img.src;
+					}
+					img.src = currentBlobUrl!;
+					img.srcset = "";
+					img.style.opacity = "1";
+				}
+			});
+		}
+
+		// 恢复原壁纸（支持 ESC 键）
+		function resetPreview() {
+			if (currentBlobUrl) {
+				URL.revokeObjectURL(currentBlobUrl);
+				currentBlobUrl = null;
+			}
+
+			const layer = document.getElementById("dev-wallpaper-overlay-layer");
+			if (layer) {
+				layer.style.display = "none";
+				const overlayImg = document.getElementById(
+					"dev-wallpaper-overlay-img",
+				) as HTMLImageElement | null;
+				if (overlayImg) overlayImg.src = "";
+			}
+
+			const wrapper = getWallpaperWrapper();
+			if (wrapper) {
+				wrapper.querySelectorAll("picture").forEach((pic) => {
+					pic.querySelectorAll("source").forEach((source) => {
+						if (source.dataset.devOriginalSrcset) {
+							source.srcset = source.dataset.devOriginalSrcset;
+							delete source.dataset.devOriginalSrcset;
+						}
+					});
+				});
+
+				wrapper.querySelectorAll("img").forEach((img) => {
+					if (img.id !== "dev-wallpaper-overlay-img") {
+						if (img.dataset.devOriginalSrc) {
+							img.src = img.dataset.devOriginalSrc;
+							delete img.dataset.devOriginalSrc;
+						}
+					}
+				});
+
+				const activeImg =
+					document.querySelector("#banner-images-container .slide-item.active img") ||
+					document.querySelector("#wallpaper-wrapper img");
+				if (activeImg instanceof HTMLImageElement) {
+					window.dispatchEvent(
+						new CustomEvent("wallpaperChange", {
+							detail: { img: activeImg, smooth: true },
+						}),
+					);
+				}
+			}
+		}
+
+		// 全局静默拖拽监听（无任何遮罩、无任何按钮）
+		window.addEventListener("dragover", (e) => {
+			e.preventDefault();
+			if (e.dataTransfer) {
+				e.dataTransfer.dropEffect = "copy";
+			}
+		});
+
+		window.addEventListener("drop", (e) => {
+			e.preventDefault();
+			const files = e.dataTransfer?.files;
+			if (files && files.length > 0) {
+				applyPreviewImage(files[0]);
+			}
+		});
+
+		// ESC 键静默恢复原壁纸
+		window.addEventListener("keydown", (e) => {
+			if (e.key === "Escape" && currentBlobUrl) {
+				resetPreview();
+			}
+		});
+	}
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", setupDevWallpaperPreview);
+	} else {
+		setupDevWallpaperPreview();
+	}
+</script>

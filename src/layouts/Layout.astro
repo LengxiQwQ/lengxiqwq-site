@@ -12,6 +12,7 @@ import MusicPlayerView from "@components/features/MusicPlayerView.astro";
 import SakuraEffect from "@components/features/SakuraEffect.astro";
 import WavesEffect from "@components/features/WavesEffect.astro";
 import ConfigCarrier from "@components/layout/ConfigCarrier.astro";
+import DevWallpaperPreview from "@/components/dev/DevWallpaperPreview.astro";
 
 import {
 	analyticsConfig,
@@ -585,6 +586,9 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
 
     <!-- GitHub 卡片客户端实时补全（forks/stars） -->
     <GithubCardManager />
+
+    <!-- 本地开发壁纸即拖即看辅助工具（生产构建自动剔除） -->
+    {import.meta.env.DEV && <DevWallpaperPreview />}
   </body>
 </html>
 

@@ -330,12 +330,21 @@ const wallpaperPosition = state.isFullscreenMode
                 materialize(slides[nextIndex], false);
                 materializeAhead(slides, nextIndex);
 
-                // 直接切换（CSS 处理过渡动画）
                 applySlideChange(slides, nextIndex);
+                notifyWallpaperChange(slides[nextIndex], true);
 
                 if (resetProgress !== false && appState.isPlaying) {
                     startAutoPlay();
                 }
+            }
+
+            function notifyWallpaperChange(slideEl, smooth) {
+                if (!slideEl) return;
+                var img = slideEl.querySelector('img');
+                if (!img) return;
+                window.dispatchEvent(new CustomEvent('wallpaperChange', {
+                    detail: { img: img, smooth: smooth !== false }
+                }));
             }
 
             var appState = {
@@ -422,6 +431,7 @@ const wallpaperPosition = state.isFullscreenMode
                 else slides[k].classList.remove('active');
             }
             materialize(firstSlide, true);
+            notifyWallpaperChange(firstSlide, false);
             if (firstSlide) {
                 // 下一帧再放开，后续轮播切换的交叉淡入照旧。双 rAF 是为了确保
                 // opacity:1 已经 flush 成新的 before-change style，恢复时不会倒着跑一遍
@@ -491,6 +501,11 @@ const wallpaperPosition = state.isFullscreenMode
                 }
                 slot.appendChild(frag);
                 tpl.remove();
+                if (img) {
+                    window.dispatchEvent(new CustomEvent('wallpaperChange', {
+                        detail: { img: img, smooth: false }
+                    }));
+                }
                 // Layout 的全局淡入只扫解析期的图片，克隆进来的要自己接管
                 var ph = slot.querySelector('.lqip-placeholder');
                 if (!img) return;

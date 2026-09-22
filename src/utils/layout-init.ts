@@ -1,3 +1,4 @@
+import { initWallpaperHueFollower } from "@/utils/color-extract-utils";
 import {
 	registerContentOverflowListeners,
 	scheduleContentOverflowEnhancements,
@@ -29,6 +30,7 @@ export function initLayout(): void {
 	if (window.__fireflyLayoutInit) return;
 	window.__fireflyLayoutInit = true;
 
+	initWallpaperHueFollower();
 	initializeFloatingPanels();
 
 	setClickOutsideToClose("display-setting", [

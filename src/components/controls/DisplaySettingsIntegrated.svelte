@@ -20,6 +20,7 @@ import {
 	getDefaultOverlayOpacity,
 	getDefaultSakuraEnabled,
 	getDefaultWavesEnabled,
+	getFollowWallpaperHue,
 	getHue,
 	getStoredBannerCarouselEnabled,
 	getStoredBannerTitleEnabled,
@@ -37,6 +38,7 @@ import {
 	setBannerTitleEnabled,
 	setCardBorderEnabled,
 	setCardFollowThemeEnabled,
+	setFollowWallpaperHue,
 	setFullscreenLayout,
 	setGradientEnabled,
 	setHue,
@@ -73,6 +75,19 @@ type TabKey = "appearance" | "wallpaper" | "effects";
 
 let hue = $state(getHue());
 const defaultHue = getDefaultHue();
+let followWallpaperHue = $state(getFollowWallpaperHue());
+
+function toggleFollowWallpaperHue() {
+	followWallpaperHue = !followWallpaperHue;
+	setFollowWallpaperHue(followWallpaperHue);
+}
+
+function handleHueInput() {
+	if (followWallpaperHue) {
+		followWallpaperHue = false;
+		setFollowWallpaperHue(false);
+	}
+}
 let wallpaperMode: WALLPAPER_MODE = $state(backgroundWallpaper.mode);
 const defaultWallpaperMode = backgroundWallpaper.mode;
 let fullscreenLayout: FullscreenWallpaperLayout = $state(
@@ -320,6 +335,8 @@ let hasVisibleOverlaySlider = $derived(
 );
 
 function resetHue() {
+	followWallpaperHue = false;
+	setFollowWallpaperHue(false);
 	hue = getDefaultHue();
 	requestAnimationFrame(refreshAllRangeProgress);
 }
@@ -625,6 +642,30 @@ onMount(() => {
 	};
 });
 
+onMount(() => {
+	const handleHueChange = (event: Event) => {
+		const customEvent = event as CustomEvent<{ hue: number }>;
+		if (typeof customEvent.detail?.hue === "number") {
+			hue = customEvent.detail.hue;
+			requestAnimationFrame(refreshAllRangeProgress);
+		}
+	};
+	const handleFollowChange = (event: Event) => {
+		const customEvent = event as CustomEvent<{ enable: boolean }>;
+		if (typeof customEvent.detail?.enable === "boolean") {
+			followWallpaperHue = customEvent.detail.enable;
+		}
+	};
+
+	window.addEventListener("hueChange", handleHueChange);
+	window.addEventListener("followWallpaperHueChange", handleFollowChange);
+
+	return () => {
+		window.removeEventListener("hueChange", handleHueChange);
+		window.removeEventListener("followWallpaperHueChange", handleFollowChange);
+	};
+});
+
 $effect(() => {
 	if (hue || hue === 0) {
 		setHue(hue);
@@ -688,9 +729,22 @@ $effect(() => {
 		<div class="">
 			<div class="section-title">
 				{i18n(I18nKey.themeColor)}
+				<button
+					type="button"
+					aria-label={followWallpaperHue ? "正在跟随壁纸色调 (点击切换为手动)" : "开启跟随壁纸色调"}
+					title={followWallpaperHue ? "正在跟随壁纸色调 (点击切换为手动)" : "开启跟随壁纸色调"}
+					class="btn-regular rounded-md active:scale-90 transition-all flex items-center justify-center"
+					class:bg-(--primary)={followWallpaperHue}
+					class:text-white={followWallpaperHue}
+					onclick={toggleFollowWallpaperHue}
+				>
+					<div class={followWallpaperHue ? "text-white" : "text-(--btn-content)"}>
+						<Icon icon="fa7-solid:wand-magic-sparkles" class="text-[0.75rem]"></Icon>
+					</div>
+				</button>
 				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
-						class:opacity-0={hue === defaultHue} class:pointer-events-none={hue === defaultHue}
-						disabled={hue === defaultHue} aria-hidden={hue === defaultHue ? "true" : undefined} onclick={resetHue}>
+						class:opacity-0={hue === defaultHue && !followWallpaperHue} class:pointer-events-none={hue === defaultHue && !followWallpaperHue}
+						disabled={hue === defaultHue && !followWallpaperHue} aria-hidden={hue === defaultHue && !followWallpaperHue ? "true" : undefined} onclick={resetHue}>
 					<div class="text-(--btn-content)">
 						<Icon icon="fa7-solid:arrow-rotate-left" class="text-[0.75rem]"></Icon>
 					</div>
@@ -702,6 +756,7 @@ $effect(() => {
 			</div>
 			<div class="hue-slider-shell w-full h-6 px-1 bg-[oklch(0.80_0.10_0)] dark:bg-[oklch(0.70_0.10_0)] rounded-md select-none">
 				<input aria-label={i18n(I18nKey.themeColor)} type="range" min="0" max="360" bind:value={hue}
+					   oninput={handleHueInput}
 					   class="slider" id="colorSlider" step="5" style="width: 100%">
 			</div>
 		</div>
