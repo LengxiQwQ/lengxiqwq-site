@@ -27,7 +27,7 @@ function getFilesRecursive(dir: string, base = ""): string[] {
  *
  * 🛡️ 具备防误删救援机制：如果检测到用户在主仓中误写了新文件，会自动安全备份/同步到内容仓，绝不丢数据。
  */
-export function resetContent(silent = false) {
+export function resetContent(silent = false): void {
 	// CI 环境中容器为一次性环境，无需重置，避免影响 CI 产物上传
 	if (process.env.CI) {
 		return;
@@ -51,9 +51,12 @@ export function resetContent(silent = false) {
 					if (!fs.existsSync(targetFull)) {
 						// 排除 git 模板自带文件
 						try {
-							execSync(`git ls-files --error-unmatch "src/content/${relFile.replace(/\\/g, "/")}"`, {
-								stdio: "ignore",
-							});
+							execSync(
+								`git ls-files --error-unmatch "src/content/${relFile.replace(/\\/g, "/")}"`,
+								{
+									stdio: "ignore",
+								},
+							);
 							// 在模板 git 中受控，无需救援
 						} catch {
 							// 不在模板 git 中，说明是用户的全新文章/资源！执行自动同步救援
