@@ -241,6 +241,7 @@ async function run() {
 		const msg = `⚠️ **站点链接格式不正确**\n\n您填写的站点链接 \`${siteurl}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
+		console.log(msg);
 		return;
 	}
 
@@ -248,6 +249,7 @@ async function run() {
 		const msg = `⚠️ **头像链接格式不正确**\n\n您填写的头像链接 \`${imgurl}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
+		console.log(msg);
 		return;
 	}
 
@@ -255,6 +257,7 @@ async function run() {
 		const msg = `⚠️ **友链所在页面格式不正确**\n\n您填写的检测页面链接 \`${checkurl}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
+		console.log(msg);
 		return;
 	}
 
