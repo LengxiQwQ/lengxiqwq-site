@@ -143,7 +143,6 @@ async function main() {
 		contentRepoDir,
 		"config/friendsConfig.ts",
 	);
-	const mainConfigFile = path.resolve("src/config/friendsConfig.ts");
 
 	if (!fs.existsSync(contentConfigFile)) {
 		console.error(`❌ 未找到私有内容仓配置文件: ${contentConfigFile}`);
@@ -154,10 +153,15 @@ async function main() {
 	insertFriendToConfig(contentConfigFile, entry);
 	console.log(`✅ 已写入内容仓: ${contentConfigFile}`);
 
-	// 3. 写入主代码仓本地
-	if (fs.existsSync(mainConfigFile)) {
-		insertFriendToConfig(mainConfigFile, entry);
-		console.log(`✅ 已写入主代码仓: ${mainConfigFile}`);
+	// 3. 自动同步到本地开发环境
+	console.log("⏳ 正在同步内容到本地工作区...");
+	try {
+		execSync("npx tsx scripts/sync-content.ts", {
+			stdio: "inherit",
+			cwd: path.resolve("."),
+		});
+	} catch {
+		// 忽略
 	}
 
 	// 4. 执行格式化
@@ -169,7 +173,7 @@ async function main() {
 		// 忽略
 	}
 
-	// 5. 自动 git commit & push
+	// 5. 自动 git commit & push (仅限内容仓)
 	const autoPush = !process.argv.includes("--no-push");
 
 	if (autoPush) {
@@ -185,23 +189,10 @@ async function main() {
 				(err as Error).message,
 			);
 		}
-
-		console.log("\n🚀 正在提交并推送到主代码仓...");
-		try {
-			execSync("git add src/config/friendsConfig.ts", {
-				cwd: path.resolve("."),
-			});
-			execSync('git commit -m "feat: 新增友链"', { cwd: path.resolve(".") });
-			execSync("git push origin main", { cwd: path.resolve(".") });
-			console.log("✅ 主代码仓已成功推送至远程！");
-		} catch (err: unknown) {
-			console.error(
-				"❌ 主代码仓推送失败，请手动检查 git 状态:",
-				(err as Error).message,
-			);
-		}
 	} else {
-		console.log("\n💡 已跳过自动 push (--no-push)。请稍后手动检查并提交。");
+		console.log(
+			"\n💡 已跳过自动 push (--no-push)。请稍后手动检查并提交内容仓。",
+		);
 	}
 
 	console.log("\n🎉 大功告成！友链已成功添加：");

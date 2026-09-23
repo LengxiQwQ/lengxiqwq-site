@@ -225,4 +225,28 @@ export const LinkPresets: Record<string, NavBarLink> = {
 	},
 };
 
-export const navBarConfig: NavBarConfig = getDynamicNavBarConfig();
+export const navBarConfig: NavBarConfig = {
+	...getDynamicNavBarConfig(),
+	siteSwitcher: {
+		enable: true,
+		items: [
+			{
+				title: "冷汐的杂货铺",
+				url: "/",
+				key: "site",
+			},
+			{
+				title: "冷汐的小站",
+				url: "https://blog.lengxiqwq.com",
+				key: "nest",
+				external: true,
+			},
+			{
+				title: "冷汐的小屋",
+				url: "https://room.lengxiqwq.com",
+				key: "room",
+				external: true,
+			},
+		],
+	},
+};

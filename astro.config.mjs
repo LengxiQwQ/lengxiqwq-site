@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { setMaxListeners } from "node:events";
 import cloudflare from "@astrojs/cloudflare";
 import { unified } from "@astrojs/markdown-remark";
@@ -64,6 +66,82 @@ const adapter = process.env.CF_WORKERS
 			prerenderEnvironment: "node",
 		})
 	: undefined;
+
+// Vite 插件：本地开发时实时监听私有内容仓，变动时自动热同步并刷新页面
+function contentRepoWatcher() {
+	return {
+		name: "vite-plugin-content-repo-watcher",
+		configureServer(server) {
+			let contentDir = process.env.CONTENT_DIR;
+			if (!contentDir) {
+				const sibling = path.resolve("../lengxiqwq-site-content");
+				if (fs.existsSync(sibling)) {
+					contentDir = sibling;
+				}
+			}
+			if (!contentDir || !fs.existsSync(contentDir)) {
+				return;
+			}
+
+			const resolvedDir = path.resolve(contentDir);
+			server.watcher.add(resolvedDir);
+
+			const syncTarget = (filePath) => {
+				const rel = path.relative(resolvedDir, filePath);
+				if (rel.startsWith(".git") || rel.startsWith("node_modules")) return;
+
+				let dest = null;
+				if (rel.startsWith(`content${path.sep}`) || rel === "content") {
+					dest = path.resolve("src", rel);
+				} else if (rel.startsWith(`config${path.sep}`) || rel === "config") {
+					dest = path.resolve("src", rel);
+				} else if (rel.startsWith(`public${path.sep}`) || rel === "public") {
+					const sub = rel.slice("public".length + 1);
+					dest = path.resolve("public", sub);
+				}
+
+				if (!dest) return;
+
+				try {
+					if (fs.existsSync(filePath)) {
+						const stat = fs.statSync(filePath);
+						if (stat.isDirectory()) {
+							fs.mkdirSync(dest, { recursive: true });
+						} else {
+							fs.mkdirSync(path.dirname(dest), { recursive: true });
+							fs.copyFileSync(filePath, dest);
+							console.log(
+								`[content-watcher] Synced: ${rel} -> ${path.relative(process.cwd(), dest)}`,
+							);
+						}
+					} else if (fs.existsSync(dest)) {
+						fs.rmSync(dest, { recursive: true, force: true });
+						console.log(
+							`[content-watcher] Removed: ${path.relative(process.cwd(), dest)}`,
+						);
+					}
+
+					for (const cachePath of [
+						path.resolve(".astro"),
+						path.resolve("node_modules/.astro"),
+					]) {
+						if (fs.existsSync(cachePath)) {
+							fs.rmSync(cachePath, { recursive: true, force: true });
+						}
+					}
+
+					server.ws.send({ type: "full-reload" });
+				} catch (err) {
+					console.error("[content-watcher] Sync error:", err);
+				}
+			};
+
+			server.watcher.on("change", syncTarget);
+			server.watcher.on("add", syncTarget);
+			server.watcher.on("unlink", syncTarget);
+		},
+	};
+}
 
 // https://astro.build/config
 export default defineConfig({
@@ -351,7 +429,7 @@ export default defineConfig({
 		}),
 	},
 	vite: {
-		plugins: [tailwindcss()],
+		plugins: [tailwindcss(), contentRepoWatcher()],
 		server: {
 			watch: {
 				ignored: ["**/package/**", "**/Firefly-docs/**"],

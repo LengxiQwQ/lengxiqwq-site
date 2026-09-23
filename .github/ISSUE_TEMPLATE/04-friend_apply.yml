@@ -11,7 +11,7 @@ body:
         - **站点名称**：冷汐的杂货铺
         - **站点链接**：https://lengxiqwq.com
         - **站点描述**：你好谢谢小笼包再见！
-        - **头像链接**：https://weavatar.com/avatar/52f243e67ccc2293d68c6f33db3f4083?s=640
+        - **头像链接**：https://weavatar.com/avatar/52f243e67ccc2293d68c6f33db3f4083?s=256
 
         提交后系统将通过 GitHub Actions 自动爬取校验反向链接。审核通过后将自动加入配置并触发部署上线！
   - type: input

@@ -92,22 +92,23 @@ const className = Astro.props.class;
                     }
             })(profileConfig.links[0])}
         </div>
+        {profileConfig.contact && (profileConfig.contact.email || profileConfig.contact.qq) && (
         <div class="mt-2.5 flex flex-col items-center">
             <div class="flex flex-col items-start w-fit max-w-full space-y-0.5">
-                <!-- 邮箱项 -->
+                {profileConfig.contact.email && (
                 <div class="copy-contact-row relative flex items-center w-full">
                     <div
                         role="button"
                         tabindex="0"
-                        data-copy="lengxi@lengxiqwq.com"
+                        data-copy={profileConfig.contact.email}
                         class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 hover:text-(--primary) dark:text-neutral-400 dark:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
                         title="点击复制"
-                        aria-label="邮箱：lengxi@lengxiqwq.com"
+                        aria-label={`邮箱：${profileConfig.contact.email}`}
                     >
                         <div class="w-4.5 flex items-center justify-center shrink-0 select-none pointer-events-none">
                             <Icon name="material-symbols:mail-outline-rounded" class="text-[1.1rem]" />
                         </div>
-                        <span class="font-medium tracking-wide select-text">lengxi@lengxiqwq.com</span>
+                        <span class="font-medium tracking-wide select-text">{profileConfig.contact.email}</span>
                     </div>
 
                     <!-- 打勾效果：放在小框外面，绝对定位零位移，上下垂直对齐 -->
@@ -115,21 +116,22 @@ const className = Astro.props.class;
                         <Icon name="material-symbols:check-rounded" class="text-[1.15rem]" />
                     </div>
                 </div>
+                )}
 
-                <!-- QQ 项 -->
+                {profileConfig.contact.qq && (
                 <div class="copy-contact-row relative flex items-center w-full">
                     <div
                         role="button"
                         tabindex="0"
-                        data-copy="3197635836"
+                        data-copy={profileConfig.contact.qq}
                         class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 hover:text-(--primary) dark:text-neutral-400 dark:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
                         title="点击复制"
-                        aria-label="QQ：3197635836"
+                        aria-label={`QQ：${profileConfig.contact.qq}`}
                     >
                         <div class="w-4.5 flex items-center justify-center shrink-0 select-none pointer-events-none">
                             <Icon name="mingcute:qq-line" class="text-[1.1rem]" />
                         </div>
-                        <span class="font-medium tracking-wide select-text">3197635836</span>
+                        <span class="font-medium tracking-wide select-text">{profileConfig.contact.qq}</span>
                     </div>
 
                     <!-- 打勾效果：放在小框外面，绝对定位零位移，上下垂直对齐 -->
@@ -137,8 +139,10 @@ const className = Astro.props.class;
                         <Icon name="material-symbols:check-rounded" class="text-[1.15rem]" />
                     </div>
                 </div>
+                )}
             </div>
         </div>
+        )}
   </div>
 </div>
 

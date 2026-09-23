@@ -7,12 +7,14 @@ description: "这里以后会慢慢住进一些互联网小伙伴 (´• ω •`
 
 {/* ========== 站点信息 ========= */}
 
+import { siteConfig, profileConfig } from "@/config";
+
 export const site = {
-  name: "冷汐的杂货铺",
-  desc: "你好谢谢小笼包再见！",
-  url: "https://lengxiqwq.com",
-  avatar: "https://weavatar.com/avatar/52f243e67ccc2293d68c6f33db3f4083?s=640",
-  email: "lengxi@lengxiqwq.com",
+  name: siteConfig.title,
+  desc: siteConfig.description,
+  url: siteConfig.site_url,
+  avatar: profileConfig.avatarUrl || (profileConfig.avatar?.startsWith("http") ? profileConfig.avatar : `${siteConfig.site_url.replace(/\/$/, '')}${profileConfig.avatar?.startsWith('/') ? '' : '/'}${profileConfig.avatar || 'avatar.webp'}`),
+  email: profileConfig.contact?.email || "",
 };
 
 {/* ========= 注意事项 ========== */}
@@ -38,6 +40,10 @@ export const notes = [
               <img
                 src={site.avatar}
                 alt={site.name}
+                width="64"
+                height="64"
+                loading="eager"
+                decoding="async"
                 class="w-full h-full object-cover"
               />
             </div>

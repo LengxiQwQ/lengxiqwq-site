@@ -11,7 +11,16 @@ interface FriendLinkEntry {
 
 const issueBody = process.env.ISSUE_BODY || "";
 const issueNumber = process.env.ISSUE_NUMBER || "";
-const contentRepoDir = process.env.CONTENT_REPO_DIR || ".content-repo";
+let contentRepoDir = process.env.CONTENT_REPO_DIR || "";
+if (!contentRepoDir) {
+	if (fs.existsSync(path.resolve(".content-repo"))) {
+		contentRepoDir = ".content-repo";
+	} else if (fs.existsSync(path.resolve("../lengxiqwq-site-content"))) {
+		contentRepoDir = path.resolve("../lengxiqwq-site-content");
+	} else {
+		contentRepoDir = ".content-repo";
+	}
+}
 const githubToken = process.env.GITHUB_TOKEN || "";
 const githubRepo = process.env.GITHUB_REPOSITORY || "";
 const forceBypass = process.env.FORCE_BYPASS === "true";
@@ -21,7 +30,43 @@ const inputSiteUrl = process.env.INPUT_SITEURL || "";
 const inputImgUrl = process.env.INPUT_IMGURL || "";
 const inputDesc = process.env.INPUT_DESC || "";
 
-const TARGET_DOMAIN = "lengxiqwq.com";
+// 动态解析站点配置，提取主站域名与链接
+function resolveSiteInfo(repoDir: string) {
+	let siteUrl = "https://lengxiqwq.com";
+	let siteTitle = "冷汐的杂货铺";
+
+	const candidates = [
+		path.resolve(repoDir, "config/siteConfig.ts"),
+		path.resolve("src/config/siteConfig.ts"),
+	];
+
+	for (const candidate of candidates) {
+		if (fs.existsSync(candidate)) {
+			try {
+				const content = fs.readFileSync(candidate, "utf-8");
+				const urlMatch = content.match(/site_url:\s*["']([^"']+)["']/);
+				if (urlMatch) siteUrl = urlMatch[1].trim();
+				const titleMatch = content.match(/title:\s*["']([^"']+)["']/);
+				if (titleMatch) siteTitle = titleMatch[1].trim();
+				break;
+			} catch {
+				// 忽略读取错误
+			}
+		}
+	}
+
+	let targetDomain = "lengxiqwq.com";
+	try {
+		targetDomain = new URL(siteUrl).hostname.replace(/^www\./, "");
+	} catch {
+		// 忽略 URL 解析错误
+	}
+
+	return { siteUrl, siteTitle, targetDomain };
+}
+
+const siteInfo = resolveSiteInfo(contentRepoDir);
+const TARGET_DOMAIN = siteInfo.targetDomain;
 
 // GitHub REST API 辅助函数
 async function githubRequest(
@@ -456,7 +501,7 @@ async function run() {
 	console.log(`[friend-apply] 成功将友链写入: ${configFile}`);
 
 	// 成功互动反馈
-	const successMsg = `🎉 **友链审核通过！**\n\n已成功自动录入本站友链配置：\n- **站点名称**：${title}\n- **站点链接**：${siteurl}\n- **站点描述**：${desc}\n- **头像链接**：${imgurl}\n\n更改已自动推送至内容仓，构建部署已触发。稍后即可在 [冷汐的杂货铺 - 友情链接](https://lengxiqwq.com/friends/) 查看到您的站点！欢迎常来互访交流～ ✨`;
+	const successMsg = `🎉 **友链审核通过！**\n\n已成功自动录入本站友链配置：\n- **站点名称**：${title}\n- **站点链接**：${siteurl}\n- **站点描述**：${desc}\n- **头像链接**：${imgurl}\n\n更改已自动推送至内容仓，构建部署已触发。稍后即可在 [${siteInfo.siteTitle} - 友情链接](${siteInfo.siteUrl.replace(/\/$/, "")}/friends/) 查看到您的站点！欢迎常来互访交流～ ✨`;
 
 	await postComment(successMsg);
 	await removeLabel("check-failed");

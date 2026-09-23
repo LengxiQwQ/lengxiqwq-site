@@ -84,6 +84,7 @@ jobs:
 
       - name: 提交并推送内容仓变更
         run: |
+          pnpm biome format --write .content-repo/config/friendsConfig.ts || true
           cd .content-repo
           if [ -n "$(git status --porcelain config/friendsConfig.ts)" ]; then
             git config user.name "github-actions[bot]"
