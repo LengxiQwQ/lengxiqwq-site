@@ -403,8 +403,13 @@ export async function extractHeaderThemeFromWallpaper(
 		// 考虑黑色暗化层 dimOpacity (例如 0.2 的暗化层使最终背景亮度乘以 0.8)
 		const effectiveLuminance = avgLuminance * (1 - dimOpacity);
 
-		// 亮度阈值：> 0.48 认为是浅色背景（文字用黑色/深色），<= 0.48 认为是深色背景（文字用白色/浅色）
-		return effectiveLuminance > 0.48 ? "dark" : "light";
+		// 亮度阈值：更倾向于使用白色文字（light）。
+		// 提高阈值至 0.60：只有当壁纸顶部极其浅亮（> 0.60）时才切换为黑色文字（dark），
+		// 只要壁纸稍微有点暗、有点黑或处于普通中等明度，均稳定使用白色文字（light）。
+		const HEADER_THEME_LUMINANCE_THRESHOLD = 0.6;
+		return effectiveLuminance > HEADER_THEME_LUMINANCE_THRESHOLD
+			? "dark"
+			: "light";
 	} catch (e) {
 		console.warn(
 			"[color-extract] Failed to extract header theme from wallpaper:",
