@@ -16,9 +16,6 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 	// 主页
 	links.push(LinkPresets.Home);
 
-	// 项目
-	links.push(LinkPresets.Projects);
-
 	// 文章及其子菜单
 	links.push({
 		name: "文章",
@@ -39,7 +36,7 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 		],
 	});
 
-	// 社交及其子菜单
+	//社交及其子菜单
 	links.push({
 		name: "社交",
 		url: "#",
@@ -62,14 +59,11 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 			// 动态
 			LinkPresets.Dynamic,
 
+			// 项目
+			LinkPresets.Projects,
+
 			// 相册
 			LinkPresets.Gallery,
-
-			// 我的设备
-			LinkPresets.Devices,
-
-			// 时间线
-			LinkPresets.Timeline,
 
 			// 书签导航
 			LinkPresets.Booknav,
@@ -101,6 +95,42 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 			LinkPresets.About,
 		],
 	});
+
+	// 自定义导航栏链接
+	links.push({
+		name: "链接",
+		url: "#",
+		icon: "material-symbols:link",
+		// 子菜单
+		children: [
+			{
+				name: "GitHub",
+				url: "https://github.com/CuteLeaf/Firefly",
+				external: true,
+				icon: "fa7-brands:github",
+			},
+			{
+				name: "Gitee",
+				url: "https://gitee.com/CuteLeaf/Firefly",
+				external: true,
+				icon: "fa7-brands:gitee",
+			},
+			{
+				name: "Firefly文档",
+				url: "https://docs-firefly.cuteleaf.cn",
+				external: true,
+				icon: "material-symbols:docs",
+			},
+		],
+	});
+
+	// 文档链接
+	// links.push({
+	// 	name: "文档",
+	// 	url: "https://docs-firefly.cuteleaf.cn",
+	// 	external: true,
+	// 	icon: "material-symbols:docs",
+	// });
 
 	return { links } as NavBarConfig;
 };
@@ -170,18 +200,6 @@ export const LinkPresets: Record<string, NavBarLink> = {
 		icon: "material-symbols:photo-library",
 		pageKey: "gallery",
 	},
-	Devices: {
-		name: "我的设备",
-		url: "/devices/",
-		icon: "material-symbols:devices-rounded",
-		pageKey: "devices",
-	},
-	Timeline: {
-		name: "时间线",
-		url: "/timeline/",
-		icon: "material-symbols:timeline-rounded",
-		pageKey: "timeline",
-	},
 	Booknav: {
 		name: "书签导航",
 		url: "/booknav/",
@@ -225,28 +243,4 @@ export const LinkPresets: Record<string, NavBarLink> = {
 	},
 };
 
-export const navBarConfig: NavBarConfig = {
-	...getDynamicNavBarConfig(),
-	siteSwitcher: {
-		enable: true,
-		items: [
-			{
-				title: "冷汐的杂货铺",
-				url: "/",
-				key: "site",
-			},
-			{
-				title: "冷汐的小站",
-				url: "https://blog.lengxiqwq.com",
-				key: "nest",
-				external: true,
-			},
-			{
-				title: "冷汐的小屋",
-				url: "https://room.lengxiqwq.com",
-				key: "room",
-				external: true,
-			},
-		],
-	},
-};
+export const navBarConfig: NavBarConfig = getDynamicNavBarConfig();

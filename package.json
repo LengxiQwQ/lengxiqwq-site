@@ -26,7 +26,8 @@
     "preinstall": "npx only-allow pnpm",
     "lqips": "npx tsx scripts/generate-lqips.ts",
     "github-cards": "npx tsx scripts/generate-github-card-data.ts",
-    "content:sync": "npx tsx scripts/sync-content.ts"
+    "content:sync": "npx tsx scripts/sync-content.ts",
+    "content:reset": "git checkout HEAD -- src/content src/config public && git clean -fd src/content public"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",

@@ -1,61 +1,14 @@
 import type { AnalyticsConfig } from "../types/analyticsConfig";
 
-// 读取 Clarity Project ID 环境变量（优先读取 PUBLIC_MICROSOFT_CLARITY_ID）
-function readClarityIdEnv(): string {
-	try {
-		const raw = import.meta.env.PUBLIC_MICROSOFT_CLARITY_ID;
-		if (typeof raw === "string" && raw.trim() !== "") {
-			return raw.trim();
-		}
-	} catch {}
-	try {
-		if (
-			typeof process !== "undefined" &&
-			process.env?.PUBLIC_MICROSOFT_CLARITY_ID
-		) {
-			return process.env.PUBLIC_MICROSOFT_CLARITY_ID.trim();
-		}
-	} catch {}
-	return "";
-}
-
-// 读取 Umami Website ID 环境变量（优先读取 PUBLIC_UMAMI_WEBSITE_ID）
-function readUmamiWebsiteIdEnv(): string {
-	try {
-		const raw = import.meta.env.PUBLIC_UMAMI_WEBSITE_ID;
-		if (typeof raw === "string" && raw.trim() !== "") {
-			return raw.trim();
-		}
-	} catch {}
-	try {
-		if (
-			typeof process !== "undefined" &&
-			process.env?.PUBLIC_UMAMI_WEBSITE_ID
-		) {
-			return process.env.PUBLIC_UMAMI_WEBSITE_ID.trim();
-		}
-	} catch {}
-	return "";
-}
-
 export const analyticsConfig: AnalyticsConfig = {
 	// Google Analytics ID
 	googleAnalyticsId: "",
 	// Microsoft Clarity ID
-	// 统一配置入口：在此填写你的 Microsoft Clarity Project ID（例如："xxxxxxxxxx"），
-	// 或在部署平台/环境变量中配置 PUBLIC_MICROSOFT_CLARITY_ID
-	microsoftClarityId: readClarityIdEnv() || "ylmp70p0eu",
-	// Microsoft Clarity 增强配置
-	clarityAnalytics: {
-		// 是否开启高价值交互事件统计（项目卡片、外链/GitHub、文章打开、相册、搜索、音乐、邮箱等）
-		enableCustomEvents: true,
-	},
+	microsoftClarityId: "",
 	// Umami 统计配置
 	umamiAnalytics: {
 		// Umami Website ID
-		// 统一配置入口：在此填写你的 Umami Website ID（例如："xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"），
-		// 或在部署平台/环境变量中配置 PUBLIC_UMAMI_WEBSITE_ID
-		websiteId: readUmamiWebsiteIdEnv(),
+		websiteId: "",
 		// Umami JS地址，支持使用自建
 		scriptUrl: "https://cloud.umami.is/script.js",
 		// Umami 会话回放脚本地址，支持使用自建
