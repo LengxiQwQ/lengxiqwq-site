@@ -411,13 +411,12 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semi"].navbar-sticky-sha
 }
 
 /* ============================================
- * 自适应 Header 文字颜色主题（根据壁纸背景色）
+ * 自适应 Header 文字颜色主题（根据壁纸背景色）[已注释禁用]
  * 仅在未滚动状态 (:not(.scrolled)) 下生效；
  * 滚动后恢复跟随卡片背景主题色。
  * 严格排除下拉菜单与浮动面板 (:not(.dropdown-menu *):not(.float-panel *))。
  * ============================================ */
-
-/* 浅色文字主题 (Header Text: Light/White) - 适用于深色壁纸背景 */
+/*
 #navbar[data-header-theme="light"]:not(.scrolled) {
     --header-adaptive-text: rgba(255, 255, 255, 0.92);
     --header-adaptive-muted: rgba(255, 255, 255, 0.65);
@@ -427,7 +426,6 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semi"].navbar-sticky-sha
     --header-adaptive-search-hover: rgba(255, 255, 255, 0.2);
 }
 
-/* 深色文字主题 (Header Text: Dark/Black) - 适用于浅色壁纸背景 */
 #navbar[data-header-theme="dark"]:not(.scrolled) {
     --header-adaptive-text: rgba(0, 0, 0, 0.88);
     --header-adaptive-muted: rgba(0, 0, 0, 0.55);
@@ -437,7 +435,6 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semi"].navbar-sticky-sha
     --header-adaptive-search-hover: rgba(0, 0, 0, 0.1);
 }
 
-/* 应用自适应文字与图标颜色 */
 #navbar[data-header-theme]:not(.scrolled) :is(.btn-plain, #site-switcher-trigger):not(.dropdown-menu *):not(.float-panel *) {
     color: var(--header-adaptive-text) !important;
     transition: color 0.3s ease, background-color 0.3s ease;
@@ -452,19 +449,16 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semi"].navbar-sticky-sha
     background-color: var(--header-adaptive-active-bg) !important;
 }
 
-/* 站点标题与 Logo 文字 */
 #navbar[data-header-theme]:not(.scrolled) #site-switcher-trigger > div:not(.text-\(--primary\)) {
     color: var(--header-adaptive-text) !important;
     transition: color 0.3s ease;
 }
 
-/* 箭头与弱化图标 */
 #navbar[data-header-theme]:not(.scrolled) :is(.site-switcher-arrow, .dropdown-arrow, .navbar-icon):not(.dropdown-menu *):not(.float-panel *) {
     color: var(--header-adaptive-muted) !important;
     transition: color 0.3s ease;
 }
 
-/* 桌面搜索框 */
 #navbar[data-header-theme]:not(.scrolled) #search-bar:not(.dropdown-menu *):not(.float-panel *) {
     background-color: var(--header-adaptive-search-bg) !important;
     transition: background-color 0.3s ease;
@@ -489,4 +483,5 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semi"].navbar-sticky-sha
     color: var(--header-adaptive-muted) !important;
     transition: color 0.3s ease;
 }
+*/
 

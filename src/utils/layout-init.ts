@@ -1,5 +1,5 @@
 import {
-	initHeaderThemeFollower,
+	// initHeaderThemeFollower,
 	initWallpaperHueFollower,
 } from "@/utils/color-extract-utils";
 import {
@@ -34,7 +34,7 @@ export function initLayout(): void {
 	window.__fireflyLayoutInit = true;
 
 	initWallpaperHueFollower();
-	initHeaderThemeFollower();
+	// initHeaderThemeFollower(); // 暂禁用根据壁纸深浅自适应切换导航栏文字深浅功能
 	initializeFloatingPanels();
 
 	setClickOutsideToClose("display-setting", [

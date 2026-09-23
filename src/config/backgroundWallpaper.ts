@@ -19,7 +19,6 @@ export const backgroundWallpaper: BackgroundWallpaperConfig = {
 			"/wallpapers/mobile/uehara-sei-lily-girl.webp",
 			"/wallpapers/mobile/yanno-chan.webp",
 			"/wallpapers/mobile/hydrangea-girl.webp",
-			"/wallpapers/mobile/kinako-catgirl.webp",
 			"/wallpapers/mobile/miku-desk.webp",
 			"/wallpapers/mobile/miku-heart.webp",
 		],

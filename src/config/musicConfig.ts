@@ -18,7 +18,7 @@ export const musicPlayerConfig: MusicPlayerConfig = {
 	playMode: "list",
 
 	// 是否显启用歌词
-	showLyrics: false,
+	showLyrics: true,
 
 	// Meting API 配置
 	meting: {
@@ -47,7 +47,7 @@ export const musicPlayerConfig: MusicPlayerConfig = {
 				artist: "酸欠少女 さユり",
 				url: "/assets/music/birthday-song-me-hikigatari.mp3",
 				cover: "/assets/music/cover/birthday-song.webp",
-				lrc: "",
+				lrc: "/assets/music/birthday-song-me-hikigatari.lrc",
 			},
 			// 备用曲目（资源保留于仓库中，暂不在站点前端展示）
 			// {
@@ -55,7 +55,7 @@ export const musicPlayerConfig: MusicPlayerConfig = {
 			// 	artist: "酸欠少女 さユり",
 			// 	url: "/assets/music/mikazuki-me-hikigatari.mp3",
 			// 	cover: "/assets/music/cover/mikazuki.webp",
-			// 	lrc: "",
+			// 	lrc: "/assets/music/mikazuki-me-hikigatari.lrc",
 			// },
 		],
 	},

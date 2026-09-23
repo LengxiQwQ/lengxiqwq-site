@@ -440,8 +440,25 @@ const viewConfigStr = JSON.stringify({
             }
             lyrics.forEach(function (line, index) {
                 var lineEl = document.createElement('div');
-                lineEl.className = 'lrc-line transition-all duration-300 text-sm text-neutral-400 py-1 cursor-pointer hover:text-(--primary)';
-                lineEl.innerText = line.text;
+                lineEl.className = 'lrc-line transition-all duration-300 text-sm text-neutral-400 py-1 cursor-pointer hover:text-(--primary) flex flex-col items-center justify-center leading-snug';
+
+                // 智能识别括号内的中文翻译（如 "人はみんな幸福を願い (人们都祈求幸福)"），拆为上下双行
+                var match = line.text.match(/^(.*?)\s*[(（](.+?)[)）]\s*$/);
+                if (match && match[1] && match[2]) {
+                    var origSpan = document.createElement('span');
+                    origSpan.className = 'lrc-orig transition-all duration-300';
+                    origSpan.innerText = match[1].trim();
+
+                    var transSpan = document.createElement('span');
+                    transSpan.className = 'lrc-trans text-xs opacity-70 font-normal mt-0.5 tracking-wide transition-all duration-300';
+                    transSpan.innerText = match[2].trim();
+
+                    lineEl.appendChild(origSpan);
+                    lineEl.appendChild(transSpan);
+                } else {
+                    lineEl.innerText = line.text;
+                }
+
                 lineEl.dataset.index = index;
                 lineEl.setAttribute('role', 'option');
                 lineEl.setAttribute('aria-label', line.text);
@@ -458,12 +475,21 @@ const viewConfigStr = JSON.stringify({
 
             var lines = ui.lrcContainer.querySelectorAll('.lrc-line');
             lines.forEach(function (line, i) {
+                var trans = line.querySelector('.lrc-trans');
                 if (i === index) {
                     line.classList.add('text-(--primary)', 'font-bold', 'text-base');
                     line.classList.remove('text-neutral-400', 'text-sm');
+                    if (trans) {
+                        trans.classList.remove('opacity-70');
+                        trans.classList.add('opacity-90');
+                    }
                 } else {
                     line.classList.remove('text-(--primary)', 'font-bold', 'text-base');
                     line.classList.add('text-neutral-400', 'text-sm');
+                    if (trans) {
+                        trans.classList.remove('opacity-90');
+                        trans.classList.add('opacity-70');
+                    }
                 }
             });
 
