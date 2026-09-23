@@ -124,7 +124,7 @@ const logoVariants = await Promise.all(
 		})),
 );
 ---
-<div id="navbar" class="z-50" style={`--navbar-glass-blur: ${navbarBlur}px;`} data-transparent-mode={navbarTransparentMode} data-is-home={isHomePageCheck} data-full-width={navbarWidthFull}>
+<div id="navbar" class="z-50" style={`--navbar-glass-blur: ${navbarBlur}px; --navbar-scroll-progress: 0;`} data-transparent-mode={navbarTransparentMode} data-is-home={isHomePageCheck} data-full-width={navbarWidthFull}>
     <script is:inline define:vars={{
       bannerTMode: backgroundWallpaper.banner?.navbar?.transparentMode || "semi",
       bannerBlur: backgroundWallpaper.banner?.navbar?.blur ?? 20,
@@ -154,6 +154,12 @@ const logoVariants = await Promise.all(
         }
         navbar.setAttribute("data-transparent-mode", mode);
         navbar.style.setProperty("--navbar-glass-blur", `${blur}px`);
+        if (mode === "semifull") {
+          const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+          const progress = Math.min(1, Math.max(0, scrollTop / 80));
+          navbar.style.setProperty("--navbar-scroll-progress", progress.toFixed(3));
+          if (progress >= 0.85) navbar.classList.add("scrolled");
+        }
       })();
     </script>
     <div class:list={[
@@ -472,7 +478,10 @@ function initSemifullScrollDetection() {
     if (!navbar) return;
 
     const transparentMode = navbar.getAttribute('data-transparent-mode');
-    if (transparentMode !== 'semifull') return;
+    if (transparentMode !== 'semifull') {
+        navbar.style.removeProperty('--navbar-scroll-progress');
+        return;
+    }
 
     // 无论首页/非首页，semifull 都由滚动位置决定是否进入 scrolled 状态
     // 先移除之前的滚动监听器，避免重复绑定
@@ -481,10 +490,8 @@ function initSemifullScrollDetection() {
         window.semifullScrollHandler = undefined;
     }
 
-    // 初始状态不强制加 scrolled，保持透明；滚动后再切换
-    navbar.classList.remove('scrolled');
-
     let ticking = false;
+    let lastProgress = -1;
 
     function updateNavbarState() {
         if (document.documentElement.classList.contains('is-page-transitioning')) {
@@ -495,17 +502,32 @@ function initSemifullScrollDetection() {
                 'fullscreen'
             ) {
                 navbar!.classList.remove('scrolled');
+                navbar!.style.setProperty('--navbar-scroll-progress', '0');
+                lastProgress = 0;
             }
             ticking = false;
             return;
         }
 
         const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-        const threshold = 50; // 滚动阈值，可以根据需要调整
-        // 使用批量DOM操作优化性能
-        if (scrollTop > threshold) {
+        const maxScroll = 80; // 滚动过渡距离：0px 到 80px 平滑过渡
+        const rawProgress = Math.min(1, Math.max(0, scrollTop / maxScroll));
+        const progress = Math.round(rawProgress * 1000) / 1000;
+
+        // 仅在进度发生微小变化以上，或到达边界 0 / 1 时更新 DOM 属性
+        if (
+            Math.abs(progress - lastProgress) >= 0.005 ||
+            (progress === 0 && lastProgress !== 0) ||
+            (progress === 1 && lastProgress !== 1)
+        ) {
+            navbar!.style.setProperty('--navbar-scroll-progress', progress.toString());
+            lastProgress = progress;
+        }
+
+        // 保持 .scrolled 状态同步（带滞后防抖）
+        if (progress >= 0.85) {
             navbar!.classList.add('scrolled');
-        } else {
+        } else if (progress <= 0.15) {
             navbar!.classList.remove('scrolled');
         }
 
@@ -517,11 +539,6 @@ function initSemifullScrollDetection() {
             requestAnimationFrame(updateNavbarState);
             ticking = true;
         }
-    }
-
-    // 移除之前的滚动事件监听器（如果存在）
-    if (window.semifullScrollHandler) {
-        window.removeEventListener('scroll', window.semifullScrollHandler as () => void);
     }
 
     // 保存新的事件处理器引用

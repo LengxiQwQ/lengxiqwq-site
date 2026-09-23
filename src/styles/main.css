@@ -301,12 +301,22 @@ a, a:link, a:visited {
         box-shadow: inset 0 1px 0 var(--navbar-glass-highlight), 0 1px 0 var(--navbar-glass-hairline) !important;
     }
 
-    /* 全屏壁纸首页动态透明（semifull）：顶部透明，下滑后显示卡片底色。
-       需要比上面 wallpaper-transparent 的固定底色更高特异性，才能让顶部透明生效 */
-    html[data-wallpaper-mode="fullscreen"] #navbar[data-transparent-mode="semifull"]:not(.scrolled) > div {
-        background: transparent !important;
-        --navbar-surface-blur: 0px !important;
-        box-shadow: none !important;
+    /* 全屏壁纸首页动态透明（semifull）：平滑渐进过渡 */
+    html[data-wallpaper-mode="fullscreen"] #navbar[data-transparent-mode="semifull"] > div {
+        --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
+        --navbar-blur-opacity: var(--navbar-scroll-progress, 0);
+        background-color: color-mix(
+            in oklch,
+            var(--card-bg) calc(var(--opacity-45) * var(--navbar-scroll-progress, 0) * 100%),
+            transparent
+        ) !important;
+        box-shadow:
+            inset 0 1px 0 color-mix(in srgb, var(--navbar-glass-highlight) calc(var(--navbar-scroll-progress, 0) * 100%), transparent),
+            0 1px 0 color-mix(in srgb, var(--navbar-glass-hairline) calc(var(--navbar-scroll-progress, 0) * 100%), transparent) !important;
+        transition:
+            background-color 0.15s cubic-bezier(0.22, 1, 0.36, 1),
+            box-shadow 0.15s cubic-bezier(0.22, 1, 0.36, 1),
+            border-color 0.15s cubic-bezier(0.22, 1, 0.36, 1) !important;
     }
 
     /* 全屏 semi 玻璃 */
@@ -319,7 +329,9 @@ a, a:link, a:visited {
     }
     /* 全屏 semifull 滚动后玻璃化 */
     html[data-wallpaper-mode="fullscreen"] #navbar[data-transparent-mode="semifull"].scrolled > div {
+        --navbar-blur-opacity: 1;
         --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
+        background-color: color-mix(in oklch, var(--card-bg) calc(var(--opacity-45) * 100%), transparent) !important;
         box-shadow: inset 0 1px 0 var(--navbar-glass-highlight), 0 1px 0 var(--navbar-glass-hairline) !important;
     }
     :root.dark[data-wallpaper-mode="fullscreen"] #navbar[data-transparent-mode="semifull"].scrolled > div {

@@ -482,6 +482,7 @@ export function updateNavbarTransparency(mode: WALLPAPER_MODE): void {
 		// 移除滚动监听器
 		window.removeEventListener("scroll", window.semifullScrollHandler);
 		delete window.semifullScrollHandler;
+		navbar.style.removeProperty("--navbar-scroll-progress");
 	}
 }
 
