@@ -239,12 +239,13 @@ export default defineConfig({
 			],
 			smoothScrolling: false,
 			cache: true,
-			preload: {
-				hover: true,
-				visible: true,
-			},
+			preload: false,
 			accessibility: true,
-			updateHead: true,
+			updateHead: {
+				awaitAssets: true,
+				persistAssets: true, // 跨页保留 CSS/JS 资源标签，避免移除再重插导致 FOUC
+				persistTags: false,
+			},
 			updateBodyClass: false,
 			globalInstance: true,
 			// 滚动相关配置优化

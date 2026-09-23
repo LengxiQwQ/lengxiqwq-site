@@ -543,8 +543,8 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
 
     {/* 卡片样式：根据 localStorage 覆盖默认配置 */}
     <script is:inline define:vars={{
-      defaultBorder: siteConfig.card?.border ?? true,
-      defaultFollowTheme: siteConfig.card?.followTheme ?? true,
+      defaultBorder: siteConfig.card?.border ?? false,
+      defaultFollowTheme: siteConfig.card?.followTheme ?? false,
     }}>
       (function() {
         var stored = localStorage.getItem("cardBorderEnabled");
