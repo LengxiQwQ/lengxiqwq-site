@@ -488,7 +488,7 @@ async function run() {
 			if (!trimmedInner) {
 				return `export const friendsConfig: FriendLink[] = [\n${newEntry}\n];`;
 			}
-			return `export const friendsConfig: FriendLink[] = [\n${newEntry}\n\t${trimmedInner}\n];`;
+			return `export const friendsConfig: FriendLink[] = [\n\t${trimmedInner}\n${newEntry}\n];`;
 		});
 	} else {
 		console.error(

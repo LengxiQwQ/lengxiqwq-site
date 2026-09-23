@@ -73,7 +73,7 @@ function insertFriendToConfig(filePath: string, entry: FriendEntry) {
 		if (!trimmed) {
 			return `export const friendsConfig: FriendLink[] = [\n${newCode}\n];`;
 		}
-		return `export const friendsConfig: FriendLink[] = [\n${newCode}\n\t${trimmed}\n];`;
+		return `export const friendsConfig: FriendLink[] = [\n\t${trimmed}\n${newCode}\n];`;
 	});
 
 	fs.writeFileSync(filePath, updated, "utf-8");

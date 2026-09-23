@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { setMaxListeners } from "node:events";
@@ -139,6 +140,45 @@ function contentRepoWatcher() {
 			server.watcher.on("change", syncTarget);
 			server.watcher.on("add", syncTarget);
 			server.watcher.on("unlink", syncTarget);
+
+			// 本地开发服务停止/退出时，自动执行清理以恢复纯净模板预设
+			let isCleaned = false;
+			const cleanUpOnExit = () => {
+				if (isCleaned) return;
+				isCleaned = true;
+				try {
+					console.log("\n[content-watcher] 正在自动清理临时同步内容，恢复纯净模板状态...");
+					execSync("git checkout HEAD -- src/content src/config public", {
+						stdio: "ignore",
+					});
+					execSync("git clean -fd src/content public", {
+						stdio: "ignore",
+					});
+					for (const cacheDir of [".astro", "node_modules/.astro"]) {
+						const resolved = path.resolve(cacheDir);
+						if (fs.existsSync(resolved)) {
+							fs.rmSync(resolved, { recursive: true, force: true });
+						}
+					}
+					console.log("[content-watcher] ✅ 已自动还原为纯净代码仓状态 ✨");
+				} catch {
+					// 忽略清理异常
+				}
+			};
+
+			process.once("SIGINT", () => {
+				cleanUpOnExit();
+				process.exit(0);
+			});
+			process.once("SIGTERM", () => {
+				cleanUpOnExit();
+				process.exit(0);
+			});
+			process.once("SIGHUP", () => {
+				cleanUpOnExit();
+				process.exit(0);
+			});
+			server.httpServer?.on("close", cleanUpOnExit);
 		},
 	};
 }

@@ -12,8 +12,10 @@
     "start": "astro dev",
     "precheck": "npx tsx scripts/sync-content.ts",
     "check": "astro check",
+    "postcheck": "npx tsx scripts/reset-content.ts",
     "prebuild": "npx tsx scripts/sync-content.ts",
     "build": "npx tsx scripts/generate-github-card-data.ts && npx tsx scripts/generate-lqips.ts && npx tsx scripts/generate-vndb-covers.ts && astro build && npx tsx scripts/prune-pio-assets.ts && npx tsx scripts/subset-fonts.ts && npx tsx scripts/minify-inline-scripts.ts && npx tsx scripts/run-pagefind.ts",
+    "postbuild": "npx tsx scripts/reset-content.ts",
     "preview": "astro preview",
     "astro": "astro",
     "type-check": "tsc --noEmit --isolatedDeclarations",
@@ -27,7 +29,7 @@
     "lqips": "npx tsx scripts/generate-lqips.ts",
     "github-cards": "npx tsx scripts/generate-github-card-data.ts",
     "content:sync": "npx tsx scripts/sync-content.ts",
-    "content:reset": "git checkout HEAD -- src/content src/config public && git clean -fd src/content public"
+    "content:reset": "npx tsx scripts/reset-content.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",
