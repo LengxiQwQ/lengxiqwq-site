@@ -541,9 +541,9 @@ function initSemifullScrollDetection() {
         }
 
         // 保持 .scrolled 状态同步（带滞后防抖）
-        if (progress >= 0.85) {
+        if (progress >= 0.95) {
             navbar!.classList.add('scrolled');
-        } else if (progress <= 0.15) {
+        } else if (progress <= 0.05) {
             navbar!.classList.remove('scrolled');
         }
 
