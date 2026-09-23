@@ -147,6 +147,89 @@ function isValidHttpUrl(string: string) {
 	}
 }
 
+// 站点主页可访问性检测
+async function verifySiteReachable(
+	siteUrl: string,
+): Promise<{ success: boolean; reason?: string }> {
+	try {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+		const response = await fetch(siteUrl, {
+			signal: controller.signal,
+			headers: {
+				"User-Agent":
+					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 FireflyBot/1.0",
+				Accept:
+					"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+			},
+			redirect: "follow",
+		});
+
+		clearTimeout(timeoutId);
+
+		if (!response.ok) {
+			return {
+				success: false,
+				reason: `站点返回 HTTP 状态码: ${response.status} ${response.statusText}`,
+			};
+		}
+
+		return { success: true };
+	} catch (err: unknown) {
+		const error = err as Error;
+		if (error.name === "AbortError") {
+			return { success: false, reason: "访问站点超时（超过 12 秒）" };
+		}
+		return {
+			success: false,
+			reason: `站点连接失败: ${error.message || String(error)}`,
+		};
+	}
+}
+
+// 头像图片链接可访问性检测
+async function verifyAvatarReachable(
+	imgUrl: string,
+): Promise<{ success: boolean; reason?: string }> {
+	try {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+		const response = await fetch(imgUrl, {
+			method: "GET",
+			signal: controller.signal,
+			headers: {
+				"User-Agent":
+					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 FireflyBot/1.0",
+				Accept:
+					"image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+			},
+			redirect: "follow",
+		});
+
+		clearTimeout(timeoutId);
+
+		if (!response.ok) {
+			return {
+				success: false,
+				reason: `头像链接返回 HTTP 状态码: ${response.status} ${response.statusText}`,
+			};
+		}
+
+		return { success: true };
+	} catch (err: unknown) {
+		const error = err as Error;
+		if (error.name === "AbortError") {
+			return { success: false, reason: "加载头像图片超时（超过 10 秒）" };
+		}
+		return {
+			success: false,
+			reason: `头像图片加载失败: ${error.message || String(error)}`,
+		};
+	}
+}
+
 // 反向链接网页抓取与检测
 async function verifyBacklink(
 	checkUrl: string,
@@ -284,10 +367,37 @@ async function run() {
 		return;
 	}
 
-	// 反向链接审核
+	// 连通性与反向链接审核
 	if (forceBypass) {
-		console.log("[friend-apply] 检测到 bypass-check 标签，跳过反向链接验证");
+		console.log(
+			"[friend-apply] 检测到 bypass-check 标签，跳过连通性与反向链接验证",
+		);
 	} else {
+		// 1. 站点主页存活连通性检测
+		console.log(`[friend-apply] 开始探测站点主页连通性: ${siteurl}`);
+		const siteCheck = await verifySiteReachable(siteurl);
+		if (!siteCheck.success) {
+			const msg = `⚠️ **站点主页无法正常访问**\n\n机器人尝试访问您的网站主页（\`${siteurl}\`）失败：${siteCheck.reason}。\n\n请确保站点已正常上线、网络可以公开访问后再提交申请。如果您使用了特殊防爬保护或地区限制，请联系博主添加 \`bypass-check\` 标签进行人工放行。`;
+			await postComment(msg);
+			await addLabels(["check-failed"]);
+			console.log(`[friend-apply] 站点存活检测失败: ${siteCheck.reason}`);
+			return;
+		}
+		console.log("[friend-apply] 站点主页连通性良好！");
+
+		// 2. 头像图片链接连通性检测
+		console.log(`[friend-apply] 开始探测头像图片连通性: ${imgurl}`);
+		const avatarCheck = await verifyAvatarReachable(imgurl);
+		if (!avatarCheck.success) {
+			const msg = `⚠️ **站点头像无法正常加载**\n\n机器人尝试加载您的头像图片（\`${imgurl}\`）失败：${avatarCheck.reason}。\n\n请检查头像链接是否填写正确、是否支持公网外链访问。修改后可重新编辑 Issue 重新检测。`;
+			await postComment(msg);
+			await addLabels(["check-failed"]);
+			console.log(`[friend-apply] 头像存活检测失败: ${avatarCheck.reason}`);
+			return;
+		}
+		console.log("[friend-apply] 头像图片加载正常！");
+
+		// 3. 反向链接爬虫审核
 		console.log(`[friend-apply] 开始对反向链接进行爬虫验证: ${checkurl}`);
 		const checkResult = await verifyBacklink(checkurl);
 
