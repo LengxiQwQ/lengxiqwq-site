@@ -18,6 +18,7 @@
     "new-dynamic": "tsx scripts/new-dynamic.js",
     "new-d": "tsx scripts/new-dynamic.js",
     "new-post": "tsx scripts/new-post.js",
+    "add-friend": "tsx scripts/add-friend.ts",
     "format": "biome format --write ./src ./scripts",
     "lint": "biome check --write ./src ./scripts",
     "preinstall": "npx only-allow pnpm",

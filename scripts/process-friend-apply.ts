@@ -16,6 +16,11 @@ const githubToken = process.env.GITHUB_TOKEN || "";
 const githubRepo = process.env.GITHUB_REPOSITORY || "";
 const forceBypass = process.env.FORCE_BYPASS === "true";
 
+const inputTitle = process.env.INPUT_TITLE || "";
+const inputSiteUrl = process.env.INPUT_SITEURL || "";
+const inputImgUrl = process.env.INPUT_IMGURL || "";
+const inputDesc = process.env.INPUT_DESC || "";
+
 const TARGET_DOMAIN = "lengxiqwq.com";
 
 // GitHub REST API 辅助函数
@@ -282,14 +287,27 @@ async function verifyBacklink(
 }
 
 async function run() {
-	console.log(`[friend-apply] 开始处理友链申请 Issue #${issueNumber}`);
+	const isManualDispatch = Boolean(inputTitle && inputSiteUrl);
 
-	if (!issueBody) {
-		console.error("未获取到 Issue 内容");
-		process.exit(1);
+	if (isManualDispatch) {
+		console.log("[friend-apply] 检测到博主手动添加模式 (无需校验反向链接)");
+	} else {
+		console.log(`[friend-apply] 开始处理友链申请 Issue #${issueNumber}`);
+		if (!issueBody) {
+			console.error("未获取到 Issue 内容");
+			process.exit(1);
+		}
 	}
 
-	const parsed = parseIssueBody(issueBody);
+	const parsed = isManualDispatch
+		? {
+				title: inputTitle,
+				siteurl: inputSiteUrl,
+				imgurl: inputImgUrl,
+				desc: inputDesc,
+				checkurl: inputSiteUrl,
+			}
+		: parseIssueBody(issueBody);
 
 	// 必填项检查
 	if (
@@ -297,16 +315,17 @@ async function run() {
 		!parsed.siteurl ||
 		!parsed.imgurl ||
 		!parsed.desc ||
-		!parsed.checkurl
+		(!isManualDispatch && !parsed.checkurl)
 	) {
 		const missingFields: string[] = [];
 		if (!parsed.title) missingFields.push("站点名称");
 		if (!parsed.siteurl) missingFields.push("站点链接");
 		if (!parsed.imgurl) missingFields.push("头像链接");
 		if (!parsed.desc) missingFields.push("站点描述");
-		if (!parsed.checkurl) missingFields.push("友链所在页面");
+		if (!isManualDispatch && !parsed.checkurl)
+			missingFields.push("友链所在页面");
 
-		const msg = `⚠️ **申请信息不完整**\n\n缺少以下必填字段：${missingFields.map((f) => `\`${f}\``).join("、")}。\n请编辑 Issue 补充完整后重试。`;
+		const msg = `⚠️ **申请信息不完整**\n\n缺少以下必填字段：${missingFields.map((f) => `\`${f}\``).join("、")}。\n请补充完整后重试。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
@@ -317,7 +336,7 @@ async function run() {
 	const siteurl = parsed.siteurl.trim();
 	const imgurl = parsed.imgurl.trim();
 	const desc = parsed.desc.trim();
-	const checkurl = parsed.checkurl.trim();
+	const checkurl = (parsed.checkurl || siteurl).trim();
 
 	// URL 格式校验
 	if (!isValidHttpUrl(siteurl)) {
@@ -368,9 +387,9 @@ async function run() {
 	}
 
 	// 连通性与反向链接审核
-	if (forceBypass) {
+	if (forceBypass || isManualDispatch) {
 		console.log(
-			"[friend-apply] 检测到 bypass-check 标签，跳过连通性与反向链接验证",
+			"[friend-apply] 检测到博主手动添加或 bypass-check，跳过反向链接验证",
 		);
 	} else {
 		// 1. 站点主页存活连通性检测
