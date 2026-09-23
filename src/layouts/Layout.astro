@@ -82,8 +82,9 @@ const configHue = siteConfig.themeColor.hue;
 // 获取导航栏透明模式配置（banner 模式专属）
 const navbarTransparentMode =
 	backgroundWallpaper.banner?.navbar?.transparentMode || "semi";
-// 判断是否应该显示顶部高光效果（只在 semifull 动态透明模式下显示）
-const shouldShowTopHighlight = navbarTransparentMode === "semifull";
+// 判断是否应该显示顶部高光效果（原用于 semifull 模式增强顶部文字对比度，现 Header 已支持自适应变色，予以禁用并保留代码）
+// const shouldShowTopHighlight = navbarTransparentMode === "semifull";
+const shouldShowTopHighlight = false;
 
 // 全屏壁纸布局：classic 为文档流旧版，hero 为固定首屏新版
 const fullscreenLayout = backgroundWallpaper.fullscreen?.layout ?? "hero";
@@ -559,7 +560,7 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
       })();
     </script>
 
-    <!-- 页面顶部渐变高光效果 - 只在full和semifull模式下显示 -->
+    <!-- 页面顶部渐变高光效果（已禁用，Header 已支持壁纸亮度自适应黑白字） -->
     {shouldShowTopHighlight && <div class="top-gradient-highlight" />}
     <ConfigCarrier />
     <MusicManager />

@@ -75,8 +75,9 @@ html {
     }
 }
 
-/* 页面顶部渐变高光效果 */
+/* 页面顶部渐变高光效果（已禁用：Header 文字现已支持自适应壁纸色彩，无需高光提亮） */
 .top-gradient-highlight {
+    display: none !important;
     position: fixed;
     top: 0;
     left: 0;
@@ -90,6 +91,7 @@ html {
 
 /* 暗色主题下的渐变高光效果 */
 :root.dark .top-gradient-highlight {
+    display: none !important;
     background: linear-gradient(to bottom, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.3) 30%, rgba(0, 0, 0, 0.15) 60%, rgba(0, 0, 0, 0.05) 80%, transparent 100%);
 }
 
