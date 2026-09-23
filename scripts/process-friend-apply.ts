@@ -377,7 +377,7 @@ async function run() {
 		console.log(`[friend-apply] 开始探测站点主页连通性: ${siteurl}`);
 		const siteCheck = await verifySiteReachable(siteurl);
 		if (!siteCheck.success) {
-			const msg = `⚠️ **站点主页无法正常访问**\n\n机器人尝试访问您的网站主页（\`${siteurl}\`）失败：${siteCheck.reason}。\n\n请确保站点已正常上线、网络可以公开访问后再提交申请。如果您使用了特殊防爬保护或地区限制，请联系博主添加 \`bypass-check\` 标签进行人工放行。`;
+			const msg = `⚠️ **站点主页无法正常访问**\n\n机器人尝试访问您的网站主页（\`${siteurl}\`）失败：${siteCheck.reason}。\n\n请确保站点已正常上线、网络可以公开访问后再提交申请。如果您使用了特殊防爬保护或地区限制，请联系博主添加 \`bypass-check\` 标签进行人工放行。\n\n排查解决后，可**重新编辑 Issue 或在下方回复任意内容**，系统将自动重新检测。`;
 			await postComment(msg);
 			await addLabels(["check-failed"]);
 			console.log(`[friend-apply] 站点存活检测失败: ${siteCheck.reason}`);
@@ -389,7 +389,7 @@ async function run() {
 		console.log(`[friend-apply] 开始探测头像图片连通性: ${imgurl}`);
 		const avatarCheck = await verifyAvatarReachable(imgurl);
 		if (!avatarCheck.success) {
-			const msg = `⚠️ **站点头像无法正常加载**\n\n机器人尝试加载您的头像图片（\`${imgurl}\`）失败：${avatarCheck.reason}。\n\n请检查头像链接是否填写正确、是否支持公网外链访问。修改后可重新编辑 Issue 重新检测。`;
+			const msg = `⚠️ **站点头像无法正常加载**\n\n机器人尝试加载您的头像图片（\`${imgurl}\`）失败：${avatarCheck.reason}。\n\n请检查头像链接是否填写正确、是否支持公网外链访问。修改后可**重新编辑 Issue 或在下方回复任意内容**重新检测。`;
 			await postComment(msg);
 			await addLabels(["check-failed"]);
 			console.log(`[friend-apply] 头像存活检测失败: ${avatarCheck.reason}`);
@@ -402,7 +402,7 @@ async function run() {
 		const checkResult = await verifyBacklink(checkurl);
 
 		if (!checkResult.success) {
-			const msg = `⚠️ **友链检测未通过**\n\n${checkResult.reason}。\n\n**建议排查步骤**：\n1. 确认已将本站添加至您的网站（本站域名：\`${TARGET_DOMAIN}\`）；\n2. 若友链存放在子页面（如 \`/friends\`），请确保在申请表单中准确填写「友链所在页面」；\n3. 若站点为 SPA 动态渲染架构或启用了高防防爬验证，可联系博主添加 \`bypass-check\` 标签以人工跳过检测。\n\n修改完成后可直接**重新编辑 Issue**，系统将自动重新检测。`;
+			const msg = `⚠️ **友链检测未通过**\n\n${checkResult.reason}。\n\n**建议排查步骤**：\n1. 确认已将本站添加至您的网站（本站域名：\`${TARGET_DOMAIN}\`）；\n2. 若友链存放在子页面（如 \`/friends\`），请确保在申请表单中准确填写「友链所在页面」；\n3. 若站点为 SPA 动态渲染架构或启用了高防防爬验证，可联系博主添加 \`bypass-check\` 标签以人工跳过检测。\n\n修改或添加完毕后，可直接**重新编辑 Issue 或在下方回复任意内容**，系统将自动重新触发检测。`;
 			await postComment(msg);
 			await addLabels(["check-failed"]);
 			console.log(`[friend-apply] 验证失败: ${checkResult.reason}`);

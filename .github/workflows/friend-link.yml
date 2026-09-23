@@ -3,6 +3,8 @@ name: 自动友链处理
 on:
   issues:
     types: [opened, edited, labeled]
+  issue_comment:
+    types: [created]
 
 permissions:
   issues: write
@@ -15,7 +17,11 @@ concurrency:
 jobs:
   process-friend:
     name: 审核并添加友链
-    if: contains(github.event.issue.labels.*.name, 'friend-apply') && !contains(github.event.issue.labels.*.name, 'friend-added')
+    if: >
+      contains(github.event.issue.labels.*.name, 'friend-apply') &&
+      !contains(github.event.issue.labels.*.name, 'friend-added') &&
+      github.event.issue.state != 'closed' &&
+      (github.event_name != 'issue_comment' || (github.event.comment.user.login != 'github-actions[bot]' && github.event.comment.user.type != 'Bot'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
