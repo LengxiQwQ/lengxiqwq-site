@@ -337,3 +337,177 @@ export function initWallpaperHueFollower(): void {
 		}
 	}
 }
+
+/**
+ * 从壁纸图片顶部区域提取感知亮度，并返回 header 文字应该使用的明暗主题：
+ * - 'dark': 壁纸顶部偏亮，header 文字使用黑色（深色）
+ * - 'light': 壁纸顶部偏暗，header 文字使用白色（浅色）
+ */
+export async function extractHeaderThemeFromWallpaper(
+	img: HTMLImageElement,
+	dimOpacity = 0.2,
+): Promise<"light" | "dark"> {
+	const ready = await waitForImage(img);
+	if (!ready || !img.naturalWidth || !img.naturalHeight) {
+		return document.documentElement.classList.contains("dark")
+			? "light"
+			: "dark";
+	}
+
+	// 只采样壁纸顶部 20% 的高度（这是 Header / Navbar 覆盖的区域）
+	const sw = img.naturalWidth;
+	const sh = Math.max(1, Math.floor(img.naturalHeight * 0.2));
+	const sx = 0;
+	const sy = 0;
+
+	const sampleWidth = 64;
+	const sampleHeight = 32;
+	const canvas = document.createElement("canvas");
+	canvas.width = sampleWidth;
+	canvas.height = sampleHeight;
+	const ctx = canvas.getContext("2d", { willReadFrequently: true });
+	if (!ctx) {
+		return document.documentElement.classList.contains("dark")
+			? "light"
+			: "dark";
+	}
+
+	try {
+		ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sampleWidth, sampleHeight);
+		const data = ctx.getImageData(0, 0, sampleWidth, sampleHeight).data;
+
+		let totalLuminance = 0;
+		let count = 0;
+
+		for (let i = 0; i < data.length; i += 4) {
+			const a = data[i + 3];
+			if (a < 64) continue; // 忽略高透明像素
+
+			const r = data[i] / 255;
+			const g = data[i + 1] / 255;
+			const b = data[i + 2] / 255;
+
+			// WCAG 2.0 相对感知亮度公式
+			const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+			totalLuminance += lum;
+			count++;
+		}
+
+		if (count === 0) {
+			return document.documentElement.classList.contains("dark")
+				? "light"
+				: "dark";
+		}
+
+		const avgLuminance = totalLuminance / count;
+		// 考虑黑色暗化层 dimOpacity (例如 0.2 的暗化层使最终背景亮度乘以 0.8)
+		const effectiveLuminance = avgLuminance * (1 - dimOpacity);
+
+		// 亮度阈值：> 0.48 认为是浅色背景（文字用黑色/深色），<= 0.48 认为是深色背景（文字用白色/浅色）
+		return effectiveLuminance > 0.48 ? "dark" : "light";
+	} catch (e) {
+		console.warn(
+			"[color-extract] Failed to extract header theme from wallpaper:",
+			e,
+		);
+		return document.documentElement.classList.contains("dark")
+			? "light"
+			: "dark";
+	}
+}
+
+/**
+ * 提取并应用当前壁纸下 Header 的明暗主题
+ */
+export async function applyHeaderThemeFromWallpaper(
+	img?: HTMLImageElement | null,
+): Promise<void> {
+	if (typeof document === "undefined") return;
+
+	const navbar = document.getElementById("navbar");
+	if (!navbar) return;
+
+	// 如果壁纸模式是 none，则移除属性，恢复跟随网站常规主题
+	const wallpaperMode = document.documentElement.getAttribute(
+		"data-wallpaper-mode",
+	);
+	if (wallpaperMode === "none") {
+		navbar.removeAttribute("data-header-theme");
+		return;
+	}
+
+	const targetImg = img || getActiveWallpaperImg();
+	if (!targetImg) return;
+
+	const dimContainer = document.getElementById("banner-dim-container");
+	let dimOpacity = 0.2;
+	const dimOverlay = dimContainer?.querySelector(
+		".banner-dim-overlay",
+	) as HTMLElement | null;
+	if (dimOverlay) {
+		const bg = dimOverlay.style.background || "";
+		const match = bg.match(/rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*([\d.]+)\s*\)/);
+		if (match) dimOpacity = Number.parseFloat(match[1]);
+	}
+
+	const theme = await extractHeaderThemeFromWallpaper(targetImg, dimOpacity);
+	navbar.setAttribute("data-header-theme", theme);
+	window.dispatchEvent(
+		new CustomEvent("headerThemeChange", { detail: { theme } }),
+	);
+}
+
+/**
+ * 全局初始化 Header 文本颜色主题跟随壁纸亮度的监听器
+ */
+export function initHeaderThemeFollower(): void {
+	if (typeof window === "undefined") return;
+
+	// 1. 监听壁纸切换自定义事件
+	window.addEventListener("wallpaperChange", ((
+		e: CustomEvent<{ img: HTMLImageElement; smooth?: boolean }>,
+	) => {
+		if (e.detail?.img) {
+			applyHeaderThemeFromWallpaper(e.detail.img);
+		}
+	}) as EventListener);
+
+	// 2. 监听壁纸模式改变
+	window.addEventListener("wallpaperModeChange", ((
+		e: CustomEvent<{ mode: string }>,
+	) => {
+		if (e.detail?.mode === "none") {
+			document.getElementById("navbar")?.removeAttribute("data-header-theme");
+		} else {
+			applyHeaderThemeFromWallpaper();
+		}
+	}) as EventListener);
+
+	// 3. 监听 Swup 切页 / Astro 页面换入事件
+	document.addEventListener("astro:page-load", () => {
+		applyHeaderThemeFromWallpaper();
+	});
+	document.addEventListener("swup:content:replace", () => {
+		applyHeaderThemeFromWallpaper();
+	});
+
+	// 4. 首屏立即执行一次自适应提取
+	const img = getActiveWallpaperImg();
+	if (img) {
+		applyHeaderThemeFromWallpaper(img);
+	} else {
+		// 若当前图片节点尚未挂载进 DOM，使用 MutationObserver 监听首个壁纸节点的插入
+		const wrapper = document.getElementById("wallpaper-wrapper");
+		if (wrapper) {
+			const observer = new MutationObserver(() => {
+				const found = getActiveWallpaperImg();
+				if (found) {
+					observer.disconnect();
+					applyHeaderThemeFromWallpaper(found);
+				}
+			});
+			observer.observe(wrapper, { childList: true, subtree: true });
+			setTimeout(() => observer.disconnect(), 3000);
+		}
+	}
+}
