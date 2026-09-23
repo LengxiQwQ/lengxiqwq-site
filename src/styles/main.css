@@ -53,12 +53,6 @@ html {
     scroll-behavior: smooth;
 }
 
-/* 确保链接默认继承文字颜色，避免 iOS WebKit / Safari 回退为 -webkit-link 系统蓝 */
-a, a:link, a:visited {
-    color: inherit;
-    text-decoration: inherit;
-}
-
 /* 全站键盘焦点基线；组件可以在更高的层中覆盖间距或形态。 */
 @layer components {
     :where(
@@ -328,11 +322,23 @@ a, a:link, a:visited {
     /* 全屏 semifull 滚动后玻璃化 */
     html[data-wallpaper-mode="fullscreen"] #navbar[data-transparent-mode="semifull"].scrolled > div {
         --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
-        background-color: color-mix(in oklch, var(--card-bg) calc(var(--opacity-45) * 100%), transparent) !important;
-        box-shadow: inset 0 1px 0 var(--navbar-glass-highlight), 0 1px 0 var(--navbar-glass-hairline) !important;
+        background-color: color-mix(
+            in oklch,
+            var(--card-bg) calc(var(--opacity-45) * var(--navbar-scroll-progress, 1) * 100%),
+            transparent
+        ) !important;
+        box-shadow:
+            inset 0 1px 0 color-mix(in srgb, var(--navbar-glass-highlight) calc(var(--navbar-scroll-progress, 1) * 100%), transparent),
+            0 1px 0 color-mix(in srgb, var(--navbar-glass-hairline) calc(var(--navbar-scroll-progress, 1) * 100%), transparent) !important;
+        transition:
+            background-color 0.15s cubic-bezier(0.22, 1, 0.36, 1),
+            box-shadow 0.15s cubic-bezier(0.22, 1, 0.36, 1),
+            border-color 0.15s cubic-bezier(0.22, 1, 0.36, 1) !important;
     }
     :root.dark[data-wallpaper-mode="fullscreen"] #navbar[data-transparent-mode="semifull"].scrolled > div {
-        box-shadow: inset 0 1px 0 var(--navbar-glass-highlight), 0 1px 0 var(--navbar-glass-hairline) !important;
+        box-shadow:
+            inset 0 1px 0 color-mix(in srgb, var(--navbar-glass-highlight) calc(var(--navbar-scroll-progress, 1) * 100%), transparent),
+            0 1px 0 color-mix(in srgb, var(--navbar-glass-hairline) calc(var(--navbar-scroll-progress, 1) * 100%), transparent) !important;
     }
     /* 全屏 semi 滚动后加回投影 */
     html[data-wallpaper-mode="fullscreen"] #navbar[data-transparent-mode="semi"].navbar-sticky-shadow > div {
