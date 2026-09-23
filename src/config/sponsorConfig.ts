@@ -76,5 +76,11 @@ export const sponsorConfig: SponsorConfig = {
 			date: "2026-01-29T00:25:46",
 			message: "🦌🦌",
 		},
+		{
+			name: "匿名用户",
+			amount: "¥1",
+			date: "2026-09-23T15:07:36",
+			message: "感谢playlistout",
+		},
 	],
 };

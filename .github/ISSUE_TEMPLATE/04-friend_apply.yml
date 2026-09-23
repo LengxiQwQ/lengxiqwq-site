@@ -1,0 +1,54 @@
+name: 友链申请
+description: 申请添加友情链接（支持自动反链审核与跨仓库自动添加）
+title: "[友链申请]: "
+labels: ["friend-apply"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 欢迎交换友链！ (´• ω •`)
+        在提交申请前，请确保您已将本站添加至您的友链页中：
+        - **站点名称**：冷汐的杂货铺
+        - **站点链接**：https://lengxiqwq.com
+        - **站点描述**：你好谢谢小笼包再见！
+        - **头像链接**：https://weavatar.com/avatar/52f243e67ccc2293d68c6f33db3f4083?s=640
+
+        提交后系统将通过 GitHub Actions 自动爬取校验反向链接。审核通过后将自动加入配置并触发部署上线！
+  - type: input
+    id: title
+    attributes:
+      label: 站点名称
+      description: 您的博客或网站名称
+      placeholder: 例如：MmzMing的知识库
+    validations:
+      required: true
+  - type: input
+    id: siteurl
+    attributes:
+      label: 站点链接
+      description: 您的网站主页链接（需包含 http:// 或 https://）
+      placeholder: https://example.com
+    validations:
+      required: true
+  - type: input
+    id: imgurl
+    attributes:
+      label: 头像链接
+      description: 您的站点头像图片地址（需支持外链访问）
+      placeholder: https://example.com/avatar.png
+    validations:
+      required: true
+  - type: textarea
+    id: desc
+    attributes:
+      label: 站点描述
+      description: 一句话介绍您的站点
+      placeholder: 这是一个记录技术与生活的个人小站
+    validations:
+      required: true
+  - type: input
+    id: checkurl
+    attributes:
+      label: 友链所在页面（可选）
+      description: 如果您的友链单独存放在特定页面（如 /friends 或 /links），请在此填写，以便爬虫准确校验。留空则默认检测站点主页。
+      placeholder: https://example.com/friends

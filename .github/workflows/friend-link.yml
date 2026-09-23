@@ -1,0 +1,67 @@
+name: 自动友链处理
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+
+permissions:
+  issues: write
+  contents: write
+
+jobs:
+  process-friend:
+    name: 审核并添加友链
+    if: contains(github.event.issue.labels.*.name, 'friend-apply') && !contains(github.event.issue.labels.*.name, 'friend-added')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出主仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+          run_install: false
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: 安装项目依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 检出私有内容仓
+        uses: actions/checkout@v4
+        with:
+          repository: LengxiQwQ/lengxiqwq-site-content
+          path: .content-repo
+          token: ${{ secrets.CONTENT_REPO_TOKEN }}
+
+      - name: 审核并写入友链
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          CONTENT_REPO_DIR: .content-repo
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          FORCE_BYPASS: ${{ contains(github.event.issue.labels.*.name, 'bypass-check') }}
+        run: |
+          npx tsx scripts/process-friend-apply.ts
+
+      - name: 提交并推送内容仓变更
+        run: |
+          cd .content-repo
+          if [ -n "$(git status --porcelain config/friendsConfig.ts)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add config/friendsConfig.ts
+            git commit -m "feat: 新增友链"
+            git push origin main
+          else
+            echo "未检测到内容仓有需要提交的变更。"
+          fi
