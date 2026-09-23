@@ -209,12 +209,19 @@ async function run() {
 	const parsed = parseIssueBody(issueBody);
 
 	// 必填项检查
-	if (!parsed.title || !parsed.siteurl || !parsed.imgurl || !parsed.desc) {
+	if (
+		!parsed.title ||
+		!parsed.siteurl ||
+		!parsed.imgurl ||
+		!parsed.desc ||
+		!parsed.checkurl
+	) {
 		const missingFields: string[] = [];
 		if (!parsed.title) missingFields.push("站点名称");
 		if (!parsed.siteurl) missingFields.push("站点链接");
 		if (!parsed.imgurl) missingFields.push("头像链接");
 		if (!parsed.desc) missingFields.push("站点描述");
+		if (!parsed.checkurl) missingFields.push("友链所在页面");
 
 		const msg = `⚠️ **申请信息不完整**\n\n缺少以下必填字段：${missingFields.map((f) => `\`${f}\``).join("、")}。\n请编辑 Issue 补充完整后重试。`;
 		await postComment(msg);
@@ -227,7 +234,7 @@ async function run() {
 	const siteurl = parsed.siteurl.trim();
 	const imgurl = parsed.imgurl.trim();
 	const desc = parsed.desc.trim();
-	const checkurl = (parsed.checkurl || "").trim() || siteurl;
+	const checkurl = parsed.checkurl.trim();
 
 	// URL 格式校验
 	if (!isValidHttpUrl(siteurl)) {

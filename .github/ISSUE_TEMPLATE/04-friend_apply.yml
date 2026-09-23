@@ -19,7 +19,7 @@ body:
     attributes:
       label: 站点名称
       description: 您的博客或网站名称
-      placeholder: 例如：MmzMing的知识库
+      placeholder: 例如：我的个人博客
     validations:
       required: true
   - type: input
@@ -38,7 +38,7 @@ body:
       placeholder: https://example.com/avatar.png
     validations:
       required: true
-  - type: textarea
+  - type: input
     id: desc
     attributes:
       label: 站点描述
@@ -49,6 +49,8 @@ body:
   - type: input
     id: checkurl
     attributes:
-      label: 友链所在页面（可选）
-      description: 如果您的友链单独存放在特定页面（如 /friends 或 /links），请在此填写，以便爬虫准确校验。留空则默认检测站点主页。
+      label: 友链所在页面
+      description: 包含本站友链的页面完整地址（必填，机器人将访问此页面自动校验是否已添加本站）
       placeholder: https://example.com/friends
+    validations:
+      required: true
