@@ -88,6 +88,15 @@
   box-shadow: 0 0 0 2px color-mix(in oklch, var(--tk-accent) 20%, transparent);
 }
 
+/* 浏览器自动填充（Autofill）样式适配，保持与主题背景和文本颜色融合 */
+.twikoo .el-input__inner:-webkit-autofill,
+.twikoo .el-input__inner:-webkit-autofill:hover,
+.twikoo .el-input__inner:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--tk-text);
+  box-shadow: 0 0 0 1000px var(--tk-bg) inset;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
 /* 新版排序样式：并排文字按钮，仅改文字颜色（默认/悬停/激活） */
 .twikoo .tk-comments-sort .tk-sort-item {
   color: var(--tk-muted);

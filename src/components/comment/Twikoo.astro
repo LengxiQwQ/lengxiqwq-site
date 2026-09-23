@@ -22,6 +22,154 @@ const config = {
 <script is:inline src={jsUrl} defer></script>
 {cssUrl && <link rel="stylesheet" href={cssUrl.startsWith("http") ? cssUrl : url(cssUrl)} />}
 <script is:inline define:vars={{ config }}>
+  // 1. 拦截 Twikoo 子回复输入框挂载时的 scrollIntoView 调用，防止视口被强行滚动到页面顶部
+  if (!window.__twikooScrollHookInstalled) {
+    window.__twikooScrollHookInstalled = true;
+    const originalScrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (...args) {
+      if (
+        this instanceof Element &&
+        (this.classList?.contains("tk-submit") || this.closest?.(".tk-submit")) &&
+        this.closest?.(".tk-comment")
+      ) {
+        // 子回复框挂载在具体评论下，此时评论本身已在视口，坚决不执行任何跳转滚动
+        return;
+      }
+      return originalScrollIntoView.apply(this, args);
+    };
+
+    // 全局捕获阶段拦截回复按钮点击，锁定当前滚动高度，双重保险杜绝页面跳动
+    document.addEventListener(
+      "click",
+      function (e) {
+        const target = e.target;
+        if (!target || !(target instanceof Element)) return;
+        const actionBtn = target.closest("#tcomment .tk-action-link");
+        if (actionBtn) {
+          const savedY = window.scrollY;
+          const pinScroll = function () {
+            if (Math.abs(window.scrollY - savedY) > 5) {
+              window.scrollTo({ top: savedY, behavior: "instant" });
+            }
+          };
+          requestAnimationFrame(pinScroll);
+          setTimeout(pinScroll, 20);
+          setTimeout(pinScroll, 60);
+          setTimeout(pinScroll, 150);
+          setTimeout(pinScroll, 300);
+        }
+      },
+      true
+    );
+  }
+
+  // 2. 增强 Twikoo 输入框支持系统 / 浏览器原生自动填充（Autofill & Autocomplete）
+  function enhanceTwikooInputs(container) {
+    if (!container) return;
+    const inputs = container.querySelectorAll(".tk-meta-input input");
+    inputs.forEach(function (input) {
+      const parent = input.closest(".el-input-group");
+      const labelText = (parent ? parent.textContent : "") || "";
+      const name = input.getAttribute("name") || "";
+      const placeholder = input.getAttribute("placeholder") || "";
+
+      // 邮箱输入框：启用 autocomplete="email"，配合 name="email" 与 type="email"
+      if (
+        name === "mail" ||
+        name === "email" ||
+        input.type === "email" ||
+        labelText.includes("邮箱") ||
+        placeholder.includes("邮箱")
+      ) {
+        if (input.getAttribute("autocomplete") !== "email") {
+          input.setAttribute("autocomplete", "email");
+          input.setAttribute("name", "email");
+          input.setAttribute("type", "email");
+          input.setAttribute("id", "twikoo-email");
+          input.setAttribute("inputmode", "email");
+          input.setAttribute("autocapitalize", "off");
+          input.setAttribute("autocorrect", "off");
+          input.setAttribute("spellcheck", "false");
+        }
+      }
+      // 昵称输入框：启用 autocomplete="nickname"
+      else if (
+        name === "nick" ||
+        name === "nickname" ||
+        labelText.includes("昵称") ||
+        placeholder.includes("昵称")
+      ) {
+        if (input.getAttribute("autocomplete") !== "nickname") {
+          input.setAttribute("autocomplete", "nickname");
+          input.setAttribute("name", "nickname");
+          input.setAttribute("id", "twikoo-nickname");
+        }
+      }
+      // 网址输入框：启用 autocomplete="url"
+      else if (
+        name === "link" ||
+        name === "url" ||
+        labelText.includes("网址") ||
+        placeholder.includes("网址")
+      ) {
+        if (input.getAttribute("autocomplete") !== "url") {
+          input.setAttribute("autocomplete", "url");
+          input.setAttribute("name", "url");
+          input.setAttribute("type", "url");
+          input.setAttribute("id", "twikoo-url");
+          input.setAttribute("inputmode", "url");
+        }
+      }
+
+      // 自动填充联动：当用户从浏览器下拉选中项时，触发 input 与 change 事件驱动 Vue 模型双向同步
+      if (!input.__twikooEnhanced) {
+        input.__twikooEnhanced = true;
+        const syncModel = function () {
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        };
+        input.addEventListener("change", syncModel);
+        input.addEventListener("blur", syncModel);
+        input.addEventListener("animationstart", function (e) {
+          if (e.animationName && e.animationName.toLowerCase().includes("autofill")) {
+            syncModel();
+          }
+        });
+      }
+    });
+  }
+
+  // 3. 动态监听 Twikoo DOM 节点变动（包括动态插入的回复输入框）
+  let twikooObserver = null;
+  function setupTwikooObserver(commentEl) {
+    if (twikooObserver) {
+      twikooObserver.disconnect();
+    }
+    twikooObserver = new MutationObserver(function () {
+      enhanceTwikooInputs(commentEl);
+    });
+    twikooObserver.observe(commentEl, {
+      childList: true,
+      subtree: true,
+    });
+    enhanceTwikooInputs(commentEl);
+  }
+
+  // 获得焦点时兜底检测增强
+  if (!window.__twikooFocusHookInstalled) {
+    window.__twikooFocusHookInstalled = true;
+    document.addEventListener(
+      "focusin",
+      function (e) {
+        const target = e.target;
+        if (target && target instanceof Element && target.matches?.("#tcomment input")) {
+          enhanceTwikooInputs(document.getElementById("tcomment"));
+        }
+      },
+      true
+    );
+  }
+
   // 获取当前页面路径
   function getCurrentPath() {
     const requestedPath = new URLSearchParams(window.location.search).get("path");
@@ -55,6 +203,7 @@ const config = {
           .init(dynamicConfig)
           .then(() => {
             console.log("[Twikoo] Init complete");
+            setupTwikooObserver(commentEl);
           })
           .catch((error) => {
             console.error("[Twikoo] Init failed:", error);
