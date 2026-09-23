@@ -8,6 +8,7 @@ interface FriendEntry {
 	siteurl: string;
 	desc: string;
 	imgurl: string;
+	tags?: string[];
 }
 
 // 尝试从单段多行文本中解析友链字段
@@ -29,10 +30,18 @@ function tryParsePastedText(text: string): Partial<FriendEntry> | null {
 			else if (/链接|网址|地址|url|site/i.test(key)) result.siteurl = val;
 			else if (/头像|avatar|img|icon/i.test(key)) result.imgurl = val;
 			else if (/描述|介绍|简介|desc|bio/i.test(key)) result.desc = val;
+			else if (/分类|标签|tag/i.test(key))
+				result.tags = [val.replace(/[[\]"]/g, "").trim()];
 		}
 	}
 
-	return result.title && result.siteurl ? result : null;
+	if (result.title && result.siteurl) {
+		if (!result.tags || result.tags.length === 0) {
+			result.tags = ["博客"];
+		}
+		return result;
+	}
+	return null;
 }
 
 // 往指定的 friendsConfig.ts 中插入新友链
@@ -48,7 +57,8 @@ function insertFriendToConfig(filePath: string, entry: FriendEntry) {
 		throw new Error(`站点链接已存在于 ${filePath} 中: ${entry.siteurl}`);
 	}
 
-	const newCode = `\t{\n\t\ttitle: ${JSON.stringify(entry.title)},\n\t\tdesc: ${JSON.stringify(entry.desc)},\n\t\tsiteurl: ${JSON.stringify(entry.siteurl)},\n\t\timgurl: ${JSON.stringify(entry.imgurl)},\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
+	const tags = entry.tags && entry.tags.length > 0 ? entry.tags : ["博客"];
+	const newCode = `\t{\n\t\ttitle: ${JSON.stringify(entry.title)},\n\t\tdesc: ${JSON.stringify(entry.desc)},\n\t\tsiteurl: ${JSON.stringify(entry.siteurl)},\n\t\timgurl: ${JSON.stringify(entry.imgurl)},\n\t\ttags: ${JSON.stringify(tags)},\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
 
 	const targetPattern =
 		/export const friendsConfig: FriendLink\[\] = \[([\s\S]*?)\];/;
@@ -83,6 +93,7 @@ async function main() {
 	let siteurl = "";
 	let desc = "";
 	let imgurl = "";
+	let tags: string[] = ["博客"];
 
 	// 先提示是否直接粘贴整段文字
 	const firstInput = await rl.question(
@@ -95,7 +106,8 @@ async function main() {
 		console.log(`- 站点名称: ${parsed.title}`);
 		console.log(`- 站点链接: ${parsed.siteurl}`);
 		console.log(`- 站点描述: ${parsed.desc}`);
-		console.log(`- 头像链接: ${parsed.imgurl}\n`);
+		console.log(`- 头像链接: ${parsed.imgurl}`);
+		console.log(`- 分类标签: ${parsed.tags?.join(", ") || "博客"}\n`);
 
 		const confirm = await rl.question("确认使用上述信息添加吗？(Y/n) ");
 		if (!confirm || confirm.toLowerCase() === "y") {
@@ -103,6 +115,9 @@ async function main() {
 			siteurl = parsed.siteurl;
 			desc = parsed.desc;
 			imgurl = parsed.imgurl;
+			if (parsed.tags && parsed.tags.length > 0) {
+				tags = parsed.tags;
+			}
 		}
 	}
 
@@ -129,11 +144,18 @@ async function main() {
 		while (!imgurl) {
 			imgurl = (await rl.question("4. 请输入头像图片链接: ")).trim();
 		}
+
+		const tagInput = (
+			await rl.question(
+				"5. 请输入分类标签 (直接回车默认 [博客]，可选输入 导航 等): ",
+			)
+		).trim();
+		tags = tagInput ? [tagInput] : ["博客"];
 	}
 
 	rl.close();
 
-	const entry: FriendEntry = { title, siteurl, desc, imgurl };
+	const entry: FriendEntry = { title, siteurl, desc, imgurl, tags };
 
 	console.log("\n⏳ 正在更新配置文件...");
 

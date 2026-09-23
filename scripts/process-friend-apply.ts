@@ -476,7 +476,7 @@ async function run() {
 	}
 
 	// 写入配置
-	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
+	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
 
 	let updatedContent = "";
 	const targetPattern =
