@@ -57,6 +57,7 @@ import { remarkPlantuml } from "./src/plugins/remark-plantuml.js";
 import { remarkReadingTime } from "./src/plugins/remark-reading-time.mjs";
 import { remarkWikiLink } from "./src/plugins/remark-wiki-link.js";
 import { collectUsedFontCssVars } from "./src/utils/fontHelper";
+import { resetContent } from "./scripts/reset-content.ts";
 
 if (process.env.NODE_ENV === "development") {
 	setMaxListeners(20);
@@ -148,19 +149,7 @@ function contentRepoWatcher() {
 				isCleaned = true;
 				try {
 					console.log("\n[content-watcher] 正在自动清理临时同步内容，恢复纯净模板状态...");
-					execSync("git checkout HEAD -- src/content src/config public", {
-						stdio: "ignore",
-					});
-					execSync("git clean -fd src/content public", {
-						stdio: "ignore",
-					});
-					for (const cacheDir of [".astro", "node_modules/.astro"]) {
-						const resolved = path.resolve(cacheDir);
-						if (fs.existsSync(resolved)) {
-							fs.rmSync(resolved, { recursive: true, force: true });
-						}
-					}
-					console.log("[content-watcher] ✅ 已自动还原为纯净代码仓状态 ✨");
+					resetContent(false);
 				} catch {
 					// 忽略清理异常
 				}

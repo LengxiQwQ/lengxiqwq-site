@@ -22,10 +22,44 @@ function getFilesRecursive(dir: string, base = ""): string[] {
 }
 
 /**
+ * 判断指定文件是否被主仓库 Git 追踪
+ */
+function isTrackedByGit(relPath: string): boolean {
+	try {
+		execSync(`git ls-files --error-unmatch "${relPath.replace(/\\/g, "/")}"`, {
+			stdio: "ignore",
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 判断已追踪文件在当前工作区是否与 Git HEAD 完全一致（未被修改）
+ */
+function isTrackedAndClean(relPath: string): boolean {
+	try {
+		execSync(`git diff --quiet -- "${relPath.replace(/\\/g, "/")}"`, {
+			stdio: "ignore",
+		});
+		execSync(`git diff --cached --quiet -- "${relPath.replace(/\\/g, "/")}"`, {
+			stdio: "ignore",
+		});
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * 将本地工作区的 src/content、src/config、public 恢复为 Git HEAD 中的纯净预设状态，
  * 清理本地开发或构建时从内容仓临时覆盖物化的文件。
  *
- * 🛡️ 具备防误删救援机制：如果检测到用户在主仓中误写了新文件，会自动安全备份/同步到内容仓，绝不丢数据。
+ * 🛡️ 智能防丢失与双向救援机制：
+ * 1. 新建救援：如果用户误在主仓新建了文件，自动安全备份至内容仓。
+ * 2. 改动救援：如果用户误在主仓直接修改了文章或配置，自动将最新修改写回内容仓。
+ * 3. 模板隔离：绝对不会将主仓纯净的 Git 模板预设反向污染至内容仓。
  */
 export function resetContent(silent = false): void {
 	// CI 环境中容器为一次性环境，无需重置，避免影响 CI 产物上传
@@ -36,37 +70,82 @@ export function resetContent(silent = false): void {
 	try {
 		const contentRepoDir = path.resolve("../lengxiqwq-site-content");
 
-		// 🛡️ 智能防误删救援：检查是否有在本地代码仓新写、但内容仓中尚不存在的文件
+		// 🛡️ 执行多目录双向安全救援防护
 		if (fs.existsSync(contentRepoDir)) {
-			const localContentDir = path.resolve("src/content");
-			const targetContentDir = path.join(contentRepoDir, "content");
+			const rescueTargets = [
+				{
+					localDir: path.resolve("src/content"),
+					targetDir: path.join(contentRepoDir, "content"),
+				},
+				{
+					localDir: path.resolve("src/config"),
+					targetDir: path.join(contentRepoDir, "config"),
+				},
+				{
+					localDir: path.resolve("public"),
+					targetDir: path.join(contentRepoDir, "public"),
+				},
+			];
 
-			if (fs.existsSync(localContentDir) && fs.existsSync(targetContentDir)) {
-				const localFiles = getFilesRecursive(localContentDir);
+			for (const { localDir, targetDir } of rescueTargets) {
+				if (!fs.existsSync(localDir) || !fs.existsSync(targetDir)) continue;
+
+				const localFiles = getFilesRecursive(localDir);
 				for (const relFile of localFiles) {
-					const localFull = path.join(localContentDir, relFile);
-					const targetFull = path.join(targetContentDir, relFile);
+					if (
+						relFile.includes(".git") ||
+						relFile.endsWith(".DS_Store") ||
+						relFile.endsWith("Thumbs.db")
+					) {
+						continue;
+					}
 
-					// 若文件在内容仓不存在，说明可能是误在主代码仓创建的真实内容，执行自动救援
-					if (!fs.existsSync(targetFull)) {
-						// 排除 git 模板自带文件
-						try {
-							execSync(
-								`git ls-files --error-unmatch "src/content/${relFile.replace(/\\/g, "/")}"`,
-								{
-									stdio: "ignore",
-								},
+					const localFilePath = path.join(localDir, relFile);
+					const targetFilePath = path.join(targetDir, relFile);
+					const gitRelPath = path.relative(process.cwd(), localFilePath);
+
+					// 情况 1: 内容仓中不存在该文件
+					if (!fs.existsSync(targetFilePath)) {
+						// 若主代码仓 Git 原本就追踪了此模板文件，无需救援
+						if (isTrackedByGit(gitRelPath)) {
+							continue;
+						}
+						// 不在模板 git 中，说明是用户在主仓误建的全新文章或资源 -> 执行新建救援
+						fs.mkdirSync(path.dirname(targetFilePath), { recursive: true });
+						fs.copyFileSync(localFilePath, targetFilePath);
+						if (!silent) {
+							console.log(
+								`[content:reset] 🛡️ 触发防丢救援：已自动将误建的新文件备份至内容仓: ${gitRelPath}`,
 							);
-							// 在模板 git 中受控，无需救援
-						} catch {
-							// 不在模板 git 中，说明是用户的全新文章/资源！执行自动同步救援
-							fs.mkdirSync(path.dirname(targetFull), { recursive: true });
-							fs.copyFileSync(localFull, targetFull);
-							if (!silent) {
-								console.log(
-									`[content:reset] 🛡️ 触发防丢救援：已自动将误建的新内容同步至内容仓: ${relFile}`,
-								);
+						}
+					} else {
+						// 情况 2: 内容仓中存在同名文件
+						// 若主仓本地文件与 Git HEAD 完全一致（纯净模板状态），绝不反向覆盖内容仓！
+						if (isTrackedByGit(gitRelPath) && isTrackedAndClean(gitRelPath)) {
+							continue;
+						}
+
+						// 比较本地修改时间与文件内容
+						try {
+							const localStat = fs.statSync(localFilePath);
+							const targetStat = fs.statSync(targetFilePath);
+
+							// 仅当本地修改时间更新，且内容发生实质变动时，才回写救援
+							if (localStat.mtimeMs > targetStat.mtimeMs) {
+								const localBuf = fs.readFileSync(localFilePath);
+								const targetBuf = fs.readFileSync(targetFilePath);
+
+								if (!localBuf.equals(targetBuf)) {
+									fs.copyFileSync(localFilePath, targetFilePath);
+									if (!silent) {
+										console.log(
+											`[content:reset] 🛡️ 触发防丢救援：已自动将主仓最新修改写回内容仓: ${gitRelPath}`,
+										);
+									}
+								}
 							}
+						} catch {
+							// 忽略单个文件状态读取异常
 						}
 					}
 				}
