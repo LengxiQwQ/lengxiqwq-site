@@ -66,11 +66,9 @@
     z-index: -1;
     border-radius: inherit;
     pointer-events: none;
-    /* 保持高斯模糊，通过 opacity 控制显隐与平滑过渡 */
-    backdrop-filter: blur(var(--navbar-surface-blur, var(--navbar-glass-blur, 20px)));
-    -webkit-backdrop-filter: blur(var(--navbar-surface-blur, var(--navbar-glass-blur, 20px)));
-    opacity: var(--navbar-blur-opacity, 1);
-    transition: opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    /* 动态模糊度：随滑动实时由 --navbar-dynamic-blur 驱动，兜底 fallback 到 --navbar-surface-blur */
+    -webkit-backdrop-filter: blur(var(--navbar-dynamic-blur, var(--navbar-surface-blur, 0px)));
+    backdrop-filter: blur(var(--navbar-dynamic-blur, var(--navbar-surface-blur, 0px)));
 }
 
 /* 通用滚动阴影：下滑到内容区时给导航栏加向下投影，与内容区分层。
@@ -112,8 +110,6 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].navbar-sticky
 
     /* "semifull" (dynamic progress) */
     html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"]>div {
-        --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
-        --navbar-blur-opacity: var(--navbar-scroll-progress, 0);
         background-color: color-mix(
             in oklch,
             var(--card-bg) calc(var(--opacity-45) * var(--navbar-scroll-progress, 0) * 100%),
@@ -132,7 +128,7 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].navbar-sticky
 
     /* "semifull" (scrolled) */
     html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].scrolled>div {
-        --navbar-blur-opacity: 1;
+        --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
         background-color: color-mix(in oklch, var(--card-bg) calc(var(--opacity-45) * 100%), transparent) !important;
         border-radius: 0 0 0.75rem 0.75rem !important;
         box-shadow: inset 0 1px 0 var(--navbar-glass-highlight), 0 1px 0 var(--navbar-glass-hairline) !important;
@@ -155,8 +151,6 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].navbar-sticky
 
     /* "semifull" (dynamic progress) */
     html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"][data-is-home="true"]>div {
-        --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
-        --navbar-blur-opacity: var(--navbar-scroll-progress, 0);
         background-color: color-mix(
             in oklch,
             var(--card-bg) calc(var(--opacity-45) * var(--navbar-scroll-progress, 0) * 100%),
@@ -175,7 +169,7 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].navbar-sticky
 
     /* "semifull" (scrolled) */
     html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"][data-is-home="true"].scrolled>div {
-        --navbar-blur-opacity: 1;
+        --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
         background-color: color-mix(in oklch, var(--card-bg) calc(var(--opacity-45) * 100%), transparent) !important;
         border-radius: 0 0 0.75rem 0.75rem !important;
         box-shadow: inset 0 1px 0 var(--navbar-glass-highlight), 0 1px 0 var(--navbar-glass-hairline) !important;
@@ -195,8 +189,6 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].navbar-sticky
 
     /* "semifull" (dynamic progress) */
     :root.dark[data-has-wallpaper] #navbar[data-transparent-mode="semifull"]>div {
-        --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
-        --navbar-blur-opacity: var(--navbar-scroll-progress, 0);
         background-color: color-mix(
             in oklch,
             var(--card-bg) calc(var(--opacity-45) * var(--navbar-scroll-progress, 0) * 100%),
@@ -214,7 +206,7 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].navbar-sticky
 
     /* "semifull" (scrolled) */
     :root.dark[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].scrolled>div {
-        --navbar-blur-opacity: 1;
+        --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
         background-color: color-mix(in oklch, var(--card-bg) calc(var(--opacity-45) * 100%), transparent) !important;
         box-shadow: inset 0 1px 0 var(--navbar-glass-highlight), 0 1px 0 var(--navbar-glass-hairline) !important;
     }
@@ -233,8 +225,6 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].navbar-sticky
 
     /* "semifull" (dynamic progress) */
     :root.dark[data-has-wallpaper] #navbar[data-transparent-mode="semifull"][data-is-home="true"]>div {
-        --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
-        --navbar-blur-opacity: var(--navbar-scroll-progress, 0);
         background-color: color-mix(
             in oklch,
             var(--card-bg) calc(var(--opacity-45) * var(--navbar-scroll-progress, 0) * 100%),
@@ -252,7 +242,7 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].navbar-sticky
 
     /* "semifull" (scrolled) */
     :root.dark[data-has-wallpaper] #navbar[data-transparent-mode="semifull"][data-is-home="true"].scrolled>div {
-        --navbar-blur-opacity: 1;
+        --navbar-surface-blur: var(--navbar-glass-blur, 20px) !important;
         background-color: color-mix(in oklch, var(--card-bg) calc(var(--opacity-45) * 100%), transparent) !important;
         box-shadow: inset 0 1px 0 var(--navbar-glass-highlight), 0 1px 0 var(--navbar-glass-hairline) !important;
     }
@@ -278,7 +268,7 @@ html[data-has-wallpaper] #navbar[data-transparent-mode="semifull"].navbar-sticky
 /* 页面切换期间强制 semifull 保持透明，避免自动回顶时出现背景闪烁 */
 .is-page-transitioning[data-has-wallpaper] #navbar[data-transparent-mode="semifull"]:not(.scrolled)>div {
     --navbar-surface-blur: 0px !important;
-    --navbar-blur-opacity: 0 !important;
+    --navbar-dynamic-blur: 0px !important;
     background-color: transparent !important;
     border-color: transparent !important;
     box-shadow: none !important;

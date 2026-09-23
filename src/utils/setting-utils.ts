@@ -483,6 +483,7 @@ export function updateNavbarTransparency(mode: WALLPAPER_MODE): void {
 		window.removeEventListener("scroll", window.semifullScrollHandler);
 		delete window.semifullScrollHandler;
 		navbar.style.removeProperty("--navbar-scroll-progress");
+		navbar.style.removeProperty("--navbar-dynamic-blur");
 	}
 }
 

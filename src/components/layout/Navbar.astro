@@ -48,7 +48,9 @@ const navbarTransparentMode =
 const navbarBlur =
 	backgroundWallpaper.mode === "banner"
 		? (backgroundWallpaper.banner?.navbar?.blur ?? 20)
-		: 0;
+		: backgroundWallpaper.mode === "fullscreen"
+			? (backgroundWallpaper.fullscreen?.navbar?.blur ?? 20)
+			: 0;
 
 // 获取导航栏标题，如果没有设置则使用 siteConfig.title
 const navbarTitle = siteConfig.navbar.title || siteConfig.title;
@@ -158,6 +160,7 @@ const logoVariants = await Promise.all(
           const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
           const progress = Math.min(1, Math.max(0, scrollTop / 80));
           navbar.style.setProperty("--navbar-scroll-progress", progress.toFixed(3));
+          navbar.style.setProperty("--navbar-dynamic-blur", `${(progress * blur).toFixed(1)}px`);
           if (progress >= 0.85) navbar.classList.add("scrolled");
         }
       })();
@@ -480,6 +483,7 @@ function initSemifullScrollDetection() {
     const transparentMode = navbar.getAttribute('data-transparent-mode');
     if (transparentMode !== 'semifull') {
         navbar.style.removeProperty('--navbar-scroll-progress');
+        navbar.style.removeProperty('--navbar-dynamic-blur');
         return;
     }
 
@@ -493,6 +497,14 @@ function initSemifullScrollDetection() {
     let ticking = false;
     let lastProgress = -1;
 
+    // 获取目标模糊值（默认为 20px）
+    function getTargetBlur() {
+        const raw = navbar!.style.getPropertyValue('--navbar-glass-blur');
+        if (raw) return parseFloat(raw) || 20;
+        const comp = getComputedStyle(navbar!).getPropertyValue('--navbar-glass-blur');
+        return parseFloat(comp) || 20;
+    }
+
     function updateNavbarState() {
         if (document.documentElement.classList.contains('is-page-transitioning')) {
             // 全屏壁纸模式：切换期间保持当前 scrolled 状态，避免点击瞬间导航栏背景突然消失
@@ -503,6 +515,7 @@ function initSemifullScrollDetection() {
             ) {
                 navbar!.classList.remove('scrolled');
                 navbar!.style.setProperty('--navbar-scroll-progress', '0');
+                navbar!.style.setProperty('--navbar-dynamic-blur', '0px');
                 lastProgress = 0;
             }
             ticking = false;
@@ -520,7 +533,10 @@ function initSemifullScrollDetection() {
             (progress === 0 && lastProgress !== 0) ||
             (progress === 1 && lastProgress !== 1)
         ) {
+            const targetBlur = getTargetBlur();
+            const currentBlur = (progress * targetBlur).toFixed(1);
             navbar!.style.setProperty('--navbar-scroll-progress', progress.toString());
+            navbar!.style.setProperty('--navbar-dynamic-blur', `${currentBlur}px`);
             lastProgress = progress;
         }
 
