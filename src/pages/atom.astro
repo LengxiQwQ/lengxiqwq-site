@@ -16,7 +16,7 @@ const recentPosts = posts.slice(0, 6);
         <div class="card-base rounded-(--radius-large) p-8 mb-6">
             <div class="text-center">
                 <div class="inline-flex items-center justify-center w-16 h-16 bg-(--primary) rounded-2xl mb-4">
-                    <Icon name="material-symbols:rss-feed" class="text-white text-3xl" />
+                    <Icon name="fa7-solid:atom" class="text-white text-3xl" />
                 </div>
                 <div class="text-3xl font-bold text-(--primary) mb-3">{i18n(I18nKey.atom)}</div>
                 <p class="text-75 max-w-2xl mx-auto">
@@ -80,6 +80,30 @@ const recentPosts = posts.slice(0, 6);
                         </div>
                     </article>
                 ))}
+            </div>
+        </div>
+
+        <!-- Atom 说明 -->
+        <div class="card-base rounded-(--radius-large) p-6">
+            <h2 class="text-xl font-bold text-90 mb-4 flex items-center">
+                <Icon name="material-symbols:help-outline" class="mr-2 text-(--primary)" />
+                关于 Atom 订阅
+            </h2>
+            <div class="text-75 space-y-3">
+                <p>
+                    Atom（RFC 4287）是专为网络内容聚合设计的新一代规范，相比传统 RSS 具备更严谨的结构、标准化的 ISO 8601 时区时间与完善的内容类型支持。
+                </p>
+                <ul class="list-disc list-inside space-y-1 ml-4">
+                    <li>及时获取博客最新文章与更新动态，无需手动刷新网页</li>
+                    <li>广泛兼容现代 RSS / Feed 阅读器（如 Feedly、Inoreader、Follow、NetNewsWire 等）</li>
+                    <li>无算法干扰与广告推荐，专注纯粹的高质量阅读体验</li>
+                </ul>
+                <div class="pt-3 text-sm text-60 border-t border-(--line-divider) flex flex-wrap items-center justify-between gap-2">
+                    <span>想要订阅传统 RSS 2.0 格式？</span>
+                    <a href="/rss/" class="text-(--primary) hover:underline font-medium inline-flex items-center">
+                        前往 RSS 订阅页面 &rarr;
+                    </a>
+                </div>
             </div>
         </div>
     </div>

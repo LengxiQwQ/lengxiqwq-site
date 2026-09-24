@@ -347,7 +347,23 @@ export default defineConfig({
 				// 根据页面开关配置过滤sitemap
 				const url = new URL(page);
 				const pathname = url.pathname;
+				// 动态页评论嵌入页仅供 iframe 内部调用，不应进 sitemap
+				if (pathname === "/dynamic/comments/") {
+					return false;
+				}
 				if (pathname === "/dynamic/" && !siteConfig.pages.dynamic) {
+					return false;
+				}
+				if (
+					(pathname === "/projects/" || pathname.startsWith("/projects/")) &&
+					!siteConfig.pages.projects
+				) {
+					return false;
+				}
+				if (pathname === "/devices/" && !siteConfig.pages.devices) {
+					return false;
+				}
+				if (pathname === "/timeline/" && !siteConfig.pages.timeline) {
 					return false;
 				}
 				if (pathname.startsWith("/gallery/") && !siteConfig.pages.gallery) {
@@ -372,15 +388,6 @@ export default defineConfig({
 					return false;
 				}
 				if (pathname === "/myanimelist/" && !siteConfig.pages.mal) {
-					return false;
-				}
-				// 动态页评论嵌入页：评论关闭时重定向到 /404/，不应进 sitemap
-				if (
-					pathname === "/dynamic/comments/" &&
-					(dynamicConfig.showComment === false ||
-						!commentConfig.type ||
-						commentConfig.type === "none")
-				) {
 					return false;
 				}
 				if (pathname === "/sponsor/" && !siteConfig.pages.sponsor) {

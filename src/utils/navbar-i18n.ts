@@ -21,6 +21,8 @@ const NAVBAR_DEFAULT_NAMES: Record<string, I18nKey> = {
 	分类: I18nKey.categories,
 	标签: I18nKey.tags,
 	系列: I18nKey.series,
+	"RSS 订阅": I18nKey.rss,
+	"Atom 订阅": I18nKey.atom,
 	友链: I18nKey.friends,
 	留言: I18nKey.guestbook,
 	动态: I18nKey.dynamic,

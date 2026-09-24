@@ -512,6 +512,13 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
       href={`${Astro.site}atom.xml`}
     />
 
+    <link
+      rel="sitemap"
+      type="application/xml"
+      title="Sitemap"
+      href={`${Astro.site}sitemap-index.xml`}
+    />
+
     <!-- Font Setup (Astro Font API) -->
     <FontSetup />
   </head>

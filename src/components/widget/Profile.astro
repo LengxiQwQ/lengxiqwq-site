@@ -11,6 +11,9 @@ interface Props {
 }
 const { style } = Astro.props;
 const className = Astro.props.class;
+const contact = profileConfig.contact;
+// 保留备用：原下方联系方式文本行开关，日后若需启用改为 true 即可
+const showContactRows: boolean = false;
 ---
 
 <div class:list={["card-base", "p-3", className]} style={style}>
@@ -53,108 +56,187 @@ const className = Astro.props.class;
       {profileConfig.bio}
     </div>
         <div class="flex flex-wrap gap-2 justify-center mb-1">
-            {profileConfig.links.length > 1 && profileConfig.links.map(item =>
-                    {
-                    const showName = item.showName;
-                    const className = showName 
-                        ? "btn-regular rounded-lg h-10 gap-2 px-3 font-bold active:scale-95" 
-                        : "btn-regular rounded-lg h-10 w-10 active:scale-90";
+        {profileConfig.links.map((item, index) => {
+            const showName = item.showName;
+            const className = showName 
+                ? "btn-regular rounded-lg h-10 gap-2 px-3 font-bold active:scale-95" 
+                : "btn-regular rounded-lg h-10 w-10 active:scale-90 flex items-center justify-center";
 
-                    if (item.url.startsWith("mailto:")) {
-                        const encodedEmail = encodeMailto(item.url);
-                        return <a rel="me" aria-label={item.name} href="#" data-encoded-email={encodedEmail} onclick={MAILTO_ONCLICK_SCRIPT},
-                                    class={className}>
-                            <Icon name={item.icon} class="text-[1.5rem]"></Icon>
+            const isMailto = item.url.startsWith("mailto:");
+            const encodedEmail = isMailto ? encodeMailto(item.url) : null;
+            const hasPopover = Boolean(item.copyText);
+
+            // 根据按钮在列表中的相对位置，调整气泡弹出对齐与小箭头指示点
+            const total = profileConfig.links.length;
+            const isFirst = index === 0;
+            const isLast = index === total - 1;
+            const popoverAlign = isFirst ? "left-0" : isLast ? "right-0" : "left-1/2 -translate-x-1/2";
+            const arrowAlign = isFirst ? "left-5 -translate-x-1/2" : isLast ? "right-5 translate-x-1/2" : "left-1/2 -translate-x-1/2";
+
+            return (
+                <div class="relative group/popover">
+                    {isMailto ? (
+                        <a
+                            rel="me"
+                            aria-label={item.name}
+                            href="#"
+                            data-encoded-email={encodedEmail}
+                            onclick={MAILTO_ONCLICK_SCRIPT}
+                            class={className}
+                            title={hasPopover ? undefined : item.name}
+                        >
+                            <Icon name={item.icon} class="text-[1.5rem]" />
                             {showName && item.name}
                         </a>
-                    } else {
-                        return <a rel="me" aria-label={item.name} href={item.url} target="_blank" class={className}>
-                            <Icon name={item.icon} class="text-[1.5rem]"></Icon>
+                    ) : (
+                        <a
+                            rel="me"
+                            aria-label={item.name}
+                            href={item.url}
+                            target={item.url.startsWith("tencent:") ? undefined : "_blank"}
+                            class={className}
+                            title={hasPopover ? undefined : item.name}
+                        >
+                            <Icon name={item.icon} class="text-[1.5rem]" />
                             {showName && item.name}
                         </a>
-                    }
-                    }
-            )}
-            {profileConfig.links.length == 1 && (function(item){
-                if (item.url.startsWith("mailto:")) {
-                        const encodedEmail = encodeMailto(item.url);
-                        return <a rel="me" aria-label={item.name} href="#" data-encoded-email={encodedEmail} onclick={MAILTO_ONCLICK_SCRIPT},
-                                    class="btn-regular rounded-lg h-10 gap-2 px-3 font-bold active:scale-95">
-                            <Icon name={item.icon} class="text-[1.5rem]"></Icon>
-                            {item.name}
-                        </a>
-                    } else {
-                        return <a rel="me" aria-label={item.name} href={item.url} target="_blank"
-                                            class="btn-regular rounded-lg h-10 gap-2 px-3 font-bold active:scale-95">
-                                <Icon name={item.icon} class="text-[1.5rem]"></Icon>
-                                {item.name}
-                            </a>
-                    }
-            })(profileConfig.links[0])}
-        </div>
-        {profileConfig.contact && (profileConfig.contact.email || profileConfig.contact.qq) && (
-        <div class="mt-2.5 flex flex-col items-center">
-            <div class="flex flex-col items-start w-fit max-w-full space-y-0.5">
-                {profileConfig.contact.email && (
-                <div class="copy-contact-row relative flex items-center w-full">
-                    <div
-                        role="button"
-                        tabindex="0"
-                        data-copy={profileConfig.contact.email}
-                        class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 hover:text-(--primary) dark:text-neutral-400 dark:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
-                        title="点击复制"
-                        aria-label={`邮箱：${profileConfig.contact.email}`}
-                    >
-                        <div class="w-4.5 flex items-center justify-center shrink-0 select-none pointer-events-none">
-                            <Icon name="material-symbols:mail-outline-rounded" class="text-[1.1rem]" />
+                    )}
+
+                    {hasPopover && (
+                        <div class:list={[
+                            "profile-popover pointer-events-none opacity-0 translate-y-1.5",
+                            "group-hover/popover:pointer-events-auto group-hover/popover:opacity-100 group-hover/popover:translate-y-0",
+                            "transition-all duration-200 ease-out absolute bottom-full mb-2.5 z-50",
+                            popoverAlign
+                        ]}>
+                            <div
+                                class="profile-popover-card card-base shadow-xl border border-(--line-divider) px-2.5 py-1.5 rounded-xl flex items-center gap-1.5 whitespace-nowrap select-text"
+                            >
+                                <div class="flex items-center justify-center shrink-0 pointer-events-none select-none text-(--primary)">
+                                    <Icon name={item.icon} class="text-[1.1rem]" />
+                                </div>
+                                <span class="font-mono text-xs font-medium text-75 select-text cursor-text tracking-wide px-0.5">
+                                    {item.copyText}
+                                </span>
+                                <button
+                                    type="button"
+                                    data-copy={item.copyText}
+                                    class="popover-copy-btn flex items-center justify-center shrink-0 text-50 hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/10 rounded-md p-1 -mr-0.5 cursor-pointer transition-colors"
+                                    title="点击复制"
+                                    aria-label={`复制 ${item.name}：${item.copyText}`}
+                                >
+                                    <Icon name="material-symbols:content-copy-outline" class="text-[0.95rem] icon-copy pointer-events-none" />
+                                    <Icon name="material-symbols:check-rounded" class="text-[1.1rem] text-(--primary) icon-check pointer-events-none" />
+                                </button>
+                                <!-- 底部指示小三角箭头 -->
+                                <div class:list={[
+                                    "popover-arrow absolute -bottom-1 w-2 h-2 rotate-45 bg-(--card-bg) border-r border-b border-(--line-divider) pointer-events-none",
+                                    arrowAlign
+                                ]}></div>
+                            </div>
                         </div>
-                        <span class="font-medium tracking-wide select-text">{profileConfig.contact.email}</span>
-                    </div>
-
-                    <!-- 打勾效果：放在小框外面，绝对定位零位移，上下垂直对齐 -->
-                    <div class="copy-check-badge absolute left-full ml-1.5 flex items-center justify-center pointer-events-none select-none text-(--primary)" aria-hidden="true">
-                        <Icon name="material-symbols:check-rounded" class="text-[1.15rem]" />
-                    </div>
+                    )}
                 </div>
-                )}
+            );
+        })}
+    </div>
 
-                {profileConfig.contact.qq && (
-                <div class="copy-contact-row relative flex items-center w-full">
-                    <div
-                        role="button"
-                        tabindex="0"
-                        data-copy={profileConfig.contact.qq}
-                        class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 hover:text-(--primary) dark:text-neutral-400 dark:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
-                        title="点击复制"
-                        aria-label={`QQ：${profileConfig.contact.qq}`}
-                    >
-                        <div class="w-4.5 flex items-center justify-center shrink-0 select-none pointer-events-none">
-                            <Icon name="mingcute:qq-line" class="text-[1.1rem]" />
-                        </div>
-                        <span class="font-medium tracking-wide select-text">{profileConfig.contact.qq}</span>
+    {/* 保留备用：原下方联系方式文本行，先隐藏备用，日后若需启用将顶部 showContactRows 改为 true 即可 */}
+    {showContactRows && contact && (contact.email || contact.qq) && (
+    <div class="mt-2.5 flex flex-col items-center">
+        <div class="flex flex-col items-start w-fit max-w-full space-y-0.5">
+            {contact.email && (
+            <div class="copy-contact-row relative flex items-center w-full">
+                <div
+                    role="button"
+                    tabindex="0"
+                    data-copy={contact.email}
+                    class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 hover:text-(--primary) dark:text-neutral-400 dark:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
+                    title="点击复制"
+                    aria-label={`邮箱：${contact.email}`}
+                >
+                    <div class="w-4.5 flex items-center justify-center shrink-0 select-none pointer-events-none">
+                        <Icon name="material-symbols:mail-outline-rounded" class="text-[1.1rem]" />
                     </div>
-
-                    <!-- 打勾效果：放在小框外面，绝对定位零位移，上下垂直对齐 -->
-                    <div class="copy-check-badge absolute left-full ml-1.5 flex items-center justify-center pointer-events-none select-none text-(--primary)" aria-hidden="true">
-                        <Icon name="material-symbols:check-rounded" class="text-[1.15rem]" />
-                    </div>
+                    <span class="font-medium tracking-wide select-text">{contact.email}</span>
                 </div>
-                )}
+
+                <!-- 打勾效果：放在小框外面，绝对定位零位移，上下垂直对齐 -->
+                <div class="copy-check-badge absolute left-full ml-1.5 flex items-center justify-center pointer-events-none select-none text-(--primary)" aria-hidden="true">
+                    <Icon name="material-symbols:check-rounded" class="text-[1.15rem]" />
+                </div>
             </div>
+            )}
+
+            {contact.qq && (
+            <div class="copy-contact-row relative flex items-center w-full">
+                <div
+                    role="button"
+                    tabindex="0"
+                    data-copy={contact.qq}
+                    class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 hover:text-(--primary) dark:text-neutral-400 dark:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
+                    title="点击复制"
+                    aria-label={`QQ：${contact.qq}`}
+                >
+                    <div class="w-4.5 flex items-center justify-center shrink-0 select-none pointer-events-none">
+                        <Icon name="mingcute:qq-line" class="text-[1.1rem]" />
+                    </div>
+                    <span class="font-medium tracking-wide select-text">{contact.qq}</span>
+                </div>
+
+                <!-- 打勾效果：放在小框外面，绝对定位零位移，上下垂直对齐 -->
+                <div class="copy-check-badge absolute left-full ml-1.5 flex items-center justify-center pointer-events-none select-none text-(--primary)" aria-hidden="true">
+                    <Icon name="material-symbols:check-rounded" class="text-[1.15rem]" />
+                </div>
+            </div>
+            )}
         </div>
-        )}
+    </div>
+    )}
   </div>
 </div>
 
 <style>
-    .copy-contact-btn {
+    .copy-contact-btn,
+    .profile-popover-card {
         user-select: text !important;
         -webkit-user-select: text !important;
     }
 
-    .copy-contact-btn *::selection {
+    .copy-contact-btn *::selection,
+    .profile-popover-card *::selection {
         background-color: color-mix(in oklch, var(--primary) 30%, transparent);
         color: inherit;
+    }
+
+    /* 气泡底部隐形安全桥梁，防止鼠标移入时意外丢失 hover */
+    .profile-popover::after {
+        content: "";
+        position: absolute;
+        top: 100%;
+        left: 0;
+        width: 100%;
+        height: 12px;
+        display: block;
+    }
+
+    /* 复制按钮及打勾动效 */
+    .popover-copy-btn .icon-check {
+        display: none;
+    }
+
+    .popover-copy-btn.is-copied .icon-copy {
+        display: none;
+    }
+
+    .popover-copy-btn.is-copied .icon-check {
+        display: inline-block;
+        animation: popCheck 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+    }
+
+    @keyframes popCheck {
+        0% { transform: scale(0.6); opacity: 0; }
+        100% { transform: scale(1); opacity: 1; }
     }
 
     /* 打勾效果放在小框外面：绝对定位 + 零位移平滑微动效 */
@@ -195,6 +277,22 @@ const className = Astro.props.class;
         });
     }
 
+    function showPopoverCopiedFeedback(btn: HTMLElement) {
+        const btnObj = btn as unknown as { _copyTimeout?: ReturnType<typeof setTimeout> };
+        if (btnObj._copyTimeout) {
+            clearTimeout(btnObj._copyTimeout);
+        }
+
+        btn.classList.add("is-copied");
+        btn.setAttribute("title", "已复制！");
+
+        btnObj._copyTimeout = setTimeout(() => {
+            btn.classList.remove("is-copied");
+            btn.setAttribute("title", "点击复制");
+            btnObj._copyTimeout = undefined;
+        }, 2000);
+    }
+
     function showCopiedFeedback(row: HTMLElement) {
         const rowObj = row as unknown as { _copyTimeout?: ReturnType<typeof setTimeout> };
         if (rowObj._copyTimeout) {
@@ -219,7 +317,8 @@ const className = Astro.props.class;
     let startY = 0;
 
     document.addEventListener("mousedown", (e) => {
-        const row = (e.target as HTMLElement | null)?.closest(".copy-contact-row");
+        const target = e.target as HTMLElement | null;
+        const row = target?.closest(".copy-contact-row");
         if (row) {
             isDragging = false;
             startX = e.clientX;
@@ -236,13 +335,31 @@ const className = Astro.props.class;
         }
     });
 
-    // 1. 点击直接复制对应内容（非划词框选时触发）
+    // 1. 点击直接复制对应内容（独立复制按钮或备用联系行触发）
     document.addEventListener("click", (e) => {
         const target = e.target as HTMLElement | null;
+
+        // 悬停气泡中的独立复制按钮（文字区域不触发复制，仅供选择）
+        const copyBtn = target?.closest(".popover-copy-btn") as HTMLElement | null;
+        if (copyBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const textToCopy = copyBtn.getAttribute("data-copy") || "";
+            if (!textToCopy) return;
+
+            copyText(textToCopy).then(() => {
+                showPopoverCopiedFeedback(copyBtn);
+            }).catch((err) => {
+                console.error("Failed to copy text:", err);
+            });
+            return;
+        }
+
+        // 备用联系行
         const row = target?.closest(".copy-contact-row") as HTMLElement | null;
         if (!row) return;
 
-        // 如果用户正在框选、或者当前已有选中的文本，说明用户在进行文本选择操作，不触发整项覆盖复制
         const selection = window.getSelection();
         const selectedText = selection ? selection.toString().trim() : "";
         if (isDragging || selectedText.length > 0) {
@@ -264,6 +381,18 @@ const className = Astro.props.class;
     document.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") {
             const activeEl = document.activeElement as HTMLElement | null;
+            if (activeEl?.classList.contains("popover-copy-btn")) {
+                e.preventDefault();
+                e.stopPropagation();
+                const textToCopy = activeEl.getAttribute("data-copy") || "";
+                if (textToCopy) {
+                    copyText(textToCopy).then(() => {
+                        showPopoverCopiedFeedback(activeEl);
+                    });
+                }
+                return;
+            }
+
             if (activeEl?.classList.contains("copy-contact-btn")) {
                 const row = activeEl.closest(".copy-contact-row") as HTMLElement | null;
                 if (!row) return;
@@ -278,11 +407,22 @@ const className = Astro.props.class;
         }
     });
 
-    // 3. 用户框选文本并复制（Ctrl+C 或右键复制）时，同样在框外触发对勾反馈
+    // 3. 用户框选文本并复制（Ctrl+C 或右键复制）时，触发对勾反馈
     document.addEventListener("copy", () => {
         const selection = window.getSelection();
         if (selection && selection.rangeCount > 0) {
             const anchorNode = selection.anchorNode;
+            const popoverCard = anchorNode instanceof Element
+                ? anchorNode.closest(".profile-popover-card")
+                : anchorNode?.parentElement?.closest(".profile-popover-card");
+            if (popoverCard) {
+                const copyBtn = popoverCard.querySelector(".popover-copy-btn") as HTMLElement | null;
+                if (copyBtn) {
+                    showPopoverCopiedFeedback(copyBtn);
+                }
+                return;
+            }
+
             const row = anchorNode instanceof Element
                 ? anchorNode.closest(".copy-contact-row")
                 : anchorNode?.parentElement?.closest(".copy-contact-row");

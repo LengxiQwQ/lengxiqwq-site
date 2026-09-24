@@ -12,7 +12,7 @@
 		"license": "GPL-3.0"
 	},
 	"lengxiqwq/playlistout": {
-		"description": "Playlist Out（歌单导出助手）— 主流音乐平台歌单解析与多格式导出工具，支持 TXT / CSV / Excel / JSON 等格式｜Playlist parser and multi-format exporter for major music platforms, supporting TXT, CSV, Excel, JSON, and more.",
+		"description": "Playlist Out（把你的歌单带走）— 主流音乐平台歌单解析与多格式导出工具，支持 TXT / CSV / Excel / JSON 等格式｜Playlist parser and multi-format exporter for major music platforms, supporting TXT, CSV, Excel, JSON, and more.",
 		"language": "TypeScript",
 		"avatarUrl": "https://avatars.githubusercontent.com/u/97082679?v=4",
 		"license": "MIT"

@@ -1,6 +1,5 @@
 import rss, { type RSSFeedItem } from "@astrojs/rss";
 import { getSortedPosts } from "@utils/content-utils";
-import { formatDateI18nWithTime } from "@utils/date-utils";
 import { renderFeedEntries } from "@utils/feed-utils";
 import type { APIContext } from "astro";
 import { siteConfig } from "@/config";
@@ -21,12 +20,13 @@ export async function GET(context: APIContext): Promise<Response> {
 	}));
 	return rss({
 		title: siteConfig.title,
-		description: siteConfig.subtitle || "No description",
+		description:
+			siteConfig.subtitle || siteConfig.description || "No description",
 		site: context.site ?? siteConfig.site_url,
 		customData: `<templateTheme>Firefly</templateTheme>
 		<templateThemeVersion>${pkg.version}</templateThemeVersion>
 		<templateThemeUrl>https://github.com/CuteLeaf/Firefly</templateThemeUrl>
-		<lastBuildDate>${formatDateI18nWithTime(new Date())}</lastBuildDate>`,
+		<lastBuildDate>${new Date().toUTCString()}</lastBuildDate>`,
 		items: feedItems,
 	});
 }
