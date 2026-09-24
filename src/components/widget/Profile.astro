@@ -119,9 +119,7 @@ const showContactRows: boolean = false;
 
                     {hasPopover && (
                         <div class:list={[
-                            "profile-popover pointer-events-none opacity-0 translate-y-1.5",
-                            "group-hover/popover:pointer-events-auto group-hover/popover:opacity-100 group-hover/popover:translate-y-0",
-                            "transition-all duration-200 ease-out absolute bottom-full mb-2.5 z-50",
+                            "profile-popover absolute bottom-full mb-2.5 z-50",
                             popoverAlign
                         ]}>
                             <div
@@ -224,14 +222,29 @@ const showContactRows: boolean = false;
         color: inherit;
     }
 
-    /* 气泡底部隐形安全桥梁，防止鼠标移入时意外丢失 hover */
+    /* 气泡平滑过渡：默认隐藏且不阻挡底层元素 */
+    .profile-popover {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.18s ease-out;
+    }
+
+    /* 激活状态：CSS hover 或 JS is-open 宽限期内保持完全显示且可交互 */
+    .group\/popover:hover .profile-popover,
+    .group\/popover.is-open .profile-popover,
+    .group\/popover:focus-within .profile-popover {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    /* 气泡底部隐形安全桥梁，扩大覆盖范围，防止鼠标跨越空隙时意外丢失 hover */
     .profile-popover::after {
         content: "";
         position: absolute;
         top: 100%;
-        left: 0;
-        width: 100%;
-        height: 12px;
+        left: -12px;
+        width: calc(100% + 24px);
+        height: 16px;
         display: block;
     }
 
@@ -268,6 +281,52 @@ const showContactRows: boolean = false;
 </style>
 
 <script>
+    // 社交图标弹窗 0.2s 离开缓冲与无缝续接管理
+    let activePopoverGroup: HTMLElement | null = null;
+    let popoverHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function clearPopoverTimer() {
+        if (popoverHideTimer) {
+            clearTimeout(popoverHideTimer);
+            popoverHideTimer = null;
+        }
+    }
+
+    document.addEventListener("mouseover", (e) => {
+        const target = e.target as HTMLElement | null;
+        const group = target?.closest(".group\\/popover") as HTMLElement | null;
+        if (group) {
+            // 只要鼠标在按钮、弹窗或空隙安全区内，立即清除关闭倒计时并继续保持开启
+            clearPopoverTimer();
+            if (activePopoverGroup && activePopoverGroup !== group) {
+                activePopoverGroup.classList.remove("is-open");
+            }
+            activePopoverGroup = group;
+            group.classList.add("is-open");
+        }
+    });
+
+    document.addEventListener("mouseout", (e) => {
+        const target = e.target as HTMLElement | null;
+        const group = target?.closest(".group\\/popover") as HTMLElement | null;
+        if (group) {
+            // 如果鼠标只是在 group 内部（如从按钮移动到弹窗卡片），保持开启不触发离开
+            const related = e.relatedTarget as HTMLElement | null;
+            if (related && group.contains(related)) {
+                return;
+            }
+
+            // 鼠标真正离开 group 区域，启动精准 0.2 秒（200ms）宽限期！
+            clearPopoverTimer();
+            popoverHideTimer = setTimeout(() => {
+                group.classList.remove("is-open");
+                if (activePopoverGroup === group) {
+                    activePopoverGroup = null;
+                }
+            }, 200);
+        }
+    });
+
     function copyText(text: string): Promise<void> {
         if (navigator.clipboard && window.isSecureContext) {
             return navigator.clipboard.writeText(text);
