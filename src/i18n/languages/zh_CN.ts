@@ -80,7 +80,7 @@ export const zh_CN: Translation = {
 	[Key.commentNotConfigured]: "评论系统暂未配置",
 	[Key.guestbookCommentHint]:
 		"您还未在配置文件中启用评论系统，启用后访客才可在此留言",
-	[Key.friends]: "友链",
+	[Key.friends]: "友情链接",
 	[Key.friendsDescription]: "这里是我的朋友们，欢迎互相访问交流",
 	[Key.searchFriends]: "搜索友链...",
 	[Key.friendsEmpty]: "暂无友情链接",
