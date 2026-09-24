@@ -115,7 +115,7 @@ export const zh_TW: Translation = {
 	[Key.timelineAll]: "全部",
 	[Key.timelineNoResults]: "暫無該分類下的時間線節點",
 
-	[Key.guestbook]: "留言",
+	[Key.guestbook]: "留言板",
 	[Key.guestbookDescription]: "歡迎在這裡留下你的足跡，分享你的想法和建議",
 	[Key.untitled]: "無標題",
 	[Key.uncategorized]: "未分類",
