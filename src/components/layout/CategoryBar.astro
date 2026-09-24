@@ -2,7 +2,12 @@
 import I18nKey from "@i18n/i18nKey";
 import { i18n } from "@i18n/translation";
 import { Icon } from "astro-icon/components";
-import { getCategoryList, getSortedPostsList } from "@/utils/content-utils";
+import { siteConfig } from "@/config";
+import {
+	getCategoryList,
+	getSortedPostsList,
+	getSortedProjects,
+} from "@/utils/content-utils";
 import { url } from "@/utils/url-utils";
 
 interface Props {
@@ -13,7 +18,10 @@ const { currentPostCategory } = Astro.props as Props;
 
 const categories = await getCategoryList();
 const totalPosts = (await getSortedPostsList()).length;
+const showProjects = siteConfig.pages.projects !== false;
+const totalProjects = showProjects ? (await getSortedProjects()).length : 0;
 const homeUrl = url("/");
+const projectsUrl = url("/projects/");
 const archiveUrl = url("/archive/");
 
 // 服务端计算初始高亮 pill（首屏无需等 JS）。
@@ -21,8 +29,11 @@ const archiveUrl = url("/archive/");
 // 交由客户端脚本在加载/导航时同步；此处只处理路径可确定的情况。
 const pathname = Astro.url.pathname.replace(/\/$/, "");
 const homePath = homeUrl.replace(/\/$/, "");
+const projectsPath = projectsUrl.replace(/\/$/, "");
 const archivePath = archiveUrl.replace(/\/$/, "");
 const isHome = pathname === homePath || pathname === "" || pathname === "/";
+const isProjects =
+	pathname === projectsPath || pathname.startsWith(`${projectsPath}/`);
 const isCategories = pathname === "/categories";
 const isArchive = pathname === archivePath;
 const postCategory = (currentPostCategory || "").trim();
@@ -33,6 +44,8 @@ function initialActive(categoryName: string): {
 	soft?: boolean;
 } {
 	if (isHome) return categoryName === "" ? { active: true } : {};
+	if (isProjects)
+		return categoryName === "__projects__" ? { active: true } : {};
 	if (isCategories)
 		return categoryName === "__categories__" ? { active: true } : {};
 	if (isArchive) return categoryName === "__archive__" ? { active: true } : {};
@@ -45,6 +58,7 @@ function initialActive(categoryName: string): {
   class="card-base category-bar p-3 onload-animation"
   id="category-bar"
   data-home-path={homeUrl}
+  data-projects-path={projectsUrl}
   data-archive-path={archiveUrl}
   data-current-post-category={currentPostCategory || ""}
 >
@@ -59,6 +73,20 @@ function initialActive(categoryName: string): {
     >
       <Icon name="material-symbols:home" class="text-lg" />
     </a>
+    {
+      showProjects && (
+        <a
+          href={projectsUrl}
+          class="category-pill focus-ring-inset text-sm px-4 py-1.5 whitespace-nowrap shrink-0
+                 transition-colors duration-150 ease-out flex items-center justify-center"
+          data-category-name="__projects__"
+          data-active={initialActive("__projects__").active ? "" : undefined}
+        >
+          {i18n(I18nKey.projects)}
+          <span class="pill-count">{totalProjects}</span>
+        </a>
+      )
+    }
     <a
       href={archiveUrl}
       class="category-pill focus-ring-inset text-sm px-4 py-1.5 whitespace-nowrap shrink-0
@@ -173,13 +201,16 @@ function initialActive(categoryName: string): {
   function getCategoryBarState(bar: HTMLElement, currentUrl: URL) {
     const pathname = currentUrl.pathname.replace(/\/$/, "");
     const homePath = (bar.getAttribute("data-home-path") || "/").replace(/\/$/, "");
+    const projectsPath = (bar.getAttribute("data-projects-path") || "/projects").replace(/\/$/, "");
     const archivePath = (bar.getAttribute("data-archive-path") || "/archive").replace(/\/$/, "");
     const isHome = pathname === homePath || pathname === "" || pathname === "/";
+    const isProjects = pathname === projectsPath || pathname.startsWith(`${projectsPath}/`);
     const isArchive = pathname === archivePath;
     const isCategories = pathname === "/categories";
 
     return {
       isHome,
+      isProjects,
       isArchive,
       isCategories,
       activeCategory: currentUrl.searchParams.get("category") || "",
@@ -189,7 +220,7 @@ function initialActive(categoryName: string): {
   }
 
   function setActiveCategory(bar: HTMLElement, currentUrl: URL) {
-    const { isHome, isArchive, isCategories, activeCategory, hasTag, hasUncategorized } =
+    const { isHome, isProjects, isArchive, isCategories, activeCategory, hasTag, hasUncategorized } =
       getCategoryBarState(bar, currentUrl);
     const postCategory = (bar.getAttribute("data-current-post-category") || "").trim();
 
@@ -201,6 +232,12 @@ function initialActive(categoryName: string): {
 
     if (isHome) {
       bar.querySelector<HTMLAnchorElement>('.category-pill[data-category-name=""]')
+        ?.setAttribute("data-active", "");
+      return;
+    }
+
+    if (isProjects) {
+      bar.querySelector<HTMLAnchorElement>('.category-pill[data-category-name="__projects__"]')
         ?.setAttribute("data-active", "");
       return;
     }
