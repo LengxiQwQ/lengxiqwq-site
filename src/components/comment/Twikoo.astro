@@ -66,140 +66,159 @@ const config = {
   }
 
   // 2. 增强 Twikoo 输入框支持系统 / 浏览器原生自动填充（Autofill & Autocomplete）
-  // 必须将 prepend 元素转换为标准 <label for="...">，Chrome / Edge 才能将其识别为有效联系人表单并弹出建议
-  function enhanceInputGroup(inputGroup) {
-    if (inputGroup.dataset.autofillReady) return; // 严格单次执行，杜绝重复替换与循环 Mutation
-    inputGroup.dataset.autofillReady = "1";
+  function enhanceTwikooInputs() {
+    const inputs = document.querySelectorAll(
+      ".twikoo .tk-meta-input input, .twikoo-form .tk-meta-input input, #twikoo .tk-meta-input input"
+    );
+    inputs.forEach(function (input) {
+      const parent = input.closest(".el-input-group");
+      const labelText = (parent ? parent.textContent : "") || "";
+      const name = input.getAttribute("name") || "";
+      const placeholder = input.getAttribute("placeholder") || "";
+      const isSubReply = !!input.closest(".tk-comment");
+      const idPrefix = isSubReply ? "twikoo-reply-" : "twikoo-";
 
-    const input = inputGroup.querySelector("input");
-    const prepend = inputGroup.querySelector(".el-input-group__prepend");
-    if (!input) return;
+      let fieldType = "";
+      if (
+        name === "mail" ||
+        name === "email" ||
+        input.type === "email" ||
+        labelText.includes("邮箱") ||
+        placeholder.includes("邮箱")
+      ) {
+        fieldType = "email";
+      } else if (
+        name === "nick" ||
+        name === "nickname" ||
+        labelText.includes("昵称") ||
+        placeholder.includes("昵称")
+      ) {
+        fieldType = "nickname";
+      } else if (
+        name === "link" ||
+        name === "url" ||
+        labelText.includes("网址") ||
+        placeholder.includes("网址")
+      ) {
+        fieldType = "url";
+      }
 
-    const labelText = (prepend ? prepend.textContent : "") || "";
-    const name = input.getAttribute("name") || "";
-    const placeholder = input.getAttribute("placeholder") || "";
-    const isSubReply = !!inputGroup.closest(".tk-comment");
-    const idPrefix = isSubReply ? "tk-sub-" + Date.now().toString(36) + "-" : "twikoo-";
-
-    let fieldType = "";
-    if (
-      name === "mail" ||
-      name === "email" ||
-      input.type === "email" ||
-      labelText.includes("邮箱") ||
-      placeholder.includes("邮箱")
-    ) {
-      fieldType = "email";
-    } else if (
-      name === "nick" ||
-      name === "nickname" ||
-      labelText.includes("昵称") ||
-      placeholder.includes("昵称")
-    ) {
-      fieldType = "nickname";
-    } else if (
-      name === "link" ||
-      name === "url" ||
-      labelText.includes("网址") ||
-      placeholder.includes("网址")
-    ) {
-      fieldType = "url";
-    }
-
-    if (!fieldType) return;
-
-    const inputId = idPrefix + fieldType;
-    input.id = inputId;
-
-    if (fieldType === "email") {
-      input.setAttribute("autocomplete", "email");
-      input.setAttribute("name", "email");
-      input.setAttribute("type", "email");
-      input.setAttribute("inputmode", "email");
-      input.setAttribute("autocapitalize", "off");
-      input.setAttribute("spellcheck", "false");
-    } else if (fieldType === "nickname") {
-      input.setAttribute("autocomplete", "nickname");
-      input.setAttribute("name", "nickname");
-    } else if (fieldType === "url") {
-      input.setAttribute("autocomplete", "url");
-      input.setAttribute("name", "url");
-      input.setAttribute("type", "url");
-      input.setAttribute("inputmode", "url");
-    }
-
-    // 将非标准的 div.prepend 转为标准 HTML5 <label for="inputId">
-    if (prepend && prepend.tagName !== "LABEL") {
-      const label = document.createElement("label");
-      label.className = prepend.className;
-      label.innerHTML = prepend.innerHTML;
-      label.htmlFor = inputId;
-      prepend.parentNode.replaceChild(label, prepend);
-    }
-
-    // 自动填充联动：当用户从浏览器下拉选中项时，驱动 Vue 数据模型双向同步
-    if (!input.__twikooEnhanced) {
-      input.__twikooEnhanced = true;
-      const syncModel = function () {
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-      };
-      input.addEventListener("change", syncModel);
-      input.addEventListener("blur", syncModel);
-      input.addEventListener("animationstart", function (e) {
-        if (e.animationName && e.animationName.toLowerCase().includes("autofill")) {
-          syncModel();
+      if (fieldType === "email") {
+        const inputId = idPrefix + "email";
+        if (input.id !== inputId) input.id = inputId;
+        if (input.getAttribute("autocomplete") !== "email") {
+          input.setAttribute("autocomplete", "email");
+          input.setAttribute("name", "email");
+          input.setAttribute("type", "email");
+          input.setAttribute("inputmode", "email");
+          input.setAttribute("autocapitalize", "off");
+          input.setAttribute("autocorrect", "off");
+          input.setAttribute("spellcheck", "false");
         }
-      });
-    }
+        const prepend = parent ? parent.querySelector(".el-input-group__prepend") : null;
+        if (prepend && prepend.tagName !== "LABEL") {
+          const label = document.createElement("label");
+          label.className = prepend.className;
+          label.innerHTML = prepend.innerHTML;
+          label.htmlFor = inputId;
+          prepend.parentNode.replaceChild(label, prepend);
+        }
+      } else if (fieldType === "nickname") {
+        const inputId = idPrefix + "nickname";
+        if (input.id !== inputId) input.id = inputId;
+        if (input.getAttribute("autocomplete") !== "nickname") {
+          input.setAttribute("autocomplete", "nickname");
+          input.setAttribute("name", "nickname");
+        }
+        const prepend = parent ? parent.querySelector(".el-input-group__prepend") : null;
+        if (prepend && prepend.tagName !== "LABEL") {
+          const label = document.createElement("label");
+          label.className = prepend.className;
+          label.innerHTML = prepend.innerHTML;
+          label.htmlFor = inputId;
+          prepend.parentNode.replaceChild(label, prepend);
+        }
+      } else if (fieldType === "url") {
+        const inputId = idPrefix + "url";
+        if (input.id !== inputId) input.id = inputId;
+        if (input.getAttribute("autocomplete") !== "url") {
+          input.setAttribute("autocomplete", "url");
+          input.setAttribute("name", "url");
+          input.setAttribute("type", "url");
+          input.setAttribute("inputmode", "url");
+        }
+        const prepend = parent ? parent.querySelector(".el-input-group__prepend") : null;
+        if (prepend && prepend.tagName !== "LABEL") {
+          const label = document.createElement("label");
+          label.className = prepend.className;
+          label.innerHTML = prepend.innerHTML;
+          label.htmlFor = inputId;
+          prepend.parentNode.replaceChild(label, prepend);
+        }
+      }
+
+      // 自动填充联动：当用户从浏览器下拉选中项时，触发 input 与 change 事件驱动 Vue 模型双向同步
+      if (!input.__twikooEnhanced) {
+        input.__twikooEnhanced = true;
+        const syncModel = function () {
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          input.dispatchEvent(new Event("change", { bubbles: true }));
+        };
+        input.addEventListener("change", syncModel);
+        input.addEventListener("blur", syncModel);
+        input.addEventListener("animationstart", function (e) {
+          if (e.animationName && e.animationName.toLowerCase().includes("autofill")) {
+            syncModel();
+          }
+        });
+      }
+    });
   }
 
-  function enhanceAllTwikooInputs() {
-    const root = document.getElementById("tcomment") || document.getElementById("twikoo-form");
-    if (!root) return;
-    const groups = root.querySelectorAll(".el-input-group:not([data-autofill-ready])");
-    groups.forEach(enhanceInputGroup);
-  }
-
-  // 3. 动态监听 Twikoo DOM 节点变动（只在评论容器内精准监听子树添加，已增强项会直接跳过）
+  // 3. 动态监听 Twikoo DOM 节点变动（限制在评论表单内部，增加 rAF 防抖保护）
   let twikooObserver = null;
+  let rafId = null;
+
   function cleanupTwikooObserver() {
     if (twikooObserver) {
       twikooObserver.disconnect();
       twikooObserver = null;
     }
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
   }
 
   function setupTwikooObserver() {
     cleanupTwikooObserver();
-    const commentEl = document.getElementById("tcomment");
-    if (!commentEl) return;
+    const formEl = document.getElementById("twikoo-form") || document.getElementById("tcomment");
+    if (!formEl) return;
 
     twikooObserver = new MutationObserver(function () {
-      enhanceAllTwikooInputs();
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(function () {
+        enhanceTwikooInputs();
+      });
     });
-    twikooObserver.observe(commentEl, {
+    twikooObserver.observe(formEl, {
       childList: true,
       subtree: true,
     });
-    enhanceAllTwikooInputs();
+    enhanceTwikooInputs();
   }
 
-  // 点击评论区时进行就绪保障（仅限 #tcomment 容器内部委托，绝不监听全局 document）
-  function setupTwikooPointerHook() {
-    const container = document.getElementById("tcomment") || document.getElementById("twikoo-form");
-    if (!container || container.__twikooHookInstalled) return;
-    container.__twikooHookInstalled = true;
-    container.addEventListener(
-      "pointerdown",
-      function (e) {
-        const target = e.target;
-        if (target && target instanceof Element && target.closest(".tk-meta-input")) {
-          enhanceAllTwikooInputs();
-        }
-      },
-      true
-    );
+  // 4. 获得焦点或点击时在捕获阶段（Capture）瞬间就绪表单属性与 Label，保障 Chrome 唤起 Autofill
+  if (!window.__twikooFocusHookInstalled) {
+    window.__twikooFocusHookInstalled = true;
+    const triggerIfComment = function (e) {
+      const target = e.target;
+      if (target && target instanceof Element && target.closest?.(".twikoo, .twikoo-form, #twikoo")) {
+        enhanceTwikooInputs();
+      }
+    };
+    document.addEventListener("focusin", triggerIfComment, true);
+    document.addEventListener("pointerdown", triggerIfComment, true);
   }
 
   // 获取当前页面路径
@@ -223,13 +242,11 @@ const config = {
 
   // 初始化 Twikoo
   function initTwikoo() {
-    const container = document.getElementById("tcomment");
+    const container = document.getElementById("twikoo-form") || document.getElementById("tcomment");
     if (!container) {
       cleanupTwikooObserver();
       return;
     }
-
-    setupTwikooPointerHook();
 
     if (typeof twikoo !== "undefined") {
       const dynamicConfig = createTwikooConfig();
@@ -245,7 +262,7 @@ const config = {
           console.error("[Twikoo] Init failed:", error);
         });
     } else {
-      // 如果 Twikoo 脚本未加载完成，延迟重试一次
+      // 如果 Twikoo 未加载，稍后重试
       setTimeout(initTwikoo, 300);
     }
   }
@@ -253,11 +270,11 @@ const config = {
   // 页面加载时初始化
   document.addEventListener("DOMContentLoaded", initTwikoo);
 
-  // Swup 页面切换适配：离开时清理 observer，切入后重新初始化
+  // Swup 页面切换后重新初始化与资源清理
   const onSwupContentReplace = function () {
     cleanupTwikooObserver();
     if (document.getElementById("tcomment")) {
-      setTimeout(initTwikoo, 150);
+      setTimeout(initTwikoo, 200);
     }
   };
 
@@ -270,6 +287,15 @@ const config = {
       }
     });
   }
+
+  // 自定义事件监听
+  document.addEventListener("firefly:page:loaded", function () {
+    const container = document.getElementById("twikoo-form") || document.getElementById("tcomment");
+    if (container) {
+      console.log("[Twikoo] Re-initializing via custom event");
+      initTwikoo();
+    }
+  });
 
   // 自定义事件监听
   document.addEventListener("firefly:page:loaded", function () {
