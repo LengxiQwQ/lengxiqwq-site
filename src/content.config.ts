@@ -52,6 +52,7 @@ type ProjectData = {
 	link: ProjectLink[];
 	status: string;
 	lang: string;
+	comment?: boolean;
 };
 
 type ContentCollection<T> = CollectionConfig<
@@ -127,6 +128,7 @@ const projectsCollection: ContentCollection<ProjectData> = defineCollection({
 			.default([]),
 		status: z.string().optional().default(""),
 		lang: z.string().optional().default(""),
+		comment: z.boolean().optional().default(true),
 	}),
 });
 

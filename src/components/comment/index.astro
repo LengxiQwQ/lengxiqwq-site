@@ -11,7 +11,10 @@ import Twikoo from "./Twikoo.astro";
 import Waline from "./Waline.astro";
 
 interface Props {
-	post?: CollectionEntry<"posts"> | CollectionEntry<"spec">;
+	post?:
+		| CollectionEntry<"posts">
+		| CollectionEntry<"spec">
+		| CollectionEntry<"projects">;
 	customPath?: string;
 	title?: string;
 }
@@ -26,7 +29,9 @@ const path = customPath
 	: post
 		? post.collection === "posts"
 			? `/posts/${slug}`
-			: `/${slug}`
+			: post.collection === "projects"
+				? `/projects/${slug}`
+				: `/${slug}`
 		: `/${slug}`;
 const url = `${Astro.site?.href}${path}`;
 const postTitle = post && "title" in post.data ? post.data.title : undefined;

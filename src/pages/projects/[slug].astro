@@ -1,9 +1,10 @@
 ---
 import { render } from "astro:content";
+import Comment from "@components/comment/index.astro";
 import Markdown from "@components/common/Markdown.astro";
 import { Icon } from "astro-icon/components";
 import CoverImage from "@/components/common/CoverImage.astro";
-import { siteConfig } from "@/config";
+import { commentConfig, siteConfig } from "@/config";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
@@ -57,6 +58,9 @@ const statusMeta = status ? getProjectStatusMeta(status) : null;
 
 // 标签：详情页完整显示所有标签（不折叠成 +N）
 const visibleTags = tags || [];
+
+const slug = removeFileExtension(entry.id);
+const projectPath = `/projects/${slug}`;
 ---
 
 <MainGridLayout
@@ -97,7 +101,7 @@ const visibleTags = tags || [];
           )}
         </div>
 
-        <!-- 日期 + 标签-->
+        <!-- 日期 + 标签 + 浏览量 -->
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3">
           <div class="flex items-center">
             <div class="meta-icon">
@@ -124,6 +128,75 @@ const visibleTags = tags || [];
               </span>
             </div>
           )}
+
+          {
+            commentConfig.type === "twikoo" &&
+              commentConfig.twikoo?.visitorCount && (
+                <div class="flex items-center">
+                  <div class="meta-icon">
+                    <Icon
+                      name="material-symbols:visibility-outline-rounded"
+                      class="text-xl"
+                    />
+                  </div>
+                  <span class="text-50 text-sm font-medium mr-1">
+                    {i18n(I18nKey.pageViews)}
+                  </span>
+                  <span
+                    class="text-50 text-sm font-medium"
+                    id="twikoo_visitors"
+                  >
+                    {i18n(I18nKey.pageViewsLoading)}
+                  </span>
+                </div>
+              )
+          }
+
+          {
+            commentConfig.type === "waline" &&
+              commentConfig.waline?.visitorCount && (
+                <div class="flex items-center">
+                  <div class="meta-icon">
+                    <Icon
+                      name="material-symbols:visibility-outline-rounded"
+                      class="text-xl"
+                    />
+                  </div>
+                  <span class="text-50 text-sm font-medium mr-1">
+                    {i18n(I18nKey.pageViews)}
+                  </span>
+                  <span
+                    class="text-50 text-sm font-medium waline-pageview-count"
+                    data-path={projectPath}
+                  >
+                    {i18n(I18nKey.pageViewsLoading)}
+                  </span>
+                </div>
+              )
+          }
+
+          {
+            commentConfig.type === "artalk" &&
+              commentConfig.artalk?.visitorCount && (
+                <div class="flex items-center">
+                  <div class="meta-icon">
+                    <Icon
+                      name="material-symbols:visibility-outline-rounded"
+                      class="text-xl"
+                    />
+                  </div>
+                  <span class="text-50 text-sm font-medium mr-1">
+                    {i18n(I18nKey.pageViews)}
+                  </span>
+                  <span
+                    class="text-50 text-sm font-medium artalk-pv-count"
+                    data-path={projectPath}
+                  >
+                    {i18n(I18nKey.pageViewsLoading)}
+                  </span>
+                </div>
+              )
+          }
         </div>
 
         {description && (
@@ -226,4 +299,7 @@ const visibleTags = tags || [];
       )}
     </div>
   </div>
+
+  <!-- 评论系统与访问量上报 -->
+  {entry.data.comment !== false && <Comment post={entry} />}
 </MainGridLayout>
