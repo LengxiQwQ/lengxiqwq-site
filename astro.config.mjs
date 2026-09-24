@@ -57,7 +57,6 @@ import { remarkPlantuml } from "./src/plugins/remark-plantuml.js";
 import { remarkReadingTime } from "./src/plugins/remark-reading-time.mjs";
 import { remarkWikiLink } from "./src/plugins/remark-wiki-link.js";
 import { collectUsedFontCssVars } from "./src/utils/fontHelper";
-import { resetContent } from "./scripts/reset-content.ts";
 
 if (process.env.NODE_ENV === "development") {
 	setMaxListeners(20);
@@ -123,14 +122,9 @@ function contentRepoWatcher() {
 						);
 					}
 
-					for (const cachePath of [
-						path.resolve(".astro"),
-						path.resolve("node_modules/.astro"),
-					]) {
-						if (fs.existsSync(cachePath)) {
-							fs.rmSync(cachePath, { recursive: true, force: true });
-						}
-					}
+					// 注意：这里不能删 .astro 缓存！dev server 运行时 Astro 正在使用这些文件，
+					// 强删会导致 content layer 崩溃 (exit code 1)。
+					// 缓存清理只在 sync-content.ts（predev 阶段）做一次就够了。
 
 					server.ws.send({ type: "full-reload" });
 				} catch (err) {
@@ -141,33 +135,6 @@ function contentRepoWatcher() {
 			server.watcher.on("change", syncTarget);
 			server.watcher.on("add", syncTarget);
 			server.watcher.on("unlink", syncTarget);
-
-			// 本地开发服务停止/退出时，自动执行清理以恢复纯净模板预设
-			let isCleaned = false;
-			const cleanUpOnExit = () => {
-				if (isCleaned) return;
-				isCleaned = true;
-				try {
-					console.log("\n[content-watcher] 正在自动清理临时同步内容，恢复纯净模板状态...");
-					resetContent(false);
-				} catch {
-					// 忽略清理异常
-				}
-			};
-
-			process.once("SIGINT", () => {
-				cleanUpOnExit();
-				process.exit(0);
-			});
-			process.once("SIGTERM", () => {
-				cleanUpOnExit();
-				process.exit(0);
-			});
-			process.once("SIGHUP", () => {
-				cleanUpOnExit();
-				process.exit(0);
-			});
-			server.httpServer?.on("close", cleanUpOnExit);
 		},
 	};
 }

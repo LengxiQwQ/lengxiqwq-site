@@ -269,7 +269,7 @@ const wallpaperPosition = state.isFullscreenMode
             // 获取当前设备可见的 slide-item
             function getVisibleSlides() {
                 var all = container.querySelectorAll('.slide-item');
-                var isLg = window.innerWidth >= 1024;
+                var isLg = window.matchMedia ? window.matchMedia('(min-width: 1024px)').matches : window.innerWidth >= 1024;
                 var visible = [];
                 for (var i = 0; i < all.length; i++) {
                     var el = all[i];
@@ -331,20 +331,20 @@ const wallpaperPosition = state.isFullscreenMode
                 materializeAhead(slides, nextIndex);
 
                 applySlideChange(slides, nextIndex);
-                notifyWallpaperChange(slides[nextIndex], true);
+                notifyWallpaperChange(slides[nextIndex], false);
 
                 if (resetProgress !== false && appState.isPlaying) {
                     startAutoPlay();
                 }
             }
 
-            function notifyWallpaperChange(slideEl, smooth) {
+            function notifyWallpaperChange(slideEl) {
                 if (!slideEl) return;
                 var img = slideEl.querySelector('img');
                 if (!img) return;
                 window.__currentWallpaperImg = img;
                 window.dispatchEvent(new CustomEvent('wallpaperChange', {
-                    detail: { img: img, smooth: smooth !== false }
+                    detail: { img: img, smooth: false }
                 }));
             }
 
@@ -454,6 +454,7 @@ const wallpaperPosition = state.isFullscreenMode
                     if (!hasActive) s[0].classList.add('active');
                     var idx = getCurrentIndex(s);
                     materialize(s[idx], false);
+                    notifyWallpaperChange(s[idx]);
                     if (isCarouselEnabled()) materializeAhead(s, idx);
                 };
                 if (lgQuery.addEventListener) lgQuery.addEventListener('change', onBreakpointChange);
@@ -485,6 +486,16 @@ const wallpaperPosition = state.isFullscreenMode
             var container = document.getElementById('banner-images-container');
             if (!container) return;
 
+            function notify(slot) {
+                if (!slot) return;
+                var img = slot.querySelector('img');
+                if (!img) return;
+                window.__currentWallpaperImg = img;
+                window.dispatchEvent(new CustomEvent('wallpaperChange', {
+                    detail: { img: img, smooth: false }
+                }));
+            }
+
             function materialize(slot, high) {
                 var tpl = slot.querySelector('template');
                 if (!tpl) return;
@@ -502,12 +513,6 @@ const wallpaperPosition = state.isFullscreenMode
                 }
                 slot.appendChild(frag);
                 tpl.remove();
-                if (img) {
-                    window.__currentWallpaperImg = img;
-                    window.dispatchEvent(new CustomEvent('wallpaperChange', {
-                        detail: { img: img, smooth: false }
-                    }));
-                }
                 // Layout 的全局淡入只扫解析期的图片，克隆进来的要自己接管
                 var ph = slot.querySelector('.lqip-placeholder');
                 if (!img) return;
@@ -526,12 +531,13 @@ const wallpaperPosition = state.isFullscreenMode
 
             function sync() {
                 var all = container.querySelectorAll('.banner-image-slot');
-                var isLg = window.innerWidth >= 1024;
+                var isLg = window.matchMedia ? window.matchMedia('(min-width: 1024px)').matches : window.innerWidth >= 1024;
                 for (var i = 0; i < all.length; i++) {
                     var el = all[i];
                     if (isLg && el.classList.contains('lg:hidden')) continue;
                     if (!isLg && el.classList.contains('hidden') && !el.classList.contains('lg:hidden')) continue;
                     materialize(el, true);
+                    notify(el);
                 }
             }
 
@@ -539,8 +545,11 @@ const wallpaperPosition = state.isFullscreenMode
 
             if (window.matchMedia) {
                 var lgQuery = window.matchMedia('(min-width: 1024px)');
-                if (lgQuery.addEventListener) lgQuery.addEventListener('change', sync);
-                else if (lgQuery.addListener) lgQuery.addListener(sync);
+                var onBreakpointChange = function () {
+                    sync();
+                };
+                if (lgQuery.addEventListener) lgQuery.addEventListener('change', onBreakpointChange);
+                else if (lgQuery.addListener) lgQuery.addListener(onBreakpointChange);
             }
         })();
     </script>

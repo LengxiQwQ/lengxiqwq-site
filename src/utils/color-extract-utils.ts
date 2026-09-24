@@ -236,25 +236,40 @@ export function animateHue(targetHue: number, duration = 700): void {
 	activeHueAnimationId = requestAnimationFrame(step);
 }
 
+let currentExtractionToken = 0;
+
 /**
- * 处理壁纸切换时的色彩自适应
+ * 处理壁纸切换时的色彩自适应（直接硬切至目标主色调，不进行多色相旋转过渡）
  */
 export async function handleWallpaperChange(
 	img: HTMLImageElement | null,
-	smooth = true,
+	_smooth = false,
 ): Promise<void> {
 	if (!img) return;
 	if (!getFollowWallpaperHue()) return;
 
-	const targetHue = await extractDominantHue(img);
-	if (smooth) {
-		animateHue(targetHue);
-	} else {
-		setHue(targetHue);
-		window.dispatchEvent(
-			new CustomEvent("hueChange", { detail: { hue: targetHue } }),
-		);
+	if (activeHueAnimationId !== null) {
+		cancelAnimationFrame(activeHueAnimationId);
+		activeHueAnimationId = null;
 	}
+
+	const token = ++currentExtractionToken;
+	const targetHue = await extractDominantHue(img);
+	if (token !== currentExtractionToken) return;
+
+	setHue(targetHue);
+	window.dispatchEvent(
+		new CustomEvent("hueChange", { detail: { hue: targetHue } }),
+	);
+}
+
+/**
+ * 判断壁纸元素在当前视口断点下是否实际处于可见显示状态（排除 display: none）
+ */
+function isWallpaperVisible(el: Element | null): boolean {
+	if (!el || typeof window === "undefined") return false;
+	const parent = el.closest(".slide-item, .banner-image-slot") || el;
+	return window.getComputedStyle(parent).display !== "none";
 }
 
 /**
@@ -262,14 +277,27 @@ export async function handleWallpaperChange(
  */
 export function getActiveWallpaperImg(): HTMLImageElement | null {
 	if (typeof document === "undefined") return null;
-	const active =
-		(window as unknown as { __currentWallpaperImg?: HTMLImageElement })
-			.__currentWallpaperImg ||
-		document.querySelector("#banner-images-container .slide-item.active img") ||
-		document.querySelector("#banner-images-container .banner-image-slot img") ||
-		document.querySelector("#dev-wallpaper-overlay-img") ||
-		document.querySelector("#wallpaper-wrapper img");
-	return active instanceof HTMLImageElement ? active : null;
+
+	const current = (
+		window as unknown as { __currentWallpaperImg?: HTMLImageElement }
+	).__currentWallpaperImg;
+	if (current instanceof HTMLImageElement && isWallpaperVisible(current)) {
+		return current;
+	}
+
+	const candidates = document.querySelectorAll<HTMLImageElement>(
+		"#banner-images-container .slide-item.active img, #banner-images-container .banner-image-slot img, #dev-wallpaper-overlay-img, #wallpaper-wrapper img",
+	);
+	for (const img of candidates) {
+		if (isWallpaperVisible(img)) {
+			(
+				window as unknown as { __currentWallpaperImg?: HTMLImageElement }
+			).__currentWallpaperImg = img;
+			return img;
+		}
+	}
+
+	return candidates[0] || null;
 }
 
 /**
@@ -294,7 +322,7 @@ export function initWallpaperHueFollower(): void {
 		e: CustomEvent<{ img: HTMLImageElement; smooth?: boolean }>,
 	) => {
 		if (e.detail?.img) {
-			handleWallpaperChange(e.detail.img, e.detail.smooth !== false);
+			handleWallpaperChange(e.detail.img, false);
 		}
 	}) as EventListener);
 
@@ -303,7 +331,7 @@ export function initWallpaperHueFollower(): void {
 		e: CustomEvent<{ enable: boolean }>,
 	) => {
 		if (e.detail?.enable) {
-			applyCurrentWallpaperHue(true);
+			applyCurrentWallpaperHue(false);
 		}
 	}) as EventListener);
 
@@ -315,7 +343,22 @@ export function initWallpaperHueFollower(): void {
 		applyCurrentWallpaperHue(false);
 	});
 
-	// 4. 首屏立即执行一次自适应提取
+	// 4. 监听桌面/移动端断点变化（窗口缩放或平板横竖屏切换时自动更新主题色）
+	if (window.matchMedia) {
+		const lgQuery = window.matchMedia("(min-width: 1024px)");
+		const onBreakpointChange = () => {
+			requestAnimationFrame(() => {
+				applyCurrentWallpaperHue(false);
+			});
+		};
+		if (lgQuery.addEventListener) {
+			lgQuery.addEventListener("change", onBreakpointChange);
+		} else if (lgQuery.addListener) {
+			lgQuery.addListener(onBreakpointChange);
+		}
+	}
+
+	// 5. 首屏立即执行一次自适应提取
 	if (getFollowWallpaperHue()) {
 		const img = getActiveWallpaperImg();
 		if (img) {

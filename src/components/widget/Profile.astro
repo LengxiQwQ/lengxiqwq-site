@@ -77,7 +77,7 @@ const showContactRows: boolean = false;
             const arrowAlign = isFirst ? "left-5 -translate-x-1/2" : isLast ? "right-5 translate-x-1/2" : "left-1/2 -translate-x-1/2";
 
             return (
-                <div class="relative group/popover">
+                <div class:list={["relative", hasPopover && "profile-popover-wrapper group/popover"]}>
                     {isMailto ? (
                         <a
                             rel="me"
@@ -134,12 +134,12 @@ const showContactRows: boolean = false;
                                 <button
                                     type="button"
                                     data-copy={item.copyText}
-                                    class="popover-copy-btn flex items-center justify-center shrink-0 text-50 hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/10 rounded-md p-1 -mr-0.5 cursor-pointer transition-colors"
+                                    class="popover-copy-btn relative w-6 h-6 flex items-center justify-center shrink-0 text-50 hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/10 rounded-md -mr-0.5 cursor-pointer transition-colors overflow-hidden"
                                     title="点击复制"
                                     aria-label={`复制 ${item.name}：${item.copyText}`}
                                 >
-                                    <Icon name="material-symbols:content-copy-outline" class="text-[0.95rem] icon-copy pointer-events-none" />
-                                    <Icon name="material-symbols:check-rounded" class="text-[1.1rem] text-(--primary) icon-check pointer-events-none" />
+                                    <Icon name="material-symbols:content-copy-outline" class="icon-copy text-[0.95rem] absolute inset-0 m-auto pointer-events-none transition-all duration-200" />
+                                    <Icon name="material-symbols:check-rounded" class="icon-check text-[1.05rem] text-(--primary) absolute inset-0 m-auto pointer-events-none transition-all duration-200" />
                                 </button>
                                 <!-- 底部指示小三角箭头 -->
                                 <div class:list={[
@@ -222,48 +222,69 @@ const showContactRows: boolean = false;
         color: inherit;
     }
 
-    /* 气泡平滑过渡：默认隐藏且不阻挡底层元素 */
+    /* 气泡平滑过渡：默认隐藏，具备微位移与缩放的自然高级入场/退场质感 */
     .profile-popover {
         opacity: 0;
         pointer-events: none;
-        transition: opacity 0.18s ease-out;
+        transform: translateY(6px) scale(0.96);
+        transform-origin: bottom center;
+        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        will-change: opacity, transform;
     }
 
-    /* 激活状态：CSS hover 或 JS is-open 宽限期内保持完全显示且可交互 */
-    .group\/popover:hover .profile-popover,
-    .group\/popover.is-open .profile-popover,
-    .group\/popover:focus-within .profile-popover {
+    /* 激活状态：通过 JS is-open 类或键盘 focus-within 激活，确保精准 0.2s 宽限期不受 CSS 伪类撕裂 */
+    .profile-popover-wrapper.is-open .profile-popover,
+    .profile-popover-wrapper:focus-within .profile-popover {
         opacity: 1;
         pointer-events: auto;
+        transform: translateY(0) scale(1);
     }
 
-    /* 气泡底部隐形安全桥梁，扩大覆盖范围，防止鼠标跨越空隙时意外丢失 hover */
+    /* 气泡底部隐形安全桥梁，覆盖弹窗与按钮之间 10px 空隙，防止鼠标跨越时指针失焦 */
     .profile-popover::after {
         content: "";
         position: absolute;
         top: 100%;
         left: -12px;
         width: calc(100% + 24px);
-        height: 16px;
+        height: 14px;
         display: block;
     }
 
-    /* 复制按钮及打勾动效 */
+    /* 复制按钮及打勾动效：严格锁定 24x24 盒模型，零位移、零跳动 */
+    .popover-copy-btn {
+        box-sizing: border-box;
+    }
+
+    .popover-copy-btn .icon-copy {
+        opacity: 1;
+        transform: scale(1);
+        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
     .popover-copy-btn .icon-check {
-        display: none;
+        opacity: 0;
+        transform: scale(0.4);
+        pointer-events: none;
+        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .popover-copy-btn.is-copied .icon-copy {
-        display: none;
+        opacity: 0;
+        transform: scale(0.4);
+        pointer-events: none;
     }
 
     .popover-copy-btn.is-copied .icon-check {
-        display: inline-block;
-        animation: popCheck 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+        opacity: 1;
+        transform: scale(1);
+        pointer-events: none;
+        animation: checkBounce 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
     }
 
-    @keyframes popCheck {
-        0% { transform: scale(0.6); opacity: 0; }
+    @keyframes checkBounce {
+        0% { transform: scale(0.4); opacity: 0; }
+        60% { transform: scale(1.15); opacity: 1; }
         100% { transform: scale(1); opacity: 1; }
     }
 
@@ -281,8 +302,8 @@ const showContactRows: boolean = false;
 </style>
 
 <script>
-    // 社交图标弹窗 0.2s 离开缓冲与无缝续接管理
-    let activePopoverGroup: HTMLElement | null = null;
+    // 社交图标弹窗 0.2s 离开容错缓冲（Grace Period）与无缝续接状态管理
+    let activePopoverWrapper: HTMLElement | null = null;
     let popoverHideTimer: ReturnType<typeof setTimeout> | null = null;
 
     function clearPopoverTimer() {
@@ -292,38 +313,54 @@ const showContactRows: boolean = false;
         }
     }
 
+    // 鼠标移入监听（委托）：涵盖按钮、弹窗本体、安全桥等任何内部区域
     document.addEventListener("mouseover", (e) => {
         const target = e.target as HTMLElement | null;
-        const group = target?.closest(".group\\/popover") as HTMLElement | null;
-        if (group) {
-            // 只要鼠标在按钮、弹窗或空隙安全区内，立即清除关闭倒计时并继续保持开启
+        const wrapper = target?.closest(".profile-popover-wrapper") as HTMLElement | null;
+        if (wrapper) {
+            // 只要鼠标在按钮或弹窗上，立即清除关闭倒计时
             clearPopoverTimer();
-            if (activePopoverGroup && activePopoverGroup !== group) {
-                activePopoverGroup.classList.remove("is-open");
+
+            // 若之前激活的是另一个 popover（如从 Email 快速直接划到 QQ），立即收起旧的避免重叠
+            if (activePopoverWrapper && activePopoverWrapper !== wrapper) {
+                activePopoverWrapper.classList.remove("is-open");
             }
-            activePopoverGroup = group;
-            group.classList.add("is-open");
+
+            activePopoverWrapper = wrapper;
+            wrapper.classList.add("is-open");
         }
     });
 
+    // 鼠标移出监听（委托）
     document.addEventListener("mouseout", (e) => {
         const target = e.target as HTMLElement | null;
-        const group = target?.closest(".group\\/popover") as HTMLElement | null;
-        if (group) {
-            // 如果鼠标只是在 group 内部（如从按钮移动到弹窗卡片），保持开启不触发离开
+        const wrapper = target?.closest(".profile-popover-wrapper") as HTMLElement | null;
+        if (wrapper) {
+            // 检查鼠标移向的目标：如果仍然在当前 wrapper 内部（如从按钮移向弹窗，或在弹窗卡片内各子元素间移动），绝不触发离开
             const related = e.relatedTarget as HTMLElement | null;
-            if (related && group.contains(related)) {
+            if (related && wrapper.contains(related)) {
                 return;
             }
 
-            // 鼠标真正离开 group 区域，启动精准 0.2 秒（200ms）宽限期！
+            // 鼠标真正离开当前整体区域（无论是离开了弹窗还是离开了按钮），启动精准 0.2 秒（200ms）宽限期
             clearPopoverTimer();
             popoverHideTimer = setTimeout(() => {
-                group.classList.remove("is-open");
-                if (activePopoverGroup === group) {
-                    activePopoverGroup = null;
+                wrapper.classList.remove("is-open");
+                if (activePopoverWrapper === wrapper) {
+                    activePopoverWrapper = null;
                 }
             }, 200);
+        }
+    });
+
+    // 页面不可见或切后台时，自动清理遗留弹窗与定时器
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+            clearPopoverTimer();
+            if (activePopoverWrapper) {
+                activePopoverWrapper.classList.remove("is-open");
+                activePopoverWrapper = null;
+            }
         }
     });
 
@@ -463,7 +500,7 @@ const showContactRows: boolean = false;
 
                 if (qq) {
                     copyText(qq).then(() => {
-                        const popoverBtn = qqBtn.closest(".group\\/popover")?.querySelector(".popover-copy-btn") as HTMLElement | null;
+                        const popoverBtn = qqBtn.closest(".profile-popover-wrapper, .group\\/popover")?.querySelector(".popover-copy-btn") as HTMLElement | null;
                         if (popoverBtn) showPopoverCopiedFeedback(popoverBtn);
                     }).catch(() => {});
 
