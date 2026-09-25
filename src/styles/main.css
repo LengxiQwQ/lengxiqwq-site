@@ -428,7 +428,7 @@ html {
     }
     .btn-plain {
         @apply transition-colors duration-150 relative flex items-center justify-center bg-none;
-        color: rgba(0, 0, 0, 0.75);
+        color: #404040;
         &:hover {
             color: var(--primary);
         }
@@ -447,7 +447,7 @@ html {
     }
     :is(.dark, .dark *) .btn-plain,
     .dark .btn-plain {
-        color: rgba(255, 255, 255, 0.75);
+        color: #bfbfbf;
     }
     :is(.dark, .dark *) .btn-plain:hover,
     .dark .btn-plain:hover,
@@ -464,7 +464,7 @@ html {
     }
     :is(.dark, .dark *) .btn-regular,
     .dark .btn-regular {
-        color: rgba(255, 255, 255, 0.75);
+        color: #bfbfbf;
     }
 
     .link-underline {
@@ -485,39 +485,39 @@ html {
 
 
     .text-90 {
-        color: rgba(0, 0, 0, 0.9);
+        color: #1a1a1a;
     }
     :is(.dark, .dark *) .text-90,
     .dark .text-90 {
-        color: rgba(255, 255, 255, 0.9);
+        color: #e6e6e6;
     }
     .text-75 {
-        color: rgba(0, 0, 0, 0.75);
+        color: #404040;
     }
     :is(.dark, .dark *) .text-75,
     .dark .text-75 {
-        color: rgba(255, 255, 255, 0.75);
+        color: #bfbfbf;
     }
     .text-50 {
-        color: rgba(0, 0, 0, 0.5);
+        color: #808080;
     }
     :is(.dark, .dark *) .text-50,
     .dark .text-50 {
-        color: rgba(255, 255, 255, 0.5);
+        color: #808080;
     }
     .text-30 {
-        color: rgba(0, 0, 0, 0.3);
+        color: #b3b3b3;
     }
     :is(.dark, .dark *) .text-30,
     .dark .text-30 {
-        color: rgba(255, 255, 255, 0.3);
+        color: #4d4d4d;
     }
     .text-25 {
-        color: rgba(0, 0, 0, 0.25);
+        color: #bfbfbf;
     }
     :is(.dark, .dark *) .text-25,
     .dark .text-25 {
-        color: rgba(255, 255, 255, 0.25);
+        color: #404040;
     }
 
     /* 下拉菜单样式 */
@@ -551,11 +551,11 @@ html {
 
     .dropdown-item {
         @apply flex items-center justify-between px-4 py-2.5 hover:text-(--primary) hover:bg-(--btn-plain-bg-hover) transition-colors duration-150 font-medium;
-        color: rgba(0, 0, 0, 0.75);
+        color: #404040;
     }
     :is(.dark, .dark *) .dropdown-item,
     .dark .dropdown-item {
-        color: rgba(255, 255, 255, 0.75);
+        color: #bfbfbf;
     }
     :is(.dark, .dark *) .dropdown-item:hover,
     .dark .dropdown-item:hover {
