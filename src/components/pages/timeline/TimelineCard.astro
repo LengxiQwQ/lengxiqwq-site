@@ -40,7 +40,7 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 				"relative z-10 flex items-center justify-center w-8 h-8 sm:w-11 sm:h-11 rounded-full border-2 transition-all duration-300 mt-1",
 				item.featured
 					? "border-(--primary) bg-(--primary)/15 text-(--primary) ring-4 ring-(--primary)/20 group-hover:scale-110 shadow-sm"
-					: "border-(--line-divider) bg-(--card-bg) text-neutral-600 dark:text-neutral-400 group-hover:border-(--primary) group-hover:text-(--primary) group-hover:scale-110 shadow-xs",
+					: "border-(--line-divider) bg-(--card-bg) text-neutral-600 dark:text-neutral-400 group-hover:border-(--primary) group-md:hover:text-(--primary) group-hover:scale-110 shadow-xs",
 			]}
 		>
 			<Icon name={markerIcon} class="text-sm sm:text-lg" />
@@ -79,7 +79,7 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 
 		<!-- 标题与副标题/地点 -->
 		<div class="flex flex-col gap-1 min-w-0">
-			<h2 class="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 break-words group-hover:text-(--primary) transition-colors">
+			<h2 class="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 break-words group-md:hover:text-(--primary) transition-colors">
 				{item.title}
 			</h2>
 

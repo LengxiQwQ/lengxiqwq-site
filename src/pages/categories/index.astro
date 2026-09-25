@@ -36,17 +36,17 @@ const totalPosts = categories.reduce((sum, cat) => sum + cat.count, 0);
                         />
                     </div>
                     <div class="flex-1 min-w-0">
-                        <h2 class="text-lg font-bold text-90 truncate group-hover:text-(--primary) transition-colors" title={category.name}>
+                        <h2 class="text-lg font-bold text-90 truncate group-md:hover:text-(--primary) transition-colors" title={category.name}>
                             {category.name}
                         </h2>
-                        <p class="text-sm text-30 mt-1 group-hover:text-(--primary)/60 transition-colors">
+                        <p class="text-sm text-30 mt-1 group-md:hover:text-(--primary)/60 transition-colors">
                             {category.count} {i18n(I18nKey.postsCount)}
                         </p>
                     </div>
                     <div class="shrink-0">
                         <Icon
                             name="material-symbols:chevron-right-rounded"
-                            class="text-2xl text-30 group-hover:text-(--primary) transition-colors "
+                            class="text-2xl text-30 group-md:hover:text-(--primary) transition-colors "
                         />
                     </div>
                 </a>
