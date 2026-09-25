@@ -27,11 +27,11 @@ const wallpaperPosition = state.isFullscreenMode
 
 <!-- Wallpaper - 如果允许切换则始终渲染，否则只渲染当前模式 -->
 {(state.isWallpaperSwitchable || state.isBannerMode || state.isFullscreenMode || state.isOverlayMode) && (
-<div id="wallpaper-wrapper" class="absolute z-10 w-full overflow-hidden" style={`--overlay-opacity: ${backgroundWallpaper.overlay?.opacity ?? 0.8}; --overlay-z-index: ${backgroundWallpaper.overlay?.zIndex ?? -1}; --overlay-blur: ${backgroundWallpaper.overlay?.blur ?? 3}px;`}>
+<div id="wallpaper-wrapper" class="absolute z-10 w-full overflow-hidden select-none" style={`--overlay-opacity: ${backgroundWallpaper.overlay?.opacity ?? 0.8}; --overlay-z-index: ${backgroundWallpaper.overlay?.zIndex ?? -1}; --overlay-blur: ${backgroundWallpaper.overlay?.blur ?? 3}px;`}>
 <!-- 背景图片显示 -->
     {state.hasMultipleImages ? (
     /* 轮播模式：渲染所有图片为 slide-item */
-    <div class:list={["relative h-full w-full bg-(--page-bg)", `effect-${state.bannerCarouselEffect}`]} id="banner-images-container"
+    <div class:list={["relative h-full w-full bg-(--page-bg) pointer-events-none select-none", `effect-${state.bannerCarouselEffect}`]} id="banner-images-container"
          style={`z-index: 5; --carousel-interval: ${state.bannerCarouselInterval}ms`}
          data-carousel-enabled={state.bannerCarouselEnabledDefault}
          data-carousel-switchable={state.bannerCarouselSwitchable}
@@ -43,7 +43,7 @@ const wallpaperPosition = state.isFullscreenMode
                 <template>
                     <ImageWrapper
                         alt="Mobile background image of the blog"
-                        class="object-cover h-full w-full"
+                        class="object-cover h-full w-full pointer-events-none select-none"
                         src={src}
                         position={wallpaperPosition}
                         width={828}
@@ -51,6 +51,7 @@ const wallpaperPosition = state.isFullscreenMode
                         sizes="100vw"
                         loading="eager"
                         quality={state.mobileQuality}
+                        draggable={false}
                     />
                 </template>
             </div>
@@ -60,7 +61,7 @@ const wallpaperPosition = state.isFullscreenMode
                 <template>
                     <ImageWrapper
                         alt="Desktop background image of the blog"
-                        class="object-cover h-full"
+                        class="object-cover h-full pointer-events-none select-none"
                         src={src}
                         position={wallpaperPosition}
                         width={1920}
@@ -68,6 +69,7 @@ const wallpaperPosition = state.isFullscreenMode
                         sizes="100vw"
                         loading="eager"
                         quality={state.configQuality}
+                        draggable={false}
                     />
                 </template>
             </div>
@@ -77,7 +79,7 @@ const wallpaperPosition = state.isFullscreenMode
                 <div class="slide-item active block lg:hidden">
                     <ImageWrapper
                         alt="Mobile background image of the blog"
-                        class="object-cover h-full w-full"
+                        class="object-cover h-full w-full pointer-events-none select-none"
                         src={backgroundImages.mobile[0]}
                         position={wallpaperPosition}
                         width={828}
@@ -87,6 +89,7 @@ const wallpaperPosition = state.isFullscreenMode
                         fetchpriority="high"
                         fadeIn={false}
                         quality={state.mobileQuality}
+                        draggable={false}
                     />
                 </div>
             )}
@@ -94,7 +97,7 @@ const wallpaperPosition = state.isFullscreenMode
                 <div class="slide-item active hidden lg:block">
                     <ImageWrapper
                         alt="Desktop background image of the blog"
-                        class="object-cover h-full"
+                        class="object-cover h-full pointer-events-none select-none"
                         src={backgroundImages.desktop[0]}
                         position={wallpaperPosition}
                         width={1920}
@@ -104,6 +107,7 @@ const wallpaperPosition = state.isFullscreenMode
                         fetchpriority="high"
                         fadeIn={false}
                         quality={state.configQuality}
+                        draggable={false}
                     />
                 </div>
             )}
@@ -111,7 +115,7 @@ const wallpaperPosition = state.isFullscreenMode
     </div>
     ) : (
     /* 单图模式 */
-    <div class="relative h-full w-full" id="banner-images-container">
+    <div class="relative h-full w-full pointer-events-none select-none" id="banner-images-container">
         {/* 两侧都放在 <template> 里，由下面的脚本按 matchMedia 只实例化匹配的那一侧，
             避免桌面端白下一张手机图（display:none 挡不住 loading="eager"） */}
         {backgroundImages.mobile.length > 0 && (
@@ -119,7 +123,7 @@ const wallpaperPosition = state.isFullscreenMode
                 <template>
                     <ImageWrapper
                         alt="Mobile background image of the blog"
-                        class="object-cover h-full w-full"
+                        class="object-cover h-full w-full pointer-events-none select-none"
                         src={backgroundImages.mobile[0]}
                         position={wallpaperPosition}
                         width={828}
@@ -127,6 +131,7 @@ const wallpaperPosition = state.isFullscreenMode
                         sizes="100vw"
                         loading="eager"
                         quality={state.mobileQuality}
+                        draggable={false}
                     />
                 </template>
             </div>
@@ -136,7 +141,7 @@ const wallpaperPosition = state.isFullscreenMode
                 <template>
                     <ImageWrapper
                         alt="Desktop background image of the blog"
-                        class="object-cover h-full"
+                        class="object-cover h-full pointer-events-none select-none"
                         src={backgroundImages.desktop[0]}
                         position={wallpaperPosition}
                         width={1920}
@@ -144,6 +149,7 @@ const wallpaperPosition = state.isFullscreenMode
                         sizes="100vw"
                         loading="eager"
                         quality={state.configQuality}
+                        draggable={false}
                     />
                 </template>
             </div>
@@ -153,7 +159,7 @@ const wallpaperPosition = state.isFullscreenMode
                 <div class="absolute inset-0 block lg:hidden">
                     <ImageWrapper
                         alt="Mobile background image of the blog"
-                        class="object-cover h-full w-full"
+                        class="object-cover h-full w-full pointer-events-none select-none"
                         src={backgroundImages.mobile[0]}
                         position={wallpaperPosition}
                         width={828}
@@ -163,6 +169,7 @@ const wallpaperPosition = state.isFullscreenMode
                         fetchpriority="high"
                         fadeIn={false}
                         quality={state.mobileQuality}
+                        draggable={false}
                     />
                 </div>
             )}
@@ -170,7 +177,7 @@ const wallpaperPosition = state.isFullscreenMode
                 <div class="absolute inset-0 hidden lg:block">
                     <ImageWrapper
                         alt="Desktop background image of the blog"
-                        class="object-cover h-full"
+                        class="object-cover h-full pointer-events-none select-none"
                         src={backgroundImages.desktop[0]}
                         position={wallpaperPosition}
                         width={1920}
@@ -180,6 +187,7 @@ const wallpaperPosition = state.isFullscreenMode
                         fetchpriority="high"
                         fadeIn={false}
                         quality={state.configQuality}
+                        draggable={false}
                     />
                 </div>
             )}
@@ -239,8 +247,12 @@ const wallpaperPosition = state.isFullscreenMode
                 var tpl = slideEl.querySelector('template');
                 if (!tpl) return false;
                 var frag = tpl.content.cloneNode(true);
+                var img = frag.querySelector('img');
+                if (img) {
+                    img.setAttribute('draggable', 'false');
+                    img.addEventListener('dragstart', function (e) { e.preventDefault(); });
+                }
                 if (high) {
-                    var img = frag.querySelector('img');
                     // 必须在插入前写，插入即发起请求
                     if (img) {
                         img.setAttribute('fetchpriority', 'high');
@@ -475,6 +487,12 @@ const wallpaperPosition = state.isFullscreenMode
             if (isCarouselEnabled() && isBannerWallpaperMode()) {
                 startAutoPlay();
             }
+
+            container.addEventListener('dragstart', function (e) { e.preventDefault(); });
+            var wrapper = document.getElementById('wallpaper-wrapper');
+            if (wrapper) {
+                wrapper.addEventListener('dragstart', function (e) { e.preventDefault(); });
+            }
         })();
     </script>
     )}
@@ -501,6 +519,10 @@ const wallpaperPosition = state.isFullscreenMode
                 if (!tpl) return;
                 var frag = tpl.content.cloneNode(true);
                 var img = frag.querySelector('img');
+                if (img) {
+                    img.setAttribute('draggable', 'false');
+                    img.addEventListener('dragstart', function (e) { e.preventDefault(); });
+                }
                 var phFrag = frag.querySelector('.lqip-placeholder');
                 if (img && high) {
                     img.setAttribute('fetchpriority', 'high');
@@ -550,6 +572,12 @@ const wallpaperPosition = state.isFullscreenMode
                 };
                 if (lgQuery.addEventListener) lgQuery.addEventListener('change', onBreakpointChange);
                 else if (lgQuery.addListener) lgQuery.addListener(onBreakpointChange);
+            }
+
+            container.addEventListener('dragstart', function (e) { e.preventDefault(); });
+            var wrapper = document.getElementById('wallpaper-wrapper');
+            if (wrapper) {
+                wrapper.addEventListener('dragstart', function (e) { e.preventDefault(); });
             }
         })();
     </script>

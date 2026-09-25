@@ -279,6 +279,27 @@ html[data-wallpaper-mode="overlay"] #wallpaper-wrapper img {
 }
 
 /* ============================================
+ * 壁纸防拖拽与防选取优化
+ * 禁止横幅壁纸与全屏背景大图被鼠标拽动拖走或触发原生图片拖拽复制
+ * ============================================ */
+#wallpaper-wrapper #banner-images-container,
+#wallpaper-wrapper img,
+#wallpaper-wrapper picture,
+#wallpaper-wrapper .slide-item,
+#wallpaper-wrapper .banner-image-slot {
+    -webkit-user-drag: none;
+    -khtml-user-drag: none;
+    -moz-user-drag: none;
+    -o-user-drag: none;
+    user-drag: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    pointer-events: none;
+}
+
+/* ============================================
  * 运行时模式驱动的 wrapper 显示
  * data-wallpaper-mode 在解析期内联脚本中同步设置，早于 rAF 设置 display/top；
  * 覆盖 SSR 按 config 生成的 display:none，避免 rAF 早于 wrapper 解析触发时壁纸晚出现、

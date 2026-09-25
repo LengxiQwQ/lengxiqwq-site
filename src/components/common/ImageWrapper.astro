@@ -34,6 +34,7 @@ interface Props {
 	dataCoverImg?: boolean;
 	showLqip?: boolean;
 	showOverlay?: boolean;
+	draggable?: boolean;
 }
 
 const {
@@ -56,6 +57,7 @@ const {
 	dataCoverImg = false,
 	showLqip = true,
 	showOverlay = true,
+	draggable,
 } = Astro.props;
 
 const fallbackFormat = getFallbackFormat();
@@ -133,6 +135,7 @@ const lqipProps = isLocal
             data-cover-img={dataCoverImg ? true : undefined}
             formats={formats}
             fallbackFormat={fallbackFormat}
+            draggable={draggable !== undefined ? draggable : undefined}
             {...responsiveProps}
         />
     )}
@@ -145,8 +148,9 @@ const lqipProps = isLocal
             loading={loading}
             fetchpriority={fetchpriority}
             data-cover-img={dataCoverImg ? true : undefined}
+            draggable={draggable !== undefined ? draggable : undefined}
             {...responsiveProps}
         />
     )}
-    {!isLocal && <img src={isPublic ? url(src) : src} alt={alt || ""} class={imageClass} style={imageStyle} loading={loading} fetchpriority={fetchpriority} data-cover-img={dataCoverImg ? true : undefined} referrerpolicy={referrerPolicy} />}
+    {!isLocal && <img src={isPublic ? url(src) : src} alt={alt || ""} class={imageClass} style={imageStyle} loading={loading} fetchpriority={fetchpriority} data-cover-img={dataCoverImg ? true : undefined} referrerpolicy={referrerPolicy} draggable={draggable !== undefined ? (draggable ? "true" : "false") : undefined} />}
 </div>
