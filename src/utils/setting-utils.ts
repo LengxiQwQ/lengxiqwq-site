@@ -161,6 +161,11 @@ export function applyThemeToDocument(theme: LIGHT_DARK_MODE): void {
 		} else {
 			document.documentElement.classList.remove("dark");
 		}
+
+		// 同步 CSS color-scheme，防止 iOS Safari Auto Dark Mode 强制蓝色链接
+		document.documentElement.style.colorScheme = targetIsDark
+			? "dark"
+			: "light";
 	}
 
 	// Set the theme for Expressive Code based on current mode
@@ -225,6 +230,9 @@ export function setupSystemThemeListener(): void {
 		} else {
 			document.documentElement.classList.remove("dark");
 		}
+
+		// 同步 CSS color-scheme，防止 iOS Safari Auto Dark Mode 强制蓝色链接
+		document.documentElement.style.colorScheme = isDark ? "dark" : "light";
 
 		// Set the theme for Expressive Code
 		const expressiveTheme = isDark

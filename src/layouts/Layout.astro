@@ -163,6 +163,8 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
 <html lang={siteLang} class="bg-(--page-bg) text-[14px] md:text-[16px]" data-wallpaper-mode={backgroundWallpaper.mode} data-fullscreen-layout={fullscreenLayout} data-has-wallpaper={hasWallpaper ? "" : undefined} data-tag-style={siteConfig.tagStyle ?? "pill"} data-category-style={siteConfig.categoryStyle ?? "rectangle"}>
   <head>
     <meta charset="UTF-8" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="format-detection" content="telephone=no" />
     <style is:inline>
 			@layer properties, theme, base, components, utilities;
 		</style>
@@ -398,6 +400,10 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
       } else {
         document.documentElement.classList.remove("dark");
       }
+
+      // 同步 CSS color-scheme 属性，告诉浏览器（尤其 iOS Safari）当前的色彩方案，
+      // 防止 Safari Auto Dark Mode 自作主张把链接等元素强制渲染为蓝色
+      document.documentElement.style.colorScheme = isDark ? "dark" : "light";
 
       // Set the theme for Expressive Code
       document.documentElement.setAttribute(
