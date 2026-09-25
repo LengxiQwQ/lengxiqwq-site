@@ -62,6 +62,152 @@ html {
 }
 
 /* 全站键盘焦点基线；组件可以在更高的层中覆盖间距或形态。 */
+.text-90 {
+        color: #1a1a1a;
+    }
+    :is(.dark, .dark *) .text-90,
+    .dark .text-90 {
+        color: #e6e6e6;
+    }
+    .text-75 {
+        color: #404040;
+    }
+    :is(.dark, .dark *) .text-75,
+    .dark .text-75 {
+        color: #bfbfbf;
+    }
+    .text-50 {
+        color: #808080;
+    }
+    :is(.dark, .dark *) .text-50,
+    .dark .text-50 {
+        color: #808080;
+    }
+    .text-30 {
+        color: #b3b3b3;
+    }
+    :is(.dark, .dark *) .text-30,
+    .dark .text-30 {
+        color: #4d4d4d;
+    }
+    .text-25 {
+        color: #bfbfbf;
+    }
+
+.btn-plain {
+        @apply transition-colors duration-150 relative flex items-center justify-center bg-none;
+        color: #404040;
+        &:hover {
+            color: var(--primary);
+        }
+        &:focus-visible {
+            color: var(--primary);
+        }
+        &:not(.scale-animation) {
+            @apply hover:bg-(--btn-plain-bg-hover) active:bg-(--btn-plain-bg-active);
+        }
+        &:not(.scale-animation):focus-visible {
+            background-color: var(--btn-plain-bg-hover);
+        }
+        &.scale-animation {
+            @apply expand-animation;
+        }
+    }
+    :is(.dark, .dark *) .btn-plain,
+    .dark .btn-plain {
+        color: #bfbfbf;
+    }
+    :is(.dark, .dark *) .btn-plain:hover,
+    .dark .btn-plain:hover,
+    :is(.dark, .dark *) .btn-plain:focus-visible,
+    .dark .btn-plain:focus-visible {
+        color: var(--primary);
+    }
+    .current-theme-btn {
+        @apply bg-(--btn-plain-bg-hover) text-(--primary);
+    }
+    .btn-regular {
+        @apply transition-colors duration-150 flex items-center justify-center bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) active:bg-(--btn-regular-bg-active);
+        color: var(--btn-content);
+    }
+    :is(.dark, .dark *) .btn-regular,
+    .dark .btn-regular {
+        color: #bfbfbf;
+    }
+
+    .link-underline {
+        @apply transition-colors duration-150 underline decoration-2 decoration-dashed decoration-(--link-underline)
+        hover:decoration-(--link-hover) active:decoration-(--link-active) underline-offset-[0.25rem]
+    }
+
+    /* #toc-inner-wrapper {
+        mask-image: linear-gradient(to bottom, transparent 0%, black 2rem, black calc(100% - 2rem), transparent 100%);
+    } */
+
+    .hide-scrollbar {
+        scrollbar-width: none;
+    }
+    .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+    }
+
+
+    
+    :is(.dark, .dark *) .text-25,
+    .dark .text-25 {
+        color: #404040;
+    }
+
+    /* 下拉菜单样式 */
+    .dropdown-container {
+        @apply relative;
+    }
+
+    .dropdown-menu {
+        @apply absolute top-full left-0 pt-2 pointer-events-none z-50;
+    }
+
+    .dropdown-container:hover .dropdown-menu,
+    .dropdown-container:focus-within .dropdown-menu {
+        @apply pointer-events-auto;
+    }
+
+    .dropdown-container:hover .dropdown-arrow,
+    .dropdown-container:focus-within .dropdown-arrow {
+        @apply rotate-180;
+    }
+
+    .dropdown-content {
+        @apply bg-(--card-bg) rounded-(--radius-large) shadow-xl border border-black/5 dark:border-white/10 py-2 min-w-48
+        opacity-0 translate-y-[-8px] transition-[opacity,translate,background-color,border-color] duration-200 ease-out;
+    }
+
+    .dropdown-container:hover .dropdown-content,
+    .dropdown-container:focus-within .dropdown-content {
+        @apply opacity-100 translate-y-0;
+    }
+
+    .dropdown-item {
+        @apply flex items-center justify-between px-4 py-2.5 hover:text-(--primary) hover:bg-(--btn-plain-bg-hover) transition-colors duration-150 font-medium;
+        color: #404040;
+    }
+    :is(.dark, .dark *) .dropdown-item,
+    .dark .dropdown-item {
+        color: #bfbfbf;
+    }
+    :is(.dark, .dark *) .dropdown-item:hover,
+    .dark .dropdown-item:hover {
+        color: var(--primary);
+    }
+
+    .dropdown-item:first-child {
+        @apply rounded-t-[calc(var(--radius-large)-0.5rem)];
+    }
+
+    .dropdown-item:last-child {
+        @apply rounded-b-[calc(var(--radius-large)-0.5rem)];
+    }
+
 @layer components {
     :where(
         a[href],
@@ -434,149 +580,7 @@ html {
     .btn-card.disabled {
         @apply pointer-events-none text-black/10 dark:text-white/10
     }
-    .btn-plain {
-        @apply transition-colors duration-150 relative flex items-center justify-center bg-none;
-        color: #404040;
-        &:hover {
-            color: var(--primary);
-        }
-        &:focus-visible {
-            color: var(--primary);
-        }
-        &:not(.scale-animation) {
-            @apply hover:bg-(--btn-plain-bg-hover) active:bg-(--btn-plain-bg-active);
-        }
-        &:not(.scale-animation):focus-visible {
-            background-color: var(--btn-plain-bg-hover);
-        }
-        &.scale-animation {
-            @apply expand-animation;
-        }
-    }
-    :is(.dark, .dark *) .btn-plain,
-    .dark .btn-plain {
-        color: #bfbfbf;
-    }
-    :is(.dark, .dark *) .btn-plain:hover,
-    .dark .btn-plain:hover,
-    :is(.dark, .dark *) .btn-plain:focus-visible,
-    .dark .btn-plain:focus-visible {
-        color: var(--primary);
-    }
-    .current-theme-btn {
-        @apply bg-(--btn-plain-bg-hover) text-(--primary);
-    }
-    .btn-regular {
-        @apply transition-colors duration-150 flex items-center justify-center bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) active:bg-(--btn-regular-bg-active);
-        color: var(--btn-content);
-    }
-    :is(.dark, .dark *) .btn-regular,
-    .dark .btn-regular {
-        color: #bfbfbf;
-    }
-
-    .link-underline {
-        @apply transition-colors duration-150 underline decoration-2 decoration-dashed decoration-(--link-underline)
-        hover:decoration-(--link-hover) active:decoration-(--link-active) underline-offset-[0.25rem]
-    }
-
-    /* #toc-inner-wrapper {
-        mask-image: linear-gradient(to bottom, transparent 0%, black 2rem, black calc(100% - 2rem), transparent 100%);
-    } */
-
-    .hide-scrollbar {
-        scrollbar-width: none;
-    }
-    .hide-scrollbar::-webkit-scrollbar {
-        display: none;
-    }
-
-
-    .text-90 {
-        color: #1a1a1a;
-    }
-    :is(.dark, .dark *) .text-90,
-    .dark .text-90 {
-        color: #e6e6e6;
-    }
-    .text-75 {
-        color: #404040;
-    }
-    :is(.dark, .dark *) .text-75,
-    .dark .text-75 {
-        color: #bfbfbf;
-    }
-    .text-50 {
-        color: #808080;
-    }
-    :is(.dark, .dark *) .text-50,
-    .dark .text-50 {
-        color: #808080;
-    }
-    .text-30 {
-        color: #b3b3b3;
-    }
-    :is(.dark, .dark *) .text-30,
-    .dark .text-30 {
-        color: #4d4d4d;
-    }
-    .text-25 {
-        color: #bfbfbf;
-    }
-    :is(.dark, .dark *) .text-25,
-    .dark .text-25 {
-        color: #404040;
-    }
-
-    /* 下拉菜单样式 */
-    .dropdown-container {
-        @apply relative;
-    }
-
-    .dropdown-menu {
-        @apply absolute top-full left-0 pt-2 pointer-events-none z-50;
-    }
-
-    .dropdown-container:hover .dropdown-menu,
-    .dropdown-container:focus-within .dropdown-menu {
-        @apply pointer-events-auto;
-    }
-
-    .dropdown-container:hover .dropdown-arrow,
-    .dropdown-container:focus-within .dropdown-arrow {
-        @apply rotate-180;
-    }
-
-    .dropdown-content {
-        @apply bg-(--card-bg) rounded-(--radius-large) shadow-xl border border-black/5 dark:border-white/10 py-2 min-w-48
-        opacity-0 translate-y-[-8px] transition-[opacity,translate,background-color,border-color] duration-200 ease-out;
-    }
-
-    .dropdown-container:hover .dropdown-content,
-    .dropdown-container:focus-within .dropdown-content {
-        @apply opacity-100 translate-y-0;
-    }
-
-    .dropdown-item {
-        @apply flex items-center justify-between px-4 py-2.5 hover:text-(--primary) hover:bg-(--btn-plain-bg-hover) transition-colors duration-150 font-medium;
-        color: #404040;
-    }
-    :is(.dark, .dark *) .dropdown-item,
-    .dark .dropdown-item {
-        color: #bfbfbf;
-    }
-    :is(.dark, .dark *) .dropdown-item:hover,
-    .dark .dropdown-item:hover {
-        color: var(--primary);
-    }
-
-    .dropdown-item:first-child {
-        @apply rounded-t-[calc(var(--radius-large)-0.5rem)];
-    }
-
-    .dropdown-item:last-child {
-        @apply rounded-b-[calc(var(--radius-large)-0.5rem)];
-    }
+    
 
     /* 移动端菜单样式 */
     .mobile-submenu {
