@@ -40,6 +40,7 @@ jobs:
       CI: true
       CONTENT_DIR: .content-src
       PUBLIC_UMAMI_WEBSITE_ID: ${{ vars.PUBLIC_UMAMI_WEBSITE_ID }}
+      PUBLIC_MICROSOFT_CLARITY_ID: ${{ vars.PUBLIC_MICROSOFT_CLARITY_ID }}
 
     steps:
       - name: Resolve content ref

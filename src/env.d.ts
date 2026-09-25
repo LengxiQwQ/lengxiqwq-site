@@ -8,6 +8,8 @@ declare global {
 		readonly PUBLIC_DISPLAY_SETTINGS?: string;
 		// Microsoft Clarity Project ID
 		readonly PUBLIC_MICROSOFT_CLARITY_ID?: string;
+		// Umami Website ID
+		readonly PUBLIC_UMAMI_WEBSITE_ID?: string;
 	}
 
 	interface ITOCManager {

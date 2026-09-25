@@ -1,14 +1,59 @@
 import type { AnalyticsConfig } from "../types/analyticsConfig";
 
+// 读取 Clarity Project ID 环境变量（优先读取 PUBLIC_MICROSOFT_CLARITY_ID）
+function readClarityIdEnv(): string {
+	try {
+		const raw = import.meta.env.PUBLIC_MICROSOFT_CLARITY_ID;
+		if (typeof raw === "string" && raw.trim() !== "") {
+			return raw.trim();
+		}
+	} catch {}
+	try {
+		if (
+			typeof process !== "undefined" &&
+			process.env?.PUBLIC_MICROSOFT_CLARITY_ID
+		) {
+			return process.env.PUBLIC_MICROSOFT_CLARITY_ID.trim();
+		}
+	} catch {}
+	return "";
+}
+
+// 读取 Umami Website ID 环境变量（优先读取 PUBLIC_UMAMI_WEBSITE_ID）
+function readUmamiWebsiteIdEnv(): string {
+	try {
+		const raw = import.meta.env.PUBLIC_UMAMI_WEBSITE_ID;
+		if (typeof raw === "string" && raw.trim() !== "") {
+			return raw.trim();
+		}
+	} catch {}
+	try {
+		if (
+			typeof process !== "undefined" &&
+			process.env?.PUBLIC_UMAMI_WEBSITE_ID
+		) {
+			return process.env.PUBLIC_UMAMI_WEBSITE_ID.trim();
+		}
+	} catch {}
+	return "";
+}
+
 export const analyticsConfig: AnalyticsConfig = {
 	// Google Analytics ID
 	googleAnalyticsId: "",
 	// Microsoft Clarity ID
-	microsoftClarityId: "",
+	// 默认留空保持开源模板纯净，支持从环境变量 PUBLIC_MICROSOFT_CLARITY_ID 读取或由私有内容仓覆盖
+	microsoftClarityId: readClarityIdEnv(),
+	// Microsoft Clarity 增强配置
+	clarityAnalytics: {
+		// 是否开启高价值交互事件统计（项目卡片、外链/GitHub、文章打开、相册、搜索、音乐、邮箱等）
+		enableCustomEvents: true,
+	},
 	// Umami 统计配置
 	umamiAnalytics: {
 		// Umami Website ID
-		websiteId: "",
+		// 默认留空保持开源模板纯净，支持从环境变量 PUBLIC_UMAMI_WEBSITE_ID 读取或由私有内容仓覆盖
+		websiteId: readUmamiWebsiteIdEnv(),
 		// Umami JS地址，支持使用自建
 		scriptUrl: "https://cloud.umami.is/script.js",
 		// Umami 会话回放脚本地址，支持使用自建
