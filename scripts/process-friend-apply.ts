@@ -7,6 +7,7 @@ interface FriendLinkEntry {
 	siteurl: string;
 	imgurl: string;
 	checkurl?: string;
+	feedurl?: string;
 }
 
 const issueBody = process.env.ISSUE_BODY || "";
@@ -29,6 +30,7 @@ const inputTitle = process.env.INPUT_TITLE || "";
 const inputSiteUrl = process.env.INPUT_SITEURL || "";
 const inputImgUrl = process.env.INPUT_IMGURL || "";
 const inputDesc = process.env.INPUT_DESC || "";
+const inputFeedUrl = process.env.INPUT_FEEDURL || "";
 
 // 动态解析站点配置，提取主站域名与链接
 function resolveSiteInfo(repoDir: string) {
@@ -167,6 +169,8 @@ function parseIssueBody(body: string): Partial<FriendLinkEntry> {
 			result.desc = cleanVal;
 		} else if (fieldName.includes("友链所在页面")) {
 			result.checkurl = cleanVal;
+		} else if (fieldName.includes("RSS 订阅链接")) {
+			result.feedurl = cleanVal;
 		}
 	}
 
@@ -366,6 +370,7 @@ async function run() {
 				siteurl: inputSiteUrl,
 				imgurl: inputImgUrl,
 				desc: inputDesc,
+				feedurl: inputFeedUrl,
 				checkurl: inputSiteUrl,
 			}
 		: parseIssueBody(issueBody);
@@ -398,6 +403,7 @@ async function run() {
 	const imgurl = parsed.imgurl.trim();
 	const desc = parsed.desc.trim();
 	const checkurl = (parsed.checkurl || siteurl).trim();
+	const feedurl = parsed.feedurl?.trim();
 
 	// URL 格式校验
 	if (!isValidHttpUrl(siteurl)) {
@@ -492,7 +498,7 @@ async function run() {
 	}
 
 	// 写入配置
-	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
+	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\timgurl: ${JSON.stringify(imgurl)},${feedurl ? `\n\t\tfeedUrl: ${JSON.stringify(feedurl)},` : ""}\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
 
 	let updatedContent = "";
 	const targetPattern =
@@ -517,7 +523,16 @@ async function run() {
 	console.log(`[friend-apply] 成功将友链写入: ${configFile}`);
 
 	// 成功互动反馈
-	const successMsg = `🎉 **友链审核通过！**\n\n已成功自动录入本站友链配置：\n- **站点名称**：${title}\n- **站点链接**：${siteurl}\n- **站点描述**：${desc}\n- **头像链接**：${imgurl}\n\n更改已自动推送至内容仓，构建部署已触发。稍后即可在 [${siteInfo.siteTitle} - 友情链接](${siteInfo.siteUrl.replace(/\/$/, "")}/friends/) 查看到您的站点！欢迎常来互访交流～ ✨`;
+	const successMsg = `🎉 **友链审核通过啦！**
+
+已成功自动录入本站友链配置：
+- **站点名称**：${title}
+- **站点链接**：${siteurl}
+- **站点描述**：${desc}
+- **头像链接**：${imgurl}${feedurl ? `
+- **RSS 订阅**：${feedurl}` : ""}
+
+更改已自动推送至内容仓，构建部署已触发。稍后即可在 [${siteInfo.siteTitle} - 友情链接](${siteInfo.siteUrl.replace(/\/$/, "")}/friends/) 查看到您的站点！欢迎常来互访交流~✨`;
 
 	await postComment(successMsg);
 	await removeLabel("check-failed");

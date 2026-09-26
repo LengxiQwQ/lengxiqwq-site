@@ -19,6 +19,9 @@ on:
       desc:
         description: "站点描述"
         required: true
+      feedurl:
+        description: "RSS 订阅链接"
+        required: false
 
 permissions:
   issues: write
@@ -75,6 +78,7 @@ jobs:
           INPUT_SITEURL: ${{ github.event.inputs.siteurl }}
           INPUT_IMGURL: ${{ github.event.inputs.imgurl }}
           INPUT_DESC: ${{ github.event.inputs.desc }}
+          INPUT_FEEDURL: ${{ github.event.inputs.feedurl }}
           CONTENT_REPO_DIR: .content-repo
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}

@@ -47,6 +47,14 @@ body:
     validations:
       required: true
   - type: input
+    id: feedurl
+    attributes:
+      label: RSS 订阅链接（可选）
+      description: 您的站点 RSS/Atom 订阅地址，用于在“朋友圈”中展示您的最新文章。如果不填将尝试自动探测。
+      placeholder: https://example.com/rss.xml
+    validations:
+      required: false
+  - type: input
     id: checkurl
     attributes:
       label: 友链所在页面
