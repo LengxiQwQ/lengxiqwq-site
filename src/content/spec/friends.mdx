@@ -15,6 +15,7 @@ export const site = {
   url: siteConfig.site_url,
   avatar: profileConfig.avatarUrl || (profileConfig.avatar?.startsWith("http") ? profileConfig.avatar : `${siteConfig.site_url.replace(/\/$/, '')}${profileConfig.avatar?.startsWith('/') ? '' : '/'}${profileConfig.avatar || 'avatar.webp'}`),
   email: profileConfig.contact?.email || "",
+  feed: "https://lengxiqwq.com/rss.xml",
 };
 
 {/* ========= 注意事项 ========== */}
@@ -64,6 +65,7 @@ export const notes = [
             { label: "站点描述", value: site.desc },
             { label: "站点链接", value: site.url },
             { label: "头像链接", value: site.avatar },
+            { label: "RSS 订阅", value: site.feed },
           ].map((item) => (
             <div class="flex items-start justify-between gap-2.5 rounded-lg bg-black/5 dark:bg-white/5 px-3 py-2.5">
               <div class="min-w-0 flex-1">
