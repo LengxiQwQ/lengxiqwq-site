@@ -127,7 +127,7 @@ function onKeydown(event: KeyboardEvent) {
       aria-label={label}
       title={label}
       class="w-11 h-11 flex items-center justify-center cursor-pointer transition-colors duration-150
-             text-neutral-700 dark:text-neutral-300 hover-primary"
+             text-neutral-700 dark:text-neutral-300 md:hover:text-(--primary)"
       onclick={open}
     >
       <svg class="w-11 h-11" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>

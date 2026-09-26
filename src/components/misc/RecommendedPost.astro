@@ -59,7 +59,7 @@ const noRandomPostsText = i18n(I18nKey.noRandomPosts);
             {idx + 1}
           </div>
           <div class="flex-1 min-w-0">
-            <div class="font-bold text-sm text-75 truncate transition group-hover-primary">
+            <div class="font-bold text-sm text-75 truncate transition group-md:hover:text-(--primary)">
               {post.data.title}
             </div>
             <div class="flex items-center gap-1.5 text-xs text-30 transition mt-0.5">
@@ -73,7 +73,7 @@ const noRandomPostsText = i18n(I18nKey.noRandomPosts);
           </div>
           <Icon
             name="material-symbols:chevron-right-rounded"
-            class="shrink-0 text-xl text-15 transition group-hover-primary group-md:hover:translate-x-0.5"
+            class="shrink-0 text-xl text-15 transition group-md:hover:text-(--primary) group-md:hover:translate-x-0.5"
           />
         </a>
       ))
@@ -178,7 +178,7 @@ function renderRandomPosts() {
       content.className = 'flex-1 min-w-0';
 
       var title = document.createElement('div');
-      title.className = 'font-bold text-sm text-75 truncate transition group-hover-primary';
+      title.className = 'font-bold text-sm text-75 truncate transition group-md:hover:text-(--primary)';
       title.textContent = post.title;
 
       var meta = document.createElement('div');
@@ -203,7 +203,7 @@ function renderRandomPosts() {
       svg.setAttribute('width', '24');
       svg.setAttribute('height', '24');
       svg.setAttribute('viewBox', '0 0 24 24');
-      svg.setAttribute('class', 'shrink-0 text-xl text-15 transition group-hover-primary group-md:hover:translate-x-0.5');
+      svg.setAttribute('class', 'shrink-0 text-xl text-15 transition group-md:hover:text-(--primary) group-md:hover:translate-x-0.5');
       var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('fill', 'currentColor');
       path.setAttribute('d', 'M9.29 6.71a1 1 0 0 0 0 1.41L13.17 12l-3.88 3.88a1 1 0 1 0 1.41 1.41l4.59-4.59a1 1 0 0 0 0-1.41L10.7 6.7a1 1 0 0 0-1.41.01z');

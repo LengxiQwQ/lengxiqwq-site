@@ -46,7 +46,7 @@ const viewConfigStr = JSON.stringify({
         </div>
     </div>
     <div class="flex-1 min-w-0">
-        <div class="item-title text-xs font-bold text-neutral-700 dark:text-neutral-200 truncate group-hover-primary transition-colors"></div>
+        <div class="item-title text-xs font-bold text-neutral-700 dark:text-neutral-200 truncate group-md:hover:text-(--primary) transition-colors"></div>
         <div class="item-artist text-[10px] text-neutral-400 truncate"></div>
     </div>
 </div>
@@ -193,7 +193,7 @@ const viewConfigStr = JSON.stringify({
         function updateModeUI(playMode) {
             var primaryColor = 'text-(--primary)';
             if (playMode === 0) {
-                ui.btnRepeat.className = 'p-2 md:active:scale-95 transition-colors text-neutral-300 dark:text-neutral-600 hover-primary';
+                ui.btnRepeat.className = 'p-2 md:active:scale-95 transition-colors text-neutral-300 dark:text-neutral-600 md:hover:text-(--primary)';
                 ui.iconRepeat.classList.remove('hidden');
                 ui.iconRepeatOne.classList.add('hidden');
                 ui.iconShuffle.classList.add('hidden');
@@ -440,7 +440,7 @@ const viewConfigStr = JSON.stringify({
             }
             lyrics.forEach(function (line, index) {
                 var lineEl = document.createElement('div');
-                lineEl.className = 'lrc-line transition-all duration-300 text-sm text-neutral-400 py-1 cursor-pointer hover-primary flex flex-col items-center justify-center leading-snug';
+                lineEl.className = 'lrc-line transition-all duration-300 text-sm text-neutral-400 py-1 cursor-pointer md:hover:text-(--primary) flex flex-col items-center justify-center leading-snug';
 
                 // 智能识别括号内的中文翻译（如 "人はみんな幸福を願い (人们都祈求幸福)"），拆为上下双行
                 var match = line.text.match(/^(.*?)\s*[(（](.+?)[)）]\s*$/);
