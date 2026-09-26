@@ -37,11 +37,6 @@ const widgetId =
                     {i18n(I18nKey.music)}
                 </h3>
             </div>
-            <!-- Top Right: Lyric Toggle -->
-            <button class={`btn-lrc-toggle md:hover:text-(--primary) transition-all duration-300 p-0.5 pr-2 transform md:active:scale-95 text-neutral-400 shrink-0 ${!config.showLyrics ? 'hidden' : ''}`} title={i18n(I18nKey.musicLyrics)} aria-label={i18n(I18nKey.musicLyrics)}>
-                <Icon name="material-symbols:subtitles-off-outline-rounded" class="icon-lrc-off text-xl" aria-hidden="true" />
-                <Icon name="material-symbols:subtitles-outline-rounded" class="icon-lrc-on text-xl hidden" aria-hidden="true" />
-            </button>
         </div>
 
         <div class="min-w-0 overflow-hidden">

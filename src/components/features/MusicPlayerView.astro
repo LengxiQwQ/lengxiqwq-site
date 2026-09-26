@@ -84,6 +84,7 @@ const viewConfigStr = JSON.stringify({
     }
 
     function initWidget(widget) {
+        var root = document.getElementById(widget.id + '-layout') || widget;
         // ── UI element refs ──────────────────────────────────────
         var ui = {
             widget: widget,
@@ -110,9 +111,9 @@ const viewConfigStr = JSON.stringify({
             iconVolMute: widget.querySelector('.icon-vol-mute'),
             volContainer: widget.querySelector('.vol-container'),
             volBar: widget.querySelector('.vol-bar'),
-            btnLrc: widget.querySelector('.btn-lrc-toggle'),
-            iconLrcOn: widget.querySelector('.icon-lrc-on'),
-            iconLrcOff: widget.querySelector('.icon-lrc-off'),
+            btnLrc: root.querySelector('.btn-lrc-toggle'),
+            iconLrcOn: root.querySelector('.icon-lrc-on'),
+            iconLrcOff: root.querySelector('.icon-lrc-off'),
             lrcDrawer: widget.querySelector('.lrc-drawer'),
             lrcContainer: widget.querySelector('.lrc-container'),
             btnDrawer: widget.querySelector('.btn-drawer-toggle'),
@@ -123,7 +124,7 @@ const viewConfigStr = JSON.stringify({
 
         // Verify critical elements
         var _critical = [ui.btnPlay, ui.btnRepeat, ui.btnMute, ui.volContainer,
-            ui.btnDrawer, ui.btnLrc, ui.lrcDrawer, ui.lrcContainer,
+            ui.btnDrawer, ui.lrcDrawer, ui.lrcContainer,
             ui.progressContainer, ui.btnNext, ui.btnPrev, ui.loading,
             ui.cover, ui.title, ui.artist, ui.playlistContainer, ui.itemTemplate];
         if (_critical.some(function(el) { return !el; })) return;
@@ -627,33 +628,35 @@ const viewConfigStr = JSON.stringify({
         });
 
         // ── Drawer logic (local state) ───────────────────────────
-        ui.btnLrc.addEventListener('click', function () {
-            var isOpen = ui.lrcDrawer.style.gridTemplateRows === '1fr';
-            if (isOpen) {
-                ui.lrcDrawer.style.gridTemplateRows = '0fr';
-                ui.lrcDrawer.classList.remove('opacity-100');
-                ui.lrcDrawer.classList.add('opacity-0');
-                ui.btnLrc.classList.remove('text-(--primary)');
-                ui.btnLrc.classList.add('text-neutral-400');
-                ui.iconLrcOn.classList.add('hidden');
-                ui.iconLrcOff.classList.remove('hidden');
-            } else {
-                // Close playlist if open
-                ui.playlistDrawer.style.gridTemplateRows = '0fr';
-                ui.playlistDrawer.classList.remove('opacity-100');
-                ui.playlistDrawer.classList.add('opacity-0');
-                ui.btnDrawer.classList.remove('text-(--primary)');
-                ui.btnDrawer.classList.add('text-neutral-400');
+        if (ui.btnLrc) {
+            ui.btnLrc.addEventListener('click', function () {
+                var isOpen = ui.lrcDrawer.style.gridTemplateRows === '1fr';
+                if (isOpen) {
+                    ui.lrcDrawer.style.gridTemplateRows = '0fr';
+                    ui.lrcDrawer.classList.remove('opacity-100');
+                    ui.lrcDrawer.classList.add('opacity-0');
+                    ui.btnLrc.classList.remove('text-(--primary)');
+                    ui.btnLrc.classList.add('text-neutral-400');
+                    ui.iconLrcOn.classList.add('hidden');
+                    ui.iconLrcOff.classList.remove('hidden');
+                } else {
+                    // Close playlist if open
+                    ui.playlistDrawer.style.gridTemplateRows = '0fr';
+                    ui.playlistDrawer.classList.remove('opacity-100');
+                    ui.playlistDrawer.classList.add('opacity-0');
+                    ui.btnDrawer.classList.remove('text-(--primary)');
+                    ui.btnDrawer.classList.add('text-neutral-400');
 
-                ui.lrcDrawer.style.gridTemplateRows = '1fr';
-                ui.lrcDrawer.classList.add('opacity-100');
-                ui.lrcDrawer.classList.remove('opacity-0');
-                ui.btnLrc.classList.add('text-(--primary)');
-                ui.btnLrc.classList.remove('text-neutral-400');
-                ui.iconLrcOn.classList.remove('hidden');
-                ui.iconLrcOff.classList.add('hidden');
-            }
-        });
+                    ui.lrcDrawer.style.gridTemplateRows = '1fr';
+                    ui.lrcDrawer.classList.add('opacity-100');
+                    ui.lrcDrawer.classList.remove('opacity-0');
+                    ui.btnLrc.classList.add('text-(--primary)');
+                    ui.btnLrc.classList.remove('text-neutral-400');
+                    ui.iconLrcOn.classList.remove('hidden');
+                    ui.iconLrcOff.classList.add('hidden');
+                }
+            });
+        }
 
         ui.btnDrawer.addEventListener('click', function () {
             var isOpen = ui.playlistDrawer.style.gridTemplateRows === '1fr';
@@ -669,10 +672,12 @@ const viewConfigStr = JSON.stringify({
                 ui.lrcDrawer.style.gridTemplateRows = '0fr';
                 ui.lrcDrawer.classList.remove('opacity-100');
                 ui.lrcDrawer.classList.add('opacity-0');
-                ui.btnLrc.classList.remove('text-(--primary)');
-                ui.btnLrc.classList.add('text-neutral-400');
-                ui.iconLrcOn.classList.add('hidden');
-                ui.iconLrcOff.classList.remove('hidden');
+                if (ui.btnLrc) {
+                    ui.btnLrc.classList.remove('text-(--primary)');
+                    ui.btnLrc.classList.add('text-neutral-400');
+                    ui.iconLrcOn.classList.add('hidden');
+                    ui.iconLrcOff.classList.remove('hidden');
+                }
 
                 ui.playlistDrawer.style.gridTemplateRows = '1fr';
                 ui.playlistDrawer.classList.add('opacity-100');
