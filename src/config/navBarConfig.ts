@@ -16,6 +16,9 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 	// 主页
 	links.push(LinkPresets.Home);
 
+	// 项目
+	links.push(LinkPresets.Projects);
+
 	// 文章及其子菜单
 	links.push({
 		name: "文章",
@@ -33,10 +36,16 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 
 			// 系列
 			LinkPresets.Series,
+
+			// RSS 订阅
+			LinkPresets.RSS,
+
+			// Atom 订阅
+			LinkPresets.Atom,
 		],
 	});
 
-	//社交及其子菜单
+	// 社交及其子菜单
 	links.push({
 		name: "社交",
 		url: "#",
@@ -45,7 +54,7 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 			// 友链
 			LinkPresets.Friends,
 
-			// 友链朋友圈
+			// 朋友圈
 			LinkPresets.Fcircle,
 
 			// 留言
@@ -62,11 +71,14 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 			// 动态
 			LinkPresets.Dynamic,
 
-			// 项目
-			LinkPresets.Projects,
-
 			// 相册
 			LinkPresets.Gallery,
+
+			// 我的设备
+			LinkPresets.Devices,
+
+			// 时间线
+			LinkPresets.Timeline,
 
 			// 书签导航
 			LinkPresets.Booknav,
@@ -98,42 +110,6 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 			LinkPresets.About,
 		],
 	});
-
-	// 自定义导航栏链接
-	links.push({
-		name: "链接",
-		url: "#",
-		icon: "material-symbols:link",
-		// 子菜单
-		children: [
-			{
-				name: "GitHub",
-				url: "https://github.com/CuteLeaf/Firefly",
-				external: true,
-				icon: "fa7-brands:github",
-			},
-			{
-				name: "Gitee",
-				url: "https://gitee.com/CuteLeaf/Firefly",
-				external: true,
-				icon: "fa7-brands:gitee",
-			},
-			{
-				name: "Firefly文档",
-				url: "https://docs-firefly.cuteleaf.cn",
-				external: true,
-				icon: "material-symbols:docs",
-			},
-		],
-	});
-
-	// 文档链接
-	// links.push({
-	// 	name: "文档",
-	// 	url: "https://docs-firefly.cuteleaf.cn",
-	// 	external: true,
-	// 	icon: "material-symbols:docs",
-	// });
 
 	return { links } as NavBarConfig;
 };
@@ -173,6 +149,16 @@ export const LinkPresets: Record<string, NavBarLink> = {
 		url: "/series/",
 		icon: "material-symbols:layers",
 	},
+	RSS: {
+		name: "RSS 订阅",
+		url: "/rss/",
+		icon: "fa7-solid:rss",
+	},
+	Atom: {
+		name: "Atom 订阅",
+		url: "/atom/",
+		icon: "fa7-solid:atom",
+	},
 	Friends: {
 		name: "友情链接",
 		url: "/friends/",
@@ -182,7 +168,7 @@ export const LinkPresets: Record<string, NavBarLink> = {
 	Fcircle: {
 		name: "友链朋友圈",
 		url: "/fcircle/",
-		icon: "material-symbols:rss-feed-rounded",
+		icon: "mingcute:moment-line",
 		pageKey: "fcircle",
 	},
 	Guestbook: {
@@ -208,6 +194,18 @@ export const LinkPresets: Record<string, NavBarLink> = {
 		url: "/gallery/",
 		icon: "material-symbols:photo-library",
 		pageKey: "gallery",
+	},
+	Devices: {
+		name: "我的设备",
+		url: "/devices/",
+		icon: "material-symbols:devices-rounded",
+		pageKey: "devices",
+	},
+	Timeline: {
+		name: "时间线",
+		url: "/timeline/",
+		icon: "material-symbols:timeline-rounded",
+		pageKey: "timeline",
 	},
 	Booknav: {
 		name: "书签导航",
@@ -252,4 +250,28 @@ export const LinkPresets: Record<string, NavBarLink> = {
 	},
 };
 
-export const navBarConfig: NavBarConfig = getDynamicNavBarConfig();
+export const navBarConfig: NavBarConfig = {
+	...getDynamicNavBarConfig(),
+	siteSwitcher: {
+		enable: true,
+		items: [
+			{
+				title: "冷汐的杂货铺",
+				url: "/",
+				key: "site",
+			},
+			{
+				title: "冷汐的小站",
+				url: "https://blog.lengxiqwq.com",
+				key: "nest",
+				external: true,
+			},
+			{
+				title: "冷汐的小屋",
+				url: "https://room.lengxiqwq.com",
+				key: "room",
+				external: true,
+			},
+		],
+	},
+};

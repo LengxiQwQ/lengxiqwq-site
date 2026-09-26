@@ -27,7 +27,7 @@ const description = i18n(I18nKey.fcircleDescription);
       <div class="mb-4">
         <div class="page-heading">
           <div class="page-icon" aria-hidden="true">
-            <Icon name="material-symbols:rss-feed-rounded" />
+            <Icon is:inline name="mingcute:moment-line" />
           </div>
           <div>
             <h2>{title}</h2>
@@ -39,7 +39,7 @@ const description = i18n(I18nKey.fcircleDescription);
       <div class="fcircle-grid mt-6 flex flex-col gap-4">
         {items.length === 0 && (
           <div class="flex flex-col items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
-            <Icon name="material-symbols:rss-feed-rounded" class="text-4xl mb-3 opacity-50" />
+            <Icon is:inline name="mingcute:moment-line" class="text-4xl mb-3 opacity-50" />
             <div class="text-sm">暂无最新动态，可能是友链没有配置 feedUrl，或文章尚未更新。</div>
           </div>
         )}
