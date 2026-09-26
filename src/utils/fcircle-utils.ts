@@ -12,7 +12,7 @@ export interface FcircleItem {
 
 export async function getFcircleItems(): Promise<FcircleItem[]> {
 	const parser = new Parser({
-		timeout: 10000,
+		timeout: 5000,
 		customFields: {
 			item: ["pubDate", "date", "updated"],
 		},
@@ -21,24 +21,42 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 	const items: FcircleItem[] = [];
 
 	const promises = friends.map(async (friend) => {
-		if (!friend.feedUrl) return;
-		try {
-			const feed = await parser.parseURL(friend.feedUrl);
-			for (const item of feed.items) {
-				const dateStr = item.pubDate || item.date || item.updated;
-				if (item.title && item.link && dateStr) {
-					items.push({
-						friendName: friend.title,
-						friendAvatar: friend.imgurl,
-						friendUrl: friend.siteurl,
-						title: item.title,
-						link: item.link,
-						pubDate: new Date(dateStr),
-					});
+		const base = friend.siteurl.replace(/\/+$/, "");
+		const urlsToTry = friend.feedUrl
+			? [friend.feedUrl]
+			: [
+					`${base}/atom.xml`,
+					`${base}/rss.xml`,
+					`${base}/feed/`,
+					`${base}/feed.xml`,
+				];
+
+		for (const url of urlsToTry) {
+			try {
+				const feed = await parser.parseURL(url);
+				for (const item of feed.items) {
+					const dateStr = item.pubDate || item.date || item.updated;
+					if (item.title && item.link && dateStr) {
+						items.push({
+							friendName: friend.title,
+							friendAvatar: friend.imgurl,
+							friendUrl: friend.siteurl,
+							title: item.title,
+							link: item.link,
+							pubDate: new Date(dateStr),
+						});
+					}
+				}
+				// 成功抓取后跳出尝试循环
+				return;
+			} catch (e) {
+				// 如果是用户指定的特定URL失败，或者所有猜测的URL都失败了，才输出警告
+				if (url === friend.feedUrl || url === urlsToTry[urlsToTry.length - 1]) {
+					console.warn(
+						`[Fcircle] Failed to fetch RSS for ${friend.title} (${url})`,
+					);
 				}
 			}
-		} catch (e) {
-			console.warn(`[Fcircle] Failed to fetch RSS for ${friend.title} (${friend.feedUrl}):`, e);
 		}
 	});
 
