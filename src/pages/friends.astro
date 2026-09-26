@@ -6,7 +6,8 @@ import { Icon } from "astro-icon/components";
 import {
 	commentConfig,
 	friendsPageConfig,
-	getEnabledFriends,
+	getHealthyFriends,
+	getQuarantinedFriends,
 	siteConfig,
 } from "@/config";
 import I18nKey from "@/i18n/i18nKey";
@@ -34,8 +35,9 @@ const isCommentEnabled =
 	commentConfig.type !== "none" &&
 	friendsPageConfig.showComment !== false;
 
-// 使用配置文件中的友链数据，按权重排序
-const items = getEnabledFriends();
+// 使用健康检测后的友链数据，按权重排序
+const items = getHealthyFriends();
+const quarantinedItems = getQuarantinedFriends();
 const allTags = [...new Set(items.flatMap((item) => item.tags || []))].sort();
 
 // 页面标题和描述
@@ -177,6 +179,54 @@ const description =
       </div>
     </div>
   </div>
+
+  {/* 异常链接隔离区 */}
+  {quarantinedItems.length > 0 && (
+    <div class="mt-4 card-base z-10 px-9 py-6 relative w-full">
+      <details>
+        <summary class="cursor-pointer select-none flex items-center gap-2 text-neutral-500 dark:text-neutral-400 text-sm font-medium">
+          <Icon name="material-symbols:link-off" class="text-lg" />
+          <span>以下 {quarantinedItems.length} 个友链暂时无法访问</span>
+        </summary>
+        <div class="friends-grid my-4 opacity-50 grayscale">
+          {quarantinedItems.map((item) => (
+            <a
+              href={item.siteurl}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="friend-card group flex items-center gap-3 p-2.5 rounded-xl border border-(--line-divider) transition-all duration-300 relative overflow-hidden"
+              title={`连续 ${item.failCount} 次构建无法访问${item.lastError ? `（${item.lastError}）` : ""}`}
+            >
+              {/* 头像 */}
+              <div class="relative w-16 h-16 shrink-0 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5">
+                <img
+                  src={item.imgurl}
+                  alt={item.title}
+                  width="64"
+                  height="64"
+                  loading="lazy"
+                  decoding="async"
+                  class="w-full h-full object-cover"
+                />
+              </div>
+              {/* 内容 */}
+              <div class="grow min-w-0 flex flex-col justify-center gap-0.5">
+                <div class="font-bold text-base text-neutral-900 dark:text-neutral-100 truncate pr-4">
+                  {item.title}
+                </div>
+                <div class="text-sm text-neutral-500 dark:text-neutral-400 line-clamp-1" title={item.desc}>
+                  {item.desc}
+                </div>
+                <div class="text-xs text-red-400 dark:text-red-500 mt-0.5">
+                  连续 {item.failCount} 次无法访问
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      </details>
+    </div>
+  )}
 
   {friendsPageConfig.showCustomContent !== false && (
     <div class="mt-4 card-base z-10 px-9 py-6 relative w-full">

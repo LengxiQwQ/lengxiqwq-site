@@ -14,7 +14,7 @@
     "check": "astro check",
     "postcheck": "npx tsx scripts/reset-content.ts",
     "prebuild": "npx tsx scripts/sync-content.ts",
-    "build": "npx tsx scripts/generate-github-card-data.ts && npx tsx scripts/generate-lqips.ts && npx tsx scripts/generate-vndb-covers.ts && astro build && npx tsx scripts/prune-pio-assets.ts && npx tsx scripts/subset-fonts.ts && npx tsx scripts/minify-inline-scripts.ts && npx tsx scripts/run-pagefind.ts",
+    "build": "npx tsx scripts/generate-github-card-data.ts && npx tsx scripts/generate-lqips.ts && npx tsx scripts/generate-vndb-covers.ts && npx tsx scripts/check-friends-health.ts && astro build && npx tsx scripts/prune-pio-assets.ts && npx tsx scripts/subset-fonts.ts && npx tsx scripts/minify-inline-scripts.ts && npx tsx scripts/run-pagefind.ts",
     "postbuild": "npx tsx scripts/reset-content.ts",
     "preview": "astro preview",
     "astro": "astro",

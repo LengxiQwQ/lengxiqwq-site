@@ -1,4 +1,11 @@
 import type { FriendLink, FriendsPageConfig } from "../types/friendsConfig";
+import healthDataRaw from "../constants/friends-health.json";
+
+// 友链健康检测状态数据
+const healthData = healthDataRaw as Record<
+	string,
+	{ failCount: number; lastChecked: string; lastError?: string }
+>;
 
 // 可以在src/content/spec/friends.md中编写友链页面下方的自定义内容
 
@@ -61,4 +68,37 @@ export const getEnabledFriends = (): FriendLink[] => {
 	}
 
 	return friends.sort((a, b) => b.weight - a.weight);
+};
+
+// 获取健康的友链（排除连续失败 ≥3 次的）
+export const getHealthyFriends = (): FriendLink[] => {
+	const friends = friendsConfig.filter((friend) => friend.enabled);
+	const healthy = friends.filter(
+		(f) => !healthData[f.siteurl] || healthData[f.siteurl].failCount < 3,
+	);
+
+	if (friendsPageConfig.randomizeSort) {
+		return healthy.sort(() => Math.random() - 0.5);
+	}
+
+	return healthy.sort((a, b) => b.weight - a.weight);
+};
+
+// 获取被隔离的友链（连续失败 ≥3 次）
+export const getQuarantinedFriends = (): (FriendLink & {
+	failCount: number;
+	lastError?: string;
+})[] => {
+	const friends = friendsConfig.filter((friend) => friend.enabled);
+	return friends
+		.filter(
+			(f) =>
+				healthData[f.siteurl] &&
+				healthData[f.siteurl].failCount >= 3,
+		)
+		.map((f) => ({
+			...f,
+			failCount: healthData[f.siteurl].failCount,
+			lastError: healthData[f.siteurl].lastError,
+		}));
 };
