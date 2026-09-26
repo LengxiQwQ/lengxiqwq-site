@@ -152,7 +152,7 @@ export const LinkPresets: Record<string, NavBarLink> = {
 	RSS: {
 		name: "RSS 订阅",
 		url: "/rss/",
-		icon: "fa7-solid:rss",
+		icon: "material-symbols:rss-feed-rounded",
 	},
 	Atom: {
 		name: "Atom 订阅",
