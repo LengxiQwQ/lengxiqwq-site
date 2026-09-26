@@ -310,6 +310,22 @@ export default defineConfig({
 		}),
 		svelte(),
 		sitemap({
+			serialize(item) {
+				const url = new URL(item.url);
+				const pathname = url.pathname;
+				item.lastmod = new Date().toISOString();
+				if (pathname === "/" || pathname === "") {
+					item.changefreq = "daily";
+					item.priority = 1.0;
+				} else if (pathname.startsWith("/posts/") || pathname.startsWith("/projects/")) {
+					item.changefreq = "weekly";
+					item.priority = 0.8;
+				} else {
+					item.changefreq = "monthly";
+					item.priority = 0.5;
+				}
+				return item;
+			},
 			filter: (page) => {
 				// 根据页面开关配置过滤sitemap
 				const url = new URL(page);
