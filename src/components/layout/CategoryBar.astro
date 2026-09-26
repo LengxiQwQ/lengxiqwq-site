@@ -43,12 +43,12 @@ function initialActive(categoryName: string): {
 	active?: boolean;
 	soft?: boolean;
 } {
-	if (isHome) return categoryName === "" ? { md:active: true } : {};
+	if (isHome) return categoryName === "" ? { active: true } : {};
 	if (isProjects)
-		return categoryName === "__projects__" ? { md:active: true } : {};
+		return categoryName === "__projects__" ? { active: true } : {};
 	if (isCategories)
-		return categoryName === "__categories__" ? { md:active: true } : {};
-	if (isArchive) return categoryName === "__archive__" ? { md:active: true } : {};
+		return categoryName === "__categories__" ? { active: true } : {};
+	if (isArchive) return categoryName === "__archive__" ? { active: true } : {};
 	if (postCategory && categoryName === postCategory) return { soft: true };
 	return {};
 }

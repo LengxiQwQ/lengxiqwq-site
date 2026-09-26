@@ -171,7 +171,7 @@ function goToPage(page: number) {
     }
   }
 
-  @media (md:hover: none) and (pointer: coarse) {
+  @media (hover: none) and (pointer: coarse) {
     .responsive-pagination button {
       min-height: 44px;
       min-width: 44px;
