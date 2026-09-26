@@ -32,13 +32,14 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 	const items: FcircleItem[] = [];
 
 	const promises = allFriends.map(async (friend) => {
+		const cleanFeedUrl = friend.feedUrl?.trim();
 		// 过滤非博客站点（如果明确配置了feedUrl则强制抓取）
 		const isBlog = friend.tags?.some(tag => tag.includes("博客") || tag.toLowerCase().includes("blog"));
-		if (!friend.feedUrl && !isBlog) return;
+		if (!cleanFeedUrl && !isBlog) return;
 
 		const base = friend.siteurl.replace(/\/+$/, "");
-		const urlsToTry = friend.feedUrl
-			? [friend.feedUrl]
+		const urlsToTry = cleanFeedUrl
+			? [cleanFeedUrl]
 			: [
 					`${base}/atom.xml`,
 					`${base}/rss.xml`,
