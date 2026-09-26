@@ -109,7 +109,7 @@ function formatDate(timestamp: number): string {
 				href={url(`/dynamic/#dynamic-${entry.id}`)}
 				class="group flex min-w-0 min-h-16 items-center gap-3 rounded-lg p-2
 					text-neutral-700/75 dark:text-neutral-300/75
-					md:hover:bg-(--btn-plain-bg-hover) md:hover:text-(--primary)
+					md:hover:bg-(--btn-plain-bg-hover) hover-primary
 					md:active:bg-(--btn-plain-bg-active) transition-colors duration-150"
 				aria-label={`${i18n(I18nKey.dynamic)}: ${text}`}
 			>

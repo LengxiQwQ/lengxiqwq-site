@@ -37,17 +37,17 @@ const totalPosts = seriesList.reduce((sum, series) => sum + series.count, 0);
                                     <Icon name="material-symbols:layers" aria-hidden="true" class="text-2xl text-(--primary)" />
                                 </span>
                                 <span class="flex-1 min-w-0">
-                                    <span class="block text-lg font-bold text-90 truncate group-md:hover:text-(--primary) transition">
+                                    <span class="block text-lg font-bold text-90 truncate group-hover-primary transition">
                                         {series.name}
                                     </span>
-                                    <span class="block text-sm text-30 mt-0.5 transition group-md:hover:text-(--primary)/60">
+                                    <span class="block text-sm text-30 mt-0.5 transition group-hover-primary/60">
                                         {series.count} {i18n(I18nKey.postsCount)}
                                     </span>
                                 </span>
                                 <Icon
                                     name="material-symbols:keyboard-arrow-down-rounded"
                                     aria-hidden="true"
-                                    class="acc-arrow shrink-0 text-[1.25rem] text-30 group-md:hover:text-(--primary) transition-transform duration-300"
+                                    class="acc-arrow shrink-0 text-[1.25rem] text-30 group-hover-primary transition-transform duration-300"
                                 />
                             </button>
 
@@ -68,13 +68,13 @@ const totalPosts = seriesList.reduce((sum, series) => sum + series.count, 0);
                                                     <span class="shrink-0 w-6 h-6 rounded-md bg-(--enter-btn-bg) text-(--primary) flex items-center justify-center text-sm font-bold transition">
                                                         {idx + 1}
                                                     </span>
-                                                    <span class="flex-1 min-w-0 font-bold text-sm text-75 truncate transition group-md:hover:text-(--primary)">
+                                                    <span class="flex-1 min-w-0 font-bold text-sm text-75 truncate transition group-hover-primary">
                                                         {post.data.title}
                                                     </span>
                                                     <Icon
                                                         name="material-symbols:chevron-right-rounded"
                                                         aria-hidden="true"
-                                                        class="shrink-0 text-xl text-15 transition group-md:hover:text-(--primary) group-md:hover:translate-x-0.5"
+                                                        class="shrink-0 text-xl text-15 transition group-hover-primary group-md:hover:translate-x-0.5"
                                                     />
                                                 </a>
                                             </li>

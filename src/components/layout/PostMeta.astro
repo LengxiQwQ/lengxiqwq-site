@@ -126,7 +126,7 @@ const visibleTags =
             href={getCategoryUrl(category || "")}
             aria-label={`View all posts in the ${category || i18n(I18nKey.uncategorized)} category`}
             class="link-lg transition text-50 text-sm font-medium
-              md:hover:text-(--primary) dark:md:hover:text-(--primary) whitespace-nowrap"
+              hover-primary  whitespace-nowrap"
           >
             {category || i18n(I18nKey.uncategorized)}
           </a>
@@ -163,7 +163,7 @@ const visibleTags =
                   href={getTagUrl(tag)}
                   aria-label={`View all posts with the ${tag.trim()} tag`}
                   class="link-lg transition text-50 text-sm font-medium
-                    md:hover:text-(--primary) dark:md:hover:text-(--primary) whitespace-nowrap"
+                    hover-primary  whitespace-nowrap"
                 >
                   {tag.trim()}
                 </a>
