@@ -21,7 +21,7 @@ const showTitle = widgetConfig?.showTitle !== false;
 
 {musicPlayerConfig.showInSidebar !== false && (
 	<WidgetLayout id={`${widgetId}-layout`} class={className} style={style} name={i18n(I18nKey.music)} showTitle={showTitle}>
-		<button slot="title-icon" class={`btn-lrc-toggle md:hover:text-(--primary) transition-all duration-300 p-0.5 transform md:active:scale-95 text-neutral-400 shrink-0 ${!musicPlayerConfig.showLyrics ? 'hidden' : ''}`} title={i18n(I18nKey.musicLyrics)} aria-label={i18n(I18nKey.musicLyrics)}>
+		<button slot="title-icon" class={`btn-lrc-toggle md:hover:text-(--primary) transition-all duration-300 p-0.5 mr-4 transform md:active:scale-95 text-neutral-400 shrink-0 ${!musicPlayerConfig.showLyrics ? 'hidden' : ''}`} title={i18n(I18nKey.musicLyrics)} aria-label={i18n(I18nKey.musicLyrics)}>
             <Icon name="material-symbols:subtitles-off-outline-rounded" class="icon-lrc-off text-xl" aria-hidden="true" />
             <Icon name="material-symbols:subtitles-outline-rounded" class="icon-lrc-on text-xl hidden" aria-hidden="true" />
         </button>

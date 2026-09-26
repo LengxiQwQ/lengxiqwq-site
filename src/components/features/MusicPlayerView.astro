@@ -84,7 +84,7 @@ const viewConfigStr = JSON.stringify({
     }
 
     function initWidget(widget) {
-        var root = document.getElementById(widget.id + '-layout') || widget;
+        var root = widget.closest('widget-layout') || widget;
         // ── UI element refs ──────────────────────────────────────
         var ui = {
             widget: widget,
