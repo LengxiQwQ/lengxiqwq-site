@@ -8,6 +8,7 @@ export interface FcircleItem {
 	title: string;
 	link: string;
 	pubDate: Date;
+	excerpt?: string;
 }
 
 export async function getFcircleItems(): Promise<FcircleItem[]> {
@@ -21,6 +22,10 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 	const items: FcircleItem[] = [];
 
 	const promises = friends.map(async (friend) => {
+		// 过滤非博客站点（如果明确配置了feedUrl则强制抓取）
+		const isBlog = friend.tags?.some(tag => tag.includes("博客") || tag.toLowerCase().includes("blog"));
+		if (!friend.feedUrl && !isBlog) return;
+
 		const base = friend.siteurl.replace(/\/+$/, "");
 		const urlsToTry = friend.feedUrl
 			? [friend.feedUrl]
@@ -44,6 +49,7 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 							title: item.title,
 							link: item.link,
 							pubDate: new Date(dateStr),
+							excerpt: item.contentSnippet ? item.contentSnippet.substring(0, 150) : undefined,
 						});
 					}
 				}

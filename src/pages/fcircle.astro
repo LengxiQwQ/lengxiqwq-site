@@ -83,9 +83,14 @@ const description = i18n(I18nKey.fcircleDescription);
                   <span>{dateStr}</span>
                 </div>
                 
-                <div class="font-bold text-lg text-neutral-900 dark:text-neutral-100 group-md:hover:text-(--primary) transition-colors line-clamp-2 pr-6">
+                <div class="font-bold text-lg text-neutral-900 dark:text-neutral-100 group-md:hover:text-(--primary) transition-colors line-clamp-2 pr-6 mb-1">
                   {item.title}
                 </div>
+                {item.excerpt && (
+                  <div class="text-sm text-neutral-500 dark:text-neutral-400 line-clamp-2 pr-4">
+                    {item.excerpt}
+                  </div>
+                )}
               </div>
             </a>
           );
