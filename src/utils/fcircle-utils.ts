@@ -32,10 +32,13 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 	const items: FcircleItem[] = [];
 
 	const promises = allFriends.map(async (friend) => {
+		// 严格只在“博客”分类中抓取朋友圈动态，排除导航、工具等其他分类
+		const isBlog = friend.tags?.some(
+			(tag) => tag.includes("博客") || tag.toLowerCase().includes("blog"),
+		);
+		if (!isBlog) return;
+
 		const cleanFeedUrl = friend.feedUrl?.trim();
-		// 过滤非博客站点（如果明确配置了feedUrl则强制抓取）
-		const isBlog = friend.tags?.some(tag => tag.includes("博客") || tag.toLowerCase().includes("blog"));
-		if (!cleanFeedUrl && !isBlog) return;
 
 		const base = friend.siteurl.replace(/\/+$/, "");
 		const urlsToTry = cleanFeedUrl
