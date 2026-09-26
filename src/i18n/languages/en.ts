@@ -83,6 +83,8 @@ export const en: Translation = {
 	[Key.friends]: "Friends",
 	[Key.friendsDescription]:
 		"Here are my friends, welcome to visit and communicate with each other",
+	[Key.fcircle]: "Friend Circle",
+	[Key.fcircleDescription]: "Latest updates from friend blogs",
 	[Key.searchFriends]: "Search friends...",
 	[Key.friendsEmpty]: "No friends yet.",
 	[Key.booknav]: "Bookmark Nav",

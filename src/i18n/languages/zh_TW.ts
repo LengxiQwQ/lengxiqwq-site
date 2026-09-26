@@ -82,6 +82,8 @@ export const zh_TW: Translation = {
 		"您還未在配置文件中啟用評論系統，啟用後訪客才可在此留言",
 	[Key.friends]: "友情鏈接",
 	[Key.friendsDescription]: "這裡是我的朋友們，歡迎互相訪問交流",
+	[Key.fcircle]: 'Friend Circle',
+	[Key.fcircleDescription]: 'Latest updates from friend blogs',
 	[Key.searchFriends]: "搜尋友鏈...",
 	[Key.friendsEmpty]: "暫無友情連結",
 	[Key.booknav]: "書籤導航",

@@ -110,6 +110,8 @@ enum I18nKey {
 	license = "license",
 	friends = "friends",
 	friendsDescription = "friendsDescription",
+	fcircle = "fcircle",
+	fcircleDescription = "fcircleDescription",
 	searchFriends = "searchFriends",
 	friendsEmpty = "friendsEmpty",
 	guestbook = "guestbook",

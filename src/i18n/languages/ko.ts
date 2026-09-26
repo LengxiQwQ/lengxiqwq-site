@@ -552,4 +552,6 @@ export const ko: Translation = {
 	[Key.exitImmersiveReading]: "몰입형 읽기 종료",
 	[Key.tocExpand]: "목차 펼치기",
 	[Key.tocCollapse]: "목차 접기",
+  [Key.fcircle]: 'Friend Circle',
+  [Key.fcircleDescription]: 'Latest updates from friend blogs',
 };

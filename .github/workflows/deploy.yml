@@ -8,6 +8,8 @@ on:
       - "*.md"
   repository_dispatch:
     types: [content-updated]
+  schedule:
+    - cron: '0 0,12 * * *'
   workflow_dispatch:
     inputs:
       content_ref:

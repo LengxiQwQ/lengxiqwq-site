@@ -1,0 +1,129 @@
+---
+import { Icon } from "astro-icon/components";
+import { siteConfig } from "@/config";
+import I18nKey from "@/i18n/i18nKey";
+import { i18n } from "@/i18n/translation";
+import MainGridLayout from "@/layouts/MainGridLayout.astro";
+import { getFcircleItems } from "@/utils/fcircle-utils";
+import "@/styles/pages/common.css";
+
+// 检查页面是否启用
+if (!siteConfig.pages.fcircle) {
+	return Astro.redirect("/404/");
+}
+
+// 获取友链文章
+const items = await getFcircleItems();
+
+// 页面标题和描述
+const title = i18n(I18nKey.fcircle);
+const description = i18n(I18nKey.fcircleDescription);
+---
+
+<MainGridLayout title={title} description={description}>
+  <div class="flex w-full rounded-(--radius-large) overflow-hidden relative min-h-32">
+    <div class="card-base z-10 px-9 py-6 relative w-full">
+      <!-- 页面标题和描述 -->
+      <div class="mb-4">
+        <div class="page-heading">
+          <div class="page-heading-icon page-icon" aria-hidden="true">
+            <Icon name="material-symbols:rss-feed-rounded" />
+          </div>
+          <div>
+            <h2>{title}</h2>
+            {description && <p>{description}</p>}
+          </div>
+        </div>
+      </div>
+
+      <div class="fcircle-grid mt-6 flex flex-col gap-4">
+        {items.length === 0 && (
+          <div class="flex flex-col items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
+            <Icon name="material-symbols:rss-feed-rounded" class="text-4xl mb-3 opacity-50" />
+            <div class="text-sm">暂无最新动态，可能是友链没有配置 feedUrl，或文章尚未更新。</div>
+          </div>
+        )}
+        
+        {items.map((item) => {
+          const dateStr = item.pubDate.toLocaleDateString('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          });
+          
+          return (
+            <a
+              href={item.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="group flex items-start gap-4 p-4 rounded-xl border border-(--line-divider) md:hover:border-(--primary) md:hover:bg-(--card-bg) transition-all duration-300 md:hover:shadow-md relative overflow-hidden"
+            >
+              <div class="absolute inset-0 bg-(--primary) opacity-0 group-md:hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
+              <Icon
+                name="material-symbols:arrow-outward-rounded"
+                class="absolute top-4 right-4 text-(--primary) text-lg opacity-0 -translate-x-2 group-md:hover:opacity-100 group-md:hover:translate-x-0 transition-all duration-300"
+              />
+
+              <div class="relative w-12 h-12 shrink-0 rounded-full overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-md:hover:scale-105 transition-transform duration-300 mt-1">
+                <img
+                  src={item.friendAvatar}
+                  alt={item.friendName}
+                  width="48"
+                  height="48"
+                  loading="lazy"
+                  decoding="async"
+                  class="w-full h-full object-cover"
+                />
+              </div>
+
+              <div class="grow min-w-0 flex flex-col gap-1">
+                <div class="text-xs text-neutral-500 dark:text-neutral-400 font-medium flex items-center gap-2">
+                  <span class="text-neutral-700 dark:text-neutral-300 group-md:hover:text-(--primary) transition-colors">{item.friendName}</span>
+                  <span class="w-1 h-1 rounded-full bg-neutral-300 dark:bg-neutral-600"></span>
+                  <span>{dateStr}</span>
+                </div>
+                
+                <div class="font-bold text-lg text-neutral-900 dark:text-neutral-100 group-md:hover:text-(--primary) transition-colors line-clamp-2 pr-6">
+                  {item.title}
+                </div>
+              </div>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  </div>
+</MainGridLayout>
+
+<style>
+.page-heading {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.page-heading-icon {
+  width: 3.5rem;
+  height: 3.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 1rem;
+  background-color: var(--card-bg);
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+.page-heading-icon svg {
+  width: 2rem;
+  height: 2rem;
+  color: var(--primary);
+}
+.page-heading h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+}
+.page-heading p {
+  margin: 0.25rem 0 0;
+  color: var(--text-50);
+  font-size: 0.875rem;
+}
+</style>

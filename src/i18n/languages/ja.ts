@@ -552,4 +552,6 @@ export const ja: Translation = {
 	[Key.exitImmersiveReading]: "没入型リーディングを終了する",
 	[Key.tocExpand]: "目錄を開く",
 	[Key.tocCollapse]: "目錄をたたむ",
+  [Key.fcircle]: 'Friend Circle',
+  [Key.fcircleDescription]: 'Latest updates from friend blogs',
 };

@@ -82,6 +82,8 @@ export const zh_CN: Translation = {
 		"您还未在配置文件中启用评论系统，启用后访客才可在此留言",
 	[Key.friends]: "友情链接",
 	[Key.friendsDescription]: "这里是我的朋友们，欢迎互相访问交流",
+	[Key.fcircle]: "朋友圈",
+	[Key.fcircleDescription]: "友链博主们的最新文章更新",
 	[Key.searchFriends]: "搜索友链...",
 	[Key.friendsEmpty]: "暂无友情链接",
 	[Key.booknav]: "书签导航",
