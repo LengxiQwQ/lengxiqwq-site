@@ -41,7 +41,7 @@ const showTitle = widgetConfig?.showTitle !== false;
               href={config.link.url}
               target={config.link.external ? "_blank" : "_self"}
               rel={config.link.external ? "noopener noreferrer" : undefined}
-              class="btn-regular rounded-lg px-3 py-1.5 text-sm font-medium active:scale-95 transition-transform"
+              class="btn-regular rounded-lg px-3 py-1.5 text-sm font-medium md:active:scale-95 transition-transform"
             >
               {config.link.text}
             </a>
@@ -52,7 +52,7 @@ const showTitle = widgetConfig?.showTitle !== false;
       {
         config.closable && (
           <button
-            class="btn-regular rounded-lg h-8 w-8 text-sm hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+            class="btn-regular rounded-lg h-8 w-8 text-sm md:hover:bg-red-100 dark:md:hover:bg-red-900/30 transition-colors"
             onclick="this.closest('widget-layout').style.display='none'"
             aria-label={i18n(I18nKey.announcementClose)}
           >

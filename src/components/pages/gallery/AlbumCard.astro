@@ -61,7 +61,7 @@ const coverClass = gridCoverFullWidth
         <img
           src={cover}
           alt={name}
-          class="w-full h-full object-cover pointer-events-none opacity-0 transition-all duration-500 ease-out group-hover:scale-110"
+          class="w-full h-full object-cover pointer-events-none opacity-0 transition-all duration-500 ease-out group-md:hover:scale-110"
           loading="lazy"
           decoding="async"
         />
@@ -73,11 +73,11 @@ const coverClass = gridCoverFullWidth
     )}
 
     <!-- 悬浮：变暗 + 箭头 -->
-    <div class="absolute inset-0 pointer-events-none z-10 transition group-hover:bg-black/30" />
+    <div class="absolute inset-0 pointer-events-none z-10 transition group-md:hover:bg-black/30" />
     <div class="absolute inset-0 pointer-events-none z-20 flex items-center justify-center">
       <Icon
         name="material-symbols:chevron-right-rounded"
-        class="transition opacity-0 scale-50 group-hover:opacity-100 group-hover:scale-100 text-white text-5xl"
+        class="transition opacity-0 scale-50 group-md:hover:opacity-100 group-md:hover:scale-100 text-white text-5xl"
       />
     </div>
 
@@ -98,7 +98,7 @@ const coverClass = gridCoverFullWidth
   <div class="p-4 flex flex-col flex-1 min-h-0">
     <a
       href={detailUrl}
-      class="album-card-title font-bold text-[1.35rem] leading-[1.75rem] text-black/90 dark:text-white/90 line-clamp-1 md:hover:text-(--primary) transition-colors"
+      class="album-card-title font-bold text-[1.35rem] leading-[1.75rem] text-90 line-clamp-1 md:hover:text-(--primary) transition-colors"
     >
       {name}
     </a>

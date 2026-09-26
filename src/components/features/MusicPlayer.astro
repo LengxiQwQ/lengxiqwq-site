@@ -38,7 +38,7 @@ const widgetId =
                 </h3>
             </div>
             <!-- Top Right: Lyric Toggle -->
-            <button class={`btn-lrc-toggle md:hover:text-(--primary) transition-all duration-300 p-0.5 pr-2 transform active:scale-95 text-neutral-400 shrink-0 ${!config.showLyrics ? 'hidden' : ''}`} title={i18n(I18nKey.musicLyrics)} aria-label={i18n(I18nKey.musicLyrics)}>
+            <button class={`btn-lrc-toggle md:hover:text-(--primary) transition-all duration-300 p-0.5 pr-2 transform md:active:scale-95 text-neutral-400 shrink-0 ${!config.showLyrics ? 'hidden' : ''}`} title={i18n(I18nKey.musicLyrics)} aria-label={i18n(I18nKey.musicLyrics)}>
                 <Icon name="material-symbols:subtitles-off-outline-rounded" class="icon-lrc-off text-xl" aria-hidden="true" />
                 <Icon name="material-symbols:subtitles-outline-rounded" class="icon-lrc-on text-xl hidden" aria-hidden="true" />
             </button>
@@ -79,37 +79,37 @@ const widgetId =
     <div class="progress-container relative w-full h-1 bg-neutral-300/60 dark:bg-neutral-500/40 rounded-full cursor-pointer touch-none mb-2 group mt-2" role="slider" aria-label={i18n(I18nKey.musicProgress)} aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="progress-bar absolute left-0 top-0 h-full bg-(--primary) rounded-full w-0 transition-[width] duration-100"></div>
         <!-- Hover Thumb -->
-        <div class="progress-thumb absolute top-1/2 -mt-1.5 -ml-1.5 w-3 h-3 bg-(--primary) ring-2 ring-white dark:ring-neutral-800 rounded-full shadow-sm scale-0 group-hover:scale-100 transition-transform duration-200"></div>
+        <div class="progress-thumb absolute top-1/2 -mt-1.5 -ml-1.5 w-3 h-3 bg-(--primary) ring-2 ring-white dark:ring-neutral-800 rounded-full shadow-sm scale-0 group-md:hover:scale-100 transition-transform duration-200"></div>
     </div>
 </div>
 
 <!-- Controls Row -->
 <div class="flex items-center justify-between px-1 select-none">
     <!-- Repeat Mode -->
-    <button class="btn-repeat text-neutral-300 dark:text-neutral-600 md:hover:text-(--primary) transition-colors p-2 active:scale-95" title={i18n(I18nKey.musicPlayMode)} aria-label={i18n(I18nKey.musicPlayMode)}>
+    <button class="btn-repeat text-neutral-300 dark:text-neutral-600 md:hover:text-(--primary) transition-colors p-2 md:active:scale-95" title={i18n(I18nKey.musicPlayMode)} aria-label={i18n(I18nKey.musicPlayMode)}>
         <Icon name="material-symbols:repeat-rounded" class="icon-repeat text-xl" aria-hidden="true" />
         <Icon name="material-symbols:repeat-one-rounded" class="icon-repeat-one text-xl hidden" aria-hidden="true" />
         <Icon name="material-symbols:shuffle-rounded" class="icon-shuffle text-xl hidden" aria-hidden="true" />
     </button>
 
     <!-- Prev -->
-    <button class="btn-prev text-neutral-600 dark:text-neutral-300 md:hover:text-(--primary) transition-colors p-2 active:scale-95" title={i18n(I18nKey.musicPrev)} aria-label={i18n(I18nKey.musicPrev)}>
+    <button class="btn-prev text-neutral-600 dark:text-neutral-300 md:hover:text-(--primary) transition-colors p-2 md:active:scale-95" title={i18n(I18nKey.musicPrev)} aria-label={i18n(I18nKey.musicPrev)}>
         <Icon name="material-symbols:skip-previous-rounded" class="text-3xl" aria-hidden="true" />
     </button>
 
     <!-- Play/Pause (Feature) -->
-    <button class="btn-play w-12 h-12 bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) active:bg-(--btn-regular-bg-active) text-(--primary) rounded-full flex items-center justify-center transition-all duration-300" title={i18n(I18nKey.musicPlay)} aria-label={i18n(I18nKey.musicPlay)}>
+    <button class="btn-play w-12 h-12 bg-(--btn-regular-bg) md:hover:bg-(--btn-regular-bg-hover) md:active:bg-(--btn-regular-bg-active) text-(--primary) rounded-full flex items-center justify-center transition-all duration-300" title={i18n(I18nKey.musicPlay)} aria-label={i18n(I18nKey.musicPlay)}>
         <Icon name="material-symbols:play-arrow-rounded" class="icon-play text-3xl ml-0.5" aria-hidden="true" />
         <Icon name="material-symbols:pause-rounded" class="icon-pause text-3xl hidden" aria-hidden="true" />
     </button>
 
     <!-- Next -->
-    <button class="btn-next text-neutral-600 dark:text-neutral-300 md:hover:text-(--primary) transition-colors p-2 active:scale-95" title={i18n(I18nKey.musicNext)} aria-label={i18n(I18nKey.musicNext)}>
+    <button class="btn-next text-neutral-600 dark:text-neutral-300 md:hover:text-(--primary) transition-colors p-2 md:active:scale-95" title={i18n(I18nKey.musicNext)} aria-label={i18n(I18nKey.musicNext)}>
         <Icon name="material-symbols:skip-next-rounded" class="text-3xl" aria-hidden="true" />
     </button>
 
     <!-- Playlist Toggle Arrow -->
-    <button class="btn-drawer-toggle text-neutral-400 md:hover:text-(--primary) transition-all duration-300 p-2 transform active:scale-95" title={i18n(I18nKey.musicPlaylist)} aria-label={i18n(I18nKey.musicPlaylist)}>
+    <button class="btn-drawer-toggle text-neutral-400 md:hover:text-(--primary) transition-all duration-300 p-2 transform md:active:scale-95" title={i18n(I18nKey.musicPlaylist)} aria-label={i18n(I18nKey.musicPlaylist)}>
         <Icon name="mdi:playlist-music" class="text-xl" aria-hidden="true" />
     </button>
 </div>

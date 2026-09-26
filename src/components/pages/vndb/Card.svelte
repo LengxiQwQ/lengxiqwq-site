@@ -132,7 +132,7 @@ function handleError(e: Event) {
   href={link}
   target="_blank"
   rel="noopener noreferrer nofollow"
-  class="group relative overflow-hidden rounded-xl transition-all duration-300 hover:shadow-lg hover:scale-[1.02] block"
+  class="group relative overflow-hidden rounded-xl transition-all duration-300 md:hover:shadow-lg md:hover:scale-[1.02] block"
 >
   <div class="aspect-2/3 relative overflow-hidden">
     {#if initialSrc}
@@ -141,7 +141,7 @@ function handleError(e: Event) {
         src={loadImage ? initialSrc : undefined}
         data-src={loadImage ? undefined : initialSrc}
         alt={title}
-        class="w-full h-full object-cover pointer-events-none opacity-0 transition-all duration-500 ease-out group-hover:scale-105"
+        class="w-full h-full object-cover pointer-events-none opacity-0 transition-all duration-500 ease-out group-md:hover:scale-105"
         loading="lazy"
         decoding="async"
         onload={handleLoad}

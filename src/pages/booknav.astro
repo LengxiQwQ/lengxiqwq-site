@@ -130,14 +130,14 @@ const description =
                         data-title={item.title.toLowerCase()}
                         data-desc={(item.desc || "").toLowerCase()}
                         data-domain={item.domain.toLowerCase()}
-                        class="booknav-card group flex items-center gap-3 p-3 rounded-xl border border-(--line-divider) hover:border-(--primary) hover:bg-(--card-bg) transition-all duration-300 hover:shadow-lg relative overflow-hidden"
+                        class="booknav-card group flex items-center gap-3 p-3 rounded-xl border border-(--line-divider) md:hover:border-(--primary) md:hover:bg-(--card-bg) transition-all duration-300 md:hover:shadow-lg relative overflow-hidden"
                       >
                         {/* 背景装饰 - 仅悬停显示 */}
-                        <div class="absolute inset-0 bg-(--primary) opacity-0 group-hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
+                        <div class="absolute inset-0 bg-(--primary) opacity-0 group-md:hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
 
                         {/* 图标 */}
                         <div
-                          class="booknav-icon relative w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 flex items-center justify-center group-hover:scale-105 transition-transform duration-300"
+                          class="booknav-icon relative w-14 h-14 shrink-0 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 flex items-center justify-center group-md:hover:scale-105 transition-transform duration-300"
                           data-letter={item.letter}
                         >
                           {item.resolvedIcon.kind === "icon" && (
@@ -164,7 +164,7 @@ const description =
                         {/* 外部链接图标 - 固定在卡片右上角 */}
                         <Icon
                           name="material-symbols:arrow-outward-rounded"
-                          class="absolute top-3 right-3 text-(--primary) text-lg opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300"
+                          class="absolute top-3 right-3 text-(--primary) text-lg opacity-0 -translate-x-2 group-md:hover:opacity-100 group-md:hover:translate-x-0 transition-all duration-300"
                         />
 
                         {/* 内容 */}

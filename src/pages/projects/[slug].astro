@@ -76,7 +76,7 @@ const projectPath = `/projects/${slug}`;
       <!-- 返回列表 -->
       <a
         href={url("/projects/")}
-        class="inline-flex items-center gap-1.5 text-sm text-(--primary) hover:underline mb-4"
+        class="inline-flex items-center gap-1.5 text-sm text-(--primary) md:hover:underline mb-4"
       >
         <Icon name="material-symbols:arrow-back" class="text-base" />
         {i18n(I18nKey.projectBack)}
@@ -219,8 +219,8 @@ const projectPath = `/projects/${slug}`;
                   class:list={[
                     "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors",
                     isFirst
-                      ? "bg-(--primary) text-white dark:text-black/70 hover:bg-(--primary)/80"
-                      : "border border-(--primary)/40 text-(--primary) hover:bg-(--primary)/10",
+                      ? "bg-(--primary) text-white dark:text-black/70 md:hover:bg-(--primary)/80"
+                      : "border border-(--primary)/40 text-(--primary) md:hover:bg-(--primary)/10",
                   ]}
                 >
                   {resolvedIcon.kind === "icon" && <Icon name={resolvedIcon.value} class="text-base" />}
@@ -290,7 +290,7 @@ const projectPath = `/projects/${slug}`;
           </div>
           <a
             href={url("/sponsor/")}
-            class="inline-flex items-center gap-2 px-5 py-2.5 bg-(--primary) text-white dark:text-black/80 rounded-lg font-medium hover:bg-(--primary)/80 active:scale-95 transition-all text-sm shrink-0"
+            class="inline-flex items-center gap-2 px-5 py-2.5 bg-(--primary) text-white dark:text-black/80 rounded-lg font-medium md:hover:bg-(--primary)/80 md:active:scale-95 transition-all text-sm shrink-0"
           >
             <span>打赏支持</span>
             <Icon name="fa7-solid:arrow-right" class="text-xs" />

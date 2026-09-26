@@ -32,7 +32,7 @@ const viewConfigStr = JSON.stringify({
 
 <!-- 播放列表条目模板：所有 widget 共用一份 -->
 <template id="playlist-item-template">
-<div class="playlist-item flex items-center gap-3 p-2 rounded-lg cursor-pointer hover:bg-neutral-50 dark:hover:bg-white/5 transition-colors group">
+<div class="playlist-item flex items-center gap-3 p-2 rounded-lg cursor-pointer md:hover:bg-neutral-50 dark:md:hover:bg-white/5 transition-colors group">
     <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 relative bg-neutral-200 dark:bg-neutral-700">
         <img src="" class="item-cover w-full h-full object-cover" loading="lazy" alt="" />
         <!-- Active Indicator overlay with animated equalizer / play icon -->
@@ -157,16 +157,16 @@ const viewConfigStr = JSON.stringify({
 
         function updatePlayStateUI(isPlaying) {
             if (isPlaying) {
-                ui.btnPlay.classList.add('bg-(--primary)', 'text-white', 'hover:brightness-110');
-                ui.btnPlay.classList.remove('bg-(--btn-regular-bg)', 'hover:bg-(--btn-regular-bg-hover)', 'active:bg-(--btn-regular-bg-active)', 'text-(--primary)');
+                ui.btnPlay.classList.add('bg-(--primary)', 'text-white', 'md:hover:brightness-110');
+                ui.btnPlay.classList.remove('bg-(--btn-regular-bg)', 'md:hover:bg-(--btn-regular-bg-hover)', 'md:active:bg-(--btn-regular-bg-active)', 'text-(--primary)');
                 ui.iconPlay.classList.add('hidden');
                 ui.iconPause.classList.remove('hidden');
                 ui.cover.style.animationPlayState = 'running';
                 ui.btnPlay.setAttribute('aria-label', cfg.i18n.pause);
                 ui.btnPlay.title = cfg.i18n.pause;
             } else {
-                ui.btnPlay.classList.remove('bg-(--primary)', 'text-white', 'hover:brightness-110');
-                ui.btnPlay.classList.add('bg-(--btn-regular-bg)', 'hover:bg-(--btn-regular-bg-hover)', 'active:bg-(--btn-regular-bg-active)', 'text-(--primary)');
+                ui.btnPlay.classList.remove('bg-(--primary)', 'text-white', 'md:hover:brightness-110');
+                ui.btnPlay.classList.add('bg-(--btn-regular-bg)', 'md:hover:bg-(--btn-regular-bg-hover)', 'md:active:bg-(--btn-regular-bg-active)', 'text-(--primary)');
                 ui.iconPlay.classList.remove('hidden');
                 ui.iconPause.classList.add('hidden');
                 ui.cover.style.animationPlayState = 'paused';
@@ -193,17 +193,17 @@ const viewConfigStr = JSON.stringify({
         function updateModeUI(playMode) {
             var primaryColor = 'text-(--primary)';
             if (playMode === 0) {
-                ui.btnRepeat.className = 'p-2 active:scale-95 transition-colors text-neutral-300 dark:text-neutral-600 md:hover:text-(--primary)';
+                ui.btnRepeat.className = 'p-2 md:active:scale-95 transition-colors text-neutral-300 dark:text-neutral-600 md:hover:text-(--primary)';
                 ui.iconRepeat.classList.remove('hidden');
                 ui.iconRepeatOne.classList.add('hidden');
                 ui.iconShuffle.classList.add('hidden');
             } else if (playMode === 1) {
-                ui.btnRepeat.className = 'p-2 active:scale-95 transition-colors ' + primaryColor;
+                ui.btnRepeat.className = 'p-2 md:active:scale-95 transition-colors ' + primaryColor;
                 ui.iconRepeat.classList.add('hidden');
                 ui.iconRepeatOne.classList.remove('hidden');
                 ui.iconShuffle.classList.add('hidden');
             } else {
-                ui.btnRepeat.className = 'p-2 active:scale-95 transition-colors ' + primaryColor;
+                ui.btnRepeat.className = 'p-2 md:active:scale-95 transition-colors ' + primaryColor;
                 ui.iconRepeat.classList.add('hidden');
                 ui.iconRepeatOne.classList.add('hidden');
                 ui.iconShuffle.classList.remove('hidden');

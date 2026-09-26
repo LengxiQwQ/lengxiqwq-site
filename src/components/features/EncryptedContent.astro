@@ -40,7 +40,7 @@ const labels = {
       <p class="text-sm text-black/40 dark:text-white/40 text-center m-0">{labels.desc}</p>
 
       {hint && (
-        <p class="text-xs text-black/30 dark:text-white/30 text-center m-0">{labels.hint}: {hint}</p>
+        <p class="text-xs text-30 text-center m-0">{labels.hint}: {hint}</p>
       )}
 
       <form id="password-form" class="w-full mt-2 space-y-2">
@@ -58,7 +58,7 @@ const labels = {
         <button
           type="submit"
           class="w-full py-2 rounded-lg text-sm font-medium bg-(--primary) text-white dark:text-black/70
-                 hover:opacity-85 active:scale-[0.98] transition-all"
+                 md:hover:opacity-85 md:active:scale-[0.98] transition-all"
         >
           {labels.submit}
         </button>

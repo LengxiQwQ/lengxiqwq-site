@@ -70,7 +70,7 @@ export const notes = [
                 <p class="text-[0.65rem] text-neutral-400 dark:text-neutral-500 mb-0.5">{item.label}</p>
                 <p class="text-xs font-medium break-all select-all leading-relaxed">{item.value}</p>
               </div>
-              <button onclick={`navigator.clipboard.writeText('${item.value.replace(/'/g, "\\'")}');this.querySelectorAll('svg')[0].classList.add('hidden');this.querySelectorAll('svg')[1].classList.remove('hidden');setTimeout(()=>{this.querySelectorAll('svg')[0].classList.remove('hidden');this.querySelectorAll('svg')[1].classList.add('hidden')},1500)`} class="shrink-0 w-7 h-7 mt-0.5 flex items-center justify-center rounded-md bg-black/10 dark:bg-white/10 text-(--btn-content) hover:opacity-80 transition-opacity cursor-pointer" title="点击复制">
+              <button onclick={`navigator.clipboard.writeText('${item.value.replace(/'/g, "\\'")}');this.querySelectorAll('svg')[0].classList.add('hidden');this.querySelectorAll('svg')[1].classList.remove('hidden');setTimeout(()=>{this.querySelectorAll('svg')[0].classList.remove('hidden');this.querySelectorAll('svg')[1].classList.add('hidden')},1500)`} class="shrink-0 w-7 h-7 mt-0.5 flex items-center justify-center rounded-md bg-black/10 dark:bg-white/10 text-(--btn-content) md:hover:opacity-80 transition-opacity cursor-pointer" title="点击复制">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                 <svg class="w-3.5 h-3.5 hidden text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
               </button>
@@ -118,10 +118,10 @@ export const notes = [
                 href="https://github.com/LengxiQwQ/lengxiqwq-site/issues/new?template=04-friend_apply.yml"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="no-styling group my-2.5 flex items-center justify-between gap-3 p-3 rounded-xl border border-(--line-divider) hover:border-(--primary)/50 bg-black/[0.02] dark:bg-white/[0.02] hover:bg-(--card-bg) transition-all duration-200 cursor-pointer"
+                class="no-styling group my-2.5 flex items-center justify-between gap-3 p-3 rounded-xl border border-(--line-divider) md:hover:border-(--primary)/50 bg-black/[0.02] dark:bg-white/[0.02] md:hover:bg-(--card-bg) transition-all duration-200 cursor-pointer"
               >
                 <div class="flex items-center gap-3 min-w-0">
-                  <div class="w-8 h-8 rounded-lg bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 flex items-center justify-center shrink-0 group-hover:bg-(--primary) group-hover:text-white transition-colors duration-200">
+                  <div class="w-8 h-8 rounded-lg bg-black/5 dark:bg-white/10 text-neutral-600 dark:text-neutral-300 flex items-center justify-center shrink-0 group-md:hover:bg-(--primary) group-md:hover:text-white transition-colors duration-200">
                     <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
                   </div>
                   <div class="min-w-0">
@@ -138,7 +138,7 @@ export const notes = [
                     </div>
                   </div>
                 </div>
-                <div class="shrink-0 text-neutral-400 dark:text-neutral-500 group-md:hover:text-(--primary) group-hover:translate-x-0.5 transition-all duration-200">
+                <div class="shrink-0 text-neutral-400 dark:text-neutral-500 group-md:hover:text-(--primary) group-md:hover:translate-x-0.5 transition-all duration-200">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
                 </div>
               </a>
@@ -151,7 +151,7 @@ export const notes = [
 
               <p class="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed mb-2">在下方评论区留言、发邮件到 <code class="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-[0.7rem]">{site.email}</code>：</p>
               <div class="relative rounded-lg bg-black/5 dark:bg-white/5 p-4 pr-10 text-[0.7rem] leading-relaxed overflow-x-auto whitespace-pre">
-                <button onclick="navigator.clipboard.writeText('站点名称：您的站点名称\n站点描述：您的站点描述\n站点链接：您的站点链接\n头像链接：您的站点头像');this.querySelectorAll('svg')[0].classList.add('hidden');this.querySelectorAll('svg')[1].classList.remove('hidden');setTimeout(()=>{this.querySelectorAll('svg')[0].classList.remove('hidden');this.querySelectorAll('svg')[1].classList.add('hidden')},1500)" class="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-md bg-black/10 dark:bg-white/10 text-(--btn-content) hover:opacity-80 transition-opacity cursor-pointer">
+                <button onclick="navigator.clipboard.writeText('站点名称：您的站点名称\n站点描述：您的站点描述\n站点链接：您的站点链接\n头像链接：您的站点头像');this.querySelectorAll('svg')[0].classList.add('hidden');this.querySelectorAll('svg')[1].classList.remove('hidden');setTimeout(()=>{this.querySelectorAll('svg')[0].classList.remove('hidden');this.querySelectorAll('svg')[1].classList.add('hidden')},1500)" class="absolute top-2 right-2 w-7 h-7 flex items-center justify-center rounded-md bg-black/10 dark:bg-white/10 text-(--btn-content) md:hover:opacity-80 transition-opacity cursor-pointer">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                   <svg class="w-3.5 h-3.5 hidden text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                 </button>

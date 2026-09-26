@@ -712,7 +712,7 @@ $effect(() => {
 				class="focus-ring-inset flex-1 flex flex-col items-center justify-center gap-1.5 py-2 px-2 text-xs font-medium transition-colors rounded-lg min-w-0
 					{activeTab === tab.key
 						? 'bg-(--btn-plain-bg-hover) text-(--primary)'
-						: 'text-gray-500 dark:text-gray-400 hover:bg-(--btn-plain-bg-hover) hover:text-gray-700 dark:hover:text-gray-300'}"
+						: 'text-gray-500 dark:text-gray-400 md:hover:bg-(--btn-plain-bg-hover) md:hover:text-gray-700 dark:md:hover:text-gray-300'}"
 				onclick={() => activeTab = tab.key}
 			>
 				<Icon icon={tab.icon} class="text-[1.5rem] shrink-0"></Icon>
@@ -733,7 +733,7 @@ $effect(() => {
 					type="button"
 					aria-label={followWallpaperHue ? "正在跟随壁纸色调 (点击切换为手动)" : "开启跟随壁纸色调"}
 					title={followWallpaperHue ? "正在跟随壁纸色调 (点击切换为手动)" : "开启跟随壁纸色调"}
-					class="btn-regular rounded-md active:scale-90 transition-all flex items-center justify-center"
+					class="btn-regular rounded-md md:active:scale-90 transition-all flex items-center justify-center"
 					class:bg-(--primary)={followWallpaperHue}
 					class:text-white={followWallpaperHue}
 					onclick={toggleFollowWallpaperHue}
@@ -742,7 +742,7 @@ $effect(() => {
 						<Icon icon="fa7-solid:wand-magic-sparkles" class="text-[0.75rem]"></Icon>
 					</div>
 				</button>
-				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
+				<button aria-label="Reset to Default" class="btn-regular rounded-md md:active:scale-90"
 						class:opacity-0={hue === defaultHue && !followWallpaperHue} class:pointer-events-none={hue === defaultHue && !followWallpaperHue}
 						disabled={hue === defaultHue && !followWallpaperHue} aria-hidden={hue === defaultHue && !followWallpaperHue ? "true" : undefined} onclick={resetHue}>
 					<div class="text-(--btn-content)">
@@ -767,7 +767,7 @@ $effect(() => {
 		<div class="">
 			<div class="section-title">
 				{i18n(I18nKey.postListLayout)}
-				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
+				<button aria-label="Reset to Default" class="btn-regular rounded-md md:active:scale-90"
 						class:opacity-0={currentLayout === effectiveDefaultLayout} class:pointer-events-none={currentLayout === effectiveDefaultLayout}
 						disabled={currentLayout === effectiveDefaultLayout} aria-hidden={currentLayout === effectiveDefaultLayout ? "true" : undefined} onclick={resetLayout}>
 					<div class="text-(--btn-content)">
@@ -778,7 +778,7 @@ $effect(() => {
 			<div class="flex gap-2">
 				<button
 					aria-label={i18n(I18nKey.postListLayoutList)}
-					class="flex-1 btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 active:scale-95 transition-all relative overflow-hidden"
+					class="flex-1 btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 md:active:scale-95 transition-all relative overflow-hidden"
 					class:opacity-60={currentLayout !== 'list'}
 					class:bg-(--btn-regular-bg-hover)={currentLayout === 'list'}
 					disabled={isSwitching}
@@ -792,7 +792,7 @@ $effect(() => {
 				</button>
 				<button
 					aria-label={i18n(I18nKey.postListLayoutGrid)}
-					class="flex-1 btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 active:scale-95 transition-all relative overflow-hidden"
+					class="flex-1 btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 md:active:scale-95 transition-all relative overflow-hidden"
 					class:opacity-60={currentLayout !== 'grid'}
 					class:bg-(--btn-regular-bg-hover)={currentLayout === 'grid'}
 					disabled={isSwitching}
@@ -813,7 +813,7 @@ $effect(() => {
 		<div>
 			<div class="section-title">
 				{i18n(I18nKey.cardSettings)}
-				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
+				<button aria-label="Reset to Default" class="btn-regular rounded-md md:active:scale-90"
 						class:opacity-0={cardSettingsIsDefault} class:pointer-events-none={cardSettingsIsDefault}
 						disabled={cardSettingsIsDefault} aria-hidden={cardSettingsIsDefault ? "true" : undefined} onclick={resetCardSettings}>
 					<div class="text-(--btn-content)">
@@ -824,7 +824,7 @@ $effect(() => {
 			<div class="space-y-1">
 				{#if isCardBorderSwitchable}
 				<button
-					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
+					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left md:active:scale-95 transition-all relative overflow-hidden"
 					class:bg-(--btn-regular-bg-hover)={cardBorderEnabled}
 					onclick={toggleCardBorderEnabled}
 				>
@@ -841,7 +841,7 @@ $effect(() => {
 				{/if}
 				{#if isCardFollowThemeSwitchable}
 				<button
-					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
+					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left md:active:scale-95 transition-all relative overflow-hidden"
 					class:bg-(--btn-regular-bg-hover)={cardFollowThemeEnabled}
 					onclick={toggleCardFollowThemeEnabled}
 				>
@@ -868,7 +868,7 @@ $effect(() => {
 		<div>
 			<div class="section-title">
 				{i18n(I18nKey.wallpaperMode)}
-				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
+				<button aria-label="Reset to Default" class="btn-regular rounded-md md:active:scale-90"
 						class:opacity-0={wallpaperMode === defaultWallpaperMode} class:pointer-events-none={wallpaperMode === defaultWallpaperMode}
 						disabled={wallpaperMode === defaultWallpaperMode} aria-hidden={wallpaperMode === defaultWallpaperMode ? "true" : undefined} onclick={resetWallpaperMode}>
 					<div class="text-(--btn-content)">
@@ -878,7 +878,7 @@ $effect(() => {
 			</div>
 			<div class="grid grid-cols-2 gap-2">
 				<button
-					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 active:scale-95 transition-all relative overflow-hidden"
+					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 md:active:scale-95 transition-all relative overflow-hidden"
 					class:opacity-60={wallpaperMode !== WALLPAPER_BANNER}
 					class:bg-(--btn-regular-bg-hover)={wallpaperMode === WALLPAPER_BANNER}
 					onclick={() => switchWallpaperMode(WALLPAPER_BANNER)}
@@ -887,7 +887,7 @@ $effect(() => {
 					<span class="text-xs font-medium">{i18n(I18nKey.wallpaperBannerMode)}</span>
 				</button>
 				<button
-					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 active:scale-95 transition-all relative overflow-hidden"
+					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 md:active:scale-95 transition-all relative overflow-hidden"
 					class:opacity-60={wallpaperMode !== WALLPAPER_FULLSCREEN}
 					class:bg-(--btn-regular-bg-hover)={wallpaperMode === WALLPAPER_FULLSCREEN}
 					onclick={() => switchWallpaperMode(WALLPAPER_FULLSCREEN)}
@@ -896,7 +896,7 @@ $effect(() => {
 					<span class="text-xs font-medium">{i18n(I18nKey.wallpaperFullscreenMode)}</span>
 				</button>
 				<button
-					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 active:scale-95 transition-all relative overflow-hidden"
+					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 md:active:scale-95 transition-all relative overflow-hidden"
 					class:opacity-60={wallpaperMode !== WALLPAPER_OVERLAY}
 					class:bg-(--btn-regular-bg-hover)={wallpaperMode === WALLPAPER_OVERLAY}
 					onclick={() => switchWallpaperMode(WALLPAPER_OVERLAY)}
@@ -905,7 +905,7 @@ $effect(() => {
 					<span class="text-xs font-medium">{i18n(I18nKey.wallpaperOverlayMode)}</span>
 				</button>
 				<button
-					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 active:scale-95 transition-all relative overflow-hidden"
+					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 md:active:scale-95 transition-all relative overflow-hidden"
 					class:opacity-60={wallpaperMode !== WALLPAPER_NONE}
 					class:bg-(--btn-regular-bg-hover)={wallpaperMode === WALLPAPER_NONE}
 					onclick={() => switchWallpaperMode(WALLPAPER_NONE)}
@@ -922,7 +922,7 @@ $effect(() => {
 		<div>
 			<div class="section-title">
 				{i18n(I18nKey.fullscreenLayout)}
-				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
+				<button aria-label="Reset to Default" class="btn-regular rounded-md md:active:scale-90"
 						class:opacity-0={fullscreenLayout === defaultFullscreenLayout} class:pointer-events-none={fullscreenLayout === defaultFullscreenLayout}
 						disabled={fullscreenLayout === defaultFullscreenLayout} aria-hidden={fullscreenLayout === defaultFullscreenLayout ? "true" : undefined} onclick={resetFullscreenLayout}>
 					<div class="text-(--btn-content)">
@@ -932,7 +932,7 @@ $effect(() => {
 			</div>
 			<div class="grid grid-cols-2 gap-2">
 				<button
-					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 active:scale-95 transition-all relative overflow-hidden"
+					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 md:active:scale-95 transition-all relative overflow-hidden"
 					class:opacity-60={fullscreenLayout !== "classic"}
 					class:bg-(--btn-regular-bg-hover)={fullscreenLayout === "classic"}
 					onclick={() => switchFullscreenLayout("classic")}
@@ -941,7 +941,7 @@ $effect(() => {
 					<span class="text-xs font-medium">{i18n(I18nKey.fullscreenClassicLayout)}</span>
 				</button>
 				<button
-					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 active:scale-95 transition-all relative overflow-hidden"
+					class="btn-regular rounded-md py-2 px-3 flex items-center justify-center gap-2 md:active:scale-95 transition-all relative overflow-hidden"
 					class:opacity-60={fullscreenLayout !== "hero"}
 					class:bg-(--btn-regular-bg-hover)={fullscreenLayout === "hero"}
 					onclick={() => switchFullscreenLayout("hero")}
@@ -958,7 +958,7 @@ $effect(() => {
 		<div class="">
 			<div class="section-title">
 				{i18n(I18nKey.overlaySettings)}
-				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
+				<button aria-label="Reset to Default" class="btn-regular rounded-md md:active:scale-90"
 						class:opacity-0={overlaySettingsIsDefault} class:pointer-events-none={overlaySettingsIsDefault}
 						disabled={overlaySettingsIsDefault} aria-hidden={overlaySettingsIsDefault ? "true" : undefined} onclick={resetOverlaySettings}>
 					<div class="text-(--btn-content)">
@@ -996,7 +996,7 @@ $effect(() => {
 		<div class="">
 			<div class="section-title">
 				{i18n(I18nKey.wallpaperSettings)}
-				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
+				<button aria-label="Reset to Default" class="btn-regular rounded-md md:active:scale-90"
 						class:opacity-0={bannerSettingsIsDefault} class:pointer-events-none={bannerSettingsIsDefault}
 						disabled={bannerSettingsIsDefault} aria-hidden={bannerSettingsIsDefault ? "true" : undefined} onclick={resetBannerSettings}>
 					<div class="text-(--btn-content)">
@@ -1008,7 +1008,7 @@ $effect(() => {
 				<!-- Banner Title Switch -->
 				{#if isBannerTitleSwitchable}
 				<button
-					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
+					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left md:active:scale-95 transition-all relative overflow-hidden"
 					class:bg-(--btn-regular-bg-hover)={bannerTitleEnabled}
 					onclick={toggleBannerTitleEnabled}
 				>
@@ -1026,7 +1026,7 @@ $effect(() => {
 				<!-- Banner Carousel Switch -->
 				{#if isBannerCarouselSwitchable}
 				<button
-					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
+					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left md:active:scale-95 transition-all relative overflow-hidden"
 					class:bg-(--btn-regular-bg-hover)={bannerCarouselEnabled}
 					onclick={toggleBannerCarouselEnabled}
 				>
@@ -1044,7 +1044,7 @@ $effect(() => {
 				<!-- Waves Animation Switch（横幅模式和 classic 全屏模式） -->
 				{#if isWavesSwitchable && (wallpaperMode === WALLPAPER_BANNER || (wallpaperMode === WALLPAPER_FULLSCREEN && fullscreenLayout === "classic"))}
 				<button
-					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
+					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left md:active:scale-95 transition-all relative overflow-hidden"
 					class:bg-(--btn-regular-bg-hover)={wavesEnabled}
 					onclick={toggleWavesEnabled}
 				>
@@ -1062,7 +1062,7 @@ $effect(() => {
 				<!-- Gradient Transition Switch（横幅模式和 classic 全屏模式） -->
 				{#if isGradientSwitchable && (wallpaperMode === WALLPAPER_BANNER || (wallpaperMode === WALLPAPER_FULLSCREEN && fullscreenLayout === "classic"))}
 				<button
-					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
+					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left md:active:scale-95 transition-all relative overflow-hidden"
 					class:bg-(--btn-regular-bg-hover)={gradientEnabled}
 					onclick={toggleGradientEnabled}
 				>
@@ -1088,7 +1088,7 @@ $effect(() => {
 		<div class="">
 			<div class="section-title">
 				{i18n(I18nKey.effectsSettings)}
-				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
+				<button aria-label="Reset to Default" class="btn-regular rounded-md md:active:scale-90"
 						class:opacity-0={sakuraEnabled === defaultSakuraEnabled} class:pointer-events-none={sakuraEnabled === defaultSakuraEnabled}
 						disabled={sakuraEnabled === defaultSakuraEnabled} aria-hidden={sakuraEnabled === defaultSakuraEnabled ? "true" : undefined}
 						onclick={() => { sakuraEnabled = defaultSakuraEnabled; setSakuraEnabled(defaultSakuraEnabled); }}>
@@ -1098,7 +1098,7 @@ $effect(() => {
 				</button>
 			</div>
 			<button
-				class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
+				class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left md:active:scale-95 transition-all relative overflow-hidden"
 				class:bg-(--btn-regular-bg-hover)={sakuraEnabled}
 				onclick={toggleSakuraEnabled}
 			>

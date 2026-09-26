@@ -65,7 +65,7 @@ function getQrLqipProps(qrCode: string) {
       <div class="mb-8">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
                     {enabledMethods.map((method) => (
-                      <div class="flex flex-col items-center card-base p-6 rounded-lg bg-neutral-50 dark:bg-neutral-900/50 border border-neutral-200 dark:border-neutral-800 hover:border-(--primary) transition-colors">
+                      <div class="flex flex-col items-center card-base p-6 rounded-lg bg-neutral-50 dark:bg-neutral-900/50 border border-neutral-200 dark:border-neutral-800 md:hover:border-(--primary) transition-colors">
                         <!-- 图标和名称 -->
                         <div class="flex items-center gap-3 mb-4">
                           {method.icon && (
@@ -101,7 +101,7 @@ function getQrLqipProps(qrCode: string) {
                             href={method.link}
                             target="_blank"
                             rel="noopener noreferrer"
-                            class="inline-flex items-center gap-2 px-4 py-2 bg-(--primary) text-white dark:text-black/70 rounded-lg font-medium hover:bg-(--primary)/90 active:scale-95 transition-all"
+                            class="inline-flex items-center gap-2 px-4 py-2 bg-(--primary) text-white dark:text-black/70 rounded-lg font-medium md:hover:bg-(--primary)/90 md:active:scale-95 transition-all"
                           >
                             <span>{i18n(I18nKey.sponsorGoTo)}</span>
                             <Icon name="fa7-solid:arrow-up-right-from-square" class="text-sm" />
@@ -139,7 +139,7 @@ function getQrLqipProps(qrCode: string) {
               .slice()
               .sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
               .map((sponsor) => (
-              <div class="group flex items-start gap-3 p-3.5 rounded-xl border border-(--line-divider) hover:border-(--primary) bg-(--card-bg-transparent) transition-all duration-200">
+              <div class="group flex items-start gap-3 p-3.5 rounded-xl border border-(--line-divider) md:hover:border-(--primary) bg-(--card-bg-transparent) transition-all duration-200">
                 {/* 头像占位 */}
                 <!-- 新的头像逻辑：有头像用图片，没有用首字母 -->
                 {sponsor.avatar ? (
@@ -154,7 +154,7 @@ function getQrLqipProps(qrCode: string) {
 
                 <!-- 首字母头像（作为兜底，图片加载失败也会显示这个） -->
                 <div 
-                  class={`w-9 h-9 rounded-full bg-(--primary)/10 flex items-center justify-center shrink-0 group-hover:bg-(--primary)/20 transition-colors mt-0.5 ${sponsor.avatar ? 'hidden' : ''}`}
+                  class={`w-9 h-9 rounded-full bg-(--primary)/10 flex items-center justify-center shrink-0 group-md:hover:bg-(--primary)/20 transition-colors mt-0.5 ${sponsor.avatar ? 'hidden' : ''}`}
                 >
                   <span class="text-sm font-bold text-(--primary)">{sponsor.name.charAt(0)}</span>
                 </div>

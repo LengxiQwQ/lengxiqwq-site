@@ -33,7 +33,7 @@ const totalPosts = seriesList.reduce((sum, series) => sum + series.count, 0);
                                 aria-expanded="false"
                                 class="series-acc-header group flex w-full items-center gap-3 p-5 md:p-6 pb-3 cursor-pointer select-none text-left transition"
                             >
-                                <span class="shrink-0 w-12 h-12 rounded-full bg-(--primary)/10 group-hover:bg-(--primary)/20 flex items-center justify-center transition-colors">
+                                <span class="shrink-0 w-12 h-12 rounded-full bg-(--primary)/10 group-md:hover:bg-(--primary)/20 flex items-center justify-center transition-colors">
                                     <Icon name="material-symbols:layers" aria-hidden="true" class="text-2xl text-(--primary)" />
                                 </span>
                                 <span class="flex-1 min-w-0">
@@ -60,7 +60,7 @@ const totalPosts = seriesList.reduce((sum, series) => sum + series.count, 0);
                                                     href={getPostUrlBySlug(post.id)}
                                                     class:list={[
                                                         "group flex items-center gap-3 px-3 py-3 -mx-1 rounded-lg transition-all",
-                                                        "hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.98]",
+                                                        "md:hover:bg-black/5 dark:md:hover:bg-white/5 md:active:scale-[0.98]",
                                                         idx < series.posts.length - 1 &&
                                                             "border-b border-dashed border-(--line-divider)",
                                                     ]}
@@ -68,13 +68,13 @@ const totalPosts = seriesList.reduce((sum, series) => sum + series.count, 0);
                                                     <span class="shrink-0 w-6 h-6 rounded-md bg-(--enter-btn-bg) text-(--primary) flex items-center justify-center text-sm font-bold transition">
                                                         {idx + 1}
                                                     </span>
-                                                    <span class="flex-1 min-w-0 font-bold text-sm text-black/75 dark:text-white/75 truncate transition group-md:hover:text-(--primary)">
+                                                    <span class="flex-1 min-w-0 font-bold text-sm text-75 truncate transition group-md:hover:text-(--primary)">
                                                         {post.data.title}
                                                     </span>
                                                     <Icon
                                                         name="material-symbols:chevron-right-rounded"
                                                         aria-hidden="true"
-                                                        class="shrink-0 text-xl text-black/15 dark:text-white/15 transition group-md:hover:text-(--primary) group-hover:translate-x-0.5"
+                                                        class="shrink-0 text-xl text-15 transition group-md:hover:text-(--primary) group-md:hover:translate-x-0.5"
                                                     />
                                                 </a>
                                             </li>

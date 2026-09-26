@@ -39,8 +39,8 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 			class:list={[
 				"relative z-10 flex items-center justify-center w-8 h-8 sm:w-11 sm:h-11 rounded-full border-2 transition-all duration-300 mt-1",
 				item.featured
-					? "border-(--primary) bg-(--primary)/15 text-(--primary) ring-4 ring-(--primary)/20 group-hover:scale-110 shadow-sm"
-					: "border-(--line-divider) bg-(--card-bg) text-neutral-600 dark:text-neutral-400 group-hover:border-(--primary) group-md:hover:text-(--primary) group-hover:scale-110 shadow-xs",
+					? "border-(--primary) bg-(--primary)/15 text-(--primary) ring-4 ring-(--primary)/20 group-md:hover:scale-110 shadow-sm"
+					: "border-(--line-divider) bg-(--card-bg) text-neutral-600 dark:text-neutral-400 group-md:hover:border-(--primary) group-md:hover:text-(--primary) group-md:hover:scale-110 shadow-xs",
 			]}
 		>
 			<Icon name={markerIcon} class="text-sm sm:text-lg" />
@@ -52,8 +52,8 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 		class:list={[
 			"card-base flex-1 flex flex-col gap-2.5 min-w-0 mb-6 p-4 sm:p-5 transition-all duration-300",
 			item.featured
-				? "border-(--primary)/40 hover:border-(--primary)"
-				: "hover:border-(--line-divider)",
+				? "border-(--primary)/40 md:hover:border-(--primary)"
+				: "md:hover:border-(--line-divider)",
 		]}
 	>
 		<!-- 头部元数据栏：日期、分类标签、重点里程碑徽标 -->
@@ -138,7 +138,7 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 						href={link.url}
 						target="_blank"
 						rel="noopener noreferrer"
-						class="inline-flex items-center gap-1 text-xs font-medium text-(--primary) hover:underline"
+						class="inline-flex items-center gap-1 text-xs font-medium text-(--primary) md:hover:underline"
 					>
 						<Icon
 							name={link.icon || "material-symbols:open-in-new-rounded"}

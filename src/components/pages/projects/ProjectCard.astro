@@ -63,7 +63,7 @@ const coverClass = gridCoverFullWidth
         src={image}
         basePath={basePath}
         alt={title}
-        class="w-full h-full transition-transform duration-300 group-hover:scale-110"
+        class="w-full h-full transition-transform duration-300 group-md:hover:scale-110"
         preview={false}
       />
     ) : (
@@ -72,11 +72,11 @@ const coverClass = gridCoverFullWidth
       </div>
     )}
     <!-- 悬浮：变暗 + 箭头（同文章列表网格模式） -->
-    <div class="absolute inset-0 pointer-events-none z-10 transition group-hover:bg-black/30" />
+    <div class="absolute inset-0 pointer-events-none z-10 transition group-md:hover:bg-black/30" />
     <div class="absolute inset-0 pointer-events-none z-20 flex items-center justify-center">
       <Icon
         name="material-symbols:chevron-right-rounded"
-        class="transition opacity-0 scale-50 group-hover:opacity-100 group-hover:scale-100 text-white text-5xl"
+        class="transition opacity-0 scale-50 group-md:hover:opacity-100 group-md:hover:scale-100 text-white text-5xl"
       />
     </div>
     <!-- 状态徽标覆盖在封面右上角 -->
@@ -94,7 +94,7 @@ const coverClass = gridCoverFullWidth
   <div class="post-card-content p-4 flex flex-col flex-1 min-h-0">
     <a
       href={detailUrl}
-      class="post-card-title font-bold text-[1.35rem] leading-[1.75rem] text-black/90 dark:text-white/90 line-clamp-1 md:hover:text-(--primary) transition-colors flex-1 min-w-0"
+      class="post-card-title font-bold text-[1.35rem] leading-[1.75rem] text-90 line-clamp-1 md:hover:text-(--primary) transition-colors flex-1 min-w-0"
     >
       {title}
     </a>
@@ -146,7 +146,7 @@ const coverClass = gridCoverFullWidth
               href={r.value}
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-(--primary)/10 text-(--primary) hover:bg-(--primary)/20 transition-colors"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-(--primary)/10 text-(--primary) md:hover:bg-(--primary)/20 transition-colors"
             >
               {resolvedIcon.kind === "icon" && (
                 <Icon name={resolvedIcon.value} class="text-sm" />

@@ -49,7 +49,7 @@ function getTypeColor(seasonType: number): string {
 </script>
 
 <div
-	class="media-card group relative overflow-hidden rounded-xl border border-(--line-divider) bg-(--card-bg) cursor-pointer transition-all duration-300 hover:shadow-lg hover:border-(--primary)/30 hover:-translate-y-1"
+	class="media-card group relative overflow-hidden rounded-xl border border-(--line-divider) bg-(--card-bg) cursor-pointer transition-all duration-300 md:hover:shadow-lg md:hover:border-(--primary)/30 md:hover:-translate-y-1"
 	onclick={handleClick}
 	onkeydown={(e) => e.key === "Enter" && handleClick()}
 	role="button"
@@ -62,7 +62,7 @@ function getTypeColor(seasonType: number): string {
 			<img
 				src={anime.poster}
 				alt={anime.title}
-				class="h-full w-full object-cover transition-all duration-500 group-hover:scale-110 opacity-0"
+				class="h-full w-full object-cover transition-all duration-500 group-md:hover:scale-110 opacity-0"
 				loading="eager"
 				decoding="async"
 				referrerpolicy="no-referrer"
@@ -98,10 +98,10 @@ function getTypeColor(seasonType: number): string {
 		</div>
 
 		<!-- 悬停遮罩 -->
-		<div class="absolute inset-0 flex flex-col justify-end bg-linear-to-t from-black/80 via-black/40 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+		<div class="absolute inset-0 flex flex-col justify-end bg-linear-to-t from-black/80 via-black/40 to-transparent opacity-0 transition-opacity duration-300 group-md:hover:opacity-100">
 			<div class="p-3">
 				<p class="mb-2 line-clamp-3 text-xs text-white/90 leading-relaxed">{anime.overview || i18n(I18nKey.animeNoOverview)}</p>
-				<button class="w-full rounded-lg bg-(--primary) px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-(--primary)/80">
+				<button class="w-full rounded-lg bg-(--primary) px-3 py-1.5 text-xs font-medium text-white transition-colors md:hover:bg-(--primary)/80">
 					{i18n(I18nKey.animeViewDetails)}
 				</button>
 			</div>

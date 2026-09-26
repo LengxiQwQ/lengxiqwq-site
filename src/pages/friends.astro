@@ -115,19 +115,19 @@ const description =
               target="_blank"
               rel="noopener noreferrer"
               data-tags={item.tags?.join(",")}
-              class="friend-card group flex items-center gap-3 p-2.5 rounded-xl border border-(--line-divider) hover:border-(--primary) hover:bg-(--card-bg) transition-all duration-300 hover:shadow-lg relative overflow-hidden"
+              class="friend-card group flex items-center gap-3 p-2.5 rounded-xl border border-(--line-divider) md:hover:border-(--primary) md:hover:bg-(--card-bg) transition-all duration-300 md:hover:shadow-lg relative overflow-hidden"
             >
               {/* 背景装饰 - 仅悬停显示 */}
-              <div class="absolute inset-0 bg-(--primary) opacity-0 group-hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
+              <div class="absolute inset-0 bg-(--primary) opacity-0 group-md:hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
 
               {/* 外部链接图标 - 固定在卡片右上角 */}
               <Icon
                 name="material-symbols:arrow-outward-rounded"
-                class="absolute top-3 right-3 text-(--primary) text-lg opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300"
+                class="absolute top-3 right-3 text-(--primary) text-lg opacity-0 -translate-x-2 group-md:hover:opacity-100 group-md:hover:translate-x-0 transition-all duration-300"
               />
 
               {/* 头像 */}
-              <div class="relative w-16 h-16 shrink-0 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-hover:scale-105 transition-transform duration-300">
+              <div class="relative w-16 h-16 shrink-0 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-md:hover:scale-105 transition-transform duration-300">
                 <img
                   src={item.imgurl}
                   alt={item.title}

@@ -67,7 +67,7 @@ const topMaxCount = topTags.length > 0 ? topTags[0].count : 1;
             <div class="flex flex-col gap-3">
                 {topTags.map((t, i) => (
                     <a href={getTagUrl(t.name)}
-                       class="flex items-center gap-3 group hover:bg-(--btn-card-bg-hover) rounded-lg px-3 py-2 -mx-3 transition-colors"
+                       class="flex items-center gap-3 group md:hover:bg-(--btn-card-bg-hover) rounded-lg px-3 py-2 -mx-3 transition-colors"
                     >
                         <span class="text-sm font-bold text-(--primary) w-5 text-right shrink-0">
                             {i + 1}

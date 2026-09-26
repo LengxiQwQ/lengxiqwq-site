@@ -14,21 +14,21 @@ const {
 } = Astro.props;
 ---
 
-<div class="device-card card-base flex flex-row items-center gap-4 p-4 rounded-(--radius-large) relative group transition-all duration-300 hover:shadow-lg">
+<div class="device-card card-base flex flex-row items-center gap-4 p-4 rounded-(--radius-large) relative group transition-all duration-300 md:hover:shadow-lg">
 	<!-- 左侧小图标/图片框 -->
 	<div class="w-12 h-12 md:w-14 md:h-14 shrink-0 rounded-xl bg-neutral-100 dark:bg-neutral-800/80 flex items-center justify-center overflow-hidden transition-colors">
 		{image ? (
 			<img
 				src={image}
 				alt={name}
-				class="w-full h-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
+				class="w-full h-full object-cover transition-transform duration-500 ease-out group-md:hover:scale-105"
 				loading="lazy"
 				decoding="async"
 			/>
 		) : (
 			<Icon
 				name={icon}
-				class="text-neutral-400 dark:text-neutral-500 text-2xl md:text-3xl transition-transform duration-300 group-hover:scale-110"
+				class="text-neutral-400 dark:text-neutral-500 text-2xl md:text-3xl transition-transform duration-300 group-md:hover:scale-110"
 			/>
 		)}
 	</div>
@@ -36,7 +36,7 @@ const {
 	<!-- 右侧内容区域 -->
 	<div class="flex flex-col flex-1 min-w-0">
 		<div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-			<h4 class="font-bold text-base md:text-lg leading-snug text-black/90 dark:text-white/90" title={name}>
+			<h4 class="font-bold text-base md:text-lg leading-snug text-90" title={name}>
 				{name}
 			</h4>
 			{alias && (

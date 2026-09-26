@@ -21,15 +21,15 @@ const showContactRows: boolean = false;
     aria-label="Go to About Page"
     href={url("/about/")}
     class="group block relative mx-auto mt-1 lg:mx-0 lg:mt-0 mb-3
-       max-w-48 lg:max-w-none overflow-hidden rounded-xl active:scale-95"
+       max-w-48 lg:max-w-none overflow-hidden rounded-xl md:active:scale-95"
   >
     <div
-      class="absolute transition pointer-events-none group-hover:bg-black/30 group-active:bg-black/50
+      class="absolute transition pointer-events-none group-md:hover:bg-black/30 group-md:active:bg-black/50
         w-full h-full z-50 flex items-center justify-center"
     >
       <Icon
         name="fa7-regular:address-card"
-        class="transition opacity-0 scale-90 group-hover:scale-100 group-hover:opacity-100 text-white text-5xl"
+        class="transition opacity-0 scale-90 group-md:hover:scale-100 group-md:hover:opacity-100 text-white text-5xl"
       />
     </div>
     <ImageWrapper
@@ -59,8 +59,8 @@ const showContactRows: boolean = false;
         {profileConfig.links.map((item, index) => {
             const showName = item.showName;
             const className = showName 
-                ? "btn-regular rounded-lg h-10 gap-2 px-3 font-bold active:scale-95" 
-                : "btn-regular rounded-lg h-10 w-10 active:scale-90 flex items-center justify-center";
+                ? "btn-regular rounded-lg h-10 gap-2 px-3 font-bold md:active:scale-95" 
+                : "btn-regular rounded-lg h-10 w-10 md:active:scale-90 flex items-center justify-center";
 
             const isMailto = item.url.startsWith("mailto:");
             const encodedEmail = isMailto ? encodeMailto(item.url) : null;
@@ -134,7 +134,7 @@ const showContactRows: boolean = false;
                                 <button
                                     type="button"
                                     data-copy={item.copyText}
-                                    class="popover-copy-btn relative w-6 h-6 flex items-center justify-center shrink-0 text-50 md:hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/10 rounded-md -mr-0.5 cursor-pointer transition-colors overflow-hidden"
+                                    class="popover-copy-btn relative w-6 h-6 flex items-center justify-center shrink-0 text-50 md:hover:text-(--primary) md:hover:bg-black/5 dark:md:hover:bg-white/10 rounded-md -mr-0.5 cursor-pointer transition-colors overflow-hidden"
                                     title="点击复制"
                                     aria-label={`复制 ${item.name}：${item.copyText}`}
                                 >
@@ -164,7 +164,7 @@ const showContactRows: boolean = false;
                     role="button"
                     tabindex="0"
                     data-copy={contact.email}
-                    class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 md:hover:text-(--primary) dark:text-neutral-400 dark:md:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
+                    class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 md:hover:text-(--primary) dark:text-neutral-400 dark:md:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg md:hover:bg-black/5 dark:md:hover:bg-white/10 cursor-pointer select-text group"
                     title="点击复制"
                     aria-label={`邮箱：${contact.email}`}
                 >
@@ -187,7 +187,7 @@ const showContactRows: boolean = false;
                     role="button"
                     tabindex="0"
                     data-copy={contact.qq}
-                    class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 md:hover:text-(--primary) dark:text-neutral-400 dark:md:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer select-text group"
+                    class="copy-contact-btn w-full inline-flex items-center justify-start gap-1.5 text-xs text-neutral-500 md:hover:text-(--primary) dark:text-neutral-400 dark:md:hover:text-(--primary) transition-colors py-1 px-2.5 rounded-lg md:hover:bg-black/5 dark:md:hover:bg-white/10 cursor-pointer select-text group"
                     title="点击复制"
                     aria-label={`QQ：${contact.qq}`}
                 >

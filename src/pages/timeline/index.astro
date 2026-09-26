@@ -86,7 +86,7 @@ const totalCount = items.length;
 							return (
 								<button
 									type="button"
-									class="timeline-filter-btn px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 bg-(--btn-regular-bg) text-(--btn-content) hover:bg-(--btn-regular-bg-hover)"
+									class="timeline-filter-btn px-3 py-1 rounded-full text-xs font-medium transition-all duration-200 bg-(--btn-regular-bg) text-(--btn-content) md:hover:bg-(--btn-regular-bg-hover)"
 									data-category={category.key}
 									role="tab"
 									aria-selected="false"
@@ -191,11 +191,11 @@ const totalCount = items.length;
 					const isSelected = b === btn;
 					b.setAttribute("aria-selected", isSelected ? "true" : "false");
 					if (isSelected) {
-						b.classList.remove("bg-(--btn-regular-bg)", "text-(--btn-content)", "hover:bg-(--btn-regular-bg-hover)");
+						b.classList.remove("bg-(--btn-regular-bg)", "text-(--btn-content)", "md:hover:bg-(--btn-regular-bg-hover)");
 						b.classList.add("bg-(--primary)", "text-white", "shadow-xs");
 					} else {
 						b.classList.remove("bg-(--primary)", "text-white", "shadow-xs");
-						b.classList.add("bg-(--btn-regular-bg)", "text-(--btn-content)", "hover:bg-(--btn-regular-bg-hover)");
+						b.classList.add("bg-(--btn-regular-bg)", "text-(--btn-content)", "md:hover:bg-(--btn-regular-bg-hover)");
 					}
 				});
 

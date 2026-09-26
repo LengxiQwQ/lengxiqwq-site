@@ -622,7 +622,7 @@ function portal(node: HTMLElement) {
 
 <!-- Trigger Button -->
 <button 
-  class="btn-regular rounded-lg h-12 px-6 gap-2 hover:scale-105 active:scale-95 whitespace-nowrap"
+  class="btn-regular rounded-lg h-12 px-6 gap-2 md:hover:scale-105 md:active:scale-95 whitespace-nowrap"
   on:click={generatePoster}
   aria-label="Generate Share Poster"
 >
@@ -652,7 +652,7 @@ function portal(node: HTMLElement) {
       
       <div class="p-4 border-t border-gray-100 dark:border-gray-700 grid grid-cols-2 gap-3">
         <button 
-          class="py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-xl font-medium hover:bg-gray-200 dark:hover:bg-gray-600 active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+          class="py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-xl font-medium md:hover:bg-gray-200 dark:md:hover:bg-gray-600 md:active:scale-[0.98] transition-all flex items-center justify-center gap-2"
           on:click={copyLink}
         >
           {#if copied}
@@ -664,7 +664,7 @@ function portal(node: HTMLElement) {
           {/if}
         </button>
         <button 
-          class="py-3 text-white rounded-xl font-medium active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-90"
+          class="py-3 text-white rounded-xl font-medium md:active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed md:hover:brightness-90"
           style="background-color: {themeColor};"
           on:click={downloadPoster}
           disabled={!posterImage}
