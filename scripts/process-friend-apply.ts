@@ -197,6 +197,23 @@ function isValidHttpUrl(string: string) {
 	}
 }
 
+// 伪装浏览器请求头
+const BROWSER_HEADERS = {
+	"User-Agent":
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+	"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+	"sec-ch-ua":
+		'"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+	"sec-ch-ua-mobile": "?0",
+	"sec-ch-ua-platform": '"Windows"',
+	"Sec-Fetch-Dest": "document",
+	"Sec-Fetch-Mode": "navigate",
+	"Sec-Fetch-Site": "none",
+	"Sec-Fetch-User": "?1",
+	"Upgrade-Insecure-Requests": "1",
+	"Cache-Control": "max-age=0",
+};
+
 // 站点主页可访问性检测
 async function verifySiteReachable(
 	siteUrl: string,
@@ -208,11 +225,9 @@ async function verifySiteReachable(
 		const response = await fetch(siteUrl, {
 			signal: controller.signal,
 			headers: {
-				"User-Agent":
-					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-				"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+				...BROWSER_HEADERS,
 				Accept:
-					"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+					"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
 			},
 			redirect: "follow",
 		});
@@ -251,9 +266,9 @@ async function verifyAvatarReachable(
 			method: "GET",
 			signal: controller.signal,
 			headers: {
-				"User-Agent":
-					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-				"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+				...BROWSER_HEADERS,
+				"Sec-Fetch-Dest": "image",
+				"Sec-Fetch-Mode": "no-cors",
 				Accept:
 					"image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
 			},
@@ -293,11 +308,9 @@ async function verifyBacklink(
 		const response = await fetch(checkUrl, {
 			signal: controller.signal,
 			headers: {
-				"User-Agent":
-					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-				"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+				...BROWSER_HEADERS,
 				Accept:
-					"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+					"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
 			},
 			redirect: "follow",
 		});
