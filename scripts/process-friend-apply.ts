@@ -209,7 +209,8 @@ async function verifySiteReachable(
 			signal: controller.signal,
 			headers: {
 				"User-Agent":
-					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 FireflyBot/1.0",
+					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+				"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 				Accept:
 					"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 			},
@@ -251,7 +252,8 @@ async function verifyAvatarReachable(
 			signal: controller.signal,
 			headers: {
 				"User-Agent":
-					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 FireflyBot/1.0",
+					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+				"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 				Accept:
 					"image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
 			},
@@ -292,7 +294,8 @@ async function verifyBacklink(
 			signal: controller.signal,
 			headers: {
 				"User-Agent":
-					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 FireflyBot/1.0",
+					"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+				"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 				Accept:
 					"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 			},
