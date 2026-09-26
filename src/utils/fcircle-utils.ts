@@ -1,5 +1,6 @@
 import Parser from "rss-parser";
 import { getEnabledFriends } from "../config/friendsConfig";
+import { siteConfig, profileConfig } from "../config";
 
 export interface FcircleItem {
 	friendName: string;
@@ -19,9 +20,18 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 		},
 	});
 	const friends = getEnabledFriends();
+	const myAvatar = profileConfig.avatarUrl || (profileConfig.avatar?.startsWith("http") ? profileConfig.avatar : `${siteConfig.site_url.replace(/\/$/, "")}${profileConfig.avatar?.startsWith("/") ? "" : "/"}${profileConfig.avatar || "avatar.webp"}`);
+	const selfFriend = {
+		title: siteConfig.title,
+		siteurl: siteConfig.site_url,
+		imgurl: myAvatar,
+		feedUrl: `${siteConfig.site_url.replace(/\/$/, "")}/rss.xml`,
+		tags: ["博客"],
+	};
+	const allFriends = [selfFriend, ...friends];
 	const items: FcircleItem[] = [];
 
-	const promises = friends.map(async (friend) => {
+	const promises = allFriends.map(async (friend) => {
 		// 过滤非博客站点（如果明确配置了feedUrl则强制抓取）
 		const isBlog = friend.tags?.some(tag => tag.includes("博客") || tag.toLowerCase().includes("blog"));
 		if (!friend.feedUrl && !isBlog) return;
