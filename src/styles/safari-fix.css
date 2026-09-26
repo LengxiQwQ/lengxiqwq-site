@@ -25,6 +25,19 @@
 .text-15 { color: #d9d9d9; }
 :is(.dark, .dark *) .text-15 { color: #262626; }
 
+/* Safari unlayered overrides for standard tailwind colors used on links */
+.text-neutral-900 { color: #171717; }
+:is(.dark, .dark *) .dark\:text-neutral-100 { color: #f5f5f5; }
+
+.text-neutral-700 { color: #404040; }
+:is(.dark, .dark *) .dark\:text-neutral-300 { color: #d4d4d4; }
+
+.text-neutral-500 { color: #737373; }
+:is(.dark, .dark *) .dark\:text-neutral-400 { color: #a3a3a3; }
+
+.text-white { color: #ffffff; }
+:is(.dark, .dark *) .dark\:text-black { color: #000000; }
+
 @media (hover: hover) and (min-width: 768px) {
   .hover-primary:hover { color: var(--primary) !important; }
   .group:hover .group-hover-primary { color: var(--primary) !important; }
