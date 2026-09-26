@@ -526,10 +526,10 @@ async function run() {
 
 已成功自动录入本站友链配置：
 - **站点名称**：${title}
-- **站点链接**：${siteurl}
 - **站点描述**：${desc}
+- **站点链接**：${siteurl}
 - **头像链接**：${imgurl}${feedurl ? `
-- **RSS 订阅**：${feedurl}` : ""}
+- **RSS 订阅（可选）**：${feedurl}` : ""}
 
 更改已自动推送至内容仓，构建部署已触发。稍后即可在 [${siteInfo.siteTitle} - 友情链接](${siteInfo.siteUrl.replace(/\/$/, "")}/friends/) 查看到您的站点！欢迎常来互访交流~✨`;
 

@@ -10,17 +10,17 @@ on:
       title:
         description: "站点名称"
         required: true
+      desc:
+        description: "站点描述"
+        required: true
       siteurl:
         description: "站点链接"
         required: true
       imgurl:
         description: "头像链接"
         required: true
-      desc:
-        description: "站点描述"
-        required: true
       feedurl:
-        description: "RSS 订阅链接"
+        description: "RSS 订阅链接（可选）"
         required: false
 
 permissions:
