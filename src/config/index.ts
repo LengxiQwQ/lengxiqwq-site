@@ -55,6 +55,7 @@ export type {
 	FontDefinition,
 	FontSelectionConfig,
 } from "../types/fontConfig"; // 字体类型定义
+export type { FeedSubscription } from "../types/subscriptionConfig"; // 独立订阅源类型定义
 export { analyticsConfig } from "./analyticsConfig"; // 统计分析配置
 export { announcementConfig } from "./announcementConfig"; // 公告配置
 // 样式配置
@@ -69,7 +70,12 @@ export { dynamicConfig } from "./dynamicConfig"; // 动态页面配置
 export { sakuraConfig } from "./effectsConfig"; // 动画特效配置（樱花等）
 export { expressiveCodeConfig } from "./expressiveCodeConfig"; // 代码高亮配置
 export { fontConfig, fontsList } from "./fontConfig"; // 字体配置
-export { friendsPageConfig, getEnabledFriends, getHealthyFriends, getQuarantinedFriends } from "./friendsConfig"; // 友链配置
+export {
+	friendsPageConfig,
+	getEnabledFriends,
+	getHealthyFriends,
+	getQuarantinedFriends,
+} from "./friendsConfig"; // 友链配置
 export { galleryConfig } from "./galleryConfig"; // 相册配置
 export { licenseConfig } from "./licenseConfig"; // 许可证配置
 // 组件配置
@@ -84,4 +90,8 @@ export { sidebarLayoutConfig } from "./sidebarConfig"; // 侧边栏布局配置
 // 核心配置
 export { siteConfig } from "./siteConfig"; // 站点基础配置
 export { sponsorConfig } from "./sponsorConfig"; // 打赏配置
+export {
+	subscriptionConfig,
+	getEnabledSubscriptions,
+} from "./subscriptionConfig"; // 独立订阅源配置
 export { timelineConfig } from "./timelineConfig"; // 时间线配置

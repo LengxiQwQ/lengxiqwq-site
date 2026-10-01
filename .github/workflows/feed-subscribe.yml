@@ -1,0 +1,86 @@
+name: 添加订阅源
+
+on:
+  workflow_dispatch:
+    inputs:
+      feed_url:
+        description: "订阅地址或博客主页（系统自动嗅探识别 RSS/Atom/JSON）"
+        required: true
+      title:
+        description: "订阅名称（留空则自动从 Feed 或网页抓取）"
+        required: false
+      avatar:
+        description: "头像/图标链接（留空则自动提取 Favicon）"
+        required: false
+      desc:
+        description: "描述或备注（留空则自动提取 Feed 简介）"
+        required: false
+      tags:
+        description: "分类标签（逗号分隔，如：周刊,技术）"
+        required: false
+        default: "订阅"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: feed-subscribe-${{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  add-feed:
+    name: 探测并添加订阅源
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出主仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+          run_install: false
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: 安装项目依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 检出私有内容仓
+        uses: actions/checkout@v4
+        with:
+          repository: LengxiQwQ/lengxiqwq-site-content
+          path: .content-repo
+          token: ${{ secrets.CONTENT_REPO_TOKEN }}
+
+      - name: 探测并写入订阅源
+        env:
+          INPUT_FEED_URL: ${{ github.event.inputs.feed_url }}
+          INPUT_TITLE: ${{ github.event.inputs.title }}
+          INPUT_AVATAR: ${{ github.event.inputs.avatar }}
+          INPUT_DESC: ${{ github.event.inputs.desc }}
+          INPUT_TAGS: ${{ github.event.inputs.tags }}
+          CONTENT_REPO_DIR: .content-repo
+        run: |
+          npx tsx scripts/add-subscription.ts --ci
+
+      - name: 提交并推送内容仓变更
+        run: |
+          pnpm biome format --write .content-repo/config/subscriptionConfig.ts || true
+          cd .content-repo
+          if [ -n "$(git status --porcelain config/subscriptionConfig.ts)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add config/subscriptionConfig.ts
+            git commit -m "feat: 新增订阅源"
+            git push origin main
+          else
+            echo "未检测到内容仓有需要提交的变更。"
+          fi

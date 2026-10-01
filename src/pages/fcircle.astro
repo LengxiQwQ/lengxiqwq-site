@@ -77,8 +77,13 @@ const description = i18n(I18nKey.fcircleDescription);
               </div>
 
               <div class="grow min-w-0 flex flex-col gap-1">
-                <div class="text-xs text-neutral-500 dark:text-neutral-400 font-medium flex items-center gap-2">
+                <div class="text-xs text-neutral-500 dark:text-neutral-400 font-medium flex items-center gap-2 flex-wrap">
                   <span class="text-neutral-700 dark:text-neutral-300 group-md:hover:text-(--primary) transition-colors">{item.friendName}</span>
+                  {item.sourceType === "subscription" && (
+                    <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/10 text-(--primary) font-normal border border-(--primary)/20">
+                      {item.tags?.[0] || "订阅"}
+                    </span>
+                  )}
                   <span class="w-1 h-1 rounded-full bg-neutral-300 dark:bg-neutral-600"></span>
                   <span>{dateStr}</span>
                 </div>
