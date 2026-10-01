@@ -235,3 +235,120 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 	// 限制最多 100 篇最新动态
 	return uniqueItems.slice(0, 100);
 }
+
+export interface FcircleDateGroup {
+	dateKey: string;
+	displayDate: string;
+	subLabel?: string;
+	relativeDays: number;
+	items: FcircleItem[];
+}
+
+export interface FcircleStats {
+	todayCount: number;
+	weekCount: number;
+	totalCount: number;
+	siteCount: number;
+}
+
+/**
+ * 将朋友圈文章按自然日聚类为时间线分组
+ */
+export function groupFcircleByDate(items: FcircleItem[]): FcircleDateGroup[] {
+	const now = new Date();
+	const todayStart = new Date(
+		now.getFullYear(),
+		now.getMonth(),
+		now.getDate(),
+	).getTime();
+	const oneDayMs = 24 * 60 * 60 * 1000;
+
+	const groupsMap = new Map<string, FcircleDateGroup>();
+
+	for (const item of items) {
+		const itemDate = new Date(item.pubDate);
+		const year = itemDate.getFullYear();
+		const month = itemDate.getMonth() + 1;
+		const day = itemDate.getDate();
+		const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+		if (!groupsMap.has(dateKey)) {
+			const itemDayStart = new Date(year, itemDate.getMonth(), day).getTime();
+			const diffDays = Math.round((todayStart - itemDayStart) / oneDayMs);
+
+			let displayDate = "";
+			let subLabel = "";
+
+			const weekDays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+			const weekDayStr = weekDays[itemDate.getDay()];
+
+			if (diffDays === 0) {
+				displayDate = "今天";
+				subLabel = `${month}月${day}日 · ${weekDayStr}`;
+			} else if (diffDays === 1) {
+				displayDate = "昨天";
+				subLabel = `${month}月${day}日 · ${weekDayStr}`;
+			} else if (diffDays === 2) {
+				displayDate = "前天";
+				subLabel = `${month}月${day}日 · ${weekDayStr}`;
+			} else if (year === now.getFullYear()) {
+				displayDate = `${month}月${day}日`;
+				subLabel = weekDayStr;
+			} else {
+				displayDate = `${year}年${month}月${day}日`;
+				subLabel = weekDayStr;
+			}
+
+			groupsMap.set(dateKey, {
+				dateKey,
+				displayDate,
+				subLabel,
+				relativeDays: diffDays,
+				items: [],
+			});
+		}
+
+		const group = groupsMap.get(dateKey);
+		if (group) {
+			group.items.push(item);
+		}
+	}
+
+	return Array.from(groupsMap.values());
+}
+
+/**
+ * 计算朋友圈动态核心统计指标
+ */
+export function getFcircleStats(items: FcircleItem[]): FcircleStats {
+	const now = new Date();
+	const todayStart = new Date(
+		now.getFullYear(),
+		now.getMonth(),
+		now.getDate(),
+	).getTime();
+	const oneDayMs = 24 * 60 * 60 * 1000;
+	const sevenDaysAgo = todayStart - 6 * oneDayMs;
+
+	let todayCount = 0;
+	let weekCount = 0;
+	const sites = new Set<string>();
+
+	for (const item of items) {
+		const time = item.pubDate.getTime();
+		if (time >= todayStart) {
+			todayCount++;
+		}
+		if (time >= sevenDaysAgo) {
+			weekCount++;
+		}
+		sites.add(item.friendUrl || item.friendName);
+	}
+
+	return {
+		todayCount,
+		weekCount,
+		totalCount: items.length,
+		siteCount: sites.size,
+	};
+}

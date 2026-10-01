@@ -1,10 +1,16 @@
 ---
 import { Icon } from "astro-icon/components";
+import FcircleStatsBar from "@/components/pages/fcircle/FcircleStatsBar.astro";
+import FcircleTimelineItem from "@/components/pages/fcircle/FcircleTimelineItem.astro";
 import { siteConfig } from "@/config";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
-import { getFcircleItems } from "@/utils/fcircle-utils";
+import {
+	getFcircleItems,
+	getFcircleStats,
+	groupFcircleByDate,
+} from "@/utils/fcircle-utils";
 import "@/styles/pages/common.css";
 
 // 检查页面是否启用
@@ -12,8 +18,12 @@ if (!siteConfig.pages.fcircle) {
 	return Astro.redirect("/404/");
 }
 
-// 获取友链文章
+// 获取友链与订阅文章
 const items = await getFcircleItems();
+
+// 按自然日分组及统计数据
+const dateGroups = groupFcircleByDate(items);
+const stats = getFcircleStats(items);
 
 // 页面标题和描述
 const title = i18n(I18nKey.fcircle);
@@ -22,10 +32,10 @@ const description = i18n(I18nKey.fcircleDescription);
 
 <MainGridLayout title={title} description={description}>
   <div class="flex w-full rounded-(--radius-large) overflow-hidden relative min-h-32">
-    <div class="card-base z-10 px-9 py-6 relative w-full">
-      <!-- 页面标题和描述 -->
-      <div class="mb-4">
-        <div class="page-heading">
+    <div class="card-base z-10 px-5 sm:px-9 py-6 relative w-full">
+      <!-- 页面标题、描述与视图切换开关 -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 pb-4 border-b border-(--line-divider)">
+        <div class="page-heading mb-0">
           <div class="page-icon" aria-hidden="true">
             <Icon is:inline name="mingcute:moment-line" />
           </div>
@@ -34,73 +44,245 @@ const description = i18n(I18nKey.fcircleDescription);
             {description && <p>{description}</p>}
           </div>
         </div>
-      </div>
 
-      <div class="fcircle-grid mt-6 flex flex-col gap-4">
-        {items.length === 0 && (
-          <div class="flex flex-col items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
-            <Icon is:inline name="mingcute:moment-line" class="text-4xl mb-3 opacity-50" />
-            <div class="text-sm">暂无最新动态，可能是友链没有配置 feedUrl，或文章尚未更新。</div>
+        <!-- 视图切换 Segmented Switcher -->
+        {items.length > 0 && (
+          <div
+            id="fcircle-view-switcher"
+            class="inline-flex items-center p-1 rounded-xl bg-(--btn-regular-bg) border border-(--line-divider) text-xs font-medium self-start sm:self-auto shrink-0 shadow-2xs"
+            role="tablist"
+            aria-label="视图切换"
+          >
+            <button
+              type="button"
+              class="fcircle-view-btn px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-200 cursor-pointer text-(--btn-content) md:hover:text-(--primary)"
+              data-view="timeline"
+              role="tab"
+              aria-selected="true"
+            >
+              <Icon name="mingcute:time-line" class="text-sm shrink-0" />
+              <span>时间线</span>
+            </button>
+            <button
+              type="button"
+              class="fcircle-view-btn px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-200 cursor-pointer text-(--btn-content) md:hover:text-(--primary)"
+              data-view="list"
+              role="tab"
+              aria-selected="false"
+            >
+              <Icon name="mingcute:list-check-3-line" class="text-sm shrink-0" />
+              <span>平铺</span>
+            </button>
           </div>
         )}
-        
-        {items.map((item) => {
-          const dateStr = item.pubDate.toLocaleDateString('zh-CN', {
-            year: 'numeric',
-            month: '2-digit',
-            day: '2-digit'
-          });
-          
-          return (
-            <a
-              href={item.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="group flex items-start gap-4 p-4 rounded-xl border border-(--line-divider) md:hover:border-(--primary) md:hover:bg-(--card-bg) transition-all duration-300 md:hover:shadow-md relative overflow-hidden"
-            >
-              <div class="absolute inset-0 bg-(--primary) opacity-0 group-md:hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
-              <Icon
-                name="material-symbols:arrow-outward-rounded"
-                class="absolute top-4 right-4 text-(--primary) text-lg opacity-0 -translate-x-2 group-md:hover:opacity-100 group-md:hover:translate-x-0 transition-all duration-300"
-              />
-
-              <div class="relative w-12 h-12 shrink-0 rounded-full overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-md:hover:scale-105 transition-transform duration-300 mt-1">
-                <img
-                  src={item.friendAvatar}
-                  alt={item.friendName}
-                  width="48"
-                  height="48"
-                  loading="lazy"
-                  decoding="async"
-                  class="w-full h-full object-cover"
-                />
-              </div>
-
-              <div class="grow min-w-0 flex flex-col gap-1">
-                <div class="text-xs text-neutral-500 dark:text-neutral-400 font-medium flex items-center gap-2 flex-wrap">
-                  <span class="text-neutral-700 dark:text-neutral-300 group-md:hover:text-(--primary) transition-colors">{item.friendName}</span>
-                  {item.sourceType === "subscription" && (
-                    <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/10 text-(--primary) font-normal border border-(--primary)/20">
-                      {item.tags?.[0] || "订阅"}
-                    </span>
-                  )}
-                  <span class="w-1 h-1 rounded-full bg-neutral-300 dark:bg-neutral-600"></span>
-                  <span>{dateStr}</span>
-                </div>
-                
-                <div class="font-bold text-lg text-neutral-900 dark:text-neutral-100 group-md:hover:text-(--primary) transition-colors line-clamp-2 pr-6 mb-1">
-                  {item.title}
-                </div>
-                {item.excerpt && (
-                  <div class="text-sm text-neutral-500 dark:text-neutral-400 line-clamp-2 pr-4">
-                    {item.excerpt}
-                  </div>
-                )}
-              </div>
-            </a>
-          );
-        })}
       </div>
+
+      <!-- 顶部数据概览栏 -->
+      {items.length > 0 && <FcircleStatsBar stats={stats} />}
+
+      <!-- 空状态提示 -->
+      {items.length === 0 && (
+        <div class="flex flex-col items-center justify-center py-16 text-neutral-400 dark:text-neutral-500">
+          <Icon is:inline name="mingcute:moment-line" class="text-5xl mb-3 opacity-50" />
+          <div class="text-sm">暂无最新动态，可能是友链没有配置 feedUrl，或文章尚未更新。</div>
+        </div>
+      )}
+
+      <!-- 视图 1：按天聚合的时间线视图（默认视图） -->
+      {items.length > 0 && (
+        <div id="fcircle-timeline-view" class="mt-8 transition-opacity duration-300">
+          <div class="relative flex flex-col">
+            <!-- 纵向贯穿细轨道 -->
+            <div
+              class="fcircle-track absolute left-4 sm:left-5 top-4 bottom-4 w-0.5 bg-gradient-to-b from-(--primary) via-(--line-divider) to-transparent -translate-x-1/2 pointer-events-none"
+              aria-hidden="true"
+            />
+
+            <!-- 日期分组列表 -->
+            {dateGroups.map((group) => {
+              const isToday = group.relativeDays === 0;
+              const isYesterday = group.relativeDays === 1;
+
+              return (
+                <div class="fcircle-date-group relative mb-8 last:mb-2">
+                  <!-- 日期节点 Header -->
+                  <div class="flex items-center gap-3 sm:gap-4 mb-4 select-none">
+                    <!-- 节点圆环 Marker -->
+                    <div
+                      class:list={[
+                        "relative z-10 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 shrink-0",
+                        isToday
+                          ? "border-(--primary) bg-(--primary) text-white shadow-md shadow-(--primary)/20 ring-4 ring-(--primary)/15"
+                          : isYesterday
+                            ? "border-(--primary) bg-(--card-bg) text-(--primary) shadow-sm ring-2 ring-(--primary)/10"
+                            : "border-(--line-divider) bg-(--card-bg) text-neutral-500 dark:text-neutral-400 md:hover:border-(--primary)",
+                      ]}
+                      aria-hidden="true"
+                    >
+                      <Icon
+                        name={isToday ? "mingcute:flash-line" : "mingcute:calendar-line"}
+                        class="text-sm sm:text-base"
+                      />
+                    </div>
+
+                    <!-- 日期文本与条数徽标 -->
+                    <div class="flex items-center gap-2.5 flex-wrap">
+                      <span
+                        class:list={[
+                          "text-base sm:text-lg font-bold tracking-tight",
+                          isToday
+                            ? "text-(--primary)"
+                            : "text-neutral-900 dark:text-neutral-100",
+                        ]}
+                      >
+                        {group.displayDate}
+                      </span>
+
+                      {group.subLabel && (
+                        <span class="text-xs text-neutral-400 font-medium">
+                          {group.subLabel}
+                        </span>
+                      )}
+
+                      <span class="text-xs px-2 py-0.5 rounded-full bg-(--btn-regular-bg) text-neutral-600 dark:text-neutral-400 font-medium tabular-nums border border-(--line-divider)">
+                        {group.items.length} 篇更新
+                      </span>
+                    </div>
+                  </div>
+
+                  <!-- 当天文章卡片容器（右移缩进挂靠在轨道内） -->
+                  <div class="pl-8 sm:pl-12 flex flex-col gap-3">
+                    {group.items.map((item) => (
+                      <FcircleTimelineItem item={item} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <!-- 视图 2：经典平铺列表视图（可选切换） -->
+      {items.length > 0 && (
+        <div id="fcircle-list-view" class="fcircle-grid mt-6 flex flex-col gap-4 hidden transition-opacity duration-300">
+          {items.map((item) => {
+            const dateStr = item.pubDate.toLocaleDateString("zh-CN", {
+              year: "numeric",
+              month: "2-digit",
+              day: "2-digit",
+            });
+
+            return (
+              <a
+                href={item.link}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="group flex items-start gap-4 p-4 rounded-xl border border-(--line-divider) md:hover:border-(--primary) md:hover:bg-(--card-bg) transition-all duration-300 md:hover:shadow-md relative overflow-hidden"
+              >
+                <div class="absolute inset-0 bg-(--primary) opacity-0 group-md:hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
+                <Icon
+                  name="material-symbols:arrow-outward-rounded"
+                  class="absolute top-4 right-4 text-(--primary) text-lg opacity-0 -translate-x-2 group-md:hover:opacity-100 group-md:hover:translate-x-0 transition-all duration-300"
+                />
+
+                <div class="relative w-12 h-12 shrink-0 rounded-full overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-md:hover:scale-105 transition-transform duration-300 mt-1">
+                  <img
+                    src={item.friendAvatar}
+                    alt={item.friendName}
+                    width="48"
+                    height="48"
+                    loading="lazy"
+                    decoding="async"
+                    class="w-full h-full object-cover"
+                  />
+                </div>
+
+                <div class="grow min-w-0 flex flex-col gap-1">
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400 font-medium flex items-center gap-2 flex-wrap">
+                    <span class="text-neutral-700 dark:text-neutral-300 group-md:hover:text-(--primary) transition-colors">{item.friendName}</span>
+                    {item.sourceType === "subscription" && (
+                      <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/10 text-(--primary) font-normal border border-(--primary)/20">
+                        {item.tags?.[0] || "订阅"}
+                      </span>
+                    )}
+                    <span class="w-1 h-1 rounded-full bg-neutral-300 dark:bg-neutral-600"></span>
+                    <span>{dateStr}</span>
+                  </div>
+
+                  <div class="font-bold text-lg text-neutral-900 dark:text-neutral-100 group-md:hover:text-(--primary) transition-colors line-clamp-2 pr-6 mb-1">
+                    {item.title}
+                  </div>
+                  {item.excerpt && (
+                    <div class="text-sm text-neutral-500 dark:text-neutral-400 line-clamp-2 pr-4">
+                      {item.excerpt}
+                    </div>
+                  )}
+                </div>
+              </a>
+            );
+          })}
+        </div>
+      )}
     </div>
   </div>
 </MainGridLayout>
+
+<script>
+  function setupFcircleViewSwitcher() {
+    const switcher = document.getElementById("fcircle-view-switcher");
+    const timelineView = document.getElementById("fcircle-timeline-view");
+    const listView = document.getElementById("fcircle-list-view");
+
+    if (!switcher || !timelineView || !listView) return;
+
+    const STORAGE_KEY = "fcircle_preferred_view";
+    const buttons = switcher.querySelectorAll<HTMLButtonElement>(".fcircle-view-btn");
+
+    function applyView(mode: "timeline" | "list") {
+      if (!timelineView || !listView) return;
+
+      buttons.forEach((btn) => {
+        const isCurrent = btn.dataset.view === mode;
+        btn.setAttribute("aria-selected", isCurrent ? "true" : "false");
+        if (isCurrent) {
+          btn.classList.add("bg-(--primary)", "text-white", "shadow-xs");
+          btn.classList.remove("text-(--btn-content)");
+        } else {
+          btn.classList.remove("bg-(--primary)", "text-white", "shadow-xs");
+          btn.classList.add("text-(--btn-content)");
+        }
+      });
+
+      if (mode === "timeline") {
+        timelineView.classList.remove("hidden");
+        listView.classList.add("hidden");
+      } else {
+        timelineView.classList.add("hidden");
+        listView.classList.remove("hidden");
+      }
+    }
+
+    // 初始化默认偏好 (默认时间线)
+    const savedMode = (localStorage.getItem(STORAGE_KEY) as "timeline" | "list") || "timeline";
+    applyView(savedMode);
+
+    // 绑定点击事件（防止重复绑定）
+    if (switcher.dataset.bound !== "true") {
+      switcher.dataset.bound = "true";
+      buttons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const mode = btn.dataset.view as "timeline" | "list";
+          if (mode) {
+            localStorage.setItem(STORAGE_KEY, mode);
+            applyView(mode);
+          }
+        });
+      });
+    }
+  }
+
+  // 页面加载与 Swup 路由切换支持
+  setupFcircleViewSwitcher();
+  document.addEventListener("swup:page:view", setupFcircleViewSwitcher);
+</script>
