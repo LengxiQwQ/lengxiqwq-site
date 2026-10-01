@@ -24,7 +24,7 @@ const { stats } = Astro.props;
 				"w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-300 group-md:hover:scale-110",
 				stats.todayCount > 0
 					? "bg-(--primary) text-white shadow-sm"
-					: "bg-(--btn-regular-bg) text-neutral-600 dark:text-neutral-400",
+					: "bg-(--primary)/10 text-(--primary)",
 			]}
 			aria-hidden="true"
 		>
@@ -53,7 +53,7 @@ const { stats } = Astro.props;
 		class="card-base p-3.5 flex items-center gap-3 transition-all duration-300 relative overflow-hidden group border-(--line-divider) md:hover:border-(--primary)/40"
 	>
 		<div
-			class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-(--btn-regular-bg) text-neutral-600 dark:text-neutral-400 transition-transform duration-300 group-md:hover:scale-110"
+			class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-110"
 			aria-hidden="true"
 		>
 			<Icon name="mingcute:calendar-line" class="text-xl" />
@@ -74,7 +74,7 @@ const { stats } = Astro.props;
 		class="card-base p-3.5 flex items-center gap-3 transition-all duration-300 relative overflow-hidden group border-(--line-divider) md:hover:border-(--primary)/40"
 	>
 		<div
-			class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-(--btn-regular-bg) text-neutral-600 dark:text-neutral-400 transition-transform duration-300 group-md:hover:scale-110"
+			class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-110"
 			aria-hidden="true"
 		>
 			<Icon name="mingcute:document-2-line" class="text-xl" />
@@ -95,7 +95,7 @@ const { stats } = Astro.props;
 		class="card-base p-3.5 flex items-center gap-3 transition-all duration-300 relative overflow-hidden group border-(--line-divider) md:hover:border-(--primary)/40"
 	>
 		<div
-			class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-(--btn-regular-bg) text-neutral-600 dark:text-neutral-400 transition-transform duration-300 group-md:hover:scale-110"
+			class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-110"
 			aria-hidden="true"
 		>
 			<Icon name="mingcute:earth-2-line" class="text-xl" />

@@ -55,7 +55,7 @@ const description = i18n(I18nKey.fcircleDescription);
           >
             <button
               type="button"
-              class="fcircle-view-btn px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-200 cursor-pointer text-(--btn-content) md:hover:text-(--primary)"
+              class="fcircle-view-btn px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-[background-color,box-shadow,color] duration-150 cursor-pointer text-(--btn-content) md:hover:text-(--primary)"
               data-view="timeline"
               role="tab"
               aria-selected="true"
@@ -65,7 +65,7 @@ const description = i18n(I18nKey.fcircleDescription);
             </button>
             <button
               type="button"
-              class="fcircle-view-btn px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all duration-200 cursor-pointer text-(--btn-content) md:hover:text-(--primary)"
+              class="fcircle-view-btn px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-[background-color,box-shadow,color] duration-150 cursor-pointer text-(--btn-content) md:hover:text-(--primary)"
               data-view="list"
               role="tab"
               aria-selected="false"
@@ -94,7 +94,7 @@ const description = i18n(I18nKey.fcircleDescription);
           <div class="relative flex flex-col">
             <!-- 纵向贯穿细轨道 -->
             <div
-              class="fcircle-track absolute left-4 sm:left-5 top-4 bottom-4 w-0.5 bg-gradient-to-b from-(--primary) via-(--line-divider) to-transparent -translate-x-1/2 pointer-events-none"
+              class="fcircle-track absolute left-4 sm:left-5 top-4 bottom-4 w-0.5 bg-gradient-to-b from-(--line-divider) via-(--line-divider) to-transparent -translate-x-1/2 pointer-events-none"
               aria-hidden="true"
             />
 
@@ -129,10 +129,7 @@ const description = i18n(I18nKey.fcircleDescription);
                     <div class="flex items-center gap-2.5 flex-wrap">
                       <span
                         class:list={[
-                          "text-base sm:text-lg font-bold tracking-tight",
-                          isToday
-                            ? "text-(--primary)"
-                            : "text-neutral-900 dark:text-neutral-100",
+                          "text-base sm:text-lg font-bold tracking-tight text-(--primary)",
                         ]}
                       >
                         {group.displayDate}
