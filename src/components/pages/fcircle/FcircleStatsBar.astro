@@ -13,29 +13,29 @@ const { stats } = Astro.props;
 	<!-- 今日更新 -->
 	<div
 		class:list={[
-			"card-base p-3.5 flex items-center gap-3 transition-all duration-300 relative overflow-hidden group",
+			"p-3 rounded-xl border flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg)",
 			stats.todayCount > 0
-				? "border-(--primary)/40 bg-(--primary)/5 md:hover:border-(--primary)"
+				? "border-(--primary)/30 bg-(--primary)/5 md:hover:border-(--primary)"
 				: "border-(--line-divider) md:hover:border-(--primary)/40",
 		]}
 	>
 		<div
 			class:list={[
-				"w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-300 group-md:hover:scale-110",
+				"w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-transform duration-300 group-md:hover:scale-105",
 				stats.todayCount > 0
-					? "bg-(--primary) text-white shadow-sm"
+					? "bg-(--primary) text-white shadow-xs"
 					: "bg-(--primary)/10 text-(--primary)",
 			]}
 			aria-hidden="true"
 		>
-			<Icon name="mingcute:flash-line" class="text-xl" />
+			<Icon name="mingcute:flash-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
 			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">今日更新</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
 				<span
 					class:list={[
-						"text-xl font-bold tabular-nums leading-none",
+						"text-lg font-bold tabular-nums leading-tight",
 						stats.todayCount > 0
 							? "text-(--primary)"
 							: "text-neutral-800 dark:text-neutral-200",
@@ -50,18 +50,18 @@ const { stats } = Astro.props;
 
 	<!-- 近 7 天更新 -->
 	<div
-		class="card-base p-3.5 flex items-center gap-3 transition-all duration-300 relative overflow-hidden group border-(--line-divider) md:hover:border-(--primary)/40"
+		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) md:hover:border-(--primary)/40"
 	>
 		<div
-			class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-110"
+			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-105"
 			aria-hidden="true"
 		>
-			<Icon name="mingcute:calendar-line" class="text-xl" />
+			<Icon name="mingcute:calendar-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
 			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">近 7 天</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
-				<span class="text-xl font-bold tabular-nums leading-none text-neutral-800 dark:text-neutral-200">
+				<span class="text-lg font-bold tabular-nums leading-tight text-neutral-800 dark:text-neutral-200">
 					{stats.weekCount}
 				</span>
 				<span class="text-xs text-neutral-400">篇</span>
@@ -71,18 +71,18 @@ const { stats } = Astro.props;
 
 	<!-- 收录动态 -->
 	<div
-		class="card-base p-3.5 flex items-center gap-3 transition-all duration-300 relative overflow-hidden group border-(--line-divider) md:hover:border-(--primary)/40"
+		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) md:hover:border-(--primary)/40"
 	>
 		<div
-			class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-110"
+			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-105"
 			aria-hidden="true"
 		>
-			<Icon name="mingcute:document-2-line" class="text-xl" />
+			<Icon name="mingcute:document-2-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
 			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">收录动态</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
-				<span class="text-xl font-bold tabular-nums leading-none text-neutral-800 dark:text-neutral-200">
+				<span class="text-lg font-bold tabular-nums leading-tight text-neutral-800 dark:text-neutral-200">
 					{stats.totalCount}
 				</span>
 				<span class="text-xs text-neutral-400">篇</span>
@@ -92,18 +92,18 @@ const { stats } = Astro.props;
 
 	<!-- 订阅/友链站点 -->
 	<div
-		class="card-base p-3.5 flex items-center gap-3 transition-all duration-300 relative overflow-hidden group border-(--line-divider) md:hover:border-(--primary)/40"
+		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) md:hover:border-(--primary)/40"
 	>
 		<div
-			class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-110"
+			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-105"
 			aria-hidden="true"
 		>
-			<Icon name="mingcute:earth-2-line" class="text-xl" />
+			<Icon name="mingcute:earth-2-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
 			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">聚合站点</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
-				<span class="text-xl font-bold tabular-nums leading-none text-neutral-800 dark:text-neutral-200">
+				<span class="text-lg font-bold tabular-nums leading-tight text-neutral-800 dark:text-neutral-200">
 					{stats.siteCount}
 				</span>
 				<span class="text-xs text-neutral-400">个</span>
