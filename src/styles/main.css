@@ -56,9 +56,16 @@
   }
 }
 
-/* 确保平滑滚动 */
+/* 确保平滑滚动，并锁定滚动条槽位以彻底避免因页面长短差异或切页期间滚动条显隐导致的版心横向跳动 */
 html {
     scroll-behavior: smooth;
+    scrollbar-gutter: stable;
+}
+
+@supports not (scrollbar-gutter: stable) {
+    html {
+        overflow-y: scroll;
+    }
 }
 
 /* 全站键盘焦点基线；组件可以在更高的层中覆盖间距或形态。 */
