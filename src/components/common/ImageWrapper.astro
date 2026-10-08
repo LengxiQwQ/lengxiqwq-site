@@ -35,6 +35,7 @@ interface Props {
 	showLqip?: boolean;
 	showOverlay?: boolean;
 	draggable?: boolean;
+	raw?: boolean;
 }
 
 const {
@@ -58,6 +59,7 @@ const {
 	showLqip = true,
 	showOverlay = true,
 	draggable,
+	raw = false,
 } = Astro.props;
 
 const fallbackFormat = getFallbackFormat();
@@ -124,7 +126,22 @@ const lqipProps = isLocal
 <div id={id} class:list={[className, 'overflow-hidden relative']}>
     {fadeIn && showLqip && <div class="lqip-placeholder absolute inset-0 pointer-events-none" style={lqipProps.style} aria-hidden="true"></div>}
     {showOverlay && <div class="transition absolute inset-0 dark:bg-black/10 pointer-events-none"></div>}
-    {isLocal && img && usePicture && (
+    {isLocal && img && raw && (
+        <img
+            src={img.src}
+            width={img.width}
+            height={img.height}
+            alt={alt || ""}
+            class={imageClass}
+            style={imageStyle}
+            loading={loading}
+            decoding="async"
+            fetchpriority={fetchpriority}
+            data-cover-img={dataCoverImg ? true : undefined}
+            draggable={draggable !== undefined ? (draggable ? "true" : "false") : undefined}
+        />
+    )}
+    {isLocal && img && !raw && usePicture && (
         <Picture
             src={img}
             alt={alt || ""}
@@ -139,7 +156,7 @@ const lqipProps = isLocal
             {...responsiveProps}
         />
     )}
-    {isLocal && img && !usePicture && (
+    {isLocal && img && !raw && !usePicture && (
         <Image
             src={img}
             alt={alt || ""}

@@ -24,6 +24,8 @@ interface Props {
 	apiUrls?: string[];
 	// 高度跟随图片本身宽高比（不裁上下，只裁两边），用于文章详情页封面
 	naturalHeight?: boolean;
+	// 直接使用原图分辨率输出，不走 Astro 828px 缩放压缩
+	raw?: boolean;
 }
 
 const {
@@ -38,6 +40,7 @@ const {
 	loading = "lazy",
 	apiUrls = [],
 	naturalHeight = false,
+	raw = false,
 } = Astro.props;
 
 const configQuality = getImageQuality();
@@ -121,6 +124,7 @@ const remoteReferrerPolicy =
 			dataCoverImg={true}
 			showLqip={false}
 			showOverlay={false}
+			raw={raw}
 		/>
 	)}
 

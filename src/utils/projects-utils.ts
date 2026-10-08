@@ -1,4 +1,3 @@
-import { getImage } from "astro:assets";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import { siteConfig } from "../config/siteConfig";
@@ -20,8 +19,7 @@ async function resolveOptimizedCoverUrl(
 	if (src.startsWith("/")) return url(src);
 	const img = await loadLocalImage(src, getFileDirFromPath(filePath || ""));
 	if (!img) return "";
-	const optimized = await getImage({ src: img, width: 1600 });
-	return optimized.src;
+	return img.src;
 }
 
 /** 同源 URL（页面内封面展示 / 灯箱用；不包装 site_url，本地调试不指向远程域名）。 */
