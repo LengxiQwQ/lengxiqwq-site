@@ -98,4 +98,8 @@ jobs:
             git push origin main
           else
             echo "未检测到内容仓有需要提交的变更。"
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "::error title=未提交任何变更::未能向内容仓写入友链配置，流程终止。"
+              exit 1
+            fi
           fi

@@ -177,6 +177,19 @@ function parseIssueBody(body: string): Partial<FriendLinkEntry> {
 	return result;
 }
 
+// 补全协议头（如果用户未输入 http/https）
+function ensureProtocol(urlStr: string): string {
+	const trimmed = urlStr.trim();
+	if (!trimmed) return trimmed;
+	if (trimmed.startsWith("//")) {
+		return `https:${trimmed}`;
+	}
+	if (!/^https?:\/\//i.test(trimmed)) {
+		return `https://${trimmed}`;
+	}
+	return trimmed;
+}
+
 // 规范化 URL，去除尾随斜杠
 function normalizeUrl(urlStr: string): string {
 	try {
@@ -375,6 +388,12 @@ async function run() {
 			}
 		: parseIssueBody(issueBody);
 
+	// 自动补全可能缺失的 https:// 协议头
+	if (parsed.siteurl) parsed.siteurl = ensureProtocol(parsed.siteurl);
+	if (parsed.imgurl) parsed.imgurl = ensureProtocol(parsed.imgurl);
+	if (parsed.checkurl) parsed.checkurl = ensureProtocol(parsed.checkurl);
+	if (parsed.feedurl) parsed.feedurl = ensureProtocol(parsed.feedurl);
+
 	// 必填项检查
 	if (
 		!parsed.title ||
@@ -395,6 +414,12 @@ async function run() {
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
+		if (isManualDispatch) {
+			console.error(
+				`::error title=申请信息不完整::缺少以下必填字段：${missingFields.join("、")}`,
+			);
+			process.exit(1);
+		}
 		return;
 	}
 
@@ -411,6 +436,12 @@ async function run() {
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
+		if (isManualDispatch) {
+			console.error(
+				`::error title=站点链接格式不正确::您填写的站点链接 "${siteurl}" 不是合法的 http/https 网址`,
+			);
+			process.exit(1);
+		}
 		return;
 	}
 
@@ -419,6 +450,12 @@ async function run() {
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
+		if (isManualDispatch) {
+			console.error(
+				`::error title=头像链接格式不正确::您填写的头像链接 "${imgurl}" 不是合法的 http/https 网址`,
+			);
+			process.exit(1);
+		}
 		return;
 	}
 
@@ -427,6 +464,12 @@ async function run() {
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
+		if (isManualDispatch) {
+			console.error(
+				`::error title=友链页面格式不正确::您填写的检测页面链接 "${checkurl}" 不是合法的 http/https 网址`,
+			);
+			process.exit(1);
+		}
 		return;
 	}
 
@@ -450,6 +493,12 @@ async function run() {
 		await addLabels(["duplicate"]);
 		await closeIssue();
 		console.log(msg);
+		if (isManualDispatch) {
+			console.error(
+				`::error title=站点已在友链中::检测到站点 "${siteurl}" 已经存在于友链配置中`,
+			);
+			process.exit(1);
+		}
 		return;
 	}
 
