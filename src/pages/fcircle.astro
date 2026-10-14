@@ -21,9 +21,11 @@ if (!siteConfig.pages.fcircle) {
 // 获取友链与订阅文章
 const items = await getFcircleItems();
 
-// 按自然日分组及统计数据
-const dateGroups = groupFcircleByDate(items);
-const stats = getFcircleStats(items);
+// 所有自然日判断都以站点配置时区为唯一真源，不依赖 GitHub Actions 构建机时区
+const fcircleTimeZone = siteConfig.timezone || "UTC";
+const buildNow = new Date();
+const dateGroups = groupFcircleByDate(items, buildNow, fcircleTimeZone);
+const stats = getFcircleStats(items, buildNow, fcircleTimeZone);
 
 // 页面标题和描述
 const title = i18n(I18nKey.fcircle);
@@ -31,7 +33,11 @@ const description = i18n(I18nKey.fcircleDescription);
 ---
 
 <MainGridLayout title={title} description={description}>
-  <div class="flex w-full rounded-(--radius-large) overflow-hidden relative min-h-32">
+  <div
+    id="fcircle-root"
+    data-time-zone={fcircleTimeZone}
+    class="flex w-full rounded-(--radius-large) overflow-hidden relative min-h-32"
+  >
     <div class="card-base z-10 px-5 sm:px-9 py-6 relative w-full">
       <!-- 页面标题、描述与视图切换开关 -->
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 pb-4 border-b border-(--line-divider)">
@@ -104,7 +110,10 @@ const description = i18n(I18nKey.fcircleDescription);
               const isYesterday = group.relativeDays === 1;
 
               return (
-                <div class="fcircle-date-group relative mb-8 last:mb-2">
+                <div
+                  class="fcircle-date-group relative mb-8 last:mb-2"
+                  data-date-iso={group.items[0]?.pubDate.toISOString()}
+                >
                   <!-- 日期节点 Header -->
                   <div class="flex items-center gap-3 sm:gap-4 mb-4 select-none">
                     <!-- 节点圆环 Marker -->
@@ -119,20 +128,22 @@ const description = i18n(I18nKey.fcircleDescription);
                       ]}
                       aria-hidden="true"
                     >
-                      <Icon
-                        name={isToday ? "mingcute:flash-line" : "mingcute:calendar-line"}
-                        class="text-sm sm:text-base"
-                      />
+                      <span class:list={["fcircle-date-today-icon", !isToday && "hidden"]}>
+                        <Icon name="mingcute:flash-line" class="text-sm sm:text-base" />
+                      </span>
+                      <span class:list={["fcircle-date-calendar-icon", isToday && "hidden"]}>
+                        <Icon name="mingcute:calendar-line" class="text-sm sm:text-base" />
+                      </span>
                     </div>
 
                     <!-- 日期文本与条数徽标 -->
                     <div class="flex items-center gap-2.5 flex-wrap">
-                      <span class="text-base sm:text-lg font-bold tracking-tight text-neutral-800 dark:text-neutral-100">
+                      <span class="fcircle-date-label text-base sm:text-lg font-bold tracking-tight text-neutral-800 dark:text-neutral-100">
                         {group.displayDate}
                       </span>
 
                       {group.subLabel && (
-                        <span class="text-xs text-neutral-400 font-medium">
+                        <span class="fcircle-date-sublabel text-xs text-neutral-400 font-medium">
                           {group.subLabel}
                         </span>
                       )}
@@ -146,7 +157,7 @@ const description = i18n(I18nKey.fcircleDescription);
                   <!-- 当天文章卡片容器（右移缩进挂靠在轨道内） -->
                   <div class="pl-8 sm:pl-12 flex flex-col gap-3">
                     {group.items.map((item) => (
-                      <FcircleTimelineItem item={item} />
+                      <FcircleTimelineItem item={item} timeZone={fcircleTimeZone} />
                     ))}
                   </div>
                 </div>
@@ -161,6 +172,7 @@ const description = i18n(I18nKey.fcircleDescription);
         <div id="fcircle-list-view" class="fcircle-grid mt-6 flex flex-col gap-4 hidden transition-opacity duration-300">
           {items.map((item) => {
             const dateStr = item.pubDate.toLocaleDateString("zh-CN", {
+              timeZone: fcircleTimeZone,
               year: "numeric",
               month: "2-digit",
               day: "2-digit",
@@ -257,6 +269,41 @@ const description = i18n(I18nKey.fcircleDescription);
 </style>
 
 <script>
+  import {
+    getFcircleDatePresentation,
+    getFcircleRelativeDays,
+  } from "@/utils/fcircle-date-utils";
+
+  const TODAY_MARKER_CLASSES = [
+    "border-(--primary)",
+    "bg-(--primary)",
+    "text-white",
+    "shadow-md",
+    "shadow-(--primary)/20",
+    "ring-4",
+    "ring-(--primary)/15",
+  ];
+  const YESTERDAY_MARKER_CLASSES = [
+    "border-(--primary)",
+    "bg-(--card-bg)",
+    "text-(--primary)",
+    "shadow-sm",
+    "ring-2",
+    "ring-(--primary)/10",
+  ];
+  const DEFAULT_MARKER_CLASSES = [
+    "border-(--line-divider)",
+    "bg-(--card-bg)",
+    "text-neutral-500",
+    "dark:text-neutral-400",
+    "md:hover:border-(--primary)",
+  ];
+  const ALL_MARKER_CLASSES = [
+    ...TODAY_MARKER_CLASSES,
+    ...YESTERDAY_MARKER_CLASSES,
+    ...DEFAULT_MARKER_CLASSES,
+  ];
+
   function setupFcircleViewSwitcher() {
     const switcher = document.getElementById("fcircle-view-switcher");
     const timelineView = document.getElementById("fcircle-timeline-view");
@@ -284,11 +331,9 @@ const description = i18n(I18nKey.fcircleDescription);
       }
     }
 
-    // 初始化默认偏好 (默认时间线)
     const savedMode = (localStorage.getItem(STORAGE_KEY) as "timeline" | "list") || "timeline";
     applyView(savedMode);
 
-    // 绑定点击事件（防止重复绑定）
     if (switcher.dataset.bound !== "true") {
       switcher.dataset.bound = "true";
       buttons.forEach((btn) => {
@@ -303,7 +348,114 @@ const description = i18n(I18nKey.fcircleDescription);
     }
   }
 
-  // 页面加载与 Swup 路由切换支持
-  setupFcircleViewSwitcher();
-  document.addEventListener("swup:page:view", setupFcircleViewSwitcher);
+  function applyMarkerState(marker: HTMLElement, relativeDays: number) {
+    marker.classList.remove(...ALL_MARKER_CLASSES);
+    const classes =
+      relativeDays === 0
+        ? TODAY_MARKER_CLASSES
+        : relativeDays === 1
+          ? YESTERDAY_MARKER_CLASSES
+          : DEFAULT_MARKER_CLASSES;
+    marker.classList.add(...classes);
+
+    marker
+      .querySelector(".fcircle-date-today-icon")
+      ?.classList.toggle("hidden", relativeDays !== 0);
+    marker
+      .querySelector(".fcircle-date-calendar-icon")
+      ?.classList.toggle("hidden", relativeDays === 0);
+  }
+
+  function updateTodayStatStyle(todayCount: number) {
+    const card = document.getElementById("fcircle-today-stat-card");
+    const icon = document.getElementById("fcircle-today-stat-icon");
+    const count = document.getElementById("fcircle-today-count");
+    if (!card || !icon || !count) return;
+
+    const active = todayCount > 0;
+
+    card.classList.toggle("border-(--primary)/30", active);
+    card.classList.toggle("bg-(--primary)/5", active);
+    card.classList.toggle("md:hover:border-(--primary)", active);
+    card.classList.toggle("border-(--line-divider)", !active);
+    card.classList.toggle("md:hover:border-(--primary)/40", !active);
+
+    icon.classList.toggle("bg-(--primary)", active);
+    icon.classList.toggle("text-white", active);
+    icon.classList.toggle("shadow-xs", active);
+    icon.classList.toggle("bg-(--primary)/10", !active);
+    icon.classList.toggle("text-(--primary)", !active);
+
+    count.classList.toggle("text-(--primary)", active);
+    count.classList.toggle("text-neutral-800", !active);
+    count.classList.toggle("dark:text-neutral-200", !active);
+  }
+
+  function refreshFcircleRelativeDates() {
+    const root = document.getElementById("fcircle-root");
+    if (!root) return;
+
+    const timeZone = root.dataset.timeZone || "UTC";
+    const now = new Date();
+
+    root.querySelectorAll<HTMLElement>(".fcircle-date-group[data-date-iso]").forEach((group) => {
+      const dateIso = group.dataset.dateIso;
+      if (!dateIso) return;
+
+      const presentation = getFcircleDatePresentation(dateIso, now, timeZone);
+      const label = group.querySelector<HTMLElement>(".fcircle-date-label");
+      const subLabel = group.querySelector<HTMLElement>(".fcircle-date-sublabel");
+      const marker = group.querySelector<HTMLElement>(".fcircle-date-group > div > div");
+
+      if (label) label.textContent = presentation.displayDate;
+      if (subLabel) subLabel.textContent = presentation.subLabel;
+      if (marker) applyMarkerState(marker, presentation.relativeDays);
+    });
+
+    let todayCount = 0;
+    let weekCount = 0;
+
+    root
+      .querySelectorAll<HTMLElement>(
+        "#fcircle-timeline-view .fcircle-timeline-card[data-pub-date]",
+      )
+      .forEach((card) => {
+        const dateIso = card.dataset.pubDate;
+        if (!dateIso) return;
+
+        const relativeDays = getFcircleRelativeDays(dateIso, now, timeZone);
+        if (relativeDays === 0) todayCount++;
+        if (relativeDays >= 0 && relativeDays <= 6) weekCount++;
+      });
+
+    const todayCountElement = document.getElementById("fcircle-today-count");
+    const weekCountElement = document.getElementById("fcircle-week-count");
+    if (todayCountElement) todayCountElement.textContent = String(todayCount);
+    if (weekCountElement) weekCountElement.textContent = String(weekCount);
+    updateTodayStatStyle(todayCount);
+  }
+
+  function initFcirclePage() {
+    setupFcircleViewSwitcher();
+    refreshFcircleRelativeDates();
+  }
+
+  initFcirclePage();
+  document.addEventListener("swup:page:view", initFcirclePage);
+
+  const fcircleWindow = window as Window & {
+    __fcircleRelativeDateBound?: boolean;
+    __fcircleRelativeDateTimer?: number;
+  };
+
+  if (!fcircleWindow.__fcircleRelativeDateBound) {
+    fcircleWindow.__fcircleRelativeDateBound = true;
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) refreshFcircleRelativeDates();
+    });
+    fcircleWindow.__fcircleRelativeDateTimer = window.setInterval(
+      refreshFcircleRelativeDates,
+      60_000,
+    );
+  }
 </script>

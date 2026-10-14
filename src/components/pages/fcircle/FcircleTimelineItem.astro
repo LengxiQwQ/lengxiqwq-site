@@ -1,23 +1,22 @@
 ---
 import { Icon } from "astro-icon/components";
+import { formatFcircleTime } from "@/utils/fcircle-date-utils";
 import type { FcircleItem } from "@/utils/fcircle-utils";
 
 interface Props {
 	item: FcircleItem;
+	timeZone: string;
 }
 
-const { item } = Astro.props;
+const { item, timeZone } = Astro.props;
 
-// 提取具体时分（如 14:32）
-const timeStr = item.pubDate.toLocaleTimeString("zh-CN", {
-	hour: "2-digit",
-	minute: "2-digit",
-	hour12: false,
-});
+// 发布时间统一按站点时区格式化，避免构建机 UTC 时区影响显示
+const timeStr = formatFcircleTime(item.pubDate, timeZone);
 ---
 
 <a
 	href={item.link}
+	data-pub-date={item.pubDate.toISOString()}
 	target="_blank"
 	rel="noopener noreferrer"
 	class="fcircle-timeline-card group flex items-start gap-3.5 sm:gap-4 p-3.5 sm:p-4 rounded-xl border border-(--line-divider) bg-(--card-bg) md:hover:border-(--primary) transition-all duration-300 md:hover:shadow-md relative overflow-hidden"

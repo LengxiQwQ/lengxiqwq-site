@@ -2,6 +2,10 @@ import Parser from "rss-parser";
 import { profileConfig, siteConfig } from "../config";
 import { getEnabledFriends } from "../config/friendsConfig";
 import { getEnabledSubscriptions } from "../config/subscriptionConfig";
+import {
+	getFcircleDatePresentation,
+	getFcircleRelativeDays,
+} from "./fcircle-date-utils";
 
 export interface FcircleItem {
 	friendName: string;
@@ -252,94 +256,54 @@ export interface FcircleStats {
 }
 
 /**
- * 将朋友圈文章按自然日聚类为时间线分组
+ * 将朋友圈文章按站点时区的自然日聚类为时间线分组。
+ * 服务端构建与浏览器端都使用同一套时区算法，避免部署环境的 UTC 时区影响结果。
  */
-export function groupFcircleByDate(items: FcircleItem[]): FcircleDateGroup[] {
-	const now = new Date();
-	const todayStart = new Date(
-		now.getFullYear(),
-		now.getMonth(),
-		now.getDate(),
-	).getTime();
-	const oneDayMs = 24 * 60 * 60 * 1000;
-
+export function groupFcircleByDate(
+	items: FcircleItem[],
+	now: Date = new Date(),
+	timeZone: string = siteConfig.timezone || "UTC",
+): FcircleDateGroup[] {
 	const groupsMap = new Map<string, FcircleDateGroup>();
 
 	for (const item of items) {
-		const itemDate = new Date(item.pubDate);
-		const year = itemDate.getFullYear();
-		const month = itemDate.getMonth() + 1;
-		const day = itemDate.getDate();
-		const dateKey = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+		const dateInfo = getFcircleDatePresentation(item.pubDate, now, timeZone);
 
-		if (!groupsMap.has(dateKey)) {
-			const itemDayStart = new Date(year, itemDate.getMonth(), day).getTime();
-			const diffDays = Math.round((todayStart - itemDayStart) / oneDayMs);
-
-			let displayDate = "";
-			let subLabel = "";
-
-			const weekDays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-			const weekDayStr = weekDays[itemDate.getDay()];
-
-			if (diffDays === 0) {
-				displayDate = "今天";
-				subLabel = `${month}月${day}日 · ${weekDayStr}`;
-			} else if (diffDays === 1) {
-				displayDate = "昨天";
-				subLabel = `${month}月${day}日 · ${weekDayStr}`;
-			} else if (diffDays === 2) {
-				displayDate = "前天";
-				subLabel = `${month}月${day}日 · ${weekDayStr}`;
-			} else if (year === now.getFullYear()) {
-				displayDate = `${month}月${day}日`;
-				subLabel = weekDayStr;
-			} else {
-				displayDate = `${year}年${month}月${day}日`;
-				subLabel = weekDayStr;
-			}
-
-			groupsMap.set(dateKey, {
-				dateKey,
-				displayDate,
-				subLabel,
-				relativeDays: diffDays,
+		if (!groupsMap.has(dateInfo.dateKey)) {
+			groupsMap.set(dateInfo.dateKey, {
+				dateKey: dateInfo.dateKey,
+				displayDate: dateInfo.displayDate,
+				subLabel: dateInfo.subLabel,
+				relativeDays: dateInfo.relativeDays,
 				items: [],
 			});
 		}
 
-		const group = groupsMap.get(dateKey);
-		if (group) {
-			group.items.push(item);
-		}
+		groupsMap.get(dateInfo.dateKey)?.items.push(item);
 	}
 
 	return Array.from(groupsMap.values());
 }
 
 /**
- * 计算朋友圈动态核心统计指标
+ * 计算朋友圈动态核心统计指标。
+ * “今日”和“近 7 天”均按站点时区的自然日计算，避免 DST 与构建机时区造成偏移。
  */
-export function getFcircleStats(items: FcircleItem[]): FcircleStats {
-	const now = new Date();
-	const todayStart = new Date(
-		now.getFullYear(),
-		now.getMonth(),
-		now.getDate(),
-	).getTime();
-	const oneDayMs = 24 * 60 * 60 * 1000;
-	const sevenDaysAgo = todayStart - 6 * oneDayMs;
-
+export function getFcircleStats(
+	items: FcircleItem[],
+	now: Date = new Date(),
+	timeZone: string = siteConfig.timezone || "UTC",
+): FcircleStats {
 	let todayCount = 0;
 	let weekCount = 0;
 	const sites = new Set<string>();
 
 	for (const item of items) {
-		const time = item.pubDate.getTime();
-		if (time >= todayStart) {
+		const relativeDays = getFcircleRelativeDays(item.pubDate, now, timeZone);
+		if (relativeDays === 0) {
 			todayCount++;
 		}
-		if (time >= sevenDaysAgo) {
+		if (relativeDays >= 0 && relativeDays <= 6) {
 			weekCount++;
 		}
 		sites.add(item.friendUrl || item.friendName);
