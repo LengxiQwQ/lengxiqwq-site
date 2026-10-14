@@ -119,7 +119,7 @@ const description = i18n(I18nKey.fcircleDescription);
                     <!-- 节点圆环 Marker -->
                     <div
                       class:list={[
-                        "relative z-10 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 shrink-0",
+                        "fcircle-date-marker relative z-10 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 shrink-0",
                         isToday
                           ? "border-(--primary) bg-(--primary) text-white shadow-md shadow-(--primary)/20 ring-4 ring-(--primary)/15"
                           : isYesterday
@@ -405,7 +405,7 @@ const description = i18n(I18nKey.fcircleDescription);
       const presentation = getFcircleDatePresentation(dateIso, now, timeZone);
       const label = group.querySelector<HTMLElement>(".fcircle-date-label");
       const subLabel = group.querySelector<HTMLElement>(".fcircle-date-sublabel");
-      const marker = group.querySelector<HTMLElement>(".fcircle-date-group > div > div");
+      const marker = group.querySelector<HTMLElement>(".fcircle-date-marker");
 
       if (label) label.textContent = presentation.displayDate;
       if (subLabel) subLabel.textContent = presentation.subLabel;
