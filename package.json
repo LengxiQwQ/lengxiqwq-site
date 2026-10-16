@@ -25,6 +25,7 @@
     "add-friend": "tsx scripts/add-friend.ts",
     "add-feed": "tsx scripts/add-subscription.ts",
     "add-sub": "tsx scripts/add-subscription.ts",
+    "add-sponsor": "tsx scripts/add-sponsor.ts",
     "format": "biome format --write ./src ./scripts",
     "lint": "biome check --write ./src ./scripts",
     "preinstall": "npx only-allow pnpm",

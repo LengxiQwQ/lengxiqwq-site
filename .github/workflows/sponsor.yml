@@ -1,0 +1,88 @@
+name: 添加打赏记录
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: "打赏者昵称（选填，留空则默认为「匿名用户」）"
+        required: false
+        default: "匿名用户"
+      amount:
+        description: "打赏金额（必填，如：5、¥5、10元 等）"
+        required: true
+      avatar:
+        description: "头像链接（选填，支持公网图片 URL 或本地图片路径）"
+        required: false
+      message:
+        description: "打赏附言 / 付款留言（选填）"
+        required: false
+      date:
+        description: "打赏日期时间（选填，留空则自动使用当前时间，如 2026-10-16T15:30:00）"
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sponsor-add-${{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  add-sponsor:
+    name: 录入打赏并触发上线
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: 检出主仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+          run_install: false
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: 安装项目依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 检出私有内容仓
+        uses: actions/checkout@v4
+        with:
+          repository: LengxiQwQ/lengxiqwq-site-content
+          path: .content-repo
+          token: ${{ secrets.CONTENT_REPO_TOKEN }}
+
+      - name: 写入打赏记录
+        env:
+          INPUT_NAME: ${{ github.event.inputs.name }}
+          INPUT_AMOUNT: ${{ github.event.inputs.amount }}
+          INPUT_AVATAR: ${{ github.event.inputs.avatar }}
+          INPUT_MESSAGE: ${{ github.event.inputs.message }}
+          INPUT_DATE: ${{ github.event.inputs.date }}
+          CONTENT_REPO_DIR: .content-repo
+        run: |
+          npx tsx scripts/add-sponsor.ts --ci
+
+      - name: 提交并推送内容仓变更
+        run: |
+          pnpm biome format --write .content-repo/config/sponsorConfig.ts || true
+          cd .content-repo
+          if [ -n "$(git status --porcelain config/sponsorConfig.ts)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add config/sponsorConfig.ts
+            git commit -m "feat: 新增打赏记录 (${{ github.event.inputs.name || '匿名用户' }})"
+            git push origin main
+            echo "✅ 打赏记录已成功推送到内容仓，已自动触发全站构建与部署上线流程！"
+          else
+            echo "::error title=未提交任何变更::未能向内容仓写入打赏记录，流程终止。"
+            exit 1
+          fi
