@@ -36,12 +36,7 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 
 		<!-- 节点圆形标记 -->
 		<div
-			class:list={[
-				"relative z-10 flex items-center justify-center w-8 h-8 sm:w-11 sm:h-11 rounded-full border-2 transition-all duration-300 mt-1",
-				item.featured
-					? "border-(--primary) bg-(--primary)/15 text-(--primary) ring-4 ring-(--primary)/20 group-hover:scale-110 shadow-sm"
-					: "border-(--line-divider) bg-(--card-bg) text-neutral-600 dark:text-neutral-400 group-hover:border-(--primary) group-hover:text-(--primary) group-hover:scale-110 shadow-xs",
-			]}
+			class="relative z-10 flex items-center justify-center w-8 h-8 sm:w-11 sm:h-11 rounded-full border-2 border-(--line-divider) bg-(--card-bg) text-neutral-600 dark:text-neutral-400 group-hover:border-(--primary) group-hover:text-(--primary) group-hover:scale-110 shadow-xs transition-all duration-300 mt-1"
 		>
 			<Icon name={markerIcon} class="text-sm sm:text-lg" />
 		</div>
