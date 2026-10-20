@@ -439,10 +439,11 @@ const wallpaperPosition = state.isFullscreenMode
             // .slide-item 自带 1000ms 的 opacity 过渡，首张不该吃它（它是 LCP 元素）。
             // 必须在下面加 active 之前就关掉，否则过渡已经启动了。
             if (firstSlide) firstSlide.style.transition = 'none';
-            for (var k = 0; k < slides.length; k++) {
-                if (k === startIdx) slides[k].classList.add('active');
-                else slides[k].classList.remove('active');
+            var allSlides = container.querySelectorAll('.slide-item');
+            for (var a = 0; a < allSlides.length; a++) {
+                allSlides[a].classList.remove('active');
             }
+            if (firstSlide) firstSlide.classList.add('active');
             materialize(firstSlide, true);
             notifyWallpaperChange(firstSlide, false);
             if (firstSlide) {

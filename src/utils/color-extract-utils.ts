@@ -35,42 +35,71 @@ function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
 }
 
 /**
- * 健壮地等待图片加载与解码完成，防止 Promise 永远挂起
+ * 健壮地等待图片加载与解码完成，防止 Promise 永远挂起。
+ * 兼容移动端 WebKit 在 display: none 容器下挂起图片网络请求的特性，
+ * 必要时使用离屏 Image 实例加载以保证 100% 成功提取。
  */
-async function waitForImage(img: HTMLImageElement): Promise<boolean> {
+async function waitForImage(
+	img: HTMLImageElement,
+): Promise<HTMLImageElement | null> {
 	// 1. 如果已经完成加载且已有尺寸，直接返回成功
 	if (img.complete && img.naturalWidth > 0) {
-		return true;
+		return img;
 	}
 
 	// 2. 尝试使用现代浏览器支持的 img.decode()
 	try {
 		if (typeof img.decode === "function") {
 			await img.decode();
-			if (img.naturalWidth > 0) return true;
+			if (img.naturalWidth > 0) return img;
 		}
 	} catch {
-		// decode 失败（或正在加载中）降级到事件监听
+		// decode 失败（或正在加载中）降级到事件监听 / 离屏加载
 	}
 
 	// 3. 再次检查，避免在 decode 尝试期间图片已就绪
 	if (img.complete && img.naturalWidth > 0) {
-		return true;
+		return img;
 	}
 
-	// 4. 若仍未完成，监听 load/error，并设置 1500ms 超时保护，确保绝不挂起
-	return new Promise<boolean>((resolve) => {
+	// 4. 若图片未就绪（可能因容器处于移动端 display:none 被 WebKit 挂起，或正在网络传输）：
+	// 并行启动：A) DOM img 的 load 监听；B) 离屏 Image() 加载兜底；
+	return new Promise<HTMLImageElement | null>((resolve) => {
+		let finished = false;
 		let timer: ReturnType<typeof setTimeout> | null = null;
-		const done = () => {
+
+		const done = (target: HTMLImageElement | null) => {
+			if (finished) return;
+			finished = true;
 			if (timer) clearTimeout(timer);
-			img.removeEventListener("load", done);
-			img.removeEventListener("error", done);
-			resolve(img.naturalWidth > 0);
+			img.removeEventListener("load", onDomLoad);
+			img.removeEventListener("error", onDomError);
+			resolve(target && target.naturalWidth > 0 ? target : null);
 		};
 
-		img.addEventListener("load", done, { once: true });
-		img.addEventListener("error", done, { once: true });
-		timer = setTimeout(done, 1500);
+		const onDomLoad = () => done(img);
+		const onDomError = () => done(null);
+
+		img.addEventListener("load", onDomLoad, { once: true });
+		img.addEventListener("error", onDomError, { once: true });
+
+		// 离屏 Image 兜底：即使 DOM 节点受 CSS display:none 抑制（如移动端非首页），独立 Image 仍会正常走网络请求
+		const src = img.currentSrc || img.src;
+		if (src) {
+			const offscreen = new Image();
+			offscreen.onload = () => done(offscreen);
+			offscreen.onerror = () => done(null);
+			offscreen.src = src;
+			if (typeof offscreen.decode === "function") {
+				offscreen
+					.decode()
+					.then(() => done(offscreen))
+					.catch(() => {});
+			}
+		}
+
+		// 超时保护：移动端给予 4000ms 充足网络窗口
+		timer = setTimeout(() => done(null), 4000);
 	});
 }
 
@@ -80,21 +109,34 @@ async function waitForImage(img: HTMLImageElement): Promise<boolean> {
 export async function extractDominantHue(
 	img: HTMLImageElement,
 ): Promise<number> {
-	const ready = await waitForImage(img);
-	if (!ready || !img.naturalWidth || !img.naturalHeight) {
+	const readyImg = await waitForImage(img);
+	if (!readyImg?.naturalWidth || !readyImg?.naturalHeight) {
+		// 若初次提取超时，但在页面停留期间图片最终加载完成，自动重试一次色彩提取
+		if (img && (img.src || img.currentSrc)) {
+			const retryOnLateLoad = () => {
+				img.removeEventListener("load", retryOnLateLoad);
+				if (getFollowWallpaperHue()) {
+					handleWallpaperChange(img, true);
+				}
+			};
+			img.addEventListener("load", retryOnLateLoad, { once: true });
+		}
 		return getHue();
 	}
 
 	// 横屏（桌面端）：裁剪掉上下各 30%，取中间 40% 的视野核心大横条
 	// 竖屏（移动端）：裁剪掉上下各 15%，取中间 70% 的核心视野
-	const isLandscape = img.naturalWidth >= img.naturalHeight;
+	const isLandscape = readyImg.naturalWidth >= readyImg.naturalHeight;
 	const yStartRatio = isLandscape ? 0.3 : 0.15;
 	const yEndRatio = isLandscape ? 0.7 : 0.85;
 
 	const sx = 0;
-	const sy = img.naturalHeight * yStartRatio;
-	const sw = img.naturalWidth;
-	const sh = img.naturalHeight * (yEndRatio - yStartRatio);
+	const sy = Math.floor(readyImg.naturalHeight * yStartRatio);
+	const sw = readyImg.naturalWidth;
+	const sh = Math.min(
+		Math.floor(readyImg.naturalHeight * (yEndRatio - yStartRatio)),
+		readyImg.naturalHeight - sy,
+	);
 
 	// 离屏 Canvas，降采样为 64x64 以兼顾极快分析速度与色彩准确性
 	const sampleSize = 64;
@@ -106,7 +148,7 @@ export async function extractDominantHue(
 	if (!ctx) return getHue();
 
 	try {
-		ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sampleSize, sampleSize);
+		ctx.drawImage(readyImg, sx, sy, sw, sh, 0, 0, sampleSize, sampleSize);
 		const imageData = ctx.getImageData(0, 0, sampleSize, sampleSize).data;
 
 		// 将 360° 分为 72 个区间（每区 5°，提升精准度）
@@ -297,7 +339,7 @@ export function getActiveWallpaperImg(): HTMLImageElement | null {
 		}
 	}
 
-	return candidates[0] || null;
+	return current || candidates[0] || null;
 }
 
 /**
