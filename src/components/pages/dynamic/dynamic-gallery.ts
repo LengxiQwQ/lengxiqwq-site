@@ -58,12 +58,8 @@ export function registerDynamicGallery(): void {
 						String(index + 1),
 					),
 				);
-				// 只有一张图时，点击直接打开大图查看
-				if (this.images.length === 1) {
-					button.addEventListener("click", () => this.openLightbox(0));
-				} else {
-					button.addEventListener("click", () => this.open(index));
-				}
+				// 统一交互：无论单图还是多图，均打开画廊详情视图
+				button.addEventListener("click", () => this.open(index));
 				const container =
 					element.closest<HTMLElement>("center") ??
 					element.closest<HTMLElement>("figure") ??
@@ -147,6 +143,33 @@ export function registerDynamicGallery(): void {
 			if (!grid || !viewer) return;
 			grid.hidden = true;
 			viewer.hidden = false;
+
+			// 单图展示模式优化：隐藏无意义的前后翻页按钮与缩略图条
+			const isSingle = this.images.length <= 1;
+			const stage = this.querySelector<HTMLElement>(".page-gallery-stage");
+			if (stage) stage.dataset.single = String(isSingle);
+
+			const prev = this.querySelector<HTMLElement>("[data-gallery-prev]");
+			const next = this.querySelector<HTMLElement>("[data-gallery-next]");
+			const thumbnails = this.querySelector<HTMLElement>(
+				"[data-gallery-thumbnails]",
+			);
+			const counter = this.querySelector<HTMLElement>(
+				"[data-gallery-counter]",
+			);
+
+			if (isSingle) {
+				prev?.setAttribute("hidden", "");
+				next?.setAttribute("hidden", "");
+				thumbnails?.setAttribute("hidden", "");
+				counter?.setAttribute("hidden", "");
+			} else {
+				prev?.removeAttribute("hidden");
+				next?.removeAttribute("hidden");
+				thumbnails?.removeAttribute("hidden");
+				counter?.removeAttribute("hidden");
+			}
+
 			this.select(index);
 		}
 

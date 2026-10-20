@@ -467,6 +467,16 @@ dynamic-feed {
 	padding-inline: 4rem;
 }
 
+.page-gallery-stage[data-single="true"] {
+	padding-inline: 0;
+}
+
+.page-gallery-nav[hidden],
+.page-gallery-thumbnails[hidden],
+.page-gallery-counter[hidden] {
+	display: none !important;
+}
+
 .page-gallery-main-image {
 	display: block;
 	min-width: 0;
