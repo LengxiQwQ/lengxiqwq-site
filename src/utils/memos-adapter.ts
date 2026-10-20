@@ -25,7 +25,8 @@ interface Memo {
 	content: string;
 	visibility: string;
 	pinned: boolean;
-	attachments: MemoAttachment[];
+	attachments?: MemoAttachment[];
+	resources?: MemoAttachment[];
 	location?: MemoLocation;
 }
 
@@ -114,15 +115,21 @@ function extractImages(memo: Memo, memosApiUrl: string): DynamicImage[] {
 		});
 	});
 
-	// 从 Memos 附件中提取图片
-	if (memo.attachments) {
-		for (const attachment of memo.attachments) {
+	// 从 Memos 附件/资源中提取图片
+	const attachments = memo.resources || memo.attachments;
+	if (attachments) {
+		for (const attachment of attachments) {
 			if (attachment.type.startsWith("image/")) {
-				// Memos 文件服务路径: /file/attachments/{id}/{filename}
+				// Memos 文件服务路径:
+				// v0.24+ 资源前缀为 resources/，对应 /file/resources/{id}/{filename}
+				// 旧版附件前缀为 attachments/，对应 /file/attachments/{id}/{filename}
+				const resourcePath = attachment.name.startsWith("resources/")
+					? "resources"
+					: "attachments";
 				const attachmentId = attachment.name.split("/").pop() || "";
 				const src =
 					attachment.externalLink ||
-					`${memosApiUrl}/file/attachments/${attachmentId}/${attachment.filename}`;
+					`${memosApiUrl}/file/${resourcePath}/${attachmentId}/${attachment.filename}`;
 				images.push({
 					alt: attachment.filename,
 					src,
