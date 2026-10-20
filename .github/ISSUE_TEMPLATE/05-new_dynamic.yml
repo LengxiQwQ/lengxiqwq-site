@@ -1,0 +1,36 @@
+name: 发布动态
+description: 手机端/网页端一键快速发布新动态（说说）
+title: "【动态】"
+labels: ["dynamic"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 📱 发布新动态
+        在此处输入你的随想，支持 Markdown 语法。
+        可在手机上直接点击下方工具栏的图片图标，从相册选择照片上传。
+        *注意：仅仓库管理员提交有效。发布后系统将自动转换为 WebP 并发布上线，随后关闭此 Issue。*
+  - type: textarea
+    id: content
+    attributes:
+      label: 动态内容
+      description: 支持 Markdown 语法，可直接粘贴文字或从手机上传照片
+      placeholder: 今天心情不错，出去吃了一顿火锅...
+    validations:
+      required: true
+  - type: dropdown
+    id: pinned
+    attributes:
+      label: 是否置顶
+      options:
+        - "否"
+        - "是"
+    validations:
+      required: false
+  - type: input
+    id: location
+    attributes:
+      label: 发布地点（选填）
+      placeholder: 例如：北京 · 朝阳区
+    validations:
+      required: false

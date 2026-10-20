@@ -1,0 +1,69 @@
+name: 新建相册
+
+on:
+  issues:
+    types: [opened]
+
+concurrency:
+  group: new-album-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions:
+  issues: write
+  contents: write
+
+jobs:
+  publish-album:
+    name: 处理并创建相册
+    if: contains(github.event.issue.labels.*.name, 'album')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出主仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+          run_install: false
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: 安装项目依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 检出私有内容仓
+        uses: actions/checkout@v4
+        with:
+          repository: LengxiQwQ/lengxiqwq-site-content
+          path: .content-repo
+          token: ${{ secrets.CONTENT_REPO_TOKEN }}
+
+      - name: 解析并生成相册资源
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_USER: ${{ github.event.issue.user.login }}
+          CONTENT_REPO_DIR: .content-repo
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          npx tsx scripts/process-album-issue.ts
+
+      - name: 提交并推送内容仓变更
+        run: |
+          cd .content-repo
+          if [ -n "$(git status --porcelain config/galleryConfig.ts public/gallery)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add config/galleryConfig.ts public/gallery
+            git commit -m "feat: 新建相册 (from #${{ github.event.issue.number }})"
+            git push origin main
+          fi

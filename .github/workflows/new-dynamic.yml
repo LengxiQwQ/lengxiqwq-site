@@ -1,25 +1,23 @@
-name: 同步 Memos 动态到内容仓
+name: 发布动态
 
 on:
-  schedule:
-    # 每 1 小时自动检查并同步一次 (UTC 时间每小时的 15 分，避开整点拥堵)
-    - cron: "15 * * * *"
-  workflow_dispatch: {}
-  repository_dispatch:
-    types: [memos-updated, sync-memos]
+  issues:
+    types: [opened]
 
 concurrency:
-  group: sync-memos
-  cancel-in-progress: true
+  group: new-dynamic-${{ github.event.issue.number }}
+  cancel-in-progress: false
 
 permissions:
+  issues: write
   contents: write
 
 jobs:
-  sync-memos:
-    name: 同步 Memos 动态
+  publish-dynamic:
+    name: 处理并发布动态
+    if: contains(github.event.issue.labels.*.name, 'dynamic')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
       - name: 检出主仓库
@@ -38,7 +36,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: 安装依赖
+      - name: 安装项目依赖
         run: pnpm install --frozen-lockfile
 
       - name: 检出私有内容仓
@@ -48,12 +46,16 @@ jobs:
           path: .content-repo
           token: ${{ secrets.CONTENT_REPO_TOKEN }}
 
-      - name: 执行 Memos 同步与图片优化
+      - name: 解析并生成动态文件
         env:
-          MEMOS_API_URL: ${{ vars.MEMOS_API_URL || 'https://funpyfry.sealoshzh.site' }}
-          MEMOS_PARENT: ${{ vars.MEMOS_PARENT || 'users/1' }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_USER: ${{ github.event.issue.user.login }}
+          CONTENT_REPO_DIR: .content-repo
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          npx tsx scripts/sync-memos.ts --content-dir .content-repo
+          npx tsx scripts/process-dynamic-issue.ts
 
       - name: 提交并推送内容仓变更
         run: |
@@ -62,9 +64,6 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add content/dynamic public/assets/images/dynamic
-            git commit -m "chore: 同步 Memos 云端动态与图片"
+            git commit -m "feat: 发布新动态 (from #${{ github.event.issue.number }})"
             git push origin main
-            echo "✅ 已成功将最新的 Memos 动态与优化图片同步并推送到内容仓。"
-          else
-            echo "ℹ️ 未检测到 Memos 有新增或修改，无需提交。"
           fi

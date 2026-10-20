@@ -17,12 +17,17 @@ if (!siteConfig.pages.gallery) {
 const title = i18n(I18nKey.gallery);
 const description = i18n(I18nKey.galleryDescription);
 
-// 构建相册数据（扫描照片、获取封面）
-const albums = galleryConfig.albums.map((album) => {
-	const photos = scanAlbumPhotos(album.id);
-	const cover = getAlbumCover(album, photos);
-	return { ...album, cover, photoCount: photos.length };
-});
+// 构建相册数据（扫描照片、获取封面，按日期由新到旧排序）
+const albums = galleryConfig.albums
+	.map((album) => {
+		const photos = scanAlbumPhotos(album.id);
+		const cover = getAlbumCover(album, photos);
+		return { ...album, cover, photoCount: photos.length };
+	})
+	.sort(
+		(a, b) =>
+			new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime(),
+	);
 
 // 收集所有标签用于筛选
 const allTags = [...new Set(albums.flatMap((a) => a.tags || []))].sort();
