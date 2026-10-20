@@ -21,7 +21,7 @@ export async function GET(): Promise<Response> {
 			}> = [];
 			const markdown = (entry.body || "").replace(
 				markdownImagePattern,
-				(_match, alt: string, src: string, title?: string) => {
+				(_match: string, alt: string, src: string, title?: string) => {
 					let cleanAlt = (alt || "").trim();
 					let width: string | undefined;
 

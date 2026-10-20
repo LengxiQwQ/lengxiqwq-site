@@ -365,6 +365,7 @@ dynamic-feed {
 	max-width: 100%;
 	aspect-ratio: auto;
 	background: transparent;
+	cursor: zoom-in;
 }
 
 .page-gallery-grid-item img {

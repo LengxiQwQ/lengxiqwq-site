@@ -58,8 +58,12 @@ export function registerDynamicGallery(): void {
 						String(index + 1),
 					),
 				);
-				// 统一交互：无论单图还是多图，均打开画廊详情视图
-				button.addEventListener("click", () => this.open(index));
+				// 单图交互优化：单张图片无需进入卡片内多图画廊，直接调起灯箱放大并支持快速收起；多图则打开卡片内详情
+				if (this.images.length === 1) {
+					button.addEventListener("click", () => this.openLightbox(0));
+				} else {
+					button.addEventListener("click", () => this.open(index));
+				}
 				const container =
 					element.closest<HTMLElement>("center") ??
 					element.closest<HTMLElement>("figure") ??
@@ -138,37 +142,30 @@ export function registerDynamicGallery(): void {
 		}
 
 		private open(index: number) {
+			if (this.images.length <= 1) {
+				this.openLightbox(0);
+				return;
+			}
 			const grid = this.querySelector<HTMLElement>("[data-gallery-grid]");
 			const viewer = this.querySelector<HTMLElement>("[data-gallery-viewer]");
 			if (!grid || !viewer) return;
 			grid.hidden = true;
 			viewer.hidden = false;
 
-			// 单图展示模式优化：隐藏无意义的前后翻页按钮与缩略图条
-			const isSingle = this.images.length <= 1;
 			const stage = this.querySelector<HTMLElement>(".page-gallery-stage");
-			if (stage) stage.dataset.single = String(isSingle);
+			if (stage) stage.dataset.single = "false";
 
 			const prev = this.querySelector<HTMLElement>("[data-gallery-prev]");
 			const next = this.querySelector<HTMLElement>("[data-gallery-next]");
 			const thumbnails = this.querySelector<HTMLElement>(
 				"[data-gallery-thumbnails]",
 			);
-			const counter = this.querySelector<HTMLElement>(
-				"[data-gallery-counter]",
-			);
+			const counter = this.querySelector<HTMLElement>("[data-gallery-counter]");
 
-			if (isSingle) {
-				prev?.setAttribute("hidden", "");
-				next?.setAttribute("hidden", "");
-				thumbnails?.setAttribute("hidden", "");
-				counter?.setAttribute("hidden", "");
-			} else {
-				prev?.removeAttribute("hidden");
-				next?.removeAttribute("hidden");
-				thumbnails?.removeAttribute("hidden");
-				counter?.removeAttribute("hidden");
-			}
+			prev?.removeAttribute("hidden");
+			next?.removeAttribute("hidden");
+			thumbnails?.removeAttribute("hidden");
+			counter?.removeAttribute("hidden");
 
 			this.select(index);
 		}
@@ -186,37 +183,48 @@ export function registerDynamicGallery(): void {
 			if ((Fancybox as any)?.Plugins?.Hash) {
 				delete (Fancybox as any).Plugins.Hash;
 			}
+			const isSingle = this.images.length === 1;
 			Fancybox.show(
 				this.images.map((image) => ({
 					src: image.src,
 					type: "image",
+					triggerEl: image.element,
+					thumbEl: image.element,
 				})),
 				{
 					startIndex: index,
 					Hash: false,
 					closeExisting: true,
 					preload: 1,
+					dragToClose: true,
+					backdropClick: "close",
 					Panzoom: {
 						maxScale: 2,
 						minScale: 1,
 					},
 					Toolbar: {
-						display: {
-							left: ["infobar"],
-							middle: [
-								"zoomIn",
-								"zoomOut",
-								"toggle1to1",
-								"rotateCCW",
-								"rotateCW",
-								"flipX",
-								"flipY",
-							],
-							right: ["slideshow", "thumbs", "close"],
-						},
+						display: isSingle
+							? {
+									left: [],
+									middle: ["zoomIn", "zoomOut", "toggle1to1"],
+									right: ["close"],
+								}
+							: {
+									left: ["infobar"],
+									middle: [
+										"zoomIn",
+										"zoomOut",
+										"toggle1to1",
+										"rotateCCW",
+										"rotateCW",
+										"flipX",
+										"flipY",
+									],
+									right: ["slideshow", "thumbs", "close"],
+								},
 					},
 					Thumbs: {
-						autoStart: true,
+						autoStart: !isSingle,
 						minCount: 3,
 					},
 					on: {
