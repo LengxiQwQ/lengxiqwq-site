@@ -95,10 +95,11 @@ for (const {
 	}
 }
 
-// 清理 Astro 本地内容缓存，避免旧文章/资源残留在 data-store 中引起找不到资源的构建错误
+// 清理 Astro 与 Vite 本地内容与模块缓存，避免旧文章/资源残留在 data-store 或 vite 依赖缓存中引起构建错误
 for (const cachePath of [
 	path.resolve(".astro"),
 	path.resolve("node_modules/.astro"),
+	path.resolve("node_modules/.vite"),
 ]) {
 	if (fs.existsSync(cachePath)) {
 		fs.rmSync(cachePath, { recursive: true, force: true });

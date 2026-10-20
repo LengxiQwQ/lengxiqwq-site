@@ -162,8 +162,12 @@ export function resetContent(silent = false): void {
 			stdio: "ignore",
 		});
 
-		// 3. 清理 Astro 本地缓存，避免残留数据
-		for (const cacheDir of [".astro", "node_modules/.astro"]) {
+		// 3. 清理 Astro 与 Vite 本地缓存，避免残留数据与失效模块引用
+		for (const cacheDir of [
+			".astro",
+			"node_modules/.astro",
+			"node_modules/.vite",
+		]) {
 			const resolved = path.resolve(cacheDir);
 			if (fs.existsSync(resolved)) {
 				fs.rmSync(resolved, { recursive: true, force: true });
