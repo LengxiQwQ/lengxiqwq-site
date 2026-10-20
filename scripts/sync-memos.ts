@@ -85,32 +85,6 @@ if (!memosApiUrl) {
 }
 
 /**
- * 格式化时间为 YYYY-MM-DD HH:mm:ss（按北京时间 UTC+8）
- */
-function formatDateTime(isoString: string): string {
-	const date = new Date(isoString);
-	const formatter = new Intl.DateTimeFormat("en-CA", {
-		timeZone: "Asia/Shanghai",
-		year: "numeric",
-		month: "2-digit",
-		day: "2-digit",
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-		hourCycle: "h23",
-	});
-	const parts = formatter.formatToParts(date).reduce(
-		(acc, part) => {
-			if (part.type !== "literal") acc[part.type] = part.value;
-			return acc;
-		},
-		{} as Record<string, string>,
-	);
-
-	return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
-}
-
-/**
  * 生成时间戳文件名 YYYY-MM-DD-HHmmss
  */
 function formatFilenameTime(isoString: string): string {
@@ -296,11 +270,10 @@ async function run() {
 			finalContent = `${finalContent}\n\n${imageMarkdownList.join("\n\n")}`;
 		}
 
-		const publishedStr = formatDateTime(memo.createTime);
 		const locationStr = memo.location?.placeholder?.trim() || "";
 
 		const frontmatter: Record<string, unknown> = {
-			published: publishedStr,
+			published: new Date(memo.createTime),
 			pinned: Boolean(memo.pinned),
 			memosId: memoId,
 			memosUpdated: memo.updateTime,
