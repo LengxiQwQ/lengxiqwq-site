@@ -118,7 +118,7 @@ const totalCount = items.length;
 
 		<!-- 时间线条目列表 -->
 		{totalCount > 0 ? (
-			<div id="timeline-list" class="flex flex-col" aria-live="polite">
+			<div id="timeline-list" class="flex flex-col pl-3 sm:pl-4" aria-live="polite">
 				{items.map((item, index) => {
 					const cat = item.category ? categoryMap.get(item.category) : undefined;
 					return (
