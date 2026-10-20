@@ -31,6 +31,7 @@ export async function GET(): Promise<Response> {
 				searchText: dynamicSearchText(entry),
 				pinned: entry.data.pinned || false,
 				location: entry.data.location.trim(),
+				tags: entry.data.tags || [],
 			};
 		}),
 	);
