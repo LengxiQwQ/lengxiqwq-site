@@ -21,6 +21,7 @@
     "type-check": "tsc --noEmit --isolatedDeclarations",
     "new-dynamic": "tsx scripts/new-dynamic.js",
     "new-d": "tsx scripts/new-dynamic.js",
+    "sync-memos": "tsx scripts/sync-memos.ts",
     "new-post": "tsx scripts/new-post.js",
     "add-friend": "tsx scripts/add-friend.ts",
     "add-feed": "tsx scripts/add-subscription.ts",
