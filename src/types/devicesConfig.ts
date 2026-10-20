@@ -6,6 +6,9 @@ export type DeviceItem = {
 	image?: string;
 	icon?: string;
 	tags?: string[];
+	url?: string;
+	status?: string;
+	imageFit?: "cover" | "contain";
 };
 
 export type DeviceGroup = {

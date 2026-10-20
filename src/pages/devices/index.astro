@@ -44,8 +44,24 @@ const totalDevicesCount = groups.reduce(
 		<!-- 分组设备列表 -->
 		{totalDevicesCount > 0 ? (
 			<div class="flex flex-col gap-8">
+				{groups.length > 1 && (
+					<nav class="flex flex-wrap items-center gap-2" aria-label="设备分类导航">
+						{groups.map((group) => (
+							<a
+								href={`#${group.id}`}
+								class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs md:text-sm font-medium bg-(--card-bg) border border-(--line-divider) hover:border-(--primary) hover:text-(--primary) transition-all duration-200 shadow-xs"
+							>
+								<span>{group.title}</span>
+								<span class="text-xs opacity-60">
+									{group.devices?.length || 0}
+								</span>
+							</a>
+						))}
+					</nav>
+				)}
+
 				{groups.map((group) => (
-					<section id={group.id} class="device-group">
+					<section id={group.id} class="device-group scroll-mt-24">
 						<div class="flex items-baseline gap-2 mb-4 pb-2 border-b border-(--line-divider)">
 							<h3 class="text-xl font-bold text-neutral-900 dark:text-neutral-100 shrink-0">
 								{group.title}
@@ -55,8 +71,11 @@ const totalDevicesCount = groups.reduce(
 									{group.description}
 								</span>
 							)}
+							<span class="ml-auto text-xs text-neutral-400 dark:text-neutral-500 font-medium">
+								{group.devices?.length || 0} 个设备
+							</span>
 						</div>
-						<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+						<div class="card-grid gap-5" style="--card-grid-min-width: 280px">
 							{group.devices.map((device) => (
 								<DeviceCard {...device} />
 							))}
