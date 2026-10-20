@@ -1,4 +1,4 @@
----
+﻿---
 import { Icon } from "astro-icon/components";
 import type { FcircleStats } from "@/utils/fcircle-utils";
 
@@ -23,7 +23,7 @@ const { stats } = Astro.props;
 		<div
 			id="fcircle-today-stat-icon"
 			class:list={[
-				"w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-transform duration-300 group-md:hover:scale-105",
+				"w-9 h-9 rounded-lg flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-105",
 				stats.todayCount > 0
 					? "bg-(--primary) text-white shadow-xs"
 					: "bg-(--primary)/10 text-(--primary)",
@@ -56,7 +56,7 @@ const { stats } = Astro.props;
 		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) md:hover:border-(--primary)/40"
 	>
 		<div
-			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-105"
+			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-hover:scale-105"
 			aria-hidden="true"
 		>
 			<Icon name="mingcute:calendar-line" class="text-lg" />
@@ -72,18 +72,18 @@ const { stats } = Astro.props;
 		</div>
 	</div>
 
-	<!-- 收录动态 -->
+	<!-- 最新动态 -->
 	<div
 		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) md:hover:border-(--primary)/40"
 	>
 		<div
-			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-105"
+			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-hover:scale-105"
 			aria-hidden="true"
 		>
 			<Icon name="mingcute:document-2-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
-			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">收录动态</span>
+			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">最新动态</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
 				<span class="text-lg font-bold tabular-nums leading-tight text-neutral-800 dark:text-neutral-200">
 					{stats.totalCount}
@@ -93,23 +93,23 @@ const { stats } = Astro.props;
 		</div>
 	</div>
 
-	<!-- 订阅/友链站点 -->
+	<!-- 订阅博主 -->
 	<div
 		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) md:hover:border-(--primary)/40"
 	>
 		<div
-			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-md:hover:scale-105"
+			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-hover:scale-105"
 			aria-hidden="true"
 		>
 			<Icon name="mingcute:earth-2-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
-			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">聚合站点</span>
+			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">订阅博主</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
 				<span class="text-lg font-bold tabular-nums leading-tight text-neutral-800 dark:text-neutral-200">
 					{stats.siteCount}
 				</span>
-				<span class="text-xs text-neutral-400">个</span>
+				<span class="text-xs text-neutral-400">位</span>
 			</div>
 		</div>
 	</div>

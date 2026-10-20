@@ -1,4 +1,4 @@
-<script lang="ts">
+﻿<script lang="ts">
 import I18nKey from "@i18n/i18nKey";
 import { i18n } from "@i18n/translation";
 import { onMount } from "svelte";
@@ -160,7 +160,7 @@ const handleInput = () => {
                 {#each results as result}
                     <div class="card-base p-6 block rounded-(--radius-large)">
                         <a href={result.url} class="block group">
-                            <h5 class="mb-2 text-2xl font-bold tracking-tight text-90 group-md:hover:text-(--primary) transition-colors">
+                            <h5 class="mb-2 text-2xl font-bold tracking-tight text-90 group-hover:text-(--primary) transition-colors">
                                 {@html result.meta.title}
                             </h5>
                             <p class="font-normal text-75">

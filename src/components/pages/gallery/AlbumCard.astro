@@ -61,7 +61,7 @@ const coverClass = gridCoverFullWidth
         <img
           src={cover}
           alt={name}
-          class="w-full h-full object-cover pointer-events-none opacity-0 transition-all duration-500 ease-out group-md:hover:scale-110"
+          class="w-full h-full object-cover pointer-events-none opacity-0 transition-all duration-500 ease-out group-hover:scale-110"
           loading="lazy"
           decoding="async"
         />
@@ -73,11 +73,11 @@ const coverClass = gridCoverFullWidth
     )}
 
     <!-- 悬浮：变暗 + 箭头 -->
-    <div class="absolute inset-0 pointer-events-none z-10 transition group-md:hover:bg-black/30" />
+    <div class="absolute inset-0 pointer-events-none z-10 transition group-hover:bg-black/30" />
     <div class="absolute inset-0 pointer-events-none z-20 flex items-center justify-center">
       <Icon
         name="material-symbols:chevron-right-rounded"
-        class="transition opacity-0 scale-50 group-md:hover:opacity-100 group-md:hover:scale-100 text-white text-5xl"
+        class="transition opacity-0 scale-50 group-hover:opacity-100 group-hover:scale-100 text-white text-5xl"
       />
     </div>
 

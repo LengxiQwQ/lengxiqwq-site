@@ -1,4 +1,4 @@
----
+﻿---
 import Comment from "@components/comment/index.astro";
 import { Icon } from "astro-icon/components";
 import { commentConfig, siteConfig, sponsorConfig } from "@/config";
@@ -154,7 +154,7 @@ function getQrLqipProps(qrCode: string) {
 
                 <!-- 首字母头像（作为兜底，图片加载失败也会显示这个） -->
                 <div 
-                  class={`w-9 h-9 rounded-full bg-(--primary)/10 flex items-center justify-center shrink-0 group-md:hover:bg-(--primary)/20 transition-colors mt-0.5 ${sponsor.avatar ? 'hidden' : ''}`}
+                  class={`w-9 h-9 rounded-full bg-(--primary)/10 flex items-center justify-center shrink-0 group-hover:bg-(--primary)/20 transition-colors mt-0.5 ${sponsor.avatar ? 'hidden' : ''}`}
                 >
                   <span class="text-sm font-bold text-(--primary)">{sponsor.name.charAt(0)}</span>
                 </div>

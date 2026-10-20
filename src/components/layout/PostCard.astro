@@ -239,18 +239,18 @@ const minutes = remarkPluginFrontmatter.minutes;
           "rounded-(--radius-large) md:rounded-xl overflow-hidden",
         ]}
       >
-        <div class="absolute pointer-events-none z-10 w-full h-full group-md:hover:bg-black/30 group-md:active:bg-black/50 transition" />
+        <div class="absolute pointer-events-none z-10 w-full h-full group-hover:bg-black/30 group-active:bg-black/50 transition" />
         <div class="absolute pointer-events-none z-20 w-full h-full flex items-center justify-center ">
           <Icon
             name="material-symbols:chevron-right-rounded"
-            class="transition opacity-0 group-md:hover:opacity-100 scale-50 group-md:hover:scale-100 text-white text-5xl"
+            class="transition opacity-0 group-hover:opacity-100 scale-50 group-hover:scale-100 text-white text-5xl"
           />
         </div>
         <CoverImage
           src={processedImage}
           basePath={getFileDirFromPath(entry.filePath || "")}
           alt={title}
-          class="w-full h-full transition-transform duration-300 group-md:hover:scale-110 group-md:active:scale-115"
+          class="w-full h-full transition-transform duration-300 group-hover:scale-110 group-active:scale-115"
           preview={true}
           loading={loading}
           apiUrls={apiUrls}

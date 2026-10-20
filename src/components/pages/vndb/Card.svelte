@@ -1,4 +1,4 @@
-<script lang="ts">
+﻿<script lang="ts">
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import type { NsfwMode } from "@/types/nsfw";
@@ -141,7 +141,7 @@ function handleError(e: Event) {
         src={loadImage ? initialSrc : undefined}
         data-src={loadImage ? undefined : initialSrc}
         alt={title}
-        class="w-full h-full object-cover pointer-events-none opacity-0 transition-all duration-500 ease-out group-md:hover:scale-105"
+        class="w-full h-full object-cover pointer-events-none opacity-0 transition-all duration-500 ease-out group-hover:scale-105"
         loading="lazy"
         decoding="async"
         onload={handleLoad}

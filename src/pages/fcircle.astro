@@ -7,6 +7,7 @@ import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
 import {
+	formatFcircleDate,
 	getFcircleItems,
 	getFcircleStats,
 	groupFcircleByDate,
@@ -55,29 +56,29 @@ const description = i18n(I18nKey.fcircleDescription);
         {items.length > 0 && (
           <div
             id="fcircle-view-switcher"
-            class="inline-flex items-center p-1 rounded-xl bg-(--btn-regular-bg) border border-(--line-divider) text-xs font-medium self-start sm:self-auto shrink-0 shadow-2xs"
+            class="flex gap-1 p-1 rounded-full border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 shrink-0 self-start sm:self-auto select-none"
             role="tablist"
             aria-label="视图切换"
           >
             <button
+              id="view-timeline"
               type="button"
-              class="fcircle-view-btn"
+              class="fcircle-view-btn px-4 py-1.5 text-sm rounded-full bg-(--primary) text-white font-medium transition-colors cursor-pointer"
               data-view="timeline"
               role="tab"
               aria-selected="true"
             >
-              <Icon name="mingcute:time-line" class="text-sm shrink-0" />
-              <span>时间线</span>
+              时间线
             </button>
             <button
+              id="view-grid"
               type="button"
-              class="fcircle-view-btn"
-              data-view="list"
+              class="fcircle-view-btn px-4 py-1.5 text-sm rounded-full opacity-60 hover:opacity-100 transition-colors cursor-pointer"
+              data-view="grid"
               role="tab"
               aria-selected="false"
             >
-              <Icon name="mingcute:list-check-3-line" class="text-sm shrink-0" />
-              <span>平铺</span>
+              平铺
             </button>
           </div>
         )}
@@ -96,7 +97,7 @@ const description = i18n(I18nKey.fcircleDescription);
 
       <!-- 视图 1：按天聚合的时间线视图（默认视图） -->
       {items.length > 0 && (
-        <div id="fcircle-timeline-view" class="mt-8 transition-opacity duration-300">
+        <div id="timeline-view" class="mt-8 transition-opacity duration-300">
           <div class="relative flex flex-col">
             <!-- 纵向贯穿细轨道 -->
             <div
@@ -167,63 +168,65 @@ const description = i18n(I18nKey.fcircleDescription);
         </div>
       )}
 
-      <!-- 视图 2：经典平铺列表视图（可选切换） -->
+      <!-- 视图 2：经典平铺网格视图（可选切换） -->
       {items.length > 0 && (
-        <div id="fcircle-list-view" class="fcircle-grid mt-6 flex flex-col gap-4 hidden transition-opacity duration-300">
+        <div
+          id="grid-view"
+          class="fcircle-grid mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hidden transition-opacity duration-300"
+        >
           {items.map((item) => {
-            const dateStr = item.pubDate.toLocaleDateString("zh-CN", {
-              timeZone: fcircleTimeZone,
-              year: "numeric",
-              month: "2-digit",
-              day: "2-digit",
-            });
+            const dateStr = formatFcircleDate(item.pubDate, fcircleTimeZone);
 
             return (
               <a
                 href={item.link}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="group flex items-start gap-4 p-4 rounded-xl border border-(--line-divider) md:hover:border-(--primary) md:hover:bg-(--card-bg) transition-all duration-300 md:hover:shadow-md relative overflow-hidden"
+                class="group flex flex-col justify-start p-4 sm:p-5 rounded-2xl border border-(--line-divider) bg-(--card-bg) md:hover:border-(--primary) transition-all duration-300 md:hover:shadow-md md:hover:-translate-y-0.5 relative overflow-hidden"
               >
-                <div class="absolute inset-0 bg-(--primary) opacity-0 group-md:hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
-                <Icon
-                  name="material-symbols:arrow-outward-rounded"
-                  class="absolute top-4 right-4 text-(--primary) text-lg opacity-0 -translate-x-2 group-md:hover:opacity-100 group-md:hover:translate-x-0 transition-all duration-300"
-                />
+                <div class="absolute inset-0 bg-(--primary) opacity-0 group-hover:opacity-[0.03] transition-opacity duration-300 pointer-events-none" />
 
-                <div class="relative w-12 h-12 shrink-0 rounded-full overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-md:hover:scale-105 transition-transform duration-300 mt-1">
-                  <img
-                    src={item.friendAvatar}
-                    alt={item.friendName}
-                    width="48"
-                    height="48"
-                    loading="lazy"
-                    decoding="async"
-                    class="w-full h-full object-cover"
-                  />
-                </div>
-
-                <div class="grow min-w-0 flex flex-col gap-1">
-                  <div class="text-xs text-neutral-500 dark:text-neutral-400 font-medium flex items-center gap-2 flex-wrap">
-                    <span class="text-neutral-700 dark:text-neutral-300 group-md:hover:text-(--primary) transition-colors">{item.friendName}</span>
-                    {item.sourceType === "subscription" && (
-                      <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/10 text-(--primary) font-normal border border-(--primary)/20">
-                        {item.tags?.[0] || "订阅"}
-                      </span>
-                    )}
-                    <span class="w-1 h-1 rounded-full bg-neutral-300 dark:bg-neutral-600"></span>
-                    <span>{dateStr}</span>
+                <!-- 顶部：博主信息与发表日期 -->
+                <div class="flex items-center gap-2 text-xs text-neutral-500 dark:text-neutral-400 font-medium mb-2.5 min-w-0">
+                  <div class="w-6 h-6 rounded-full overflow-hidden shrink-0 border border-black/5 dark:border-white/5 bg-zinc-100 dark:bg-zinc-800">
+                    <img
+                      src={item.friendAvatar}
+                      alt={item.friendName}
+                      width="24"
+                      height="24"
+                      loading="lazy"
+                      decoding="async"
+                      class="w-full h-full object-cover"
+                    />
                   </div>
 
-                  <div class="font-bold text-lg text-neutral-900 dark:text-neutral-100 group-md:hover:text-(--primary) transition-colors line-clamp-2 pr-6 mb-1">
-                    {item.title}
-                  </div>
-                  {item.excerpt && (
-                    <div class="text-sm text-neutral-500 dark:text-neutral-400 line-clamp-2 pr-4">
-                      {item.excerpt}
-                    </div>
+                  <span class="truncate text-neutral-700 dark:text-neutral-300 group-hover:text-(--primary) transition-colors font-medium">
+                    {item.friendName}
+                  </span>
+
+                  {item.sourceType === "subscription" && (
+                    <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/10 text-(--primary) font-normal border border-(--primary)/20 shrink-0">
+                      {item.tags?.[0] || "订阅"}
+                    </span>
                   )}
+
+                  <span class="text-neutral-300 dark:text-neutral-600 shrink-0">·</span>
+                  <span class="text-neutral-400 dark:text-neutral-500 shrink-0 tabular-nums">
+                    {dateStr}
+                  </span>
                 </div>
+
+                <!-- 中间：文章标题 -->
+                <div class="font-bold text-base text-neutral-900 dark:text-neutral-100 group-hover:text-(--primary) transition-colors line-clamp-2 leading-snug mb-2">
+                  {item.title}
+                </div>
+
+                <!-- 底部：文章摘要 -->
+                {item.excerpt && (
+                  <div class="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-3 leading-relaxed mt-auto">
+                    {item.excerpt}
+                  </div>
+                )}
               </a>
             );
           })}
@@ -234,228 +237,62 @@ const description = i18n(I18nKey.fcircleDescription);
 </MainGridLayout>
 
 <style>
-  .fcircle-view-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.375rem 0.75rem;
-    border-radius: 0.5rem;
-    font-size: 0.75rem;
-    font-weight: 500;
-    cursor: pointer;
-    line-height: 1;
-    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
-  }
-
-  .fcircle-view-btn[aria-selected="false"] {
-    color: var(--btn-content);
-    background: transparent;
-  }
-  .fcircle-view-btn[aria-selected="false"]:hover {
-    color: var(--primary);
-    background: var(--btn-plain-bg-hover);
-  }
-
-  .fcircle-view-btn[aria-selected="true"] {
-    background: var(--primary);
-    color: #ffffff;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  }
-  .fcircle-view-btn[aria-selected="true"]:hover {
-    background: var(--primary);
-    color: #ffffff;
-    opacity: 0.92;
+  #timeline-view.hidden,
+  #grid-view.hidden,
+  #fcircle-timeline-view.hidden,
+  #fcircle-list-view.hidden {
+    display: none !important;
   }
 </style>
 
-<script>
-  import {
-    getFcircleDatePresentation,
-    getFcircleRelativeDays,
-  } from "@/utils/fcircle-date-utils";
+<script is:inline>
+  (function () {
+    function setupSwitcher() {
+      var t = document.getElementById("view-timeline"),
+          i = document.getElementById("view-grid"),
+          s = document.getElementById("timeline-view") || document.getElementById("fcircle-timeline-view"),
+          n = document.getElementById("grid-view") || document.getElementById("fcircle-list-view");
 
-  const TODAY_MARKER_CLASSES = [
-    "border-(--primary)",
-    "bg-(--primary)",
-    "text-white",
-    "shadow-md",
-    "shadow-(--primary)/20",
-    "ring-4",
-    "ring-(--primary)/15",
-  ];
-  const YESTERDAY_MARKER_CLASSES = [
-    "border-(--primary)",
-    "bg-(--card-bg)",
-    "text-(--primary)",
-    "shadow-sm",
-    "ring-2",
-    "ring-(--primary)/10",
-  ];
-  const DEFAULT_MARKER_CLASSES = [
-    "border-(--line-divider)",
-    "bg-(--card-bg)",
-    "text-neutral-500",
-    "dark:text-neutral-400",
-    "md:hover:border-(--primary)",
-  ];
-  const ALL_MARKER_CLASSES = [
-    ...TODAY_MARKER_CLASSES,
-    ...YESTERDAY_MARKER_CLASSES,
-    ...DEFAULT_MARKER_CLASSES,
-  ];
+      function apply(mode) {
+        var isTimeline = mode === "timeline";
+        if (s) s.classList.toggle("hidden", !isTimeline);
+        if (n) n.classList.toggle("hidden", isTimeline);
 
-  function setupFcircleViewSwitcher() {
-    const switcher = document.getElementById("fcircle-view-switcher");
-    const timelineView = document.getElementById("fcircle-timeline-view");
-    const listView = document.getElementById("fcircle-list-view");
+        if (t) {
+          t.classList.toggle("bg-(--primary)", isTimeline);
+          t.classList.toggle("bg-[var(--primary)]", isTimeline);
+          t.classList.toggle("text-white", isTimeline);
+          t.classList.toggle("font-medium", isTimeline);
+          t.classList.toggle("opacity-60", !isTimeline);
+        }
 
-    if (!switcher || !timelineView || !listView) return;
+        if (i) {
+          i.classList.toggle("bg-(--primary)", !isTimeline);
+          i.classList.toggle("bg-[var(--primary)]", !isTimeline);
+          i.classList.toggle("text-white", !isTimeline);
+          i.classList.toggle("font-medium", !isTimeline);
+          i.classList.toggle("opacity-60", isTimeline);
+        }
 
-    const STORAGE_KEY = "fcircle_preferred_view";
-    const buttons = switcher.querySelectorAll<HTMLButtonElement>(".fcircle-view-btn");
-
-    function applyView(mode: "timeline" | "list") {
-      if (!timelineView || !listView) return;
-
-      buttons.forEach((btn) => {
-        const isCurrent = btn.dataset.view === mode;
-        btn.setAttribute("aria-selected", isCurrent ? "true" : "false");
-      });
-
-      if (mode === "timeline") {
-        timelineView.classList.remove("hidden");
-        listView.classList.add("hidden");
-      } else {
-        timelineView.classList.add("hidden");
-        listView.classList.remove("hidden");
+        try {
+          localStorage.setItem("moments-view", mode);
+          localStorage.setItem("fcircle_preferred_view", mode);
+        } catch (e) {}
       }
+
+      if (t) t.onclick = function () { apply("timeline"); };
+      if (i) i.onclick = function () { apply("grid"); };
+
+      try {
+        var saved = localStorage.getItem("moments-view") || localStorage.getItem("fcircle_preferred_view");
+        if (saved === "grid" || saved === "list") {
+          apply("grid");
+        }
+      } catch (e) {}
     }
 
-    const savedMode = (localStorage.getItem(STORAGE_KEY) as "timeline" | "list") || "timeline";
-    applyView(savedMode);
-
-    if (switcher.dataset.bound !== "true") {
-      switcher.dataset.bound = "true";
-      buttons.forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const mode = btn.dataset.view as "timeline" | "list";
-          if (mode) {
-            localStorage.setItem(STORAGE_KEY, mode);
-            applyView(mode);
-          }
-        });
-      });
-    }
-  }
-
-  function applyMarkerState(marker: HTMLElement, relativeDays: number) {
-    marker.classList.remove(...ALL_MARKER_CLASSES);
-    const classes =
-      relativeDays === 0
-        ? TODAY_MARKER_CLASSES
-        : relativeDays === 1
-          ? YESTERDAY_MARKER_CLASSES
-          : DEFAULT_MARKER_CLASSES;
-    marker.classList.add(...classes);
-
-    marker
-      .querySelector(".fcircle-date-today-icon")
-      ?.classList.toggle("hidden", relativeDays !== 0);
-    marker
-      .querySelector(".fcircle-date-calendar-icon")
-      ?.classList.toggle("hidden", relativeDays === 0);
-  }
-
-  function updateTodayStatStyle(todayCount: number) {
-    const card = document.getElementById("fcircle-today-stat-card");
-    const icon = document.getElementById("fcircle-today-stat-icon");
-    const count = document.getElementById("fcircle-today-count");
-    if (!card || !icon || !count) return;
-
-    const active = todayCount > 0;
-
-    card.classList.toggle("border-(--primary)/30", active);
-    card.classList.toggle("bg-(--primary)/5", active);
-    card.classList.toggle("md:hover:border-(--primary)", active);
-    card.classList.toggle("border-(--line-divider)", !active);
-    card.classList.toggle("md:hover:border-(--primary)/40", !active);
-
-    icon.classList.toggle("bg-(--primary)", active);
-    icon.classList.toggle("text-white", active);
-    icon.classList.toggle("shadow-xs", active);
-    icon.classList.toggle("bg-(--primary)/10", !active);
-    icon.classList.toggle("text-(--primary)", !active);
-
-    count.classList.toggle("text-(--primary)", active);
-    count.classList.toggle("text-neutral-800", !active);
-    count.classList.toggle("dark:text-neutral-200", !active);
-  }
-
-  function refreshFcircleRelativeDates() {
-    const root = document.getElementById("fcircle-root");
-    if (!root) return;
-
-    const timeZone = root.dataset.timeZone || "UTC";
-    const now = new Date();
-
-    root.querySelectorAll<HTMLElement>(".fcircle-date-group[data-date-iso]").forEach((group) => {
-      const dateIso = group.dataset.dateIso;
-      if (!dateIso) return;
-
-      const presentation = getFcircleDatePresentation(dateIso, now, timeZone);
-      const label = group.querySelector<HTMLElement>(".fcircle-date-label");
-      const subLabel = group.querySelector<HTMLElement>(".fcircle-date-sublabel");
-      const marker = group.querySelector<HTMLElement>(".fcircle-date-marker");
-
-      if (label) label.textContent = presentation.displayDate;
-      if (subLabel) subLabel.textContent = presentation.subLabel;
-      if (marker) applyMarkerState(marker, presentation.relativeDays);
-    });
-
-    let todayCount = 0;
-    let weekCount = 0;
-
-    root
-      .querySelectorAll<HTMLElement>(
-        "#fcircle-timeline-view .fcircle-timeline-card[data-pub-date]",
-      )
-      .forEach((card) => {
-        const dateIso = card.dataset.pubDate;
-        if (!dateIso) return;
-
-        const relativeDays = getFcircleRelativeDays(dateIso, now, timeZone);
-        if (relativeDays === 0) todayCount++;
-        if (relativeDays >= 0 && relativeDays <= 6) weekCount++;
-      });
-
-    const todayCountElement = document.getElementById("fcircle-today-count");
-    const weekCountElement = document.getElementById("fcircle-week-count");
-    if (todayCountElement) todayCountElement.textContent = String(todayCount);
-    if (weekCountElement) weekCountElement.textContent = String(weekCount);
-    updateTodayStatStyle(todayCount);
-  }
-
-  function initFcirclePage() {
-    setupFcircleViewSwitcher();
-    refreshFcircleRelativeDates();
-  }
-
-  initFcirclePage();
-  document.addEventListener("swup:page:view", initFcirclePage);
-
-  const fcircleWindow = window as Window & {
-    __fcircleRelativeDateBound?: boolean;
-    __fcircleRelativeDateTimer?: number;
-  };
-
-  if (!fcircleWindow.__fcircleRelativeDateBound) {
-    fcircleWindow.__fcircleRelativeDateBound = true;
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) refreshFcircleRelativeDates();
-    });
-    fcircleWindow.__fcircleRelativeDateTimer = window.setInterval(
-      refreshFcircleRelativeDates,
-      60_000,
-    );
-  }
+    setupSwitcher();
+    document.addEventListener("astro:page-load", setupSwitcher);
+    document.addEventListener("swup:content:replace", setupSwitcher);
+  })();
 </script>

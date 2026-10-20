@@ -155,3 +155,11 @@ export function formatFcircleTime(
 ): string {
 	return getTimeFormatter(timeZone).format(asDate(dateInput));
 }
+
+export function formatFcircleDate(
+	dateInput: Date | string,
+	timeZone: string,
+): string {
+	const parts = getZonedDateParts(dateInput, timeZone);
+	return `${parts.year}/${String(parts.month).padStart(2, "0")}/${String(parts.day).padStart(2, "0")}`;
+}

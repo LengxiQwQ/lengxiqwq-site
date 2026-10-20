@@ -1,4 +1,4 @@
----
+﻿---
 import { Icon } from "astro-icon/components";
 import { formatFcircleTime } from "@/utils/fcircle-date-utils";
 import type { FcircleItem } from "@/utils/fcircle-utils";
@@ -23,18 +23,18 @@ const timeStr = formatFcircleTime(item.pubDate, timeZone);
 >
 	<!-- 主题色高亮悬浮背景层 -->
 	<div
-		class="absolute inset-0 bg-(--primary) opacity-0 group-md:hover:opacity-5 transition-opacity duration-300 pointer-events-none"
+		class="absolute inset-0 bg-(--primary) opacity-0 group-hover:opacity-5 transition-opacity duration-300 pointer-events-none"
 	></div>
 
 	<!-- 右上角小箭头 -->
 	<Icon
 		name="material-symbols:arrow-outward-rounded"
-		class="absolute top-3.5 right-3.5 sm:top-4 sm:right-4 text-(--primary) text-base sm:text-lg opacity-0 -translate-x-2 group-md:hover:opacity-100 group-md:hover:translate-x-0 transition-all duration-300 shrink-0"
+		class="absolute top-3.5 right-3.5 sm:top-4 sm:right-4 text-(--primary) text-base sm:text-lg opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300 shrink-0"
 	/>
 
 	<!-- 作者头像 -->
 	<div
-		class="relative w-10 h-10 sm:w-11 sm:h-11 shrink-0 rounded-full overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-md:hover:scale-105 transition-transform duration-300 mt-0.5"
+		class="relative w-10 h-10 sm:w-11 sm:h-11 shrink-0 rounded-full overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-hover:scale-105 transition-transform duration-300 mt-0.5"
 	>
 		<img
 			src={item.friendAvatar}
@@ -51,7 +51,7 @@ const timeStr = formatFcircleTime(item.pubDate, timeZone);
 	<div class="grow min-w-0 flex flex-col gap-1 pr-6 sm:pr-8">
 		<!-- 头部：作者名 + 订阅角标 + 具体发布时间 -->
 		<div class="text-xs text-neutral-500 dark:text-neutral-400 font-medium flex items-center gap-2 flex-wrap">
-			<span class="text-neutral-700 dark:text-neutral-300 font-medium group-md:hover:text-(--primary) transition-colors truncate max-w-40 sm:max-w-64">
+			<span class="text-neutral-700 dark:text-neutral-300 font-medium group-hover:text-(--primary) transition-colors truncate max-w-40 sm:max-w-64">
 				{item.friendName}
 			</span>
 			{item.sourceType === "subscription" && (
@@ -68,7 +68,7 @@ const timeStr = formatFcircleTime(item.pubDate, timeZone);
 		</div>
 
 		<!-- 动态标题 -->
-		<h3 class="font-bold text-base sm:text-lg text-neutral-900 dark:text-neutral-100 group-md:hover:text-(--primary) transition-colors line-clamp-2 leading-snug my-0.5">
+		<h3 class="font-bold text-base sm:text-lg text-neutral-900 dark:text-neutral-100 group-hover:text-(--primary) transition-colors line-clamp-2 leading-snug my-0.5">
 			{item.title}
 		</h3>
 
