@@ -1,3 +1,9 @@
+export type SetupPhoto = {
+	src: string;
+	title?: string;
+	description?: string;
+};
+
 export type DeviceItem = {
 	name: string;
 	brand?: string;
@@ -19,5 +25,10 @@ export type DeviceGroup = {
 };
 
 export type DevicesConfig = {
+	showcase?: {
+		title?: string;
+		description?: string;
+		photos: SetupPhoto[];
+	};
 	groups: DeviceGroup[];
 };

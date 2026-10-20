@@ -6,7 +6,8 @@ import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
 import "@/styles/pages/common.css";
-import "@/styles/pages/card-grid.css";
+import { getLqipProps } from "@/utils/lqip-utils";
+import { url } from "@/utils/url-utils";
 
 // 检查页面是否启用（若明确设为 false 则 404）
 if (siteConfig.pages.devices === false) {
@@ -16,6 +17,7 @@ if (siteConfig.pages.devices === false) {
 const title = i18n(I18nKey.devices);
 const description = i18n(I18nKey.devicesDescription);
 
+const showcase = devicesConfig.showcase;
 const groups = devicesConfig.groups || [];
 const totalDevicesCount = groups.reduce(
 	(acc, g) => acc + (g.devices?.length || 0),
@@ -41,27 +43,85 @@ const totalDevicesCount = groups.reduce(
 			</div>
 		</header>
 
-		<!-- 分组设备列表 -->
+		<!-- 桌搭与特写写真展示台 -->
+		{showcase && showcase.photos && showcase.photos.length > 0 && (
+			<section class="card-base p-5 md:p-6 mb-8 rounded-(--radius-large)">
+				<div class="flex items-baseline justify-between mb-4 pb-2 border-b border-(--line-divider)">
+					<div class="flex items-center gap-2">
+						<Icon name="material-symbols:photo-library-rounded" class="text-xl text-(--primary)" />
+						<h3 class="text-xl font-bold text-neutral-900 dark:text-neutral-100">
+							{showcase.title || "桌搭空间与角落"}
+						</h3>
+						{showcase.description && (
+							<span class="text-xs text-neutral-500 dark:text-neutral-400 hidden sm:inline">
+								{showcase.description}
+							</span>
+						)}
+					</div>
+					<span class="text-xs text-neutral-400 dark:text-neutral-500 font-medium">
+						{showcase.photos.length} 张写真
+					</span>
+				</div>
+
+				<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+					{showcase.photos.map((photo, index) => {
+						const resolvedSrc = photo.src.startsWith("/") ? url(photo.src) : photo.src;
+						const lqip = getLqipProps(photo.src, undefined, true);
+						return (
+							<a
+								href={resolvedSrc}
+								data-fancybox="setup-showcase"
+								data-caption={`${photo.title || "桌搭写真"}${photo.description ? ` - ${photo.description}` : ""}`}
+								class="group/photo relative block aspect-4/3 rounded-xl overflow-hidden bg-neutral-100 dark:bg-neutral-800 shadow-sm hover:shadow-lg transition-all duration-300 cursor-zoom-in border border-black/5 dark:border-white/5"
+								aria-label={photo.title || `桌搭写真 ${index + 1}`}
+							>
+								<div
+									class="lqip-placeholder absolute inset-0 pointer-events-none"
+									style={lqip.style}
+									aria-hidden="true"
+								/>
+								<img
+									src={resolvedSrc}
+									alt={photo.title || "桌搭写真"}
+									class="w-full h-full object-cover opacity-0 pointer-events-none transition-transform duration-500 ease-out group-hover/photo:scale-105"
+									loading="lazy"
+									decoding="async"
+								/>
+								<!-- 悬停变暗与放大图标 -->
+								<div class="absolute inset-0 bg-black/20 opacity-0 group-hover/photo:opacity-100 transition-opacity duration-300 pointer-events-none z-10 flex items-center justify-center">
+									<Icon
+										name="material-symbols:zoom-in-rounded"
+										class="text-white text-4xl drop-shadow-md transition-transform duration-300 scale-75 group-hover/photo:scale-100"
+									/>
+								</div>
+
+								<!-- 底部半透明说明栏 -->
+								{(photo.title || photo.description) && (
+									<div class="absolute bottom-0 inset-x-0 p-3 bg-linear-to-t from-black/75 via-black/35 to-transparent text-white pointer-events-none z-20">
+										{photo.title && (
+											<div class="font-semibold text-sm drop-shadow-sm">
+												{photo.title}
+											</div>
+										)}
+										{photo.description && (
+											<div class="text-xs text-white/80 line-clamp-1 drop-shadow-sm mt-0.5">
+												{photo.description}
+											</div>
+										)}
+									</div>
+								)}
+							</a>
+						);
+					})}
+				</div>
+			</section>
+		)}
+
+		<!-- 分组设备列表（恢复之前的样子） -->
 		{totalDevicesCount > 0 ? (
 			<div class="flex flex-col gap-8">
-				{groups.length > 1 && (
-					<nav class="flex flex-wrap items-center gap-2" aria-label="设备分类导航">
-						{groups.map((group) => (
-							<a
-								href={`#${group.id}`}
-								class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs md:text-sm font-medium bg-(--card-bg) border border-(--line-divider) hover:border-(--primary) hover:text-(--primary) transition-all duration-200 shadow-xs"
-							>
-								<span>{group.title}</span>
-								<span class="text-xs opacity-60">
-									{group.devices?.length || 0}
-								</span>
-							</a>
-						))}
-					</nav>
-				)}
-
 				{groups.map((group) => (
-					<section id={group.id} class="device-group scroll-mt-24">
+					<section id={group.id} class="device-group">
 						<div class="flex items-baseline gap-2 mb-4 pb-2 border-b border-(--line-divider)">
 							<h3 class="text-xl font-bold text-neutral-900 dark:text-neutral-100 shrink-0">
 								{group.title}
@@ -71,11 +131,8 @@ const totalDevicesCount = groups.reduce(
 									{group.description}
 								</span>
 							)}
-							<span class="ml-auto text-xs text-neutral-400 dark:text-neutral-500 font-medium">
-								{group.devices?.length || 0} 个设备
-							</span>
 						</div>
-						<div class="card-grid gap-5" style="--card-grid-min-width: 280px">
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 							{group.devices.map((device) => (
 								<DeviceCard {...device} />
 							))}
