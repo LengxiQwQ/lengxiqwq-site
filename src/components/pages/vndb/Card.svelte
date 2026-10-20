@@ -1,4 +1,4 @@
-﻿<script lang="ts">
+<script lang="ts">
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import type { NsfwMode } from "@/types/nsfw";
@@ -132,7 +132,7 @@ function handleError(e: Event) {
   href={link}
   target="_blank"
   rel="noopener noreferrer nofollow"
-  class="group relative overflow-hidden rounded-xl transition-all duration-300 md:hover:shadow-lg md:hover:scale-[1.02] block"
+  class="group relative overflow-hidden rounded-xl transition-all duration-300 hover:shadow-lg hover:scale-[1.02] block"
 >
   <div class="aspect-2/3 relative overflow-hidden">
     {#if initialSrc}

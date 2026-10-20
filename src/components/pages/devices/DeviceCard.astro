@@ -1,4 +1,4 @@
-﻿---
+---
 import { Icon } from "astro-icon/components";
 import type { DeviceItem } from "@/types/devicesConfig";
 
@@ -14,7 +14,7 @@ const {
 } = Astro.props;
 ---
 
-<div class="device-card card-base flex flex-row items-center gap-4 p-4 rounded-(--radius-large) relative group transition-all duration-300 md:hover:shadow-lg">
+<div class="device-card card-base flex flex-row items-center gap-4 p-4 rounded-(--radius-large) relative group transition-all duration-300 hover:shadow-lg">
 	<!-- 左侧小图标/图片框 -->
 	<div class="w-12 h-12 md:w-14 md:h-14 shrink-0 rounded-xl bg-neutral-100 dark:bg-neutral-800/80 flex items-center justify-center overflow-hidden transition-colors">
 		{image ? (

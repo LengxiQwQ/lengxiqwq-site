@@ -1,4 +1,4 @@
-﻿---
+---
 import { Icon } from "astro-icon/components";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
@@ -43,7 +43,7 @@ const { seriesName, posts, currentPostId } = Astro.props;
             const isCurrent = !!currentPostId && post.id === currentPostId;
             const rowClass = [
               "group flex items-center gap-3 px-3 py-1.5 rounded-lg transition-all",
-              !isCurrent && "md:hover:bg-black/5 dark:md:hover:bg-white/5 md:active:scale-[0.98]",
+              !isCurrent && "hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.98]",
               idx < posts.length - 1 && "border-b border-dashed border-(--line-divider)",
             ];
             return isCurrent ? (

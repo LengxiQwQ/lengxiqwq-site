@@ -488,7 +488,7 @@ const seriesData = await getSeriesPosts(entry);
                         showSponsorButton && (
                           <a
                             href={url("/sponsor/")}
-                            class="inline-flex items-center gap-2 px-6 py-3 bg-(--primary) text-white dark:text-black/70 rounded-lg font-medium md:hover:bg-(--primary)/80 md:hover:scale-105 md:active:scale-95 transition-all whitespace-nowrap"
+                            class="inline-flex items-center gap-2 px-6 py-3 bg-(--primary) text-white dark:text-black/70 rounded-lg font-medium hover:bg-(--primary)/80 hover:scale-105 active:scale-95 transition-all whitespace-nowrap"
                           >
                             <span>{i18n(I18nKey.sponsor)}</span>
                             <Icon name="fa7-solid:arrow-right" class="text-sm" />
@@ -578,7 +578,7 @@ const seriesData = await getSeriesPosts(entry);
                         showSponsorButton && (
                           <a
                             href={url("/sponsor/")}
-                            class="inline-flex items-center gap-2 px-6 py-3 bg-(--primary) text-white dark:text-black/70 rounded-lg font-medium md:hover:bg-(--primary)/80 md:hover:scale-105 md:active:scale-95 transition-all whitespace-nowrap"
+                            class="inline-flex items-center gap-2 px-6 py-3 bg-(--primary) text-white dark:text-black/70 rounded-lg font-medium hover:bg-(--primary)/80 hover:scale-105 active:scale-95 transition-all whitespace-nowrap"
                           >
                             <span>{i18n(I18nKey.sponsor)}</span>
                             <Icon name="fa7-solid:arrow-right" class="text-sm" />
@@ -687,7 +687,7 @@ const seriesData = await getSeriesPosts(entry);
       >
     <a
       href={entry.data.nextSlug ? getPostUrlBySlug(entry.data.nextSlug) : url("/")}
-      class="w-full font-bold overflow-hidden md:active:scale-95"
+      class="w-full font-bold overflow-hidden active:scale-95"
     >
       <div class="btn-card rounded-2xl w-full h-15 max-w-full px-4 flex items-center justify-start! gap-4">
         <Icon
@@ -702,7 +702,7 @@ const seriesData = await getSeriesPosts(entry);
 
     <a
       href={entry.data.prevSlug ? getPostUrlBySlug(entry.data.prevSlug) : url("/")}
-      class="w-full font-bold overflow-hidden md:active:scale-95"
+      class="w-full font-bold overflow-hidden active:scale-95"
     >
       <div class="btn-card rounded-2xl w-full h-15 max-w-full px-4 flex items-center justify-end! gap-4">
         <div class="overflow-hidden transition text-ellipsis whitespace-nowrap max-w-[calc(100%-3rem)] text-75">

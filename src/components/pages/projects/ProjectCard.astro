@@ -95,7 +95,7 @@ const coverClass = gridCoverFullWidth
   <div class="post-card-content p-4 flex flex-col flex-1 min-h-0">
     <a
       href={detailUrl}
-      class="post-card-title font-bold text-[1.35rem] leading-[1.75rem] text-90 line-clamp-1 md:hover:text-(--primary) transition-colors flex-1 min-w-0"
+      class="post-card-title font-bold text-[1.35rem] leading-[1.75rem] text-90 line-clamp-1 hover:text-(--primary) transition-colors flex-1 min-w-0"
     >
       {title}
     </a>
@@ -147,7 +147,7 @@ const coverClass = gridCoverFullWidth
               href={r.value}
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-(--primary)/10 text-(--primary) md:hover:bg-(--primary)/20 transition-colors"
+              class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-(--primary)/10 text-(--primary) hover:bg-(--primary)/20 transition-colors"
             >
               {resolvedIcon.kind === "icon" && (
                 <Icon name={resolvedIcon.value} class="text-sm" />
@@ -170,7 +170,7 @@ const coverClass = gridCoverFullWidth
         })}
         <a
           href={detailUrl}
-          class="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 dark:text-neutral-400 md:hover:text-(--primary) transition-colors ml-auto"
+          class="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 dark:text-neutral-400 hover:text-(--primary) transition-colors ml-auto"
         >
           {i18n(I18nKey.projectDetails)}
           <Icon name="material-symbols:chevron-right-rounded" class="text-sm" />

@@ -1,4 +1,4 @@
-﻿---
+---
 import { getEntry, render } from "astro:content";
 import Comment from "@components/comment/index.astro";
 import Markdown from "@components/common/Markdown.astro";
@@ -117,7 +117,7 @@ const description =
               target="_blank"
               rel="noopener noreferrer"
               data-tags={item.tags?.join(",")}
-              class="friend-card group flex items-center gap-3 p-2.5 rounded-xl border border-(--line-divider) md:hover:border-(--primary) md:hover:bg-(--card-bg) transition-all duration-300 md:hover:shadow-lg relative overflow-hidden"
+              class="friend-card group flex items-center gap-3 p-2.5 rounded-xl border border-(--line-divider) hover:border-(--primary) hover:bg-(--card-bg) transition-all duration-300 hover:shadow-lg relative overflow-hidden"
             >
               {/* 背景装饰 - 仅悬停显示 */}
               <div class="absolute inset-0 bg-(--primary) opacity-0 group-hover:opacity-5 transition-opacity duration-300 pointer-events-none" />

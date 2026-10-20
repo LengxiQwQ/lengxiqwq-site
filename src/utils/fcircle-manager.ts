@@ -27,7 +27,7 @@ const DEFAULT_MARKER_CLASSES = [
 	"bg-(--card-bg)",
 	"text-neutral-500",
 	"dark:text-neutral-400",
-	"md:hover:border-(--primary)",
+	"hover:border-(--primary)",
 ];
 const ALL_MARKER_CLASSES = [
 	...TODAY_MARKER_CLASSES,
@@ -63,9 +63,9 @@ function updateTodayStatStyle(todayCount: number) {
 
 	card.classList.toggle("border-(--primary)/30", active);
 	card.classList.toggle("bg-(--primary)/5", active);
-	card.classList.toggle("md:hover:border-(--primary)", active);
+	card.classList.toggle("hover:border-(--primary)", active);
 	card.classList.toggle("border-(--line-divider)", !active);
-	card.classList.toggle("md:hover:border-(--primary)/40", !active);
+	card.classList.toggle("hover:border-(--primary)/40", !active);
 
 	icon.classList.toggle("bg-(--primary)", active);
 	icon.classList.toggle("text-white", active);

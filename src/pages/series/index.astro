@@ -1,4 +1,4 @@
-﻿---
+---
 import { Icon } from "astro-icon/components";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
@@ -60,7 +60,7 @@ const totalPosts = seriesList.reduce((sum, series) => sum + series.count, 0);
                                                     href={getPostUrlBySlug(post.id)}
                                                     class:list={[
                                                         "group flex items-center gap-3 px-3 py-3 -mx-1 rounded-lg transition-all",
-                                                        "md:hover:bg-black/5 dark:md:hover:bg-white/5 md:active:scale-[0.98]",
+                                                        "hover:bg-black/5 dark:hover:bg-white/5 active:scale-[0.98]",
                                                         idx < series.posts.length - 1 &&
                                                             "border-b border-dashed border-(--line-divider)",
                                                     ]}

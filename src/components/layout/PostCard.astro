@@ -126,8 +126,8 @@ const minutes = remarkPluginFrontmatter.minutes;
     <a
       href={url}
       class="post-card-title transition group w-full block font-bold mb-3 text-3xl text-90
-        md:hover:text-(--primary) dark:md:hover:text-(--primary)
-        md:active:text-(--title-active) dark:md:active:text-(--title-active)
+        hover:text-(--primary) dark:hover:text-(--primary)
+        active:text-(--title-active) dark:active:text-(--title-active)
         before:w-1 before:h-5 before:rounded-md before:bg-(--primary)
         before:absolute before:top-[35px] before:left-[18px] before:hidden md:before:block"
     >
@@ -188,7 +188,7 @@ const minutes = remarkPluginFrontmatter.minutes;
             class:list={[
               "transition text-xs font-medium",
               bottomTagsAsText
-                ? "text-50 md:hover:text-(--primary)"
+                ? "text-50 hover:text-(--primary)"
                 : "tag-item px-2.5 py-1",
             ]}
           >
@@ -268,7 +268,7 @@ const minutes = remarkPluginFrontmatter.minutes;
           "post-card-enter-btn",
           "flex btn-regular w-13",
           "absolute right-3 top-3 bottom-3 rounded-xl bg-(--enter-btn-bg)",
-          "md:hover:bg-(--enter-btn-bg-hover) md:active:bg-(--enter-btn-bg-active) md:active:scale-95",
+          "hover:bg-(--enter-btn-bg-hover) active:bg-(--enter-btn-bg-active) active:scale-95",
         ]}
       >
         <Icon

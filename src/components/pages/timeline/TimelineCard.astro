@@ -1,4 +1,4 @@
-﻿---
+---
 import { Icon } from "astro-icon/components";
 import type { TimelineItem } from "@/types/timelineConfig";
 
@@ -52,8 +52,8 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 		class:list={[
 			"card-base flex-1 flex flex-col gap-2.5 min-w-0 mb-6 p-4 sm:p-5 transition-all duration-300",
 			item.featured
-				? "border-(--primary)/40 md:hover:border-(--primary)"
-				: "md:hover:border-(--line-divider)",
+				? "border-(--primary)/40 hover:border-(--primary)"
+				: "hover:border-(--line-divider)",
 		]}
 	>
 		<!-- 头部元数据栏：日期、分类标签、重点里程碑徽标 -->
@@ -138,7 +138,7 @@ const markerIcon = item.icon || categoryIcon || "material-symbols:flag-rounded";
 						href={link.url}
 						target="_blank"
 						rel="noopener noreferrer"
-						class="inline-flex items-center gap-1 text-xs font-medium text-(--primary) md:hover:underline"
+						class="inline-flex items-center gap-1 text-xs font-medium text-(--primary) hover:underline"
 					>
 						<Icon
 							name={link.icon || "material-symbols:open-in-new-rounded"}

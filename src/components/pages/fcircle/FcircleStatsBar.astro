@@ -1,4 +1,4 @@
-﻿---
+---
 import { Icon } from "astro-icon/components";
 import type { FcircleStats } from "@/utils/fcircle-utils";
 
@@ -16,8 +16,8 @@ const { stats } = Astro.props;
 		class:list={[
 			"p-3 rounded-xl border flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg)",
 			stats.todayCount > 0
-				? "border-(--primary)/30 bg-(--primary)/5 md:hover:border-(--primary)"
-				: "border-(--line-divider) md:hover:border-(--primary)/40",
+				? "border-(--primary)/30 bg-(--primary)/5 hover:border-(--primary)"
+				: "border-(--line-divider) hover:border-(--primary)/40",
 		]}
 	>
 		<div
@@ -53,7 +53,7 @@ const { stats } = Astro.props;
 
 	<!-- 近 7 天更新 -->
 	<div
-		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) md:hover:border-(--primary)/40"
+		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) hover:border-(--primary)/40"
 	>
 		<div
 			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-hover:scale-105"
@@ -74,7 +74,7 @@ const { stats } = Astro.props;
 
 	<!-- 最新动态 -->
 	<div
-		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) md:hover:border-(--primary)/40"
+		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) hover:border-(--primary)/40"
 	>
 		<div
 			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-hover:scale-105"
@@ -95,7 +95,7 @@ const { stats } = Astro.props;
 
 	<!-- 订阅博主 -->
 	<div
-		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) md:hover:border-(--primary)/40"
+		class="p-3 rounded-xl border border-(--line-divider) flex items-center gap-3 transition-all duration-300 relative overflow-hidden group bg-(--card-bg) hover:border-(--primary)/40"
 	>
 		<div
 			class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-(--primary)/10 text-(--primary) transition-transform duration-300 group-hover:scale-105"
