@@ -84,13 +84,20 @@ function updateUrl(clearHash = false) {
 	history.replaceState(history.state, "", current);
 }
 
+function getEntryYear(timestamp: number): string {
+	return new Intl.DateTimeFormat("en-US", {
+		timeZone: timezone || "Asia/Shanghai",
+		year: "numeric",
+	}).format(new Date(timestamp));
+}
+
 function applyFilters(resetPage = true) {
 	const query = searchInput?.value.toLocaleLowerCase().trim() || "";
 	const year = yearSelect?.value || "all";
 	filtered = entries.filter(
 		(entry) =>
 			(year === "all" ||
-				String(new Date(entry.published).getUTCFullYear()) === year) &&
+				getEntryYear(entry.published) === year) &&
 			(!query || entry.searchText.includes(query)),
 	);
 	if (resetPage) currentPage = 1;
@@ -108,7 +115,7 @@ function populateYears() {
 	yearSelect.append(all);
 	const years = [
 		...new Set(
-			entries.map((entry) => new Date(entry.published).getUTCFullYear()),
+			entries.map((entry) => getEntryYear(entry.published)),
 		),
 	];
 	for (const year of years) {
@@ -129,7 +136,7 @@ function createItem(entry: DynamicData) {
 	permalinkUrl.hash = anchorId;
 	const permalink = `${permalinkUrl.pathname}${permalinkUrl.search}${permalinkUrl.hash}`;
 	root.id = anchorId;
-	root.dataset.year = String(new Date(entry.published).getUTCFullYear());
+	root.dataset.year = getEntryYear(entry.published);
 
 	const author = root.querySelector<HTMLElement>("[data-dynamic-author]");
 	if (author) {
@@ -172,7 +179,7 @@ function createItem(entry: DynamicData) {
 			time.textContent = new Intl.DateTimeFormat(
 				document.documentElement.lang || undefined,
 				{
-					timeZone: "UTC",
+					timeZone: timezone || "Asia/Shanghai",
 					year: "numeric",
 					month: "2-digit",
 					day: "2-digit",

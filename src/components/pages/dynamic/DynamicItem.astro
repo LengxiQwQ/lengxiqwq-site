@@ -31,6 +31,10 @@ const timezone = formatTimezoneOffset(
 	siteConfig.timezone || "UTC",
 	entry.data.published,
 );
+const itemYear = new Intl.DateTimeFormat("en-US", {
+	timeZone: siteConfig.timezone || "UTC",
+	year: "numeric",
+}).format(entry.data.published);
 const permalink = detailUrl || `#${anchorId}`;
 const location = entry.data.location.trim();
 const profileLabel = i18n(I18nKey.dynamicProfile).replace(
@@ -44,7 +48,7 @@ const profileUrl = url(dynamicConfig.profileUrl || "/about/");
 	id={anchorId}
 	class="page-entry card-base"
 	data-dynamic-entry
-	data-year={entry.data.published.getUTCFullYear()}
+	data-year={itemYear}
 >
 	<article aria-labelledby={`${anchorId}-author`}>
 		<header class="page-entry-header">
