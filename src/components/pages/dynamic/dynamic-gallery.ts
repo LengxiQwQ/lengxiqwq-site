@@ -43,6 +43,14 @@ export function registerDynamicGallery(): void {
 				const button = document.createElement("button");
 				button.type = "button";
 				button.className = "page-gallery-grid-item";
+				if (element.dataset.customWidth) {
+					button.dataset.customWidth = element.dataset.customWidth;
+					button.style.setProperty(
+						"--custom-width",
+						element.dataset.customWidth,
+					);
+					button.classList.add("is-custom-size");
+				}
 				button.setAttribute(
 					"aria-label",
 					(this.dataset.viewImage || "View image {index}").replace(

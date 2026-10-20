@@ -384,6 +384,21 @@ dynamic-feed {
 	object-fit: contain;
 }
 
+.page-gallery-grid-item.is-custom-size {
+	width: var(--custom-width, 180px);
+	max-width: 100%;
+}
+
+.page-gallery-grid-item.is-custom-size img,
+.page-gallery-grid[data-layout="single"] .page-gallery-grid-item.is-custom-size img {
+	width: var(--custom-width, 180px) !important;
+	max-width: 100% !important;
+	max-height: min(20rem, 50vh) !important;
+	height: auto !important;
+	aspect-ratio: auto !important;
+	object-fit: contain !important;
+}
+
 .page-gallery-more {
 	position: absolute;
 	inset: 0;

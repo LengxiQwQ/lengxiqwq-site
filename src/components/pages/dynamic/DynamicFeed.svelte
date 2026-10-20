@@ -10,6 +10,7 @@ type DynamicImage = {
 	alt: string;
 	src: string;
 	title?: string;
+	width?: string;
 };
 
 type DynamicData = {
@@ -207,6 +208,10 @@ function createItem(entry: DynamicData) {
 			element.src = image.src;
 			element.alt = image.alt;
 			element.loading = "lazy";
+			if (image.width) {
+				element.dataset.customWidth = image.width;
+				element.style.setProperty("--custom-width", image.width);
+			}
 			if (image.title) element.title = image.title;
 			content.append(element);
 		}
