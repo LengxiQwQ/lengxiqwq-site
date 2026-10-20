@@ -67,6 +67,56 @@ const adapter = process.env.CF_WORKERS
 		})
 	: undefined;
 
+// Vite 插件：记录开发服务器运行锁，在服务退出时自动清理，防止多实例冲突
+function devServerLockPlugin() {
+	return {
+		name: "vite-plugin-dev-server-lock",
+		configureServer(server) {
+			const lockPath = path.resolve(".dev.lock");
+			const port = server.config.server.port || 4321;
+			try {
+				fs.writeFileSync(
+					lockPath,
+					JSON.stringify(
+						{
+							pid: process.pid,
+							port,
+							startTime: new Date().toISOString(),
+							cwd: process.cwd(),
+						},
+						null,
+						2,
+					),
+					"utf8",
+				);
+			} catch {}
+
+			const cleanup = () => {
+				try {
+					if (fs.existsSync(lockPath)) {
+						const raw = fs.readFileSync(lockPath, "utf8");
+						const data = JSON.parse(raw);
+						if (data.pid === process.pid) {
+							fs.unlinkSync(lockPath);
+						}
+					}
+				} catch {}
+			};
+
+			server.httpServer?.once("close", cleanup);
+			process.once("exit", cleanup);
+			process.once("SIGINT", () => {
+				cleanup();
+				process.exit(0);
+			});
+			process.once("SIGTERM", () => {
+				cleanup();
+				process.exit(0);
+			});
+		},
+	};
+}
+
 // Vite 插件：本地开发时实时监听私有内容仓，变动时自动热同步并刷新页面
 function contentRepoWatcher() {
 	return {
@@ -502,7 +552,7 @@ export default defineConfig({
 		}),
 	},
 	vite: {
-		plugins: [tailwindcss(), contentRepoWatcher()],
+		plugins: [tailwindcss(), contentRepoWatcher(), devServerLockPlugin()],
 		server: {
 			watch: {
 				ignored: ["**/package/**", "**/Firefly-docs/**"],

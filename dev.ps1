@@ -13,13 +13,14 @@ $ErrorActionPreference = 'Continue'
 
 Push-Location $PSScriptRoot
 
+$serverStarted = $false
 try {
     Write-Host ""
     Write-Host "  [dev] " -ForegroundColor Cyan -NoNewline
     Write-Host "Syncing content from content repo..."
-    & pnpm exec tsx scripts/sync-content.ts
+    & pnpm exec tsx scripts/sync-content.ts --for-dev
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  [dev] Content sync failed, check errors above." -ForegroundColor Red
+        Write-Host "  [dev] Content sync was aborted or server is already running." -ForegroundColor Yellow
         Pop-Location
         exit 1
     }
@@ -31,22 +32,24 @@ try {
     Write-Host "Press Ctrl+C or close the terminal to stop. Content will be auto-reset." -ForegroundColor DarkGray
     Write-Host ""
 
+    $serverStarted = $true
     & pnpm exec astro dev
 }
 finally {
-    Write-Host ""
-    Write-Host "  [dev] " -ForegroundColor Yellow -NoNewline
-    Write-Host "Cleaning up, resetting to clean template state..."
+    if ($serverStarted) {
+        Write-Host ""
+        Write-Host "  [dev] " -ForegroundColor Yellow -NoNewline
+        Write-Host "Cleaning up, resetting to clean template state..."
 
-    & pnpm exec astro dev stop 2>$null
+        & pnpm exec astro dev stop 2>$null
 
-    & pnpm exec tsx scripts/reset-content.ts
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "  [dev] Done. Repo restored to clean template preset." -ForegroundColor Green
+        & pnpm exec tsx scripts/reset-content.ts
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  [dev] Done. Repo restored to clean template preset." -ForegroundColor Green
+        }
+        else {
+            Write-Host "  [dev] Auto-reset skipped or failed." -ForegroundColor Yellow
+        }
     }
-    else {
-        Write-Host "  [dev] Auto-reset failed. Run manually: pnpm content:reset" -ForegroundColor Red
-    }
-
     Pop-Location
 }

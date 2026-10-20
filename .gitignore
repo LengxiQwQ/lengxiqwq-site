@@ -51,6 +51,7 @@ package/
 # dual-repo content working copy
 .content-src/
 .env.local
+.dev.lock
 
 # project agent rules
 AGENTS.md
