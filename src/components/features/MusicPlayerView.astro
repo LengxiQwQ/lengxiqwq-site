@@ -606,8 +606,55 @@ const viewConfigStr = JSON.stringify({
             ui.title.innerText = e.detail.message || cfg.i18n.error;
         });
 
+        // ── Drawer helpers ──────────────────────────────────────
+        function openLyricsDrawer() {
+            if (!ui.lrcDrawer) return;
+            // Close playlist if open
+            if (ui.playlistDrawer) {
+                ui.playlistDrawer.style.gridTemplateRows = '0fr';
+                ui.playlistDrawer.classList.remove('opacity-100');
+                ui.playlistDrawer.classList.add('opacity-0');
+                if (ui.btnDrawer) {
+                    ui.btnDrawer.classList.remove('text-(--primary)');
+                    ui.btnDrawer.classList.add('text-neutral-400');
+                }
+                local.vs.drawerOpen = false;
+            }
+
+            ui.lrcDrawer.style.gridTemplateRows = '1fr';
+            ui.lrcDrawer.classList.add('opacity-100');
+            ui.lrcDrawer.classList.remove('opacity-0');
+            if (ui.btnLrc) {
+                ui.btnLrc.classList.add('text-(--primary)');
+                ui.btnLrc.classList.remove('text-neutral-400');
+                if (ui.iconLrcOn) ui.iconLrcOn.classList.remove('hidden');
+                if (ui.iconLrcOff) ui.iconLrcOff.classList.add('hidden');
+            }
+        }
+
+        function closeLyricsDrawer() {
+            if (!ui.lrcDrawer) return;
+            ui.lrcDrawer.style.gridTemplateRows = '0fr';
+            ui.lrcDrawer.classList.remove('opacity-100');
+            ui.lrcDrawer.classList.add('opacity-0');
+            if (ui.btnLrc) {
+                ui.btnLrc.classList.remove('text-(--primary)');
+                ui.btnLrc.classList.add('text-neutral-400');
+                if (ui.iconLrcOn) ui.iconLrcOn.classList.add('hidden');
+                if (ui.iconLrcOff) ui.iconLrcOff.classList.remove('hidden');
+            }
+        }
+
         // ── Button click delegates ───────────────────────────────
-        ui.btnPlay.addEventListener('click', function () { mgr.togglePlay(); });
+        ui.btnPlay.addEventListener('click', function () {
+            var st = mgr.getState();
+            // 进入网站首次点击播放时，左侧播放器自动展开展歌词
+            if (cfg.showLyrics && ui.btnLrc && !st.isPlaying && !window.__fireflyHasAutoOpenedLyrics) {
+                window.__fireflyHasAutoOpenedLyrics = true;
+                openLyricsDrawer();
+            }
+            mgr.togglePlay();
+        });
         ui.btnNext.addEventListener('click', function () { mgr.playNext(); });
         ui.btnPrev.addEventListener('click', function () { mgr.playPrev(); });
         ui.btnRepeat.addEventListener('click', function () { mgr.cyclePlayMode(); });
@@ -632,28 +679,9 @@ const viewConfigStr = JSON.stringify({
             ui.btnLrc.addEventListener('click', function () {
                 var isOpen = ui.lrcDrawer.style.gridTemplateRows === '1fr';
                 if (isOpen) {
-                    ui.lrcDrawer.style.gridTemplateRows = '0fr';
-                    ui.lrcDrawer.classList.remove('opacity-100');
-                    ui.lrcDrawer.classList.add('opacity-0');
-                    ui.btnLrc.classList.remove('text-(--primary)');
-                    ui.btnLrc.classList.add('text-neutral-400');
-                    ui.iconLrcOn.classList.add('hidden');
-                    ui.iconLrcOff.classList.remove('hidden');
+                    closeLyricsDrawer();
                 } else {
-                    // Close playlist if open
-                    ui.playlistDrawer.style.gridTemplateRows = '0fr';
-                    ui.playlistDrawer.classList.remove('opacity-100');
-                    ui.playlistDrawer.classList.add('opacity-0');
-                    ui.btnDrawer.classList.remove('text-(--primary)');
-                    ui.btnDrawer.classList.add('text-neutral-400');
-
-                    ui.lrcDrawer.style.gridTemplateRows = '1fr';
-                    ui.lrcDrawer.classList.add('opacity-100');
-                    ui.lrcDrawer.classList.remove('opacity-0');
-                    ui.btnLrc.classList.add('text-(--primary)');
-                    ui.btnLrc.classList.remove('text-neutral-400');
-                    ui.iconLrcOn.classList.remove('hidden');
-                    ui.iconLrcOff.classList.add('hidden');
+                    openLyricsDrawer();
                 }
             });
         }
@@ -669,15 +697,7 @@ const viewConfigStr = JSON.stringify({
                 local.vs.drawerOpen = false;
             } else {
                 // Close lyrics if open
-                ui.lrcDrawer.style.gridTemplateRows = '0fr';
-                ui.lrcDrawer.classList.remove('opacity-100');
-                ui.lrcDrawer.classList.add('opacity-0');
-                if (ui.btnLrc) {
-                    ui.btnLrc.classList.remove('text-(--primary)');
-                    ui.btnLrc.classList.add('text-neutral-400');
-                    ui.iconLrcOn.classList.add('hidden');
-                    ui.iconLrcOff.classList.remove('hidden');
-                }
+                closeLyricsDrawer();
 
                 ui.playlistDrawer.style.gridTemplateRows = '1fr';
                 ui.playlistDrawer.classList.add('opacity-100');

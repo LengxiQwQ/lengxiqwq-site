@@ -40,9 +40,7 @@ const BROWSER_HEADERS = {
 };
 
 // ---------- 探测函数 ----------
-async function checkUrl(
-	url: string,
-): Promise<{ ok: boolean; error?: string }> {
+async function checkUrl(url: string): Promise<{ ok: boolean; error?: string }> {
 	try {
 		const controller = new AbortController();
 		const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -107,9 +105,7 @@ async function run() {
 		try {
 			healthData = JSON.parse(fs.readFileSync(HEALTH_FILE, "utf-8"));
 		} catch {
-			console.warn(
-				"[friends-health] 无法解析历史状态文件，将重新初始化",
-			);
+			console.warn("[friends-health] 无法解析历史状态文件，将重新初始化");
 			healthData = {};
 		}
 	}
@@ -130,9 +126,7 @@ async function run() {
 					`[friends-health] ✅ ${friend.title} (${url}) 恢复正常（之前连续失败 ${prev.failCount} 次）`,
 				);
 			} else {
-				console.log(
-					`[friends-health] ✅ ${friend.title} (${url})`,
-				);
+				console.log(`[friends-health] ✅ ${friend.title} (${url})`);
 			}
 			healthData[url] = {
 				failCount: 0,

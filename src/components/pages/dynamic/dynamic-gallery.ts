@@ -121,16 +121,14 @@ export function registerDynamicGallery(): void {
 				"click",
 				(event) => {
 					event.preventDefault();
-					const Fancybox = FancyboxModule.Fancybox;
-					Fancybox.show(
-						this.images.map((image) => ({
-							src: image.src,
-							type: "image",
-						})),
-						{
-							startIndex: this.activeIndex,
-						},
-					);
+					this.openLightbox(this.activeIndex);
+				},
+			);
+			this.querySelector("[data-gallery-main]")?.addEventListener(
+				"click",
+				(event) => {
+					event.preventDefault();
+					this.openLightbox(this.activeIndex);
 				},
 			);
 		}
@@ -154,12 +152,56 @@ export function registerDynamicGallery(): void {
 
 		private openLightbox(index: number) {
 			const Fancybox = FancyboxModule.Fancybox;
+			if ((Fancybox as any)?.Plugins?.Hash) {
+				delete (Fancybox as any).Plugins.Hash;
+			}
 			Fancybox.show(
 				this.images.map((image) => ({
 					src: image.src,
 					type: "image",
 				})),
-				{ startIndex: index },
+				{
+					startIndex: index,
+					Hash: false,
+					closeExisting: true,
+					preload: 1,
+					Panzoom: {
+						maxScale: 2,
+						minScale: 1,
+					},
+					Toolbar: {
+						display: {
+							left: ["infobar"],
+							middle: [
+								"zoomIn",
+								"zoomOut",
+								"toggle1to1",
+								"rotateCCW",
+								"rotateCW",
+								"flipX",
+								"flipY",
+							],
+							right: ["slideshow", "thumbs", "close"],
+						},
+					},
+					Thumbs: {
+						autoStart: true,
+						minCount: 3,
+					},
+					on: {
+						destroy: (fb: any) => {
+							try {
+								const container = fb.getContainer();
+								if (container) {
+									const imgs = container.querySelectorAll("img");
+									imgs.forEach((img: HTMLImageElement) => {
+										img.src = "";
+									});
+								}
+							} catch {}
+						},
+					},
+				} as any,
 			);
 		}
 

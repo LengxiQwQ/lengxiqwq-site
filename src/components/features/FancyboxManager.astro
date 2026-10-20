@@ -5,7 +5,7 @@
 <script>
   let Fancybox: any;
   const IMG_SELECTOR = ".custom-md img:not(.card-wiki-link img), #post-cover img, .moment-images img";
-  const LINK_SELECTOR = ".moment-images a[data-fancybox], [data-fancybox]:not(.moment-images a)";
+  const LINK_SELECTOR = "[data-fancybox]";
   const svgBlobUrlCache = new Map<string, string>();
 
   function isSvgSrc(src: string): boolean {
@@ -82,9 +82,11 @@
 
   function getCommonOptions() {
     return {
+      Hash: false,
+      closeExisting: true,
       Thumbs: {
         autoStart: true,
-        showOnStart: "yes",
+        minCount: 3,
       },
       Toolbar: {
         display: {
@@ -115,13 +117,26 @@
         ArrowLeft: "prev",
       },
       fitToView: true,
-      preload: 3,
+      preload: 1,
       infinite: true,
       Panzoom: {
-        maxScale: 3,
+        maxScale: 2,
         minScale: 1,
       },
       caption: false,
+      on: {
+        destroy: (fb: any) => {
+          try {
+            const container = fb.getContainer();
+            if (container) {
+              const imgs = container.querySelectorAll("img");
+              imgs.forEach((img: HTMLImageElement) => {
+                img.src = "";
+              });
+            }
+          } catch {}
+        },
+      },
     };
   }
 
@@ -172,6 +187,9 @@
     if (!Fancybox) {
       const mod = await import("@fancyapps/ui");
       Fancybox = mod.Fancybox;
+      if (Fancybox?.Plugins?.Hash) {
+        delete Fancybox.Plugins.Hash;
+      }
     }
 
     const commonOptions = getCommonOptions();
@@ -188,11 +206,11 @@
       groupAll: true,
       Carousel: {
         transition: "slide",
-        preload: 2,
+        preload: 1,
       },
     });
 
-    Fancybox.bind(`${LINK_SELECTOR}:not(dynamic-gallery [data-gallery-lightbox])`, {
+    Fancybox.bind(LINK_SELECTOR, {
       ...commonOptions,
       source: (el: any) => el.getAttribute("data-src") || el.getAttribute("href"),
     });
@@ -201,8 +219,9 @@
 
   function cleanupFancybox() {
     if (Fancybox) {
-      Fancybox.close();
-      Fancybox.unbind(document.body);
+      try {
+        Fancybox.destroy();
+      } catch {}
     }
     // 恢复原始 URL 并清除标记，避免 blob URL 被 revoke 后图片损坏
     document.querySelectorAll<HTMLElement>("[data-svg-fixed]").forEach((el) => {
@@ -217,23 +236,30 @@
     revokeAllSvgBlobUrls();
   }
 
-  // 初始化
-  setup();
+  let setupRafId: number | null = null;
+  function scheduleSetup() {
+    if (setupRafId !== null) cancelAnimationFrame(setupRafId);
+    setupRafId = requestAnimationFrame(() => {
+      setupRafId = null;
+      setup();
+    });
+  }
 
-  // Swup 生命周期整合
-  // 切页换入后延到下一帧再 setup：让首帧先绘制，避免每趟对全图 querySelectorAll +
-  // fetch(blob) 的同步长任务阻塞换入瞬间（尤其文章页图多时）。setup 内部有
-  // data-svg-fixed / Fancybox.unbind 守卫，延一帧不会重绑或丢图。
-  document.addEventListener("swup:content:replace", () => {
-    requestAnimationFrame(setup);
-  });
-  document.addEventListener("dynamic-gallery:ready", () => {
-    requestAnimationFrame(setup);
-  });
+  // 初始化
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", scheduleSetup);
+  } else {
+    scheduleSetup();
+  }
+
+  // Swup 生命周期整合（防抖合并同一帧内的多次触发）
+  document.addEventListener("swup:content:replace", scheduleSetup);
+  document.addEventListener("swup:contentReplaced", scheduleSetup);
+  document.addEventListener("dynamic-gallery:ready", scheduleSetup);
   document.addEventListener("swup:visit:start", cleanupFancybox);
 
   // 加密文章解密后重新绑定灯箱
   document.addEventListener("password:decrypted", () => {
-    setTimeout(setup, 200);
+    setTimeout(scheduleSetup, 200);
   });
 </script>

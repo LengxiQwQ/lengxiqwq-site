@@ -556,6 +556,6 @@ export const ru: Translation = {
 	[Key.exitImmersiveReading]: "Выйти из режима чтения",
 	[Key.tocExpand]: "Развернуть оглавление",
 	[Key.tocCollapse]: "Свернуть оглавление",
-  [Key.fcircle]: 'Friend Circle',
-  [Key.fcircleDescription]: 'Latest updates from friend blogs',
+	[Key.fcircle]: "Friend Circle",
+	[Key.fcircleDescription]: "Latest updates from friend blogs",
 };

@@ -68,11 +68,14 @@ const totalDevicesCount = groups.reduce(
 						const resolvedSrc = photo.src.startsWith("/") ? url(photo.src) : photo.src;
 						const lqip = getLqipProps(photo.src, undefined, true);
 						return (
-							<a
-								href={resolvedSrc}
+							<div
+								data-src={resolvedSrc}
 								data-fancybox="setup-showcase"
+								data-type="image"
 								data-caption={`${photo.title || "桌搭写真"}${photo.description ? ` - ${photo.description}` : ""}`}
-								class="group/photo relative block aspect-4/3 rounded-xl overflow-hidden bg-neutral-100 dark:bg-neutral-800 shadow-sm hover:shadow-lg transition-all duration-300 cursor-zoom-in border border-black/5 dark:border-white/5"
+								class="group/photo relative block aspect-4/3 rounded-xl overflow-hidden bg-neutral-100 dark:bg-neutral-800 shadow-sm hover:shadow-lg transition-all duration-300 cursor-pointer border border-black/5 dark:border-white/5"
+								role="button"
+								tabindex="0"
 								aria-label={photo.title || `桌搭写真 ${index + 1}`}
 							>
 								<div
@@ -110,7 +113,7 @@ const totalDevicesCount = groups.reduce(
 										)}
 									</div>
 								)}
-							</a>
+							</div>
 						);
 					})}
 				</div>

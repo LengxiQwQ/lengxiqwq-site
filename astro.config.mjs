@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { setMaxListeners } from "node:events";
@@ -87,15 +86,28 @@ function contentRepoWatcher() {
 			const resolvedDir = path.resolve(contentDir);
 			server.watcher.add(resolvedDir);
 
+			// 防抖与去重映射表，避免 Windows 下多重事件引发并发与重复 I/O
+			const debounceTimers = new Map();
+
 			const syncTarget = (filePath) => {
 				const rel = path.relative(resolvedDir, filePath);
-				if (rel.startsWith(".git") || rel.startsWith("node_modules")) return;
+				if (
+					rel.startsWith(".git") ||
+					rel.startsWith("node_modules") ||
+					rel.endsWith(".DS_Store") ||
+					rel.endsWith("Thumbs.db")
+				) {
+					return;
+				}
 
 				let dest = null;
+				let isConfig = false;
+
 				if (rel.startsWith(`content${path.sep}`) || rel === "content") {
 					dest = path.resolve("src", rel);
 				} else if (rel.startsWith(`config${path.sep}`) || rel === "config") {
 					dest = path.resolve("src", rel);
+					isConfig = true;
 				} else if (rel.startsWith(`public${path.sep}`) || rel === "public") {
 					const sub = rel.slice("public".length + 1);
 					dest = path.resolve("public", sub);
@@ -103,33 +115,71 @@ function contentRepoWatcher() {
 
 				if (!dest) return;
 
-				try {
-					if (fs.existsSync(filePath)) {
-						const stat = fs.statSync(filePath);
-						if (stat.isDirectory()) {
-							fs.mkdirSync(dest, { recursive: true });
-						} else {
-							fs.mkdirSync(path.dirname(dest), { recursive: true });
-							fs.copyFileSync(filePath, dest);
-							console.log(
-								`[content-watcher] Synced: ${rel} -> ${path.relative(process.cwd(), dest)}`,
-							);
-						}
-					} else if (fs.existsSync(dest)) {
-						fs.rmSync(dest, { recursive: true, force: true });
-						console.log(
-							`[content-watcher] Removed: ${path.relative(process.cwd(), dest)}`,
-						);
-					}
-
-					// 注意：这里不能删 .astro 缓存！dev server 运行时 Astro 正在使用这些文件，
-					// 强删会导致 content layer 崩溃 (exit code 1)。
-					// 缓存清理只在 sync-content.ts（predev 阶段）做一次就够了。
-
-					server.ws.send({ type: "full-reload" });
-				} catch (err) {
-					console.error("[content-watcher] Sync error:", err);
+				// 100ms 防抖，合并 Windows 短时间内的多重写入/元数据触发
+				if (debounceTimers.has(filePath)) {
+					clearTimeout(debounceTimers.get(filePath));
 				}
+
+				debounceTimers.set(
+					filePath,
+					setTimeout(() => {
+						debounceTimers.delete(filePath);
+						try {
+							if (fs.existsSync(filePath)) {
+								const stat = fs.statSync(filePath);
+								if (stat.isDirectory()) {
+									fs.mkdirSync(dest, { recursive: true });
+								} else {
+									// 检查目标文件是否已存在且内容一致，若未实质变更则跳过，杜绝冗余 I/O
+									if (fs.existsSync(dest)) {
+										try {
+											const destStat = fs.statSync(dest);
+											if (
+												stat.size === destStat.size &&
+												Math.abs(stat.mtimeMs - destStat.mtimeMs) < 50
+											) {
+												return;
+											}
+											const srcBuf = fs.readFileSync(filePath);
+											const destBuf = fs.readFileSync(dest);
+											if (srcBuf.equals(destBuf)) {
+												return;
+											}
+										} catch {
+											// 忽略比对异常，直接降级为覆盖写入
+										}
+									}
+
+									fs.mkdirSync(path.dirname(dest), { recursive: true });
+									fs.copyFileSync(filePath, dest);
+									console.log(
+										`[content-watcher] Synced: ${rel} -> ${path.relative(process.cwd(), dest)}`,
+									);
+								}
+							} else if (fs.existsSync(dest)) {
+								fs.rmSync(dest, { recursive: true, force: true });
+								console.log(
+									`[content-watcher] Removed: ${path.relative(process.cwd(), dest)}`,
+								);
+							}
+
+							// 细粒度刷新分流策略：
+							// 1. 内容文件（Markdown/MDX 等）：由 Astro 7 原生 Content Layer (glob-loader)
+							//    自动捕获 src/content/ 的变更做增量热更，绝对严禁触发全局 full-reload！
+							// 2. 静态资源（public/）：由 Vite 原生静态监听处理。
+							// 3. 全局配置文件（config/）：注入 triggeredBy 精确源路径通知 Vite，
+							//    仅局部重载依赖该配置的组件，彻底阻断全站雪崩式并发死锁。
+							if (isConfig) {
+								server.ws.send({
+									type: "full-reload",
+									triggeredBy: dest.replace(/\\/g, "/"),
+								});
+							}
+						} catch (err) {
+							console.error("[content-watcher] Sync error:", err);
+						}
+					}, 100),
+				);
 			};
 
 			server.watcher.on("change", syncTarget);
@@ -317,7 +367,10 @@ export default defineConfig({
 				if (pathname === "/" || pathname === "") {
 					item.changefreq = "daily";
 					item.priority = 1.0;
-				} else if (pathname.startsWith("/posts/") || pathname.startsWith("/projects/")) {
+				} else if (
+					pathname.startsWith("/posts/") ||
+					pathname.startsWith("/projects/")
+				) {
 					item.changefreq = "weekly";
 					item.priority = 0.8;
 				} else {
