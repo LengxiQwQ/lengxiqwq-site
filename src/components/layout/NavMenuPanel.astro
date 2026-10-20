@@ -104,6 +104,7 @@ const navTitle = siteConfig.navbar.title || siteConfig.title;
 
     /* MD3 抽屉：面板改成透明全屏定位层，动画放在「遮罩/抽屉」子层上 */
     #nav-menu-panel {
+        --mobile-drawer-width: min(70vw, 340px);
         top: 0;
         bottom: 0;
         border-radius: 0; /* 覆盖 .float-panel 的圆角，避免遮罩四角被裁剪 */
@@ -121,10 +122,13 @@ const navTitle = siteConfig.navbar.title || siteConfig.title;
         pointer-events: none;
     }
 
-    /* ---- 遮罩（scrim）：fixed 锚定视口，铺满整屏 ---- */
+    /* ---- 遮罩（scrim）：fixed 锚定视口，仅遮罩抽屉以外的区域，避免抽屉本身被底层遮罩透黑变暗 ---- */
     .mobile-menu-scrim {
         position: fixed;
-        inset: 0;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        right: calc(var(--mobile-drawer-width) - 1px);
         background: rgba(0, 0, 0, 0.5);
         opacity: 0;
         pointer-events: none;
@@ -150,7 +154,7 @@ const navTitle = siteConfig.navbar.title || siteConfig.title;
         top: 0;
         right: 0;
         bottom: 0;
-        width: min(70vw, 340px);
+        width: var(--mobile-drawer-width);
         display: flex;
         flex-direction: column;
         background: var(--card-bg);
