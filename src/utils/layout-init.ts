@@ -6,6 +6,7 @@ import {
 	registerContentOverflowListeners,
 	scheduleContentOverflowEnhancements,
 } from "@/utils/content-overflow-utils";
+import { initFcircleManager } from "@/utils/fcircle-manager";
 import {
 	initializeFloatingPanels,
 	setClickOutsideToClose,
@@ -25,7 +26,6 @@ import { initScroll } from "@/utils/scroll-utils";
 import { initThemeListener, initWallpaperMode } from "@/utils/setting-utils";
 import { setupSwupTransitions } from "@/utils/swup-transitions";
 import { initTouchCodeCopyReveal } from "@/utils/touch-copy-utils";
-import { initFcircleManager } from "@/utils/fcircle-manager";
 
 /** 布局初始化编排（从 Layout.astro 迁出） */
 export function initLayout(): void {

@@ -27,8 +27,30 @@ function appendSeedParam(apiUrl: string, hash: number): string {
 }
 
 /**
+ * 判断文章是否应使用随机封面图
+ * 1. 显式指定 image: "api"
+ * 2. 文章未设置 image（或为空），且全局开启了随机封面图功能（且未显式指定 "none"）
+ */
+function isRandomCoverImage(image: string | undefined): boolean {
+	if (image === "none") {
+		return false;
+	}
+	if (image === "api") {
+		return true;
+	}
+	if (!image || image.trim() === "") {
+		return Boolean(
+			randomCoverImage.enable &&
+				randomCoverImage.apis &&
+				randomCoverImage.apis.length > 0,
+		);
+	}
+	return false;
+}
+
+/**
  * 处理文章封面图
- * 当image字段为"api"时，返回第一个API的URL（客户端会按顺序尝试所有API）
+ * 当image字段为"api"或文章未设置image（且全局开启随机封面）时，返回首选API的URL（带文章专属固定hash）
  * @param image - 文章frontmatter中的image字段值
  * @param seed - 用于生成唯一URL的种子（文章id或slug）
  */
@@ -36,16 +58,16 @@ export function processCoverImageSync(
 	image: string | undefined,
 	seed?: string,
 ): string {
-	if (!image || image === "") {
+	if (image === "none") {
 		return "";
 	}
 
-	if (image !== "api") {
+	if (image && image !== "api") {
 		return image;
 	}
 
 	if (
-		!randomCoverImage.enable ||
+		!isRandomCoverImage(image) ||
 		!randomCoverImage.apis ||
 		randomCoverImage.apis.length === 0
 	) {
@@ -67,7 +89,11 @@ export function getApiUrlList(
 	image: string | undefined,
 	seed?: string,
 ): string[] {
-	if (image !== "api" || !randomCoverImage.enable || !randomCoverImage.apis) {
+	if (
+		!isRandomCoverImage(image) ||
+		!randomCoverImage.enable ||
+		!randomCoverImage.apis
+	) {
 		return [];
 	}
 

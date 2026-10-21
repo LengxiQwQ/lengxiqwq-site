@@ -96,8 +96,7 @@ function applyFilters(resetPage = true) {
 	const year = yearSelect?.value || "all";
 	filtered = entries.filter(
 		(entry) =>
-			(year === "all" ||
-				getEntryYear(entry.published) === year) &&
+			(year === "all" || getEntryYear(entry.published) === year) &&
 			(!query || entry.searchText.includes(query)),
 	);
 	if (resetPage) currentPage = 1;
@@ -114,9 +113,7 @@ function populateYears() {
 	all.textContent = allYearsText;
 	yearSelect.append(all);
 	const years = [
-		...new Set(
-			entries.map((entry) => getEntryYear(entry.published)),
-		),
+		...new Set(entries.map((entry) => getEntryYear(entry.published))),
 	];
 	for (const year of years) {
 		const option = document.createElement("option");
