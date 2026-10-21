@@ -6,15 +6,17 @@ const { randomCoverImage } = coverImageConfig;
 
 /**
  * 根据seed生成确定性hash值
+ * 结合配置中的 version 版本号，改动 version 即可给全站文章整体轮换一组全新随机图
  */
 function getSeedHash(seed?: string): number {
-	return seed
-		? Math.abs(
-				seed.split("").reduce((acc, char) => {
-					return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
-				}, 0),
-			)
-		: 0;
+	if (!seed) return 0;
+	const version = randomCoverImage.version ?? 1;
+	const saltedSeed = `v${version}_${seed}`;
+	return Math.abs(
+		saltedSeed.split("").reduce((acc, char) => {
+			return ((acc << 5) - acc + char.charCodeAt(0)) | 0;
+		}, 0),
+	);
 }
 
 /**
@@ -49,8 +51,26 @@ function isRandomCoverImage(image: string | undefined): boolean {
 }
 
 /**
+ * 为 API URL 转换为固定确定性直链（或添加 seed 参数）
+ * 彻底解决动态 302 随机图接口每次刷新都随机变图的问题
+ * - t.alcy.cc/pc: 350 ~ 550（精选二次元高颜值美少女横屏 WebP 直链）
+ * - t.alcy.cc/moe: 1 ~ 107（精选萌系 WebP 直链）
+ */
+function resolveDeterministicApiUrl(apiUrl: string, hash: number): string {
+	if (apiUrl.includes("t.alcy.cc/pc")) {
+		const index = 350 + (hash % 201);
+		return `https://t.alcy.cc/pic/pc/${index}.webp`;
+	}
+	if (apiUrl.includes("t.alcy.cc/moe")) {
+		const index = (hash % 107) + 1;
+		return `https://t.alcy.cc/pic/moe/${index}.webp`;
+	}
+	return appendSeedParam(apiUrl, hash);
+}
+
+/**
  * 处理文章封面图
- * 当image字段为"api"或文章未设置image（且全局开启随机封面）时，返回首选API的URL（带文章专属固定hash）
+ * 当image字段为"api"或文章未设置image（且全局开启随机封面）时，返回首选API的确定性直链URL
  * @param image - 文章frontmatter中的image字段值
  * @param seed - 用于生成唯一URL的种子（文章id或slug）
  */
@@ -74,9 +94,9 @@ export function processCoverImageSync(
 		return "";
 	}
 
-	// 始终使用第一个API，失败时由客户端按顺序尝试后续API
+	// 始终使用首选API对应的确定性直链，失败时由客户端按顺序尝试后续API
 	const hash = getSeedHash(seed);
-	return appendSeedParam(randomCoverImage.apis[0], hash);
+	return resolveDeterministicApiUrl(randomCoverImage.apis[0], hash);
 }
 
 /**
@@ -98,7 +118,12 @@ export function getApiUrlList(
 	}
 
 	const hash = getSeedHash(seed);
-	return randomCoverImage.apis.map((api) => appendSeedParam(api, hash));
+	return randomCoverImage.apis.map((api, index) => {
+		if (index === 0) {
+			return resolveDeterministicApiUrl(api, hash);
+		}
+		return appendSeedParam(api, hash);
+	});
 }
 
 /**

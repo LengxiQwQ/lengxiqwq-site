@@ -4,6 +4,7 @@ export type CoverImageConfig = {
 	showLoading?: boolean; // 是否显示加载动画
 	randomCoverImage: {
 		enable: boolean; // 是否启用随机图功能
+		version?: number | string; // 随机图种子版本号，改动此值可全站统一换一批随机图
 		apis: string[]; // 随机图API列表
 	};
 };

@@ -136,6 +136,7 @@ const remoteReferrerPolicy =
 			class={imageClass}
 			style={imageStyle}
 			loading={loading}
+			fetchpriority={loading === "eager" ? "high" : "auto"}
 			decoding="async"
 			data-cover-img
 			data-remote="true"
@@ -203,6 +204,10 @@ const remoteReferrerPolicy =
 		width: 100%;
 		height: 100% !important;
 		object-fit: cover;
+		image-rendering: auto;
+		image-rendering: smooth;
+		transform: translateZ(0);
+		backface-visibility: hidden;
 	}
 
 	/* 自然高度模式（详情页封面）：高度跟随图片原始宽高比，不裁上下、只裁两边 */
