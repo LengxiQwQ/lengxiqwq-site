@@ -1,7 +1,17 @@
 import { siteConfig } from "../config";
 
 export function formatDateToYYYYMMDD(date: Date): string {
-	return date.toISOString().substring(0, 10);
+	if (!date || Number.isNaN(date.getTime())) return "";
+	const timezone = siteConfig.timezone || "Asia/Shanghai";
+	const parts = new Intl.DateTimeFormat("en-CA", {
+		timeZone: timezone,
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	}).formatToParts(date);
+	const get = (type: Intl.DateTimeFormatPartTypes) =>
+		parts.find((part) => part.type === type)?.value || "";
+	return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 // 国际化日期格式化函数

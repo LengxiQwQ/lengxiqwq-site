@@ -5,7 +5,7 @@ import path from "node:path";
 import { pinyin } from "pinyin-pro";
 import { siteConfig } from "../src/config/siteConfig.ts";
 
-function getDate() {
+function getDateTime() {
 	const now = new Date();
 	const timezone = siteConfig.timezone || "Asia/Shanghai";
 	const dateParts = new Intl.DateTimeFormat("en-CA", {
@@ -13,6 +13,10 @@ function getDate() {
 		year: "numeric",
 		month: "2-digit",
 		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hourCycle: "h23",
 	})
 		.formatToParts(now)
 		.reduce((parts, part) => {
@@ -20,7 +24,7 @@ function getDate() {
 			return parts;
 		}, {});
 
-	return `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+	return `${dateParts.year}-${dateParts.month}-${dateParts.day} ${dateParts.hour}:${dateParts.minute}:${dateParts.second} +08:00`;
 }
 
 const args = process.argv.slice(2);
@@ -110,7 +114,7 @@ if (!fs.existsSync(dirPath)) {
 
 const content = `---
 title: ${args[0]}
-published: ${getDate()}
+published: ${getDateTime()}
 description: ''
 image: ''
 tags: []

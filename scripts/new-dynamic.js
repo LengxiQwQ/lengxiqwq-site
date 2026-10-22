@@ -36,7 +36,7 @@ const day = dateParts.day;
 const hours = dateParts.hour;
 const minutes = dateParts.minute;
 const seconds = dateParts.second;
-const timestamp = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+const timestamp = `${year}-${month}-${day} ${hours}:${minutes}:${seconds} +08:00`;
 const fileName = `${year}-${month}-${day}-${hours}${minutes}${seconds}.md`;
 let contentDir = process.env.CONTENT_DIR;
 if (!contentDir) {
