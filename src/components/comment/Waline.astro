@@ -15,12 +15,25 @@ const config = {
 ---
 <!-- Waline -->
 <div class="relative w-full">
-  <div id="waline"></div>
+  <div id="waline" data-path={Astro.props.path}></div>
   <link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css" />
   <script type="module" is:inline define:vars={{ config }}>
     import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
 
     let walineInstance = null;
+
+    function getCurrentPath() {
+      const el = document.getElementById("waline");
+      if (el && el.getAttribute("data-path")) {
+        return el.getAttribute("data-path");
+      }
+      const requestedPath = new URLSearchParams(window.location.search).get("path");
+      if (requestedPath) return requestedPath;
+      const pathname = window.location.pathname;
+      return pathname.endsWith("/") && pathname.length > 1
+        ? pathname.slice(0, -1)
+        : pathname;
+    }
 
     function initWaline() {
       const el = document.getElementById("waline");
@@ -33,10 +46,13 @@ const config = {
         walineInstance = null;
       }
 
-      const requestedPath = new URLSearchParams(window.location.search).get("path");
-      const effectiveConfig = requestedPath
-        ? { ...config, path: requestedPath }
-        : config;
+      el.innerHTML = "";
+
+      const currentPath = getCurrentPath();
+      const effectiveConfig = {
+        ...config,
+        path: currentPath,
+      };
 
       try {
         walineInstance = init(effectiveConfig);
@@ -45,31 +61,44 @@ const config = {
       }
     }
 
+    window.__initWaline = initWaline;
+
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", initWaline);
     } else {
       initWaline();
     }
 
-    function bindSwup() {
+    if (!window.__walineHookInstalled) {
+      window.__walineHookInstalled = true;
+
+      const triggerRefresh = () => {
+        if (document.getElementById("waline")) {
+          setTimeout(() => {
+            if (typeof window.__initWaline === "function") {
+              window.__initWaline();
+            }
+          }, 80);
+        }
+      };
+
+      document.addEventListener("firefly:page:loaded", triggerRefresh);
+      document.addEventListener("swup:content:replace", triggerRefresh);
+
       if (window.swup && window.swup.hooks) {
-        window.swup.hooks.on("content:replace", () => {
-          setTimeout(initWaline, 100);
-        });
+        window.swup.hooks.on("content:replace", triggerRefresh);
       } else {
-        document.addEventListener("swup:enable", () => {
-          if (window.swup && window.swup.hooks) {
-            window.swup.hooks.on("content:replace", () => {
-              setTimeout(initWaline, 100);
-            });
-          }
-        }, { once: true });
+        document.addEventListener(
+          "swup:enable",
+          () => {
+            if (window.swup && window.swup.hooks) {
+              window.swup.hooks.on("content:replace", triggerRefresh);
+            }
+          },
+          { once: true }
+        );
       }
     }
-    bindSwup();
-    document.addEventListener("swup:content:replace", () => {
-      setTimeout(initWaline, 100);
-    });
   </script>
 </div>
 
