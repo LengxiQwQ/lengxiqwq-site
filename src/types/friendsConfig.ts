@@ -8,6 +8,7 @@ export type FriendLink = {
 	tags?: string[]; // 标签数组
 	weight: number; // 权重，数字越大排序越靠前
 	enabled: boolean; // 是否启用
+	pinned?: boolean; // 是否置顶（始终固定在分区最上方）
 };
 
 export type FriendsPageConfig = {

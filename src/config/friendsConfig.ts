@@ -1,5 +1,5 @@
-import type { FriendLink, FriendsPageConfig } from "../types/friendsConfig";
 import healthDataRaw from "../constants/friends-health.json";
+import type { FriendLink, FriendsPageConfig } from "../types/friendsConfig";
 
 // 友链健康检测状态数据
 const healthData = healthDataRaw as Record<
@@ -60,29 +60,37 @@ export const friendsConfig: FriendLink[] = [
 	},
 ];
 
-// 获取启用的友链并进行排序
+// 获取启用的友链并进行排序（置顶项始终固定在最前，其余项支持随机或权重排序）
 export const getEnabledFriends = (): FriendLink[] => {
 	const friends = friendsConfig.filter((friend) => friend.enabled);
+	const pinned = friends.filter((f) => f.pinned || f.weight >= 99);
+	const normal = friends.filter((f) => !f.pinned && f.weight < 99);
 
 	if (friendsPageConfig.randomizeSort) {
-		return friends.sort(() => Math.random() - 0.5);
+		normal.sort(() => Math.random() - 0.5);
+	} else {
+		normal.sort((a, b) => b.weight - a.weight);
 	}
 
-	return friends.sort((a, b) => b.weight - a.weight);
+	return [...pinned.sort((a, b) => b.weight - a.weight), ...normal];
 };
 
-// 获取健康的友链（排除连续失败 ≥3 次的）
+// 获取健康的友链（排除连续失败 ≥3 次的，置顶项始终固定在最前）
 export const getHealthyFriends = (): FriendLink[] => {
 	const friends = friendsConfig.filter((friend) => friend.enabled);
 	const healthy = friends.filter(
 		(f) => !healthData[f.siteurl] || healthData[f.siteurl].failCount < 3,
 	);
+	const pinned = healthy.filter((f) => f.pinned || f.weight >= 99);
+	const normal = healthy.filter((f) => !f.pinned && f.weight < 99);
 
 	if (friendsPageConfig.randomizeSort) {
-		return healthy.sort(() => Math.random() - 0.5);
+		normal.sort(() => Math.random() - 0.5);
+	} else {
+		normal.sort((a, b) => b.weight - a.weight);
 	}
 
-	return healthy.sort((a, b) => b.weight - a.weight);
+	return [...pinned.sort((a, b) => b.weight - a.weight), ...normal];
 };
 
 // 获取被隔离的友链（连续失败 ≥3 次）
@@ -93,9 +101,7 @@ export const getQuarantinedFriends = (): (FriendLink & {
 	const friends = friendsConfig.filter((friend) => friend.enabled);
 	return friends
 		.filter(
-			(f) =>
-				healthData[f.siteurl] &&
-				healthData[f.siteurl].failCount >= 3,
+			(f) => healthData[f.siteurl] && healthData[f.siteurl].failCount >= 3,
 		)
 		.map((f) => ({
 			...f,

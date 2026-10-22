@@ -44,6 +44,56 @@ const allTags = [...new Set(items.flatMap((item) => item.tags || []))].sort();
 const title = friendsPageConfig.title || i18n(I18nKey.friends);
 const description =
 	friendsPageConfig.description || i18n(I18nKey.friendsDescription);
+
+// 分区逻辑：定义分区顺序与元信息（博客在最前，导航在下，并可平滑支持未来新增分类）
+const defaultSectionOrder = ["博客", "导航"];
+
+const sectionMeta: Record<
+	string,
+	{ title: string; icon: string; desc?: string }
+> = {
+	博客: {
+		title: "博客",
+		icon: "material-symbols:book-2-outline",
+		desc: "博主小伙伴们的自留地",
+	},
+	导航: {
+		title: "导航",
+		icon: "material-symbols:explore-outline",
+		desc: "实用在线工具与推荐站点",
+	},
+};
+
+// 提取并划分各分区
+const sectionsMap = new Map<string, typeof items>();
+for (const sec of defaultSectionOrder) {
+	sectionsMap.set(sec, []);
+}
+
+for (const item of items) {
+	// 优先匹配 tags 中的已知分类（如 博客、导航 等），否则取第一个 tag 或 博客
+	const primaryTag =
+		item.tags?.find((t) => defaultSectionOrder.includes(t)) ||
+		item.tags?.[0] ||
+		"博客";
+	if (!sectionsMap.has(primaryTag)) {
+		sectionsMap.set(primaryTag, []);
+	}
+	sectionsMap.get(primaryTag)?.push(item);
+}
+
+// 过滤出有卡片的分区并保持预设顺序
+const sections = Array.from(sectionsMap.entries())
+	.filter(([_, list]) => list.length > 0)
+	.map(([name, list]) => ({
+		name,
+		meta: sectionMeta[name] || {
+			title: name,
+			icon: "material-symbols:folder-outline",
+			desc: "",
+		},
+		items: list,
+	}));
 ---
 
 <MainGridLayout title={title} description={description}>
@@ -101,76 +151,133 @@ const description =
         )
       }
 
-      <div class="friends-grid my-4">
-        {
-          items.length === 0 && (
-            <div class="col-span-full flex flex-col items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
-              <Icon name="material-symbols:group-off-outline" class="text-4xl mb-3" />
-              <div class="text-sm">{i18n(I18nKey.friendsEmpty)}</div>
-            </div>
-          )
-        }
-        {
-          items.map((item) => (
-            <a
-              href={item.siteurl}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-tags={item.tags?.join(",")}
-              class="friend-card group flex items-center gap-3 p-2.5 rounded-xl border border-(--line-divider) hover:border-(--primary) hover:bg-(--card-bg) transition-all duration-300 hover:shadow-lg relative overflow-hidden"
-            >
-              {/* 背景装饰 - 仅悬停显示 */}
-              <div class="absolute inset-0 bg-(--primary) opacity-0 group-hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
-
-              {/* 外部链接图标 - 固定在卡片右上角 */}
-              <Icon
-                name="material-symbols:arrow-outward-rounded"
-                class="absolute top-3 right-3 text-(--primary) text-lg opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300"
-              />
-
-              {/* 头像 */}
-              <div class="relative w-16 h-16 shrink-0 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-hover:scale-105 transition-transform duration-300">
-                <img
-                  src={item.imgurl}
-                  alt={item.title}
-                  width="64"
-                  height="64"
-                  loading="lazy"
-                  decoding="async"
-                  class="w-full h-full object-cover"
-                />
-              </div>
-
-              {/* 内容 */}
-              <div class="grow min-w-0 flex flex-col justify-center gap-0.5">
-                <div class="font-bold text-base text-neutral-900 dark:text-neutral-100 group-hover:text-(--primary) transition-colors truncate pr-4">
-                  {item.title}
-                </div>
-
-                <div
-                  class="text-sm text-neutral-500 dark:text-neutral-400 line-clamp-1"
-                  title={item.desc}
-                >
-                  {item.desc}
-                </div>
-
-                {/* 标签 */}
-                <div class="flex flex-wrap gap-1 mt-1">
-                  {item.tags && item.tags.length > 0
-                    ? item.tags
-                        .slice(0, 3)
-                        .map((tag) => (
-                          <span class="text-[0.65rem] px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 transition-colors duration-300">
-                            {tag}
-                          </span>
-                        ))
-                    : null}
-                </div>
-              </div>
-            </a>
-          ))
-        }
+      <div class="friends-empty hidden flex-col items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
+        <Icon name="material-symbols:search-off-rounded" class="text-4xl mb-3" />
+        <div class="text-sm">{i18n(I18nKey.searchNoResults)}</div>
       </div>
+
+      {
+        items.length === 0 ? (
+          <div class="flex flex-col items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
+            <Icon name="material-symbols:group-off-outline" class="text-4xl mb-3" />
+            <div class="text-sm">{i18n(I18nKey.friendsEmpty)}</div>
+          </div>
+        ) : (
+          <div class="friends-sections space-y-8 my-4">
+            {sections.map((section) => (
+              <div class="friend-section" data-section={section.name}>
+                {/* 分区标题栏 */}
+                <div class="flex items-center justify-between gap-2 mb-3.5 pb-2 border-b border-(--line-divider)">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <Icon
+                      name={section.meta.icon}
+                      class="text-(--primary) text-xl shrink-0"
+                    />
+                    <div class="flex items-baseline gap-2 min-w-0">
+                      <h3 class="text-base sm:text-lg font-bold text-neutral-900 dark:text-neutral-100 shrink-0">
+                        {section.meta.title}
+                      </h3>
+                      {section.meta.desc && (
+                        <span class="text-xs text-neutral-400 dark:text-neutral-500 truncate hidden sm:inline">
+                          {section.meta.desc}
+                        </span>
+                      )}
+                    </div>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/10 text-neutral-500 dark:text-neutral-400 font-medium shrink-0">
+                      {section.items.length}
+                    </span>
+                  </div>
+
+                  {/* 博客分区专属：随机打乱按钮 */}
+                  {section.name === "博客" && section.items.length > 2 && (
+                    <button
+                      type="button"
+                      data-shuffle-trigger
+                      class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-(--line-divider) hover:border-(--primary) hover:text-(--primary) bg-transparent text-neutral-500 dark:text-neutral-400 transition-all duration-200 cursor-pointer select-none active:scale-95"
+                      title="随机重新排列博客顺序"
+                    >
+                      <Icon name="material-symbols:shuffle" class="text-sm" />
+                      <span>随机排序</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* 对应分区的卡片网格 */}
+                <div class="friends-grid my-3">
+                  {section.items.map((item) => (
+                    <a
+                      href={item.siteurl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-tags={item.tags?.join(",")}
+                      data-pinned={item.pinned || item.weight >= 99 ? "true" : "false"}
+                      class="friend-card group flex items-center gap-3 p-2.5 rounded-xl border border-(--line-divider) hover:border-(--primary) hover:bg-(--card-bg) transition-all duration-300 hover:shadow-lg relative overflow-hidden"
+                    >
+                      {/* 背景装饰 - 仅悬停显示 */}
+                      <div class="absolute inset-0 bg-(--primary) opacity-0 group-hover:opacity-5 transition-opacity duration-300 pointer-events-none" />
+
+                      {/* 外部链接图标 - 固定在卡片右上角 */}
+                      <Icon
+                        name="material-symbols:arrow-outward-rounded"
+                        class="absolute top-3 right-3 text-(--primary) text-lg opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300"
+                      />
+
+                      {/* 头像 */}
+                      <div class="relative w-16 h-16 shrink-0 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 group-hover:scale-105 transition-transform duration-300">
+                        <img
+                          src={item.imgurl}
+                          alt={item.title}
+                          width="64"
+                          height="64"
+                          loading="lazy"
+                          decoding="async"
+                          class="w-full h-full object-cover"
+                        />
+                      </div>
+
+                      {/* 内容 */}
+                      <div class="grow min-w-0 flex flex-col justify-center gap-0.5">
+                        <div class="font-bold text-base text-neutral-900 dark:text-neutral-100 group-hover:text-(--primary) transition-colors truncate pr-4 flex items-center gap-1.5">
+                          <span class="truncate">{item.title}</span>
+                          {(item.pinned || item.weight >= 99) && (
+                            <span class="shrink-0 text-[0.65rem] px-1.5 py-0.2 rounded bg-(--primary)/15 text-(--primary) font-semibold flex items-center gap-0.5">
+                              <Icon
+                                name="material-symbols:push-pin"
+                                class="text-xs -rotate-45"
+                              />
+                              置顶
+                            </span>
+                          )}
+                        </div>
+
+                        <div
+                          class="text-sm text-neutral-500 dark:text-neutral-400 line-clamp-1"
+                          title={item.desc}
+                        >
+                          {item.desc}
+                        </div>
+
+                        {/* 标签 */}
+                        <div class="flex flex-wrap gap-1 mt-1">
+                          {item.tags && item.tags.length > 0
+                            ? item.tags
+                                .slice(0, 3)
+                                .map((tag) => (
+                                  <span class="text-[0.65rem] px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-500 dark:text-neutral-400 transition-colors duration-300">
+                                    {tag}
+                                  </span>
+                                ))
+                            : null}
+                        </div>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      }
 
       {/* 搜索无结果提示 */}
       <div class="friends-empty hidden flex-col items-center justify-center py-12 text-neutral-400 dark:text-neutral-500">
@@ -248,20 +355,59 @@ const description =
       class FriendFilter extends HTMLElement {
         selectedTag = "all";
 
-        constructor() {
-          super();
-        }
-
         connectedCallback() {
           this.addEventListener("click", this.handleClick);
           const input = this.querySelector("[data-search]");
           if (input) {
             input.addEventListener("input", () => this.applyFilters());
           }
+
+          // 页面加载 / 刷新时自动随机打乱博客列表（始终保持置顶卡片在最上方）
+          this.shuffleBlogCards();
+
+          // 绑定手动随机排序按钮
+          const container = this.closest(".card-base");
+          const shuffleBtn = container?.querySelector("[data-shuffle-trigger]");
+          if (shuffleBtn) {
+            shuffleBtn.addEventListener("click", () => {
+              this.shuffleBlogCards(true);
+            });
+          }
         }
 
         disconnectedCallback() {
           this.removeEventListener("click", this.handleClick);
+        }
+
+        shuffleBlogCards(withAnimation = false) {
+          const container = this.closest(".card-base");
+          if (!container) return;
+          const blogSection = container.querySelector('[data-section="博客"]');
+          if (!blogSection) return;
+          const grid = blogSection.querySelector(".friends-grid");
+          if (!grid) return;
+
+          const cards = Array.from(grid.querySelectorAll(".friend-card"));
+          const pinned = cards.filter((c) => c.dataset.pinned === "true");
+          const normal = cards.filter((c) => c.dataset.pinned !== "true");
+
+          if (normal.length < 2) return;
+
+          // Fisher-Yates 算法随机打乱非置顶卡片
+          for (let i = normal.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [normal[i], normal[j]] = [normal[j], normal[i]];
+          }
+
+          // 置顶在前，随机在后重新排布
+          [...pinned, ...normal].forEach((card) => {
+            grid.appendChild(card);
+            if (withAnimation) {
+              card.classList.remove("animate-fade-in-up");
+              void card.offsetWidth;
+              card.classList.add("animate-fade-in-up");
+            }
+          });
         }
 
         handleClick(e) {
@@ -286,39 +432,51 @@ const description =
 
           const input = this.querySelector("[data-search]");
           const query = (input?.value || "").toLowerCase().trim();
-          const cards = container.querySelectorAll(".friend-card");
+          const sections = container.querySelectorAll(".friend-section");
 
-          let hasVisible = false;
+          let totalVisible = 0;
 
-          cards.forEach((card) => {
-            const cardEl = card;
-            const tags = (cardEl.dataset.tags || "").split(",");
-            const name = (cardEl.querySelector(".font-bold")?.textContent || "").toLowerCase();
-            const desc = (cardEl.querySelector(".line-clamp-1")?.textContent || "").toLowerCase();
+          sections.forEach((sectionEl) => {
+            const sectionName = sectionEl.dataset.section;
+            const cards = sectionEl.querySelectorAll(".friend-card");
+            let sectionVisible = 0;
 
-            const tagMatch =
+            const tagMatchSection =
               this.selectedTag === "all" ||
-              (this.selectedTag && tags.includes(this.selectedTag));
-            const searchMatch =
-              !query ||
-              name.includes(query) ||
-              desc.includes(query) ||
-              tags.some((t) => t.toLowerCase().includes(query));
+              this.selectedTag === sectionName;
 
-            if (tagMatch && searchMatch) {
-              cardEl.style.display = "";
-              cardEl.classList.add("animate-fade-in-up");
-              hasVisible = true;
-            } else {
-              cardEl.style.display = "none";
-              cardEl.classList.remove("animate-fade-in-up");
-            }
+            cards.forEach((cardEl) => {
+              const tags = (cardEl.dataset.tags || "").split(",");
+              const name = (cardEl.querySelector(".font-bold")?.textContent || "").toLowerCase();
+              const desc = (cardEl.querySelector(".line-clamp-1")?.textContent || "").toLowerCase();
+
+              const tagMatch =
+                tagMatchSection ||
+                (this.selectedTag && tags.includes(this.selectedTag));
+
+              const searchMatch =
+                !query ||
+                name.includes(query) ||
+                desc.includes(query) ||
+                tags.some((t) => t.toLowerCase().includes(query));
+
+              if (tagMatch && searchMatch) {
+                cardEl.style.display = "";
+                sectionVisible++;
+                totalVisible++;
+              } else {
+                cardEl.style.display = "none";
+              }
+            });
+
+            // 若整个分区无匹配结果，则隐藏该分区及标题
+            sectionEl.style.display = sectionVisible > 0 ? "" : "none";
           });
 
           const emptyEl = container.querySelector(".friends-empty");
           if (emptyEl) {
-            emptyEl.classList.toggle("hidden", hasVisible);
-            emptyEl.classList.toggle("flex", !hasVisible);
+            emptyEl.classList.toggle("hidden", totalVisible > 0);
+            emptyEl.classList.toggle("flex", totalVisible === 0);
           }
         }
       }
