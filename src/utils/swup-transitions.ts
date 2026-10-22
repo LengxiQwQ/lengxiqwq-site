@@ -271,9 +271,13 @@ function registerSwupHooks(): void {
 			document.documentElement.setAttribute("data-theme", expectedTheme);
 		}
 
-		// 检查当前页面是否为文章页面，如果是则触发自定义事件用于初始化评论系统
+		// 检查当前页面是否包含评论区，如果是则触发自定义事件用于初始化评论系统
 		setTimeout(() => {
-			if (document.getElementById("tcomment")) {
+			if (
+				document.getElementById("tcomment") ||
+				document.getElementById("waline") ||
+				document.getElementById("post-comments")
+			) {
 				// 触发自定义事件，通知评论系统页面已完全加载
 				const pageLoadedEvent = new CustomEvent("firefly:page:loaded", {
 					detail: {

@@ -17,47 +17,71 @@ const config = {
 <div class="relative w-full">
   <div id="waline" data-path={Astro.props.path}></div>
   <link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css" />
-  <script type="module" is:inline define:vars={{ config }}>
-    import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
-
-    let walineInstance = null;
-
+  <script is:inline src="https://unpkg.com/@waline/client@v3/dist/waline.umd.js" defer></script>
+  <script is:inline define:vars={{ config }}>
     function getCurrentPath() {
-      const el = document.getElementById("waline");
-      if (el && el.getAttribute("data-path")) {
-        return el.getAttribute("data-path");
-      }
       const requestedPath = new URLSearchParams(window.location.search).get("path");
-      if (requestedPath) return requestedPath;
-      const pathname = window.location.pathname;
-      return pathname.endsWith("/") && pathname.length > 1
-        ? pathname.slice(0, -1)
-        : pathname;
+      let path = requestedPath;
+      if (!path) {
+        const el = document.getElementById("waline");
+        if (el && el.getAttribute("data-path")) {
+          path = el.getAttribute("data-path");
+        }
+      }
+      if (!path) {
+        path = decodeURIComponent(window.location.pathname);
+      }
+      return path && path.endsWith("/") && path.length > 1
+        ? path.slice(0, -1)
+        : path || "/";
     }
 
     function initWaline() {
       const el = document.getElementById("waline");
-      if (!el) return;
+      if (!el) {
+        if (window.__walineInstance && typeof window.__walineInstance.destroy === "function") {
+          try {
+            window.__walineInstance.destroy();
+          } catch (_) {}
+          window.__walineInstance = null;
+        }
+        return;
+      }
 
-      if (walineInstance && typeof walineInstance.destroy === "function") {
+      const walineLib = window.Waline;
+      if (!walineLib || typeof walineLib.init !== "function") {
+        setTimeout(initWaline, 100);
+        return;
+      }
+
+      const currentPath = getCurrentPath();
+      if (
+        el.getAttribute("data-initialized-path") === currentPath &&
+        el.children.length > 0
+      ) {
+        return;
+      }
+
+      if (window.__walineInstance && typeof window.__walineInstance.destroy === "function") {
         try {
-          walineInstance.destroy();
+          window.__walineInstance.destroy();
         } catch (_) {}
-        walineInstance = null;
+        window.__walineInstance = null;
       }
 
       el.innerHTML = "";
+      el.setAttribute("data-initialized-path", currentPath);
 
-      const currentPath = getCurrentPath();
-      const effectiveConfig = {
+      const dynamicConfig = {
         ...config,
+        el: "#waline",
         path: currentPath,
       };
 
       try {
-        walineInstance = init(effectiveConfig);
+        window.__walineInstance = walineLib.init(dynamicConfig);
       } catch (error) {
-        console.error("[Waline] Failed to initialize:", error);
+        console.error("[Waline] Init error:", error);
       }
     }
 
@@ -69,35 +93,31 @@ const config = {
       initWaline();
     }
 
-    if (!window.__walineHookInstalled) {
-      window.__walineHookInstalled = true;
+    if (!window.__walineListenersInstalled) {
+      window.__walineListenersInstalled = true;
 
       const triggerRefresh = () => {
-        if (document.getElementById("waline")) {
-          setTimeout(() => {
-            if (typeof window.__initWaline === "function") {
-              window.__initWaline();
-            }
-          }, 80);
+        if (typeof window.__initWaline === "function") {
+          window.__initWaline();
         }
       };
 
-      document.addEventListener("firefly:page:loaded", triggerRefresh);
-      document.addEventListener("swup:content:replace", triggerRefresh);
-
       if (window.swup && window.swup.hooks) {
+        window.swup.hooks.on("page:view", triggerRefresh);
+        window.swup.hooks.on("visit:end", triggerRefresh);
         window.swup.hooks.on("content:replace", triggerRefresh);
       } else {
-        document.addEventListener(
-          "swup:enable",
-          () => {
-            if (window.swup && window.swup.hooks) {
-              window.swup.hooks.on("content:replace", triggerRefresh);
-            }
-          },
-          { once: true }
-        );
+        document.addEventListener("swup:enable", () => {
+          if (window.swup && window.swup.hooks) {
+            window.swup.hooks.on("page:view", triggerRefresh);
+            window.swup.hooks.on("visit:end", triggerRefresh);
+            window.swup.hooks.on("content:replace", triggerRefresh);
+          }
+        });
       }
+
+      document.addEventListener("firefly:page:loaded", triggerRefresh);
+      document.addEventListener("astro:page-load", triggerRefresh);
     }
   </script>
 </div>
