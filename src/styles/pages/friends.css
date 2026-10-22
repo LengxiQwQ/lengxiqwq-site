@@ -96,3 +96,19 @@
 		transform: scale(1.35);
 	}
 }
+
+/* 博客卡片排序切换时的轻量淡入微动效 */
+@keyframes friend-card-fade {
+	0% {
+		opacity: 0.35;
+		transform: scale(0.98);
+	}
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+}
+
+.friend-card-reorder {
+	animation: friend-card-fade 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

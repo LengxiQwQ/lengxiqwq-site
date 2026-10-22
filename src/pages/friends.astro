@@ -10,6 +10,7 @@ import {
 	getQuarantinedFriends,
 	siteConfig,
 } from "@/config";
+import { friendsConfig } from "@/config/friendsConfig";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
@@ -39,6 +40,11 @@ const isCommentEnabled =
 const items = getHealthyFriends();
 const quarantinedItems = getQuarantinedFriends();
 const allTags = [...new Set(items.flatMap((item) => item.tags || []))].sort();
+
+// 记录配置文件中每个友链的原始添加次序，确保时间排序时 100% 忠实还原配置文件的添加顺序
+const configOrderMap = new Map(
+	(friendsConfig || []).map((item, idx) => [item.siteurl, idx]),
+);
 
 // 页面标题和描述
 const title = friendsPageConfig.title || i18n(I18nKey.friends);
@@ -188,29 +194,37 @@ const sections = Array.from(sectionsMap.entries())
                     </span>
                   </div>
 
-                  {/* 博客分区专属：随机打乱按钮 */}
+                  {/* 博客分区专属：排序切换按钮（默认随机排序，点击切换时间排序/随机排序） */}
                   {section.name === "博客" && section.items.length > 2 && (
                     <button
                       type="button"
-                      data-shuffle-trigger
-                      class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg border border-(--line-divider) hover:border-(--primary) hover:text-(--primary) bg-transparent text-neutral-500 dark:text-neutral-400 transition-all duration-200 cursor-pointer select-none active:scale-95"
-                      title="随机重新排列博客顺序"
+                      id="blog-sort-toggle-btn"
+                      data-sort-mode="random"
+                      class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border border-(--line-divider) hover:border-(--primary) hover:text-(--primary) bg-black/5 dark:bg-white/5 text-neutral-600 dark:text-neutral-300 transition-all duration-200 cursor-pointer select-none active:scale-95"
+                      title="点击切换排序方式（随机 / 时间）"
                     >
-                      <Icon name="material-symbols:shuffle" class="text-sm" />
-                      <span>随机排序</span>
+                      <span class="sort-icon-random inline-flex items-center gap-1">
+                        <Icon name="material-symbols:shuffle" class="text-sm text-(--primary)" />
+                        <span>随机排序</span>
+                      </span>
+                      <span class="sort-icon-time hidden items-center gap-1">
+                        <Icon name="material-symbols:schedule" class="text-sm text-(--primary)" />
+                        <span>按时间排序</span>
+                      </span>
                     </button>
                   )}
                 </div>
 
                 {/* 对应分区的卡片网格 */}
                 <div class="friends-grid my-3">
-                  {section.items.map((item) => (
+                  {section.items.map((item, index) => (
                     <a
                       href={item.siteurl}
                       target="_blank"
                       rel="noopener noreferrer"
                       data-tags={item.tags?.join(",")}
                       data-pinned={item.pinned || item.weight >= 99 ? "true" : "false"}
+                      data-order={configOrderMap.get(item.siteurl) ?? index}
                       class="friend-card group flex items-center gap-3 p-2.5 rounded-xl border border-(--line-divider) hover:border-(--primary) hover:bg-(--card-bg) transition-all duration-300 hover:shadow-lg relative overflow-hidden"
                     >
                       {/* 背景装饰 - 仅悬停显示 */}
@@ -240,12 +254,8 @@ const sections = Array.from(sectionsMap.entries())
                         <div class="font-bold text-base text-neutral-900 dark:text-neutral-100 group-hover:text-(--primary) transition-colors truncate pr-4 flex items-center gap-1.5">
                           <span class="truncate">{item.title}</span>
                           {(item.pinned || item.weight >= 99) && (
-                            <span class="shrink-0 text-[0.65rem] px-1.5 py-0.2 rounded bg-(--primary)/15 text-(--primary) font-semibold flex items-center gap-0.5">
-                              <Icon
-                                name="material-symbols:push-pin"
-                                class="text-xs -rotate-45"
-                              />
-                              置顶
+                            <span class="shrink-0 inline-flex items-center h-5 px-2 rounded-md bg-(--primary)/15 text-(--primary) text-[0.65rem] font-bold tracking-wider select-none leading-none">
+                              站长
                             </span>
                           )}
                         </div>
@@ -350,7 +360,8 @@ const sections = Array.from(sectionsMap.entries())
     </div>
   )}
 
-  <script slot="head" is:inline>
+  <script is:inline>
+    // 友链分类与搜索过滤组件
     if (!customElements.get("friend-filter")) {
       class FriendFilter extends HTMLElement {
         selectedTag = "all";
@@ -361,53 +372,10 @@ const sections = Array.from(sectionsMap.entries())
           if (input) {
             input.addEventListener("input", () => this.applyFilters());
           }
-
-          // 页面加载 / 刷新时自动随机打乱博客列表（始终保持置顶卡片在最上方）
-          this.shuffleBlogCards();
-
-          // 绑定手动随机排序按钮
-          const container = this.closest(".card-base");
-          const shuffleBtn = container?.querySelector("[data-shuffle-trigger]");
-          if (shuffleBtn) {
-            shuffleBtn.addEventListener("click", () => {
-              this.shuffleBlogCards(true);
-            });
-          }
         }
 
         disconnectedCallback() {
           this.removeEventListener("click", this.handleClick);
-        }
-
-        shuffleBlogCards(withAnimation = false) {
-          const container = this.closest(".card-base");
-          if (!container) return;
-          const blogSection = container.querySelector('[data-section="博客"]');
-          if (!blogSection) return;
-          const grid = blogSection.querySelector(".friends-grid");
-          if (!grid) return;
-
-          const cards = Array.from(grid.querySelectorAll(".friend-card"));
-          const pinned = cards.filter((c) => c.dataset.pinned === "true");
-          const normal = cards.filter((c) => c.dataset.pinned !== "true");
-
-          if (normal.length < 2) return;
-
-          // Fisher-Yates 算法随机打乱非置顶卡片
-          for (let i = normal.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [normal[i], normal[j]] = [normal[j], normal[i]];
-          }
-
-          // 置顶在前，随机在后重新排布
-          [...pinned, ...normal].forEach((card) => {
-            grid.appendChild(card);
-            if (withAnimation) {
-              card.classList.remove("animate-fade-in-up");
-              void card.offsetWidth;
-              card.classList.add("animate-fade-in-up");
-            }
-          });
         }
 
         handleClick(e) {
@@ -482,6 +450,99 @@ const sections = Array.from(sectionsMap.entries())
       }
       customElements.define("friend-filter", FriendFilter);
     }
+
+    // 博客排序控制（支持随机排序与按时间排序单按钮无缝切换）
+    function initBlogSorting() {
+      const blogSection = document.querySelector('.friend-section[data-section="博客"]');
+      if (!blogSection) return;
+      const grid = blogSection.querySelector(".friends-grid");
+      if (!grid) return;
+
+      const sortBtn = document.getElementById("blog-sort-toggle-btn");
+
+      function applySort(mode, withAnimation = false) {
+        const cards = Array.from(grid.querySelectorAll(".friend-card"));
+        const pinned = cards.filter((c) => c.dataset.pinned === "true");
+        const normal = cards.filter((c) => c.dataset.pinned !== "true");
+
+        if (mode === "time") {
+          // 按初始时间/添加顺序排序（data-order）
+          normal.sort((a, b) => {
+            const orderA = parseInt(a.dataset.order || "0", 10);
+            const orderB = parseInt(b.dataset.order || "0", 10);
+            return orderA - orderB;
+          });
+        } else {
+          // 随机排序（Fisher-Yates 随机打乱普通卡片）
+          for (let i = normal.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [normal[i], normal[j]] = [normal[j], normal[i]];
+          }
+        }
+
+        // 站长卡片始终固定在最前，其余卡片排在其后
+        [...pinned, ...normal].forEach((card) => {
+          grid.appendChild(card);
+          if (withAnimation) {
+            card.classList.remove("friend-card-reorder");
+            void card.offsetWidth;
+            card.classList.add("friend-card-reorder");
+          }
+        });
+
+        // 同步按钮状态与图标显示
+        if (sortBtn) {
+          sortBtn.setAttribute("data-sort-mode", mode);
+          const randomIcon = sortBtn.querySelector(".sort-icon-random");
+          const timeIcon = sortBtn.querySelector(".sort-icon-time");
+          if (mode === "time") {
+            if (randomIcon) {
+              randomIcon.classList.remove("inline-flex");
+              randomIcon.classList.add("hidden");
+            }
+            if (timeIcon) {
+              timeIcon.classList.remove("hidden");
+              timeIcon.classList.add("inline-flex");
+            }
+          } else {
+            if (timeIcon) {
+              timeIcon.classList.remove("inline-flex");
+              timeIcon.classList.add("hidden");
+            }
+            if (randomIcon) {
+              randomIcon.classList.remove("hidden");
+              randomIcon.classList.add("inline-flex");
+            }
+          }
+        }
+      }
+
+      // 绑定按钮切换事件
+      if (sortBtn && !sortBtn._sortInitBound) {
+        sortBtn._sortInitBound = true;
+        sortBtn.addEventListener("click", () => {
+          const currentMode = sortBtn.getAttribute("data-sort-mode") || "random";
+          const nextMode = currentMode === "random" ? "time" : "random";
+          applySort(nextMode, true);
+        });
+      }
+
+      // 默认执行一次随机排序（保证刷新/重新进入即为随机模式）
+      applySort("random", false);
+    }
+
+    // 页面初次加载、Astro 页面切换、Swup 路由切换时均可靠初始化
+    function setupBlogSorting() {
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initBlogSorting, { once: true });
+      } else {
+        initBlogSorting();
+      }
+    }
+
+    setupBlogSorting();
+    document.addEventListener("astro:page-load", initBlogSorting);
+    document.addEventListener("swup:content:replace", initBlogSorting);
   </script>
 
 </MainGridLayout>
