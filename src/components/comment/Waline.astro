@@ -10,7 +10,6 @@ const config = {
 	el: "#waline",
 	path: Astro.props.path,
 	dark: "html.dark",
-	wordLimit: ["2", "300"],
 	...(commentConfig.waline?.visitorCount ? { pageview: true } : {}),
 };
 ---
@@ -20,21 +19,69 @@ const config = {
   <link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css" />
   <script type="module" is:inline define:vars={{ config }}>
     import { init } from 'https://unpkg.com/@waline/client@v3/dist/waline.js';
-    const requestedPath = new URLSearchParams(window.location.search).get("path");
-    const effectiveConfig = requestedPath
-      ? { ...config, path: requestedPath }
-      : config;
-    try {
-      init(effectiveConfig);
-    } catch (error) {
-      console.error("[Waline] Failed to initialize:", error);
+
+    let walineInstance = null;
+
+    function initWaline() {
+      const el = document.getElementById("waline");
+      if (!el) return;
+
+      if (walineInstance && typeof walineInstance.destroy === "function") {
+        try {
+          walineInstance.destroy();
+        } catch (_) {}
+        walineInstance = null;
+      }
+
+      const requestedPath = new URLSearchParams(window.location.search).get("path");
+      const effectiveConfig = requestedPath
+        ? { ...config, path: requestedPath }
+        : config;
+
+      try {
+        walineInstance = init(effectiveConfig);
+      } catch (error) {
+        console.error("[Waline] Failed to initialize:", error);
+      }
     }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initWaline);
+    } else {
+      initWaline();
+    }
+
+    function bindSwup() {
+      if (window.swup && window.swup.hooks) {
+        window.swup.hooks.on("content:replace", () => {
+          setTimeout(initWaline, 100);
+        });
+      } else {
+        document.addEventListener("swup:enable", () => {
+          if (window.swup && window.swup.hooks) {
+            window.swup.hooks.on("content:replace", () => {
+              setTimeout(initWaline, 100);
+            });
+          }
+        }, { once: true });
+      }
+    }
+    bindSwup();
+    document.addEventListener("swup:content:replace", () => {
+      setTimeout(initWaline, 100);
+    });
   </script>
 </div>
 
 <style is:global>
-  /* 各分类表情数量不同，切换时面板布局会跟着变，下面逐项消除 */
+  #waline {
+    --waline-theme-color: var(--primary);
+    --waline-active-color: var(--primary);
+    --waline-border-color: var(--line-divider);
+    --waline-avatar-radius: 50%;
+  }
 
+  /* 各分类表情数量不同，切换时面板布局会跟着变，下面逐项消除 */
   .wl-tab-wrapper {
     /* 内容溢出时出现的滚动条会挤掉约 6px 宽度，网格随之重排 */
     scrollbar-gutter: stable;
