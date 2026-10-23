@@ -90,27 +90,76 @@ const config = {
       const hash = window.location.hash;
       if (!hash) return;
 
+      const commentCard = document.getElementById("post-comments") || document.getElementById("waline");
+
       if (hash === "#post-comments" || hash === "#waline") {
-        const target = document.getElementById("post-comments") || document.getElementById("waline");
-        if (target) {
+        if (commentCard) {
           setTimeout(() => {
-            target.scrollIntoView({ behavior: "smooth", block: "start" });
+            commentCard.scrollIntoView({ behavior: "smooth", block: "start" });
           }, 200);
         }
         return;
       }
 
-      // 若哈希指向具体的评论 ID
+      // 若哈希指向具体的评论 ID（如 #59），先将页面引流至评论区，避免长时间停留在页面顶部
+      if (commentCard) {
+        commentCard.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
       const targetId = decodeURIComponent(hash.slice(1));
+
+      const highlightAndScroll = (el) => {
+        el.classList.add("waline-highlight-target");
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => {
+          el.classList.remove("waline-highlight-target");
+        }, 3500);
+      };
+
+      const existingEl = document.getElementById(targetId);
+      if (existingEl) {
+        setTimeout(() => highlightAndScroll(existingEl), 200);
+        return;
+      }
+
+      // Waline 评论卡片为异步加载渲染，使用 MutationObserver + 轮询兜底
+      let timer = null;
+      let observer = null;
+
+      const cleanup = () => {
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+        if (observer) {
+          observer.disconnect();
+          observer = null;
+        }
+      };
+
+      const checkTarget = () => {
+        const el = document.getElementById(targetId);
+        if (el) {
+          cleanup();
+          setTimeout(() => highlightAndScroll(el), 150);
+          return true;
+        }
+        return false;
+      };
+
+      const walineEl = document.getElementById("waline");
+      if (walineEl && window.MutationObserver) {
+        observer = new MutationObserver(() => {
+          checkTarget();
+        });
+        observer.observe(walineEl, { childList: true, subtree: true });
+      }
+
       let attempts = 0;
-      const interval = setInterval(() => {
+      timer = setInterval(() => {
         attempts++;
-        const targetEl = document.getElementById(targetId);
-        if (targetEl) {
-          clearInterval(interval);
-          targetEl.scrollIntoView({ behavior: "smooth", block: "center" });
-        } else if (attempts > 30) {
-          clearInterval(interval);
+        if (checkTarget() || attempts > 80) {
+          cleanup();
         }
       }, 100);
     }
@@ -174,5 +223,24 @@ const config = {
   .wl-tabs .wl-tab:not(.active) {
     border: solid transparent;
     border-width: 0 1px 1px;
+  }
+
+  /* 目标评论精准高亮动画 */
+  .wl-card-item.waline-highlight-target {
+    border-radius: 12px;
+    outline: 2px solid var(--primary);
+    outline-offset: 4px;
+    background: color-mix(in srgb, var(--primary) 10%, transparent) !important;
+    transition: all 0.5s ease;
+    animation: waline-target-pulse 2s ease-in-out 2;
+  }
+
+  @keyframes waline-target-pulse {
+    0%, 100% {
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 40%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 10px transparent;
+    }
   }
 </style>
