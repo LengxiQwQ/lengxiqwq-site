@@ -13,7 +13,7 @@ body:
         - **站点链接**：https://lengxiqwq.com
         - **头像链接**：https://lengxiqwq.com/avatar.jpg
         - **RSS 订阅（可选）**：https://lengxiqwq.com/rss.xml
-        - **网页截图（可选）**：https://lengxiqwq.com/screenshot.png
+        - **网页截图（可选）**：https://lengxiqwq.com/screenshot.jpg
 
         提交后系统将通过 GitHub Actions 自动爬取校验反向链接。审核通过后将自动加入配置并触发部署上线！
   - type: input
