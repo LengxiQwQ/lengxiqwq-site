@@ -48,6 +48,11 @@ package/
 .claude
 .mimocode
 
+# temp covers
+temp-covers/
+.temp-*/
+.wrangler/
+
 # dual-repo content working copy
 .content-src/
 .env.local

@@ -32,7 +32,9 @@
     "lqips": "npx tsx scripts/generate-lqips.ts",
     "github-cards": "npx tsx scripts/generate-github-card-data.ts",
     "content:sync": "npx tsx scripts/sync-content.ts",
-    "content:reset": "npx tsx scripts/reset-content.ts"
+    "content:reset": "npx tsx scripts/reset-content.ts",
+    "upload:covers": "tsx scripts/upload-covers.ts",
+    "upload:img": "tsx scripts/upload-post-image.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",
