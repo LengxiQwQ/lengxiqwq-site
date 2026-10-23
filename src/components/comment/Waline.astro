@@ -316,6 +316,14 @@ const config = {
     animation: waline-aurora-glow 2.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
+  /* 针对回复评论（嵌套在 .wl-quote 内的 .wl-card-item）：
+     Waline 官方对嵌套评论设置了 padding-inline-end: 0，导致右侧比普通评论少了 0.5em。
+     在此将高亮伪元素的右侧外扩 0.5em，使回复评论的右侧边距与普通根评论完全统一对称 */
+  .wl-quote .wl-card-item.waline-highlight-target::before,
+  .wl-card-item .wl-card-item.waline-highlight-target::before {
+    right: calc(-0.5em + 2px);
+  }
+
   @keyframes waline-aurora-glow {
     0% {
       background-color: transparent;
