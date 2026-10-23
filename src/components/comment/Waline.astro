@@ -104,14 +104,73 @@ const config = {
       const targetId = decodeURIComponent(hash.slice(1));
       let hasFoundTarget = false;
 
+      const runAfterScrollFinish = (targetEl, callback) => {
+        let hasTriggered = false;
+        let scrollDebounceTimer = null;
+        let maxTimeoutTimer = null;
+
+        const execute = () => {
+          if (hasTriggered) return;
+          hasTriggered = true;
+          cleanup();
+          // 滚动停止后给 100ms 视线聚焦停顿，随后精准绽放特效
+          setTimeout(callback, 100);
+        };
+
+        const cleanup = () => {
+          window.removeEventListener("scrollend", onScrollEnd);
+          window.removeEventListener("scroll", onScrollDebounce);
+          if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
+          if (maxTimeoutTimer) clearTimeout(maxTimeoutTimer);
+        };
+
+        const onScrollEnd = () => execute();
+
+        const onScrollDebounce = () => {
+          if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
+          // 滚动事件超过 120ms 未触发，判定平滑滚动完成
+          scrollDebounceTimer = setTimeout(execute, 120);
+        };
+
+        if ("onscrollend" in window) {
+          window.addEventListener("scrollend", onScrollEnd, { once: true });
+        }
+        window.addEventListener("scroll", onScrollDebounce, { passive: true });
+
+        // 最大安全超时（即便极端情况下无滚动或事件被吞，800ms 内也必出）
+        maxTimeoutTimer = setTimeout(execute, 800);
+      };
+
       const highlightAndScroll = (el) => {
         if (!el || hasFoundTarget) return;
         hasFoundTarget = true;
-        el.classList.add("waline-highlight-target");
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        setTimeout(() => {
-          el.classList.remove("waline-highlight-target");
-        }, 2500);
+
+        // 若评论存在子回复区域，精确计算底部避让距离，确保仅高亮本条评论自身
+        const quoteEl = el.querySelector(":scope > .wl-card > .wl-quote");
+        if (quoteEl) {
+          el.style.setProperty("--waline-highlight-bottom", `${quoteEl.offsetHeight + 14}px`);
+        } else {
+          el.style.setProperty("--waline-highlight-bottom", "calc(0.5em + 4px)");
+        }
+
+        const rect = el.getBoundingClientRect();
+        const isInViewport =
+          rect.top >= 0 &&
+          rect.bottom <= (window.innerHeight || document.documentElement.clientHeight);
+
+        const startEffect = () => {
+          el.classList.add("waline-highlight-target");
+          setTimeout(() => {
+            el.classList.remove("waline-highlight-target");
+          }, 2500);
+        };
+
+        if (isInViewport) {
+          setTimeout(startEffect, 120);
+        } else {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          runAfterScrollFinish(el, startEffect);
+        }
       };
 
       const existingEl = document.getElementById(targetId);
@@ -238,9 +297,22 @@ const config = {
     border-width: 0 1px 1px;
   }
 
-  /* 目标评论极光幻境高亮与直接渐隐（纯主题色） */
+  /* 目标评论极光幻境高亮与直接渐隐（纯主题色、单层一体化、精确避让分割线与下层评论） */
   .wl-card-item.waline-highlight-target {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .wl-card-item.waline-highlight-target::before {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    right: 2px;
+    bottom: var(--waline-highlight-bottom, calc(0.5em + 4px));
     border-radius: 14px;
+    pointer-events: none;
+    z-index: -1;
     animation: waline-aurora-glow 2.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
@@ -256,15 +328,15 @@ const config = {
       background-color: color-mix(in srgb, var(--primary) 12%, transparent);
       box-shadow:
         0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent),
-        0 8px 30px -4px color-mix(in srgb, var(--primary) 35%, transparent),
-        0 0 36px color-mix(in srgb, var(--primary) 22%, transparent);
+        0 2px 20px -2px color-mix(in srgb, var(--primary) 35%, transparent),
+        0 0 30px color-mix(in srgb, var(--primary) 20%, transparent);
     }
     38% {
       background-color: color-mix(in srgb, var(--primary) 12%, transparent);
       box-shadow:
         0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent),
-        0 8px 30px -4px color-mix(in srgb, var(--primary) 35%, transparent),
-        0 0 36px color-mix(in srgb, var(--primary) 22%, transparent);
+        0 2px 20px -2px color-mix(in srgb, var(--primary) 35%, transparent),
+        0 0 30px color-mix(in srgb, var(--primary) 20%, transparent);
     }
     100% {
       background-color: transparent;
