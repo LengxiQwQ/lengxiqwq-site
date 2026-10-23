@@ -80,9 +80,39 @@ const config = {
 
       try {
         window.__walineInstance = walineLib.init(dynamicConfig);
+        scrollToHashTarget();
       } catch (error) {
         console.error("[Waline] Init error:", error);
       }
+    }
+
+    function scrollToHashTarget() {
+      const hash = window.location.hash;
+      if (!hash) return;
+
+      if (hash === "#post-comments" || hash === "#waline") {
+        const target = document.getElementById("post-comments") || document.getElementById("waline");
+        if (target) {
+          setTimeout(() => {
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 200);
+        }
+        return;
+      }
+
+      // 若哈希指向具体的评论 ID
+      const targetId = decodeURIComponent(hash.slice(1));
+      let attempts = 0;
+      const interval = setInterval(() => {
+        attempts++;
+        const targetEl = document.getElementById(targetId);
+        if (targetEl) {
+          clearInterval(interval);
+          targetEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        } else if (attempts > 30) {
+          clearInterval(interval);
+        }
+      }, 100);
     }
 
     window.__initWaline = initWaline;
