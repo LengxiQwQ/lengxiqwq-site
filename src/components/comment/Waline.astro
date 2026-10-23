@@ -111,7 +111,7 @@ const config = {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
         setTimeout(() => {
           el.classList.remove("waline-highlight-target");
-        }, 3500);
+        }, 2000);
       };
 
       const existingEl = document.getElementById(targetId);
@@ -218,6 +218,7 @@ const config = {
 
   .wl-card-item {
     scroll-margin-top: 6rem;
+    transition: background-color 0.8s ease, box-shadow 0.8s ease;
   }
 
   /* 各分类表情数量不同，切换时面板布局会跟着变，下面逐项消除 */
@@ -236,22 +237,30 @@ const config = {
     border-width: 0 1px 1px;
   }
 
-  /* 目标评论精准高亮动画 */
+  /* 目标评论优雅高亮动画 */
   .wl-card-item.waline-highlight-target {
     border-radius: 12px;
-    outline: 2px solid var(--primary);
-    outline-offset: 4px;
-    background: color-mix(in srgb, var(--primary) 10%, transparent) !important;
-    transition: all 0.5s ease;
-    animation: waline-target-pulse 2s ease-in-out 2;
+    background: color-mix(in srgb, var(--primary) 8%, transparent) !important;
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--primary) 35%, transparent),
+                0 4px 18px color-mix(in srgb, var(--primary) 12%, transparent);
+    animation: waline-gentle-glow 1.8s ease-in-out 1;
   }
 
-  @keyframes waline-target-pulse {
-    0%, 100% {
-      box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 40%, transparent);
+  @keyframes waline-gentle-glow {
+    0% {
+      background: color-mix(in srgb, var(--primary) 14%, transparent);
+      box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--primary) 50%, transparent),
+                  0 4px 22px color-mix(in srgb, var(--primary) 20%, transparent);
     }
     50% {
-      box-shadow: 0 0 0 10px transparent;
+      background: color-mix(in srgb, var(--primary) 6%, transparent);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 25%, transparent),
+                  0 2px 10px color-mix(in srgb, var(--primary) 8%, transparent);
+    }
+    100% {
+      background: color-mix(in srgb, var(--primary) 8%, transparent);
+      box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--primary) 35%, transparent),
+                  0 4px 18px color-mix(in srgb, var(--primary) 12%, transparent);
     }
   }
 </style>
