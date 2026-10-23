@@ -111,7 +111,7 @@ const config = {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
         setTimeout(() => {
           el.classList.remove("waline-highlight-target");
-        }, 2600);
+        }, 2500);
       };
 
       const existingEl = document.getElementById(targetId);
@@ -238,27 +238,40 @@ const config = {
     border-width: 0 1px 1px;
   }
 
-  /* 目标评论柔和光晕与优雅渐隐 */
+  /* 目标评论极光幻境高亮与直接渐隐（纯主题色） */
   .wl-card-item.waline-highlight-target {
-    animation: waline-elegant-focus 2.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    border-radius: 14px;
+    animation: waline-aurora-glow 2.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
-  @keyframes waline-elegant-focus {
+  @keyframes waline-aurora-glow {
     0% {
       background-color: transparent;
-      box-shadow: 0 0 0 0 transparent;
+      box-shadow:
+        0 0 0 0 transparent,
+        0 0 0 0 transparent,
+        0 0 0 0 transparent;
     }
     18% {
-      background-color: color-mix(in srgb, var(--primary) 9%, transparent);
-      box-shadow: 0 4px 24px -2px color-mix(in srgb, var(--primary) 22%, transparent);
+      background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+      box-shadow:
+        0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent),
+        0 8px 30px -4px color-mix(in srgb, var(--primary) 35%, transparent),
+        0 0 36px color-mix(in srgb, var(--primary) 22%, transparent);
     }
-    40% {
-      background-color: color-mix(in srgb, var(--primary) 7%, transparent);
-      box-shadow: 0 3px 18px -2px color-mix(in srgb, var(--primary) 16%, transparent);
+    38% {
+      background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+      box-shadow:
+        0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent),
+        0 8px 30px -4px color-mix(in srgb, var(--primary) 35%, transparent),
+        0 0 36px color-mix(in srgb, var(--primary) 22%, transparent);
     }
     100% {
       background-color: transparent;
-      box-shadow: 0 0 0 0 transparent;
+      box-shadow:
+        0 0 0 0 transparent,
+        0 0 0 0 transparent,
+        0 0 0 0 transparent;
     }
   }
 </style>
