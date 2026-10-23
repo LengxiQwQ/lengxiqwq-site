@@ -96,19 +96,17 @@ const config = {
         if (commentCard) {
           setTimeout(() => {
             commentCard.scrollIntoView({ behavior: "smooth", block: "start" });
-          }, 200);
+          }, 150);
         }
         return;
       }
 
-      // 若哈希指向具体的评论 ID（如 #59），先将页面引流至评论区，避免长时间停留在页面顶部
-      if (commentCard) {
-        commentCard.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
-
       const targetId = decodeURIComponent(hash.slice(1));
+      let hasFoundTarget = false;
 
       const highlightAndScroll = (el) => {
+        if (!el || hasFoundTarget) return;
+        hasFoundTarget = true;
         el.classList.add("waline-highlight-target");
         el.scrollIntoView({ behavior: "smooth", block: "center" });
         setTimeout(() => {
@@ -118,9 +116,16 @@ const config = {
 
       const existingEl = document.getElementById(targetId);
       if (existingEl) {
-        setTimeout(() => highlightAndScroll(existingEl), 200);
+        setTimeout(() => highlightAndScroll(existingEl), 150);
         return;
       }
+
+      // 若 400ms 后评论尚未加载完毕，先引流页面至评论区卡片
+      const fallbackTimer = setTimeout(() => {
+        if (!hasFoundTarget && commentCard) {
+          commentCard.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 400);
 
       // Waline 评论卡片为异步加载渲染，使用 MutationObserver + 轮询兜底
       let timer = null;
@@ -135,13 +140,14 @@ const config = {
           observer.disconnect();
           observer = null;
         }
+        clearTimeout(fallbackTimer);
       };
 
       const checkTarget = () => {
         const el = document.getElementById(targetId);
         if (el) {
           cleanup();
-          setTimeout(() => highlightAndScroll(el), 150);
+          setTimeout(() => highlightAndScroll(el), 100);
           return true;
         }
         return false;
@@ -197,6 +203,7 @@ const config = {
 
       document.addEventListener("firefly:page:loaded", triggerRefresh);
       document.addEventListener("astro:page-load", triggerRefresh);
+      window.addEventListener("hashchange", scrollToHashTarget);
     }
   </script>
 </div>
@@ -207,6 +214,10 @@ const config = {
     --waline-active-color: var(--primary);
     --waline-border-color: var(--line-divider);
     --waline-avatar-radius: 50%;
+  }
+
+  .wl-card-item {
+    scroll-margin-top: 6rem;
   }
 
   /* 各分类表情数量不同，切换时面板布局会跟着变，下面逐项消除 */
