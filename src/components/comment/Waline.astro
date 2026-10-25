@@ -569,9 +569,9 @@ const config = {
     --waline-avatar-radius: 50%;
   }
 
-  /* 评论区图片精美卡片化与 Fancybox 灯箱交互效果 */
+  /* 评论区图片样式与 Fancybox 灯箱支持（保持静态自然，无悬停缩放提示） */
   #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji) {
-    cursor: zoom-in;
+    cursor: pointer;
     max-width: 100%;
     height: auto;
     max-height: 480px;
@@ -579,13 +579,7 @@ const config = {
     margin: 0.6rem 0;
     border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.08));
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
-    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s ease;
     display: block;
-  }
-
-  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):hover {
-    transform: scale(1.01);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   }
 
   .wl-card-item {
