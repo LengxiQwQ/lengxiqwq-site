@@ -221,16 +221,34 @@ const config = {
 
           // 统一输出高清晰度、高兼容性的 JPG 格式（质量 0.88），并完整注入 EXIF 拍摄参数
           canvas.toBlob(
-            (blob) => {
+            async (blob) => {
               if (blob) {
                 const baseName = (file.name || "image").replace(/\.[^/.]+$/, "");
                 let finalBlob = blob;
-                // 若原图含有 EXIF 拍摄元数据，回填到转码压缩后的 JPG 数据头部
-                if (exifSegments && blob.size >= 2) {
-                  finalBlob = new Blob(
-                    [blob.slice(0, 2), exifSegments, blob.slice(2)],
-                    { type: "image/jpeg" }
-                  );
+                // 若原图含有 EXIF 拍摄元数据，规范回填到转码压缩后的 JPG 数据头部
+                if (exifSegments && blob.size >= 6) {
+                  try {
+                    const headBuf = await blob.slice(0, 8).arrayBuffer();
+                    const headView = new DataView(headBuf);
+                    let insertOffset = 2; // 默认紧跟在 SOI (0xFFD8) 之后
+                    // 若存在 APP0 (JFIF: 0xFFE0)，置于 APP0 之后，达成标准最佳兼容性
+                    if (
+                      headView.byteLength >= 6 &&
+                      headView.getUint16(2) === 0xffe0
+                    ) {
+                      insertOffset = 4 + headView.getUint16(4);
+                    }
+                    if (insertOffset <= blob.size) {
+                      finalBlob = new Blob(
+                        [
+                          blob.slice(0, insertOffset),
+                          exifSegments,
+                          blob.slice(insertOffset),
+                        ],
+                        { type: "image/jpeg" }
+                      );
+                    }
+                  } catch (_) {}
                 }
                 const newFile = new File([finalBlob], `${baseName}.jpg`, {
                   type: "image/jpeg",
