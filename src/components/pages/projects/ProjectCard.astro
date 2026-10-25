@@ -2,9 +2,11 @@
 import { Icon } from "astro-icon/components";
 import CoverImage from "@/components/common/CoverImage.astro";
 import { siteConfig } from "@/config";
+import githubCardData from "@/constants/github-card-data.json";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import { formatDateToYYYYMMDD } from "@/utils/date-utils";
+import { formatCount, parseGithubRepoFromUrl } from "@/utils/github-card-utils";
 import { getProjectStatusMeta, resolveLinkIcon } from "@/utils/projects-utils";
 import { url } from "@/utils/url-utils";
 
@@ -49,6 +51,22 @@ const gridCoverFullWidth =
 const coverClass = gridCoverFullWidth
 	? "project-card-image group relative block aspect-2/1 overflow-hidden"
 	: "project-card-image group relative block aspect-2/1 overflow-hidden mx-4 mt-4 rounded-xl";
+
+const enhancedLinks = link.map((r) => {
+	const repo = parseGithubRepoFromUrl(r.value);
+	const cachedRepo = repo
+		? (githubCardData as Record<string, { stars?: number }>)[repo.toLowerCase()]
+		: null;
+	const starsText =
+		typeof cachedRepo?.stars === "number" ? formatCount(cachedRepo.stars) : "—";
+
+	return {
+		...r,
+		resolvedIcon: resolveLinkIcon(r.icon, r.label),
+		githubRepo: repo,
+		starsText,
+	};
+});
 ---
 
 <div
@@ -140,34 +158,70 @@ const coverClass = gridCoverFullWidth
 
     <!-- 底部：link 按钮 + 查看详情（右下角，底对齐不随描述高度） -->
     <div class="mt-auto pt-4 flex flex-wrap items-center gap-2">
-        {link.map((r) => {
-          const resolvedIcon = resolveLinkIcon(r.icon, r.label);
+      {enhancedLinks.map((r) => {
+        if (r.githubRepo) {
           return (
             <a
               href={r.value}
               target="_blank"
               rel="noopener noreferrer"
-              class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg bg-(--primary)/10 text-(--primary) hover:bg-(--primary)/20 transition-colors"
+              data-github-star-repo={r.githubRepo.toLowerCase()}
+              aria-label={`${r.label} (${r.githubRepo}) - ${r.starsText} stars`}
+              class="inline-flex items-center text-xs font-medium rounded-lg border border-(--primary)/30 hover:border-(--primary)/60 bg-(--primary)/8 hover:bg-(--primary)/15 text-(--primary) transition-all overflow-hidden group/star-btn"
             >
-              {resolvedIcon.kind === "icon" && (
-                <Icon name={resolvedIcon.value} class="text-sm" />
-              )}
-              {resolvedIcon.kind === "image" && (
-                <img
-                  src={resolvedIcon.value}
-                  alt=""
-                  class="w-3.5 h-3.5 object-contain"
-                  loading="lazy"
-                  decoding="async"
-                />
-              )}
-              {resolvedIcon.kind === "letter" && (
-                <span class="text-sm font-bold">{resolvedIcon.value}</span>
-              )}
-              {r.label}
+              <span class="inline-flex items-center gap-1.5 pl-2.5 pr-2 py-1">
+                {r.resolvedIcon.kind === "icon" && (
+                  <Icon name={r.resolvedIcon.value} class="text-sm" />
+                )}
+                {r.resolvedIcon.kind === "image" && (
+                  <img
+                    src={r.resolvedIcon.value}
+                    alt=""
+                    class="w-3.5 h-3.5 object-contain"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                )}
+                {r.resolvedIcon.kind === "letter" && (
+                  <span class="text-sm font-bold">{r.resolvedIcon.value}</span>
+                )}
+                <span>{r.label}</span>
+              </span>
+              <span class="self-stretch w-px bg-(--primary)/25" aria-hidden="true" />
+              <span class="inline-flex items-center gap-1 px-2 py-1 bg-(--primary)/10 group-hover/star-btn:bg-(--primary)/20 transition-colors">
+                <Icon name="material-symbols:star-rounded" class="text-sm" />
+                <span class="github-star-count font-semibold">{r.starsText}</span>
+              </span>
             </a>
           );
-        })}
+        }
+
+        return (
+          <a
+            href={r.value}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border border-(--primary)/30 hover:border-(--primary)/60 bg-(--primary)/8 hover:bg-(--primary)/15 text-(--primary) transition-all"
+          >
+            {r.resolvedIcon.kind === "icon" && (
+              <Icon name={r.resolvedIcon.value} class="text-sm" />
+            )}
+            {r.resolvedIcon.kind === "image" && (
+              <img
+                src={r.resolvedIcon.value}
+                alt=""
+                class="w-3.5 h-3.5 object-contain"
+                loading="lazy"
+                decoding="async"
+              />
+            )}
+            {r.resolvedIcon.kind === "letter" && (
+              <span class="text-sm font-bold">{r.resolvedIcon.value}</span>
+            )}
+            <span>{r.label}</span>
+          </a>
+        );
+      })}
         <a
           href={detailUrl}
           class="inline-flex items-center gap-1 text-xs font-medium text-neutral-500 dark:text-neutral-400 hover:text-(--primary) transition-colors ml-auto"

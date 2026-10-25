@@ -1,8 +1,8 @@
 ---
-// GitHub 卡片客户端管理器
+// GitHub 卡片与 Star 徽章客户端管理器
 //
 // 构建期只在 github-card-data.json 里缓存「静态兜底信息」（description / language /
-// avatarUrl / license），forks / stars 由浏览器运行时向 api.github.com 请求一次，
+// avatarUrl / license / stars / forks），forks / stars 由浏览器运行时向 api.github.com 请求一次，
 // 写入 localStorage 缓存（24h 过期后重新请求）；请求失败则回退到构建期的静态信息。
 // 复用 markdown-extend.styl 里已存在的 .fetch-waiting / .fetch-error / pulsate 状态样式。
 ---
@@ -72,7 +72,7 @@
     return (await response.json()) as GithubApiRepo;
   }
 
-  function applyData(card: Element, data: GithubApiRepo): void {
+  function applyDataToCard(card: Element, data: GithubApiRepo): void {
     const setText = (selector: string, value: string) => {
       const el = card.querySelector(selector);
       if (el) el.textContent = value;
@@ -97,20 +97,42 @@
     card.classList.remove("fetch-waiting", "fetch-error");
   }
 
-  function enhanceCard(card: Element, repo: string): void {
-    const cached = readCache(repo);
+  function applyDataToStarButton(btn: Element, data: GithubApiRepo): void {
+    const countEl = btn.querySelector(".github-star-count");
+    if (countEl) {
+      countEl.textContent = formatCount(data.stargazers_count);
+    }
+  }
+
+  function applyData(repoKey: string, data: GithubApiRepo): void {
+    document
+      .querySelectorAll<HTMLElement>(".card-github[repo]")
+      .forEach((card) => {
+        if (card.getAttribute("repo")?.toLowerCase() === repoKey) {
+          applyDataToCard(card, data);
+        }
+      });
+    document
+      .querySelectorAll<HTMLElement>(`[data-github-star-repo="${repoKey}"]`)
+      .forEach((btn) => {
+        applyDataToStarButton(btn, data);
+      });
+  }
+
+  function enhanceRepo(repo: string): void {
+    const key = repo.toLowerCase();
+    const cached = readCache(key);
     if (cached) {
-      applyData(card, cached);
+      applyData(key, cached);
       return;
     }
 
-    const key = repo.toLowerCase();
     if (done.has(key)) return; // 本会话已尝试过且失败，保留构建兜底
     let promise = inflight.get(key);
     if (!promise) {
       promise = fetchRepo(repo)
         .then((data) => {
-          writeCache(repo, data);
+          writeCache(key, data);
           return data;
         })
         .catch((error) => {
@@ -125,27 +147,47 @@
     }
 
     promise.then((data) => {
-      if (data) applyData(card, data);
-      else card.classList.add("fetch-error");
+      if (data) {
+        applyData(key, data);
+      } else {
+        document
+          .querySelectorAll<HTMLElement>(".card-github[repo]")
+          .forEach((card) => {
+            if (card.getAttribute("repo")?.toLowerCase() === key) {
+              card.classList.add("fetch-error");
+            }
+          });
+      }
     });
   }
 
-  function enhanceCards(): void {
+  function enhanceElements(): void {
+    const repos = new Set<string>();
+
     document
       .querySelectorAll<HTMLElement>(".card-github[repo]")
       .forEach((card) => {
         const repo = card.getAttribute("repo");
-        if (repo) enhanceCard(card, repo);
+        if (repo) repos.add(repo);
       });
+
+    document
+      .querySelectorAll<HTMLElement>("[data-github-star-repo]")
+      .forEach((btn) => {
+        const repo = btn.getAttribute("data-github-star-repo");
+        if (repo) repos.add(repo);
+      });
+
+    repos.forEach((repo) => enhanceRepo(repo));
   }
 
   function init(): void {
-    enhanceCards();
+    enhanceElements();
     document.addEventListener("swup:content:replace", () => {
-      requestAnimationFrame(enhanceCards);
+      requestAnimationFrame(enhanceElements);
     });
     document.addEventListener("password:decrypted", () => {
-      requestAnimationFrame(enhanceCards);
+      requestAnimationFrame(enhanceElements);
     });
   }
 

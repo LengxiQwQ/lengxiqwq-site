@@ -13,6 +13,8 @@ interface GithubCardData {
 	language: string | null;
 	avatarUrl: string | null;
 	license: string | null;
+	stars?: number;
+	forks?: number;
 }
 
 type GithubCardCache = Record<string, GithubCardData>;
@@ -33,6 +35,14 @@ async function findRepositories(): Promise<Map<string, string>> {
 		const content = await fs.readFile(file, "utf-8");
 		for (const match of content.matchAll(GITHUB_DIRECTIVE_PATTERN)) {
 			const repo = match[1];
+			if (isValidGithubRepository(repo)) {
+				repositories.set(repo.toLowerCase(), repo);
+			}
+		}
+		for (const match of content.matchAll(
+			/github\.com\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)/g,
+		)) {
+			const repo = match[1].replace(/\.git$/i, "");
 			if (isValidGithubRepository(repo)) {
 				repositories.set(repo.toLowerCase(), repo);
 			}
@@ -75,6 +85,14 @@ async function fetchRepositoryData(repo: string): Promise<GithubCardData> {
 			typeof data.owner?.avatar_url === "string" ? data.owner.avatar_url : null,
 		license:
 			typeof data.license?.spdx_id === "string" ? data.license.spdx_id : null,
+		stars:
+			typeof data.stargazers_count === "number" ? data.stargazers_count : 0,
+		forks:
+			typeof data.forks === "number"
+				? data.forks
+				: typeof data.forks_count === "number"
+					? data.forks_count
+					: 0,
 	};
 }
 

@@ -5,11 +5,13 @@ import Markdown from "@components/common/Markdown.astro";
 import { Icon } from "astro-icon/components";
 import CoverImage from "@/components/common/CoverImage.astro";
 import { commentConfig, siteConfig } from "@/config";
+import githubCardData from "@/constants/github-card-data.json";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
 import { getSortedProjects } from "@/utils/content-utils";
 import { formatDateToYYYYMMDD } from "@/utils/date-utils";
+import { formatCount, parseGithubRepoFromUrl } from "@/utils/github-card-utils";
 import {
 	getProjectStatusMeta,
 	resolveLinkIcon,
@@ -61,6 +63,22 @@ const visibleTags = tags || [];
 
 const slug = removeFileExtension(entry.id);
 const projectPath = `/projects/${slug}`;
+
+const enhancedLinks = link.map((r) => {
+	const repo = parseGithubRepoFromUrl(r.value);
+	const cachedRepo = repo
+		? (githubCardData as Record<string, { stars?: number }>)[repo.toLowerCase()]
+		: null;
+	const starsText =
+		typeof cachedRepo?.stars === "number" ? formatCount(cachedRepo.stars) : "—";
+
+	return {
+		...r,
+		resolvedIcon: resolveLinkIcon(r.icon, r.label),
+		githubRepo: repo,
+		starsText,
+	};
+});
 ---
 
 <MainGridLayout
@@ -207,37 +225,76 @@ const projectPath = `/projects/${slug}`;
         )}
 
         <!-- 外链按钮-->
-        {link.length > 0 && (
+        {enhancedLinks.length > 0 && (
           <div class="flex flex-wrap items-center gap-2.5 mt-4">
-            {link.map((r, i) => {
-              const resolvedIcon = resolveLinkIcon(r.icon, r.label);
-              const isFirst = i === 0;
+            {enhancedLinks.map((r) => {
+              if (r.githubRepo) {
+                return (
+                  <a
+                    href={r.value}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-github-star-repo={r.githubRepo.toLowerCase()}
+                    aria-label={`${r.label} (${r.githubRepo}) - ${r.starsText} stars`}
+                    class="inline-flex items-center text-sm font-medium rounded-lg border border-(--primary)/30 hover:border-(--primary)/60 bg-(--primary)/8 hover:bg-(--primary)/15 text-(--primary) transition-all overflow-hidden group/star-btn"
+                  >
+                    <span class="inline-flex items-center gap-2 pl-3.5 pr-2.5 py-1.5">
+                      {r.resolvedIcon.kind === "icon" && (
+                        <Icon name={r.resolvedIcon.value} class="text-base" />
+                      )}
+                      {r.resolvedIcon.kind === "image" && (
+                        <img
+                          src={r.resolvedIcon.value}
+                          alt=""
+                          class="w-4 h-4 object-contain"
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      )}
+                      {r.resolvedIcon.kind === "letter" && (
+                        <span class="text-sm font-bold">
+                          {r.resolvedIcon.value}
+                        </span>
+                      )}
+                      <span>{r.label}</span>
+                    </span>
+                    <span class="self-stretch w-px bg-(--primary)/25" aria-hidden="true" />
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-(--primary)/10 group-hover/star-btn:bg-(--primary)/20 transition-colors">
+                      <Icon
+                        name="material-symbols:star-rounded"
+                        class="text-base"
+                      />
+                      <span class="github-star-count font-semibold">
+                        {r.starsText}
+                      </span>
+                    </span>
+                  </a>
+                );
+              }
+
               return (
                 <a
                   href={r.value}
                   target="_blank"
                   rel="noopener noreferrer"
-                  class:list={[
-                    "inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors",
-                    isFirst
-                      ? "bg-(--primary) text-white dark:text-black/70 hover:bg-(--primary)/80"
-                      : "border border-(--primary)/40 text-(--primary) hover:bg-(--primary)/10",
-                  ]}
+                  class="inline-flex items-center gap-2 px-3.5 py-1.5 text-sm font-medium rounded-lg border border-(--primary)/30 hover:border-(--primary)/60 bg-(--primary)/8 hover:bg-(--primary)/15 text-(--primary) transition-all"
                 >
-                  {resolvedIcon.kind === "icon" && <Icon name={resolvedIcon.value} class="text-base" />}
-                  {resolvedIcon.kind === "image" && (
+                  {r.resolvedIcon.kind === "icon" && (
+                    <Icon name={r.resolvedIcon.value} class="text-base" />
+                  )}
+                  {r.resolvedIcon.kind === "image" && (
                     <img
-                      src={resolvedIcon.value}
+                      src={r.resolvedIcon.value}
                       alt=""
                       class="w-4 h-4 object-contain"
                       loading="lazy"
                       decoding="async"
                     />
                   )}
-                  {resolvedIcon.kind === "letter" && (
-                    <span class="text-sm font-bold">{resolvedIcon.value}</span>
+                  {r.resolvedIcon.kind === "letter" && (
+                    <span class="text-sm font-bold">{r.resolvedIcon.value}</span>
                   )}
-                  {r.label}
+                  <span>{r.label}</span>
                 </a>
               );
             })}
