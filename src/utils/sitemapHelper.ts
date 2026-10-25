@@ -57,5 +57,8 @@ export function getContentLastmodMap(): ContentLastmodResult {
 		scan(dir, prefix);
 	}
 
-	return { dates, latestPostDate: latestPostDate?.toISOString() };
+	const isoString = latestPostDate
+		? (latestPostDate as Date).toISOString()
+		: undefined;
+	return { dates, latestPostDate: isoString };
 }
