@@ -183,27 +183,9 @@ const config = {
 
         img.onload = () => {
           URL.revokeObjectURL(objectUrl);
-          const maxDimension = 1600;
-          let width = img.naturalWidth || img.width;
-          let height = img.naturalHeight || img.height;
-
-          let needResize = false;
-          if (width > maxDimension || height > maxDimension) {
-            needResize = true;
-            if (width > height) {
-              height = Math.round((height * maxDimension) / width);
-              width = maxDimension;
-            } else {
-              width = Math.round((width * maxDimension) / height);
-              height = maxDimension;
-            }
-          }
-
-          // 如果是 JPG 且无需下采样缩放尺寸，则保持原文件不进行有损重压缩
-          if (isJpg && !needResize) {
-            resolve(file);
-            return;
-          }
+          // 保持 100% 原始分辨率，不降低画幅尺寸
+          const width = img.naturalWidth || img.width;
+          const height = img.naturalHeight || img.height;
 
           const canvas = document.createElement("canvas");
           canvas.width = width;
@@ -219,7 +201,7 @@ const config = {
           ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
 
-          // 统一输出高清晰度、高兼容性的 JPG 格式（质量 0.88），并完整注入 EXIF 拍摄参数
+          // 保持原始分辨率输出 JPG，质量固定为 80%（0.80），并完整注入 EXIF 拍摄参数
           canvas.toBlob(
             async (blob) => {
               if (blob) {
@@ -260,7 +242,7 @@ const config = {
               }
             },
             "image/jpeg",
-            0.88
+            0.80
           );
         };
 
