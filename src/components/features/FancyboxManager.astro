@@ -4,7 +4,8 @@
 
 <script>
   let Fancybox: any;
-  const IMG_SELECTOR = ".custom-md img:not(.card-wiki-link img), #post-cover img, .moment-images img";
+  const IMG_SELECTOR =
+    ".custom-md img:not(.card-wiki-link img), #post-cover img, .moment-images img, #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji)";
   const LINK_SELECTOR = "[data-fancybox]";
   const svgBlobUrlCache = new Map<string, string>();
 
@@ -180,7 +181,12 @@
   }
 
   async function setup() {
-    if (!document.querySelector(IMG_SELECTOR) && !document.querySelector(LINK_SELECTOR)) return;
+    if (
+      !document.querySelector(IMG_SELECTOR) &&
+      !document.querySelector(LINK_SELECTOR) &&
+      !document.querySelector("#waline")
+    )
+      return;
 
     await injectFancyboxCss();
 
@@ -256,6 +262,7 @@
   document.addEventListener("swup:content:replace", scheduleSetup);
   document.addEventListener("swup:contentReplaced", scheduleSetup);
   document.addEventListener("dynamic-gallery:ready", scheduleSetup);
+  document.addEventListener("waline:rendered", scheduleSetup);
   document.addEventListener("swup:visit:start", cleanupFancybox);
 
   // 加密文章解密后重新绑定灯箱

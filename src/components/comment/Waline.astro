@@ -353,6 +353,28 @@ const config = {
       try {
         window.__walineInstance = walineLib.init(dynamicConfig);
         scrollToHashTarget();
+
+        // 监听评论区 DOM 变动（如拉取评论、分页、发表回复），及时唤醒 Fancybox 灯箱绑定
+        if (el && !el.__fancyboxObserverInstalled && window.MutationObserver) {
+          el.__fancyboxObserverInstalled = true;
+          let debounceTimer = null;
+          const walineObserver = new MutationObserver((mutations) => {
+            let hasAddedNode = false;
+            for (const m of mutations) {
+              if (m.addedNodes.length > 0) {
+                hasAddedNode = true;
+                break;
+              }
+            }
+            if (hasAddedNode) {
+              if (debounceTimer) clearTimeout(debounceTimer);
+              debounceTimer = setTimeout(() => {
+                document.dispatchEvent(new CustomEvent("waline:rendered"));
+              }, 80);
+            }
+          });
+          walineObserver.observe(el, { childList: true, subtree: true });
+        }
       } catch (error) {
         console.error("[Waline] Init error:", error);
       }
@@ -545,6 +567,25 @@ const config = {
     --waline-active-color: var(--primary);
     --waline-border-color: var(--line-divider);
     --waline-avatar-radius: 50%;
+  }
+
+  /* 评论区图片精美卡片化与 Fancybox 灯箱交互效果 */
+  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji) {
+    cursor: zoom-in;
+    max-width: 100%;
+    height: auto;
+    max-height: 480px;
+    border-radius: 10px;
+    margin: 0.6rem 0;
+    border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.08));
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.25s ease;
+    display: block;
+  }
+
+  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):hover {
+    transform: scale(1.01);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   }
 
   .wl-card-item {
