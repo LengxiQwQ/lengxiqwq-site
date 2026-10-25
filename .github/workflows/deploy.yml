@@ -43,6 +43,7 @@ jobs:
       CONTENT_DIR: .content-src
       PUBLIC_UMAMI_WEBSITE_ID: ${{ vars.PUBLIC_UMAMI_WEBSITE_ID }}
       PUBLIC_MICROSOFT_CLARITY_ID: ${{ vars.PUBLIC_MICROSOFT_CLARITY_ID }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Resolve content ref
