@@ -55,11 +55,17 @@ const config = {
         file.type === "image/jpeg" ||
         (file.name && /\.(jpe?g)$/i.test(file.name));
 
-      // 仅对 PNG 强制转 JPG；若是已有的 JPG 且小于 1MB，直接放行无需二次重编码
+      // 仅处理 PNG 与 JPG，其他格式直接放行
       if (!isPng && !isJpg) {
         return file;
       }
 
+      // 小于等于 300KB 的 PNG 直接保持原样（保留透明小图标、表情贴纸原貌）
+      if (isPng && file.size <= 300 * 1024) {
+        return file;
+      }
+
+      // 已是 JPG 且小于等于 1MB，直接放行无需二次重编码
       if (isJpg && file.size <= 1024 * 1024) {
         return file;
       }
