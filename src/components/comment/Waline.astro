@@ -38,8 +38,31 @@ const config = {
 
     async function compressImageIfNeeded(file) {
       if (!file || typeof file !== "object") return file;
-      if (file.type === "image/gif") return file;
-      if (file.size <= 300 * 1024) return file;
+
+      // GIF 动图严格保持原样，绝不转码，以完整保留动图帧
+      if (
+        file.type === "image/gif" ||
+        (file.name && file.name.toLowerCase().endsWith(".gif"))
+      ) {
+        return file;
+      }
+
+      const isPng =
+        file.type === "image/png" ||
+        (file.name && file.name.toLowerCase().endsWith(".png"));
+
+      const isJpg =
+        file.type === "image/jpeg" ||
+        (file.name && /\.(jpe?g)$/i.test(file.name));
+
+      // 仅对 PNG 强制转 JPG；若是已有的 JPG 且小于 1MB，直接放行无需二次重编码
+      if (!isPng && !isJpg) {
+        return file;
+      }
+
+      if (isJpg && file.size <= 1024 * 1024) {
+        return file;
+      }
 
       return new Promise((resolve) => {
         const objectUrl = URL.createObjectURL(file);
@@ -47,11 +70,13 @@ const config = {
 
         img.onload = () => {
           URL.revokeObjectURL(objectUrl);
-          const maxDimension = 1400;
+          const maxDimension = 1600;
           let width = img.naturalWidth || img.width;
           let height = img.naturalHeight || img.height;
 
+          let needResize = false;
           if (width > maxDimension || height > maxDimension) {
+            needResize = true;
             if (width > height) {
               height = Math.round((height * maxDimension) / width);
               width = maxDimension;
@@ -59,6 +84,12 @@ const config = {
               width = Math.round((width * maxDimension) / height);
               height = maxDimension;
             }
+          }
+
+          // 如果是 JPG 且无需下采样缩放尺寸，则保持原文件不进行有损重压缩
+          if (isJpg && !needResize) {
+            resolve(file);
+            return;
           }
 
           const canvas = document.createElement("canvas");
@@ -70,19 +101,27 @@ const config = {
             return;
           }
 
+          // 关键细节：透明底 PNG 转 JPG 时，必须预先填充纯白背景，避免透明通道变黑
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
+
+          // 统一输出高清晰度、高兼容性的 JPG 格式（质量 0.88）
           canvas.toBlob(
             (blob) => {
-              if (blob && blob.size < file.size) {
-                const ext = blob.type === "image/webp" ? ".webp" : ".jpg";
+              if (blob) {
                 const baseName = (file.name || "image").replace(/\.[^/.]+$/, "");
-                resolve(new File([blob], `${baseName}${ext}`, { type: blob.type }));
+                const newFile = new File([blob], `${baseName}.jpg`, {
+                  type: "image/jpeg",
+                  lastModified: Date.now(),
+                });
+                resolve(newFile);
               } else {
                 resolve(file);
               }
             },
-            "image/webp",
-            0.82
+            "image/jpeg",
+            0.88
           );
         };
 
