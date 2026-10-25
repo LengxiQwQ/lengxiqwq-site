@@ -156,8 +156,17 @@ const config = {
       });
 
       if (!resp.ok) {
-        const errText = await resp.text().catch(() => "");
-        throw new Error(errText || `图片上传失败 (${resp.status})`);
+        let errMsg = "";
+        try {
+          const errJson = await resp.json();
+          if (errJson && errJson.errmsg) {
+            errMsg = errJson.errmsg;
+          }
+        } catch (_) {}
+        if (!errMsg) {
+          errMsg = await resp.text().catch(() => "");
+        }
+        throw new Error(errMsg || `图片上传失败 (${resp.status})`);
       }
 
       const res = await resp.json();
