@@ -165,12 +165,7 @@ const config = {
         return file;
       }
 
-      // 已是 JPG 且小于等于 1MB，直接放行无需二次重编码（完整保留原始 EXIF 拍摄参数）
-      if (isJpg && file.size <= 1024 * 1024) {
-        return file;
-      }
-
-      // 提取原图的 EXIF / ICC 拍摄参数元数据（相机型号、镜头、光圈快门、ISO等）
+      // 提取原图的 EXIF / ICC 拍摄参数元数据（相机型号、镜头、光圈快门、ISO、GPS等）
       let exifSegments = null;
       try {
         const arrayBuf = await file.arrayBuffer();
@@ -183,13 +178,34 @@ const config = {
 
         img.onload = () => {
           URL.revokeObjectURL(objectUrl);
-          // 保持 100% 原始分辨率，不降低画幅尺寸
           const width = img.naturalWidth || img.width;
           const height = img.naturalHeight || img.height;
 
+          // 仅对超过 2K（2560×1440 框）的超大画幅进行等比缩减至 2K，较小画幅绝不缩放
+          const isLandscape = width >= height;
+          const maxW = isLandscape ? 2560 : 1440;
+          const maxH = isLandscape ? 1440 : 2560;
+
+          let targetWidth = width;
+          let targetHeight = height;
+          let needResize = false;
+
+          if (width > maxW || height > maxH) {
+            needResize = true;
+            const scale = Math.min(maxW / width, maxH / height);
+            targetWidth = Math.round(width * scale);
+            targetHeight = Math.round(height * scale);
+          }
+
+          // 如果已是 JPG，且分辨率未超 2K 且体积在 1MB 内，直接放行原图无需二次重编码
+          if (isJpg && !needResize && file.size <= 1024 * 1024) {
+            resolve(file);
+            return;
+          }
+
           const canvas = document.createElement("canvas");
-          canvas.width = width;
-          canvas.height = height;
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
           const ctx = canvas.getContext("2d");
           if (!ctx) {
             resolve(file);
@@ -198,10 +214,10 @@ const config = {
 
           // 关键细节：透明底 PNG 转 JPG 时，必须预先填充纯白背景，避免透明通道变黑
           ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, width, height);
-          ctx.drawImage(img, 0, 0, width, height);
+          ctx.fillRect(0, 0, targetWidth, targetHeight);
+          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
-          // 保持原始分辨率输出 JPG，质量固定为 80%（0.80），并完整注入 EXIF 拍摄参数
+          // 输出高质量 JPG（质量 80%），并完整注入原图 EXIF/GPS 拍摄参数
           canvas.toBlob(
             async (blob) => {
               if (blob) {
