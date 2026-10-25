@@ -36,6 +36,106 @@ const config = {
         : path || "/";
     }
 
+    function resetExifOrientation(app1Seg) {
+      const tiffOffset = 10;
+      if (app1Seg.length < tiffOffset + 8) return;
+      const isLittle =
+        app1Seg[tiffOffset] === 0x49 && app1Seg[tiffOffset + 1] === 0x49;
+      const isBig =
+        app1Seg[tiffOffset] === 0x4d && app1Seg[tiffOffset + 1] === 0x4d;
+      if (!isLittle && !isBig) return;
+
+      const view = new DataView(
+        app1Seg.buffer,
+        app1Seg.byteOffset,
+        app1Seg.byteLength
+      );
+      const ifd0Offset = tiffOffset + view.getUint32(tiffOffset + 4, isLittle);
+      if (ifd0Offset + 2 > app1Seg.length) return;
+
+      const entryCount = view.getUint16(ifd0Offset, isLittle);
+      for (let i = 0; i < entryCount; i++) {
+        const entryOffset = ifd0Offset + 2 + i * 12;
+        if (entryOffset + 12 > app1Seg.length) break;
+        const tag = view.getUint16(entryOffset, isLittle);
+        if (tag === 0x0112) {
+          // Tag 0x0112 为 Orientation，将其数值重置为 1（正常正向），避免 Canvas 绘制后产生二次旋转歪斜
+          view.setUint16(entryOffset + 8, 1, isLittle);
+          break;
+        }
+      }
+    }
+
+    function extractExifSegments(arrayBuffer, isPng) {
+      if (!arrayBuffer || arrayBuffer.byteLength < 16) return null;
+      const view = new DataView(arrayBuffer);
+      const segments = [];
+
+      if (!isPng) {
+        // JPEG 格式解析并提取 APP1 (EXIF: 0xFFE1) 与 APP2 (ICC 色彩空间: 0xFFE2)
+        if (view.getUint16(0) !== 0xffd8) return null;
+        let offset = 2;
+        while (offset + 4 <= view.byteLength) {
+          if (view.getUint8(offset) !== 0xff) break;
+          const marker = view.getUint8(offset + 1);
+          if (marker === 0xda || marker === 0xd9) break; // 遇到扫描起始 (SOS) 或图像结束 (EOI) 终止
+          const length = view.getUint16(offset + 2);
+          if (offset + 2 + length > view.byteLength) break;
+
+          if (marker === 0xe1 || marker === 0xe2) {
+            const seg = new Uint8Array(arrayBuffer, offset, 2 + length);
+            segments.push(new Uint8Array(seg));
+          }
+          offset += 2 + length;
+        }
+      } else {
+        // PNG 格式解析并提取 eXIf 块，封装为标准 JPEG APP1 标记
+        if (view.getUint32(0) !== 0x89504e47) return null;
+        let offset = 8;
+        while (offset + 12 <= view.byteLength) {
+          const length = view.getUint32(offset);
+          const type = String.fromCharCode(
+            view.getUint8(offset + 4),
+            view.getUint8(offset + 5),
+            view.getUint8(offset + 6),
+            view.getUint8(offset + 7)
+          );
+          if (type === "eXIf" && offset + 8 + length <= view.byteLength) {
+            const app1Len = length + 6 + 2;
+            const app1 = new Uint8Array(app1Len + 2);
+            app1[0] = 0xff;
+            app1[1] = 0xe1;
+            app1[2] = (app1Len >> 8) & 0xff;
+            app1[3] = app1Len & 0xff;
+            app1.set([0x45, 0x78, 0x69, 0x66, 0x00, 0x00], 4); // "Exif\0\0"
+            app1.set(new Uint8Array(arrayBuffer, offset + 8, length), 10);
+            segments.push(app1);
+            break;
+          }
+          offset += 8 + length + 4;
+        }
+      }
+
+      if (segments.length === 0) return null;
+
+      // 校正 EXIF 中的 Orientation，防止双重旋转
+      for (const seg of segments) {
+        if (seg[0] === 0xff && seg[1] === 0xe1 && seg.length >= 18) {
+          resetExifOrientation(seg);
+        }
+      }
+
+      // 合并所有提取到的元数据标记
+      const totalLen = segments.reduce((sum, s) => sum + s.length, 0);
+      const merged = new Uint8Array(totalLen);
+      let cur = 0;
+      for (const s of segments) {
+        merged.set(s, cur);
+        cur += s.length;
+      }
+      return merged;
+    }
+
     async function compressImageIfNeeded(file) {
       if (!file || typeof file !== "object") return file;
 
@@ -65,10 +165,17 @@ const config = {
         return file;
       }
 
-      // 已是 JPG 且小于等于 1MB，直接放行无需二次重编码
+      // 已是 JPG 且小于等于 1MB，直接放行无需二次重编码（完整保留原始 EXIF 拍摄参数）
       if (isJpg && file.size <= 1024 * 1024) {
         return file;
       }
+
+      // 提取原图的 EXIF / ICC 拍摄参数元数据（相机型号、镜头、光圈快门、ISO等）
+      let exifSegments = null;
+      try {
+        const arrayBuf = await file.arrayBuffer();
+        exifSegments = extractExifSegments(arrayBuf, isPng);
+      } catch (_) {}
 
       return new Promise((resolve) => {
         const objectUrl = URL.createObjectURL(file);
@@ -112,12 +219,20 @@ const config = {
           ctx.fillRect(0, 0, width, height);
           ctx.drawImage(img, 0, 0, width, height);
 
-          // 统一输出高清晰度、高兼容性的 JPG 格式（质量 0.88）
+          // 统一输出高清晰度、高兼容性的 JPG 格式（质量 0.88），并完整注入 EXIF 拍摄参数
           canvas.toBlob(
             (blob) => {
               if (blob) {
                 const baseName = (file.name || "image").replace(/\.[^/.]+$/, "");
-                const newFile = new File([blob], `${baseName}.jpg`, {
+                let finalBlob = blob;
+                // 若原图含有 EXIF 拍摄元数据，回填到转码压缩后的 JPG 数据头部
+                if (exifSegments && blob.size >= 2) {
+                  finalBlob = new Blob(
+                    [blob.slice(0, 2), exifSegments, blob.slice(2)],
+                    { type: "image/jpeg" }
+                  );
+                }
+                const newFile = new File([finalBlob], `${baseName}.jpg`, {
                   type: "image/jpeg",
                   lastModified: Date.now(),
                 });
