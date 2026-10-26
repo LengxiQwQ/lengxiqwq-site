@@ -25,6 +25,8 @@ const pages = resolvePageToggles({
 	projects: true,
 	// 相册页面开关
 	gallery: true,
+	// Steam 游戏记录页面开关
+	steam: false,
 	// 书签导航页面开关
 	booknav: true,
 	// 哔哩哔哩追番页面开关
@@ -348,6 +350,7 @@ export const siteConfig: SiteConfig = {
 			"*.bilibili.com",
 			"*.myanimelist.net",
 			"*.vndb.org",
+			"*.steamstatic.com",
 		],
 	},
 

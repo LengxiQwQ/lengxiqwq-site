@@ -101,6 +101,7 @@ export type SiteConfig = {
 		projects: boolean; // 项目展示页开关
 		devices?: boolean; // 我的设备页面开关
 		timeline?: boolean; // 时间线页面开关
+		steam?: boolean; // Steam 游戏记录页面开关
 	};
 
 	// 分类导航栏开关

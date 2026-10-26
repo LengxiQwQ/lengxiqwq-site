@@ -74,11 +74,11 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 			// 相册
 			LinkPresets.Gallery,
 
-			// 我的设备
-			LinkPresets.Devices,
-
 			// 时间线
 			LinkPresets.Timeline,
+
+			// 我的设备
+			LinkPresets.Devices,
 
 			// 书签导航
 			LinkPresets.Booknav,
@@ -94,6 +94,9 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 
 			// MyAnimeList
 			LinkPresets.MAL,
+
+			// Steam 游戏
+			LinkPresets.Steam,
 		],
 	});
 
@@ -212,6 +215,12 @@ export const LinkPresets: Record<string, NavBarLink> = {
 		url: "/booknav/",
 		icon: "material-symbols:bookmarks",
 		pageKey: "booknav",
+	},
+	Steam: {
+		name: "Steam 游戏",
+		url: "/steam/",
+		icon: "fa7-brands:steam",
+		pageKey: "steam",
 	},
 	Bilibili: {
 		name: "哔哩哔哩",
