@@ -434,8 +434,8 @@ const config = {
           if (hasTriggered) return;
           hasTriggered = true;
           cleanup();
-          // 滚动停止后给约 0.7 秒的视线聚焦停顿，待用户视线平稳后再优雅绽放高亮
-          setTimeout(callback, 700);
+          // 滚动停止后给 0.5 秒的视线聚焦停顿，待用户视线平稳后再优雅绽放高亮
+          setTimeout(callback, 500);
         };
 
         const cleanup = () => {
@@ -457,8 +457,8 @@ const config = {
         }
         window.addEventListener("scroll", onScrollDebounce, { passive: true });
 
-        // 最大安全超时兜底（如果无滚动发生或在极端环境下），1000ms 后触发
-        maxTimeoutTimer = setTimeout(execute, 1000);
+        // 最大安全超时兜底（如果无滚动发生或在极端环境下），800ms 后触发
+        maxTimeoutTimer = setTimeout(execute, 800);
       };
 
       const highlightAndScroll = (el) => {
@@ -485,7 +485,7 @@ const config = {
           el.classList.add("waline-highlight-target");
           setTimeout(() => {
             el.classList.remove("waline-highlight-target");
-          }, 3600);
+          }, 3200);
         };
 
         // 平滑下滑定位到评论卡片中央并触发极光脉冲高亮特效
@@ -644,7 +644,7 @@ const config = {
     border-radius: 14px;
     pointer-events: none;
     z-index: -1;
-    animation: waline-aurora-glow 3.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: waline-aurora-glow 3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
   /* 针对回复评论（嵌套在 .wl-quote 内的 .wl-card-item）：
