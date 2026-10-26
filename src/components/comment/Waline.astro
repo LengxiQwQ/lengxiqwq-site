@@ -199,6 +199,7 @@ const config = {
 
           // 如果已是 JPG，且分辨率未超 2K 且体积在 1MB 内，直接放行原图无需二次重编码
           if (isJpg && !needResize && file.size <= 1024 * 1024) {
+            file.__dimensions = { width, height };
             resolve(file);
             return;
           }
@@ -252,6 +253,7 @@ const config = {
                   type: "image/jpeg",
                   lastModified: Date.now(),
                 });
+                newFile.__dimensions = { width: targetWidth, height: targetHeight };
                 resolve(newFile);
               } else {
                 resolve(file);
@@ -277,7 +279,34 @@ const config = {
         throw new Error("Waline serverURL 未配置");
       }
 
+      // 获取待上传图片的初始像素宽高
+      let dimensions = null;
+      if (file && typeof file === "object") {
+        try {
+          dimensions = await new Promise((resolve) => {
+            const objectUrl = URL.createObjectURL(file);
+            const img = new Image();
+            img.onload = () => {
+              URL.revokeObjectURL(objectUrl);
+              resolve({
+                width: img.naturalWidth || img.width,
+                height: img.naturalHeight || img.height,
+              });
+            };
+            img.onerror = () => {
+              URL.revokeObjectURL(objectUrl);
+              resolve(null);
+            };
+            img.src = objectUrl;
+          });
+        } catch (_) {}
+      }
+
       const processedFile = await compressImageIfNeeded(file);
+      if (processedFile && processedFile.__dimensions) {
+        dimensions = processedFile.__dimensions;
+      }
+
       const formData = new FormData();
       formData.append("file", processedFile);
 
@@ -302,9 +331,54 @@ const config = {
 
       const res = await resp.json();
       if (res && res.errno === 0 && res.data && res.data.url) {
-        return res.data.url;
+        let finalUrl = res.data.url;
+        // 自动在图片链接后附加尺寸元数据哈希（#vw=W&vh=H），供渲染端无损预留宽高
+        if (dimensions && dimensions.width && dimensions.height) {
+          finalUrl = `${finalUrl}#vw=${dimensions.width}&vh=${dimensions.height}`;
+        }
+        return finalUrl;
       }
       throw new Error((res && res.errmsg) || "图片上传失败，请稍后重试");
+    }
+
+    function enhanceCommentImages(container) {
+      const root = container || document.getElementById("waline");
+      if (!root) return;
+
+      const imgs = root.querySelectorAll(
+        ".wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji)"
+      );
+
+      imgs.forEach((img) => {
+        if (img.__enhancedLayout) return;
+        img.__enhancedLayout = true;
+
+        const src = img.getAttribute("src") || "";
+        const match =
+          src.match(/[#&]v?w=(\d+)&v?h=(\d+)/i) || src.match(/#(\d+)x(\d+)/i);
+
+        if (match) {
+          const w = parseInt(match[1], 10);
+          const h = parseInt(match[2], 10);
+          if (w > 0 && h > 0) {
+            img.style.aspectRatio = `${w} / ${h}`;
+            img.style.maxWidth = `${Math.min(w, 680)}px`;
+            img.style.width = "100%";
+          }
+        }
+
+        if (!img.complete) {
+          img.classList.add("wl-img-loading");
+          const onDone = () => {
+            img.classList.remove("wl-img-loading");
+            img.classList.add("wl-img-loaded");
+          };
+          img.addEventListener("load", onDone, { once: true });
+          img.addEventListener("error", onDone, { once: true });
+        } else {
+          img.classList.add("wl-img-loaded");
+        }
+      });
     }
 
     function initWaline() {
@@ -351,9 +425,10 @@ const config = {
 
       try {
         window.__walineInstance = walineLib.init(dynamicConfig);
+        enhanceCommentImages(el);
         scrollToHashTarget();
 
-        // 监听评论区 DOM 变动（如拉取评论、分页、发表回复），及时唤醒 Fancybox 灯箱绑定
+        // 监听评论区 DOM 变动（如拉取评论、分页、发表回复），及时唤醒 Fancybox 灯箱绑定与图片预留排版
         if (el && !el.__fancyboxObserverInstalled && window.MutationObserver) {
           el.__fancyboxObserverInstalled = true;
           let debounceTimer = null;
@@ -366,8 +441,10 @@ const config = {
               }
             }
             if (hasAddedNode) {
+              enhanceCommentImages(el);
               if (debounceTimer) clearTimeout(debounceTimer);
               debounceTimer = setTimeout(() => {
+                enhanceCommentImages(el);
                 document.dispatchEvent(new CustomEvent("waline:rendered"));
               }, 80);
             }
@@ -655,6 +732,7 @@ const config = {
         );
       };
 
+      enhanceCommentImages();
       const existingEl = findTargetEl(targetId);
       if (existingEl) {
         highlightAndScroll(existingEl);
@@ -755,7 +833,7 @@ const config = {
     --waline-avatar-radius: 50%;
   }
 
-  /* 评论区图片样式与 Fancybox 灯箱支持（保持静态自然，无悬停缩放提示） */
+  /* 评论区图片样式与 Fancybox 灯箱支持（保持静态自然，原生支持预留占位与骨架加载） */
   #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji) {
     cursor: pointer;
     max-width: 100%;
@@ -766,6 +844,38 @@ const config = {
     border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.08));
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
     display: block;
+    background-color: color-mix(in srgb, var(--card-bg) 60%, var(--primary) 5%);
+    transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* 图片尚未加载完成时的预留占位框（针对无固定宽高的图片提供合理最小高度与骨架流动感，杜绝高度塌陷） */
+  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji).wl-img-loading {
+    min-height: 180px;
+    min-width: 220px;
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--primary) 8%, transparent) 50%,
+      transparent 100%
+    );
+    background-size: 200% 100%;
+    animation: wl-img-skeleton 1.6s infinite ease-in-out;
+  }
+
+  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji).wl-img-loaded {
+    min-height: unset;
+    min-width: unset;
+    background-image: none;
+    animation: none;
+  }
+
+  @keyframes wl-img-skeleton {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
   }
 
   .wl-card-item {
