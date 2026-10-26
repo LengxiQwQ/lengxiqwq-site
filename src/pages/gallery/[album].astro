@@ -1,8 +1,9 @@
 ---
+import Comment from "@components/comment/index.astro";
 import { Icon } from "astro-icon/components";
 import EncryptedContent from "@/components/features/EncryptedContent.astro";
 import PhotoCard from "@/components/pages/gallery/PhotoCard.astro";
-import { galleryConfig, siteConfig } from "@/config";
+import { commentConfig, galleryConfig, siteConfig } from "@/config";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
@@ -37,6 +38,9 @@ const columnWidth = galleryConfig.columnWidth || 240;
 const coverLqipProps = cover
 	? getLqipProps(cover, undefined, true)
 	: { style: "" };
+
+const isCommentEnabled =
+	commentConfig?.type && commentConfig.type !== "none" && !albumMeta.password;
 ---
 
 <MainGridLayout title={albumMeta.name} description={albumMeta.description || ""}>
@@ -178,5 +182,12 @@ const coverLqipProps = cover
       )}
     </div>
   </div>
+
+  <!-- 评论区 -->
+  {isCommentEnabled && (
+    <div class="mt-4">
+      <Comment customPath={`/gallery/${albumMeta.id}/`} title={albumMeta.name} />
+    </div>
+  )}
 
 </MainGridLayout>

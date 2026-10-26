@@ -116,6 +116,23 @@ export const sidebarLayoutConfig: SidebarLayoutConfig = {
 			},
 		},
 		{
+			// 组件类型：最新评论组件
+			type: "comments",
+			// 是否启用该组件
+			enable: true,
+			// 组件位置
+			position: "top",
+			// 是否在文章详情页显示
+			showOnPostPage: true,
+			// 组件专属配置
+			specificConfig: {
+				comments: {
+					// 显示的最新评论数量
+					limit: 5,
+				},
+			},
+		},
+		{
 			// 组件类型：站点统计组件
 			type: "stats",
 			// 是否启用该组件
@@ -287,6 +304,21 @@ export const sidebarLayoutConfig: SidebarLayoutConfig = {
 				dynamic: {
 					// 显示的最新动态数量
 					limit: 2,
+				},
+			},
+		},
+		{
+			// 组件类型：最新评论组件
+			type: "comments",
+			// 是否启用该组件
+			enable: true,
+			// 是否在文章详情页显示
+			showOnPostPage: true,
+			// 组件专属配置
+			specificConfig: {
+				comments: {
+					// 显示的最新评论数量
+					limit: 5,
 				},
 			},
 		},

@@ -55,6 +55,9 @@ enum I18nKey {
 	announcementClose = "announcementClose",
 
 	comments = "comments",
+	latestComments = "latestComments",
+	noComments = "noComments",
+	commentOn = "commentOn",
 	commentSection = "commentSection",
 	commentSubtitle = "commentSubtitle",
 	commentNotConfigured = "commentNotConfigured",

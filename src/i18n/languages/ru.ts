@@ -75,6 +75,9 @@ export const ru: Translation = {
 	[Key.announcementClose]: "Закрыть",
 
 	[Key.comments]: "Комментарии",
+	[Key.latestComments]: "Последние комментарии",
+	[Key.noComments]: "Нет комментариев",
+	[Key.commentOn]: "в",
 	[Key.commentSection]: "Комментарии",
 	[Key.commentSubtitle]: "Поделитесь своими мыслями и обсудите с остальными",
 	[Key.commentNotConfigured]: "Система комментариев не настроена",

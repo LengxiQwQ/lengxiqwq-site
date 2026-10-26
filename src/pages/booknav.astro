@@ -1,6 +1,7 @@
 ---
+import Comment from "@components/comment/index.astro";
 import { Icon } from "astro-icon/components";
-import { booknavPageConfig, siteConfig } from "@/config";
+import { booknavPageConfig, commentConfig, siteConfig } from "@/config";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
@@ -38,6 +39,8 @@ const totalCount = resolvedGroups.reduce((sum, g) => sum + g.items.length, 0);
 const title = booknavPageConfig.title || i18n(I18nKey.booknav);
 const description =
 	booknavPageConfig.description || i18n(I18nKey.booknavDescription);
+
+const isCommentEnabled = commentConfig?.type && commentConfig.type !== "none";
 ---
 
 <MainGridLayout title={title} description={description}>
@@ -299,5 +302,12 @@ const description =
       customElements.define("booknav-list", BooknavList);
     }
   </script>
+
+  <!-- 评论区 -->
+  {isCommentEnabled && (
+    <div class="mt-4">
+      <Comment customPath="/booknav/" title={title} />
+    </div>
+  )}
 
 </MainGridLayout>

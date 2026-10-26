@@ -75,6 +75,9 @@ export const zh_TW: Translation = {
 	[Key.announcementClose]: "關閉",
 
 	[Key.comments]: "評論",
+	[Key.latestComments]: "最新評論",
+	[Key.noComments]: "暫無評論",
+	[Key.commentOn]: "評於",
 	[Key.commentSection]: "評論區",
 	[Key.commentSubtitle]: "分享你的想法，與大家交流討論",
 	[Key.commentNotConfigured]: "評論系統暫未配置",

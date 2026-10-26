@@ -129,3 +129,29 @@ export function formatDateTimeToYYYYMMDDHHmm(dateInput: Date | string): string {
 
 	return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
 }
+
+/**
+ * 格式化相对时间（紧凑纯相对时间，如“刚刚”、“5分钟前”、“昨天”、“3天前”、“45天前”，不显示绝对日期以节省空间）
+ */
+export function formatRelativeTime(dateInput: Date | string | number): string {
+	const date = typeof dateInput === "object" ? dateInput : new Date(dateInput);
+	if (!date || Number.isNaN(date.getTime())) return "";
+
+	const now = Date.now();
+	const diffMs = now - date.getTime();
+	if (diffMs < 0) return "刚刚";
+
+	const diffSec = Math.floor(diffMs / 1000);
+	const diffMin = Math.floor(diffSec / 60);
+	const diffHour = Math.floor(diffMin / 60);
+	const diffDay = Math.floor(diffHour / 24);
+
+	if (diffMin < 1) return "刚刚";
+	if (diffMin < 60) return `${diffMin}分钟前`;
+	if (diffHour < 24) return `${diffHour}小时前`;
+	if (diffDay === 1) return "昨天";
+	if (diffDay < 365) return `${diffDay}天前`;
+
+	const diffYear = Math.floor(diffDay / 365);
+	return `${diffYear}年前`;
+}

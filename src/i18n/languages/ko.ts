@@ -75,6 +75,9 @@ export const ko: Translation = {
 	[Key.announcementClose]: "닫기",
 
 	[Key.comments]: "댓글",
+	[Key.latestComments]: "최신 댓글",
+	[Key.noComments]: "댓글이 없습니다",
+	[Key.commentOn]: "작성 위치",
 	[Key.commentSection]: "댓글",
 	[Key.commentSubtitle]: "생각을 공유하고 모두와 이야기해 보세요",
 	[Key.commentNotConfigured]: "댓글 시스템이 설정되지 않았습니다",
