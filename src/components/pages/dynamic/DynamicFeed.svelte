@@ -307,18 +307,30 @@ onMount(() => {
 			populateYears();
 			currentPage = pageFromUrl();
 			applyFilters(false);
-			const anchorId = decodeURIComponent(window.location.hash.slice(1));
-			if (anchorId) {
+			const handleHashAnchor = () => {
+				const anchorId = decodeURIComponent(window.location.hash.slice(1));
+				if (!anchorId) return;
 				const anchorIndex = filtered.findIndex(
 					(entry) =>
 						`dynamic-${entry.id.replace(/[^a-zA-Z0-9_-]/g, "-")}` === anchorId,
 				);
 				if (anchorIndex >= 0) {
-					currentPage = Math.floor(anchorIndex / itemsPerPage) + 1;
-					updateUrl();
+					const targetPage = Math.floor(anchorIndex / itemsPerPage) + 1;
+					if (currentPage !== targetPage) {
+						currentPage = targetPage;
+						updateUrl();
+					}
 					restoreAnchorAfterRender = true;
+					const target = document.getElementById(anchorId);
+					if (target) {
+						restoreAnchorAfterRender = false;
+						target.scrollIntoView({ behavior: "smooth", block: "start" });
+					}
 				}
-			}
+			};
+
+			handleHashAnchor();
+			window.addEventListener("hashchange", handleHashAnchor);
 		} catch (error) {
 			console.error("Failed to load dynamics", error);
 			failed = true;
@@ -331,6 +343,7 @@ onMount(() => {
 	return () => {
 		searchInput?.removeEventListener("input", filter);
 		yearSelect?.removeEventListener("change", filter);
+		window.removeEventListener("hashchange", handleHashAnchor);
 	};
 });
 </script>

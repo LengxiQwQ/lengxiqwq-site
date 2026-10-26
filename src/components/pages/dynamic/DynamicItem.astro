@@ -36,7 +36,7 @@ const itemYear = new Intl.DateTimeFormat("en-US", {
 	year: "numeric",
 }).format(entry.data.published);
 const permalink = detailUrl || `#${anchorId}`;
-const location = entry.data.location.trim();
+const location = entry.data.location?.trim() || "";
 const profileLabel = i18n(I18nKey.dynamicProfile).replace(
 	"{name}",
 	profileConfig.name,
@@ -83,6 +83,15 @@ const profileUrl = url(dynamicConfig.profileUrl || "/about/");
 					)}
 				</div>
 			</div>
+			{entry.data.pinned && (
+				<span class="page-pinned-badge" data-dynamic-pinned>
+					<Icon name="material-symbols:push-pin" class="size-3" />
+					{i18n(I18nKey.pinned)}
+				</span>
+			)}
+			<span class="page-entry-decoration" aria-hidden="true">
+				<Icon name="material-symbols:format-quote-rounded" />
+			</span>
 			<a
 				class="page-permalink btn-plain"
 				href={permalink}

@@ -131,7 +131,39 @@ async function main() {
 				}
 			}
 			console.log(`[content:sync] Materializing ${src} -> ${dest}`);
-			fs.cpSync(src, dest, { recursive: true, force: true });
+			try {
+				fs.cpSync(src, dest, {
+					recursive: true,
+					force: true,
+					filter: (sourcePath, destPath) => {
+						try {
+							if (
+								fs.existsSync(destPath) &&
+								fs.statSync(destPath).isFile() &&
+								fs.statSync(sourcePath).isFile()
+							) {
+								const s = fs.statSync(sourcePath);
+								const d = fs.statSync(destPath);
+								if (
+									s.size === d.size &&
+									Math.abs(s.mtimeMs - d.mtimeMs) < 1000
+								) {
+									return false; // 文件未变更跳过，杜绝 Windows 下 1224 锁文件占用报错
+								}
+							}
+						} catch {}
+						return true;
+					},
+				});
+			} catch (e: any) {
+				if (e?.errno === 1224) {
+					console.warn(
+						"[content:sync] Warning: Some files are locked by Windows system cache (1224), continuing...",
+					);
+				} else {
+					throw e;
+				}
+			}
 			syncedCount++;
 		}
 	}

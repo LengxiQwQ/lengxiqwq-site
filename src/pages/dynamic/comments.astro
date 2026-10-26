@@ -24,6 +24,11 @@ if (
 </Layout>
 
 <script>
+	// 兜底防护：该页面仅作为 iframe 嵌入动态详情评论使用；若缺少 ?path= 参数直接在浏览器打开，自动重定向至动态聚合主页
+	if (!new URLSearchParams(window.location.search).get("path")) {
+		window.location.replace("/dynamic/");
+	}
+
 	window.addEventListener("message", (event) => {
 		if (
 			event.origin !== window.location.origin ||

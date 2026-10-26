@@ -16,6 +16,7 @@ export function getContentLastmodMap(): ContentLastmodResult {
 	const contentDirs = [
 		{ dir: path.resolve("src/content/posts"), prefix: "/posts/" },
 		{ dir: path.resolve("src/content/projects"), prefix: "/projects/" },
+		{ dir: path.resolve("src/content/dynamic"), prefix: "/dynamic/" },
 	];
 
 	function scan(directory: string, prefix: string) {

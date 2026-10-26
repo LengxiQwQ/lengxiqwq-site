@@ -47,11 +47,21 @@ onMount(async () => {
 	}
 });
 
-// 解析评论来源分类：统一严格为双字显示（文章、留言、动态、相册、设备、书签、项目、友链等）
+// 提取目标 URL 的纯路径名（自动剥离网络协议、域名、hash 与 search 参数）
+function extractPathname(targetUrl: string): string {
+	if (!targetUrl) return "/";
+	try {
+		if (targetUrl.startsWith("http://") || targetUrl.startsWith("https://")) {
+			return new URL(targetUrl).pathname;
+		}
+	} catch {}
+	return targetUrl.split("#")[0].split("?")[0] || "/";
+}
+
+// 解析评论来源分类：统一严格为双字显示（文章、留言、动态、相册、设备、书签、项目、友链、游戏等）
 function getSourceCategory(targetUrl: string): string {
 	if (!targetUrl) return "文章";
-	const clean =
-		targetUrl.split("#")[0].split("?")[0].replace(/\/+$/, "") || "/";
+	const clean = extractPathname(targetUrl).replace(/\/+$/, "") || "/";
 	if (clean.startsWith("/posts")) return "文章";
 	if (clean.startsWith("/guestbook")) return "留言";
 	if (clean.startsWith("/dynamic")) return "动态";
@@ -61,15 +71,16 @@ function getSourceCategory(targetUrl: string): string {
 	if (clean.startsWith("/projects")) return "项目";
 	if (clean.startsWith("/friends")) return "友链";
 	if (clean.startsWith("/sponsor")) return "赞助";
+	if (clean.startsWith("/steam")) return "游戏";
 	if (clean.startsWith("/about")) return "关于";
 	return "文章";
 }
 
 // 拼接跳转链接
 function getCommentHref(entry: RecentCommentEntry): string {
-	const rawUrl = entry.url.split("#")[0].split("?")[0];
+	const rawPath = extractPathname(entry.url);
 	// 确保页面路径末尾带有斜杠，严格匹配 Astro 的 trailingSlash: "always" 配置，避免缺少斜杠时 404
-	const normalized = rawUrl.endsWith("/") ? rawUrl : `${rawUrl}/`;
+	const normalized = rawPath.endsWith("/") ? rawPath : `${rawPath}/`;
 	const baseUrl = url(normalized);
 	return `${baseUrl}#${entry.id}`;
 }
@@ -83,10 +94,10 @@ function handleCommentClick(e: MouseEvent, entry: RecentCommentEntry) {
 		sessionStorage.setItem("waline-target-comment", entry.id);
 	} catch {}
 
-	const rawTarget = entry.url.split("#")[0].split("?")[0];
-	let decodedTarget = rawTarget;
+	const rawPath = extractPathname(entry.url);
+	let decodedTarget = rawPath;
 	try {
-		decodedTarget = decodeURIComponent(rawTarget);
+		decodedTarget = decodeURIComponent(rawPath);
 	} catch {}
 	const cleanTarget = decodedTarget.replace(/\/+$/, "") || "/";
 

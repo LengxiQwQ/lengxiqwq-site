@@ -21,11 +21,44 @@ export function registerDynamicGallery(): void {
 			if (!source) return;
 			const elements = [...source.querySelectorAll<HTMLImageElement>("img")];
 			if (elements.length === 0) return;
-			this.images = elements.map((element) => ({
-				alt: element.alt,
-				element,
-				src: element.currentSrc || element.src,
-			}));
+			this.images = elements.map((element) => {
+				let alt = (element.alt || "").trim();
+				let customWidth = element.dataset.customWidth;
+				if (!customWidth && alt) {
+					if (alt.includes("|")) {
+						const [text, spec] = alt.split("|").map((s) => s.trim());
+						alt = text;
+						const lowerSpec = spec.toLowerCase();
+						if (
+							["表情", "emoji", "meme", "sticker", "sm", "small"].includes(
+								lowerSpec,
+							)
+						) {
+							customWidth = "180px";
+						} else if (/^\d+(?:px|rem|%)?$/.test(lowerSpec)) {
+							customWidth =
+								lowerSpec.endsWith("px") ||
+								lowerSpec.endsWith("rem") ||
+								lowerSpec.endsWith("%")
+									? lowerSpec
+									: `${lowerSpec}px`;
+						}
+					} else if (
+						["表情", "emoji", "meme", "sticker"].includes(alt.toLowerCase())
+					) {
+						customWidth = "180px";
+					}
+					if (customWidth) {
+						element.dataset.customWidth = customWidth;
+						element.style.setProperty("--custom-width", customWidth);
+					}
+				}
+				return {
+					alt,
+					element,
+					src: element.currentSrc || element.src,
+				};
+			});
 			this.buildGrid();
 			this.buildThumbnails();
 			this.bindControls();
@@ -64,6 +97,7 @@ export function registerDynamicGallery(): void {
 				} else {
 					button.addEventListener("click", () => this.open(index));
 				}
+				const paragraph = element.closest<HTMLElement>("p");
 				const container =
 					element.closest<HTMLElement>("center") ??
 					element.closest<HTMLElement>("figure") ??
@@ -78,13 +112,28 @@ export function registerDynamicGallery(): void {
 				}
 				grid.append(button);
 				if (container !== element) container.remove();
+				if (
+					paragraph &&
+					!paragraph.textContent?.trim() &&
+					paragraph.querySelectorAll("img").length === 0
+				) {
+					paragraph.remove();
+				}
 			});
 			for (const { element } of this.images.slice(6)) {
+				const paragraph = element.closest<HTMLElement>("p");
 				(
 					element.closest<HTMLElement>("center") ??
 					element.closest<HTMLElement>("figure") ??
 					element
 				).remove();
+				if (
+					paragraph &&
+					!paragraph.textContent?.trim() &&
+					paragraph.querySelectorAll("img").length === 0
+				) {
+					paragraph.remove();
+				}
 			}
 		}
 

@@ -1,0 +1,92 @@
+---
+import { getCollection } from "astro:content";
+import { Icon } from "astro-icon/components";
+import Comment from "@/components/comment/index.astro";
+import DynamicItem from "@/components/pages/dynamic/DynamicItem.astro";
+import { commentConfig, dynamicConfig, siteConfig } from "@/config";
+import I18nKey from "@/i18n/i18nKey";
+import { i18n } from "@/i18n/translation";
+import MainGridLayout from "@/layouts/MainGridLayout.astro";
+import "@/styles/markdown.css";
+import "@/styles/markdown-extend.styl";
+import "@/styles/pages/common.css";
+import "@/styles/pages/dynamic.css";
+import "@fancyapps/ui/dist/fancybox/fancybox.css";
+import "@/styles/fancybox-custom.css";
+import { formatDynamicDate } from "@/utils/date-utils";
+import { dynamicPlainText, dynamicSlug } from "@/utils/dynamic-utils";
+import { url } from "@/utils/url-utils";
+
+if (!siteConfig.pages.dynamic) {
+	return Astro.redirect("/404/");
+}
+
+export async function getStaticPaths() {
+	const dynamics = await getCollection("dynamic");
+	return dynamics
+		.filter((entry) => dynamicSlug(entry.id) !== "comments")
+		.map((entry) => ({
+			params: { slug: dynamicSlug(entry.id) },
+			props: { entry },
+		}));
+}
+
+const { entry } = Astro.props;
+const slug = dynamicSlug(entry.id);
+const plainText = dynamicPlainText(entry);
+const published = formatDynamicDate(entry.data.published);
+const pageTitle = plainText
+	? `${plainText.slice(0, 30)}${plainText.length > 30 ? "..." : ""} - ${i18n(I18nKey.dynamic)}`
+	: `${i18n(I18nKey.dynamic)} - ${published}`;
+const pageDescription =
+	plainText.slice(0, 150) ||
+	dynamicConfig.description ||
+	i18n(I18nKey.dynamicDescription);
+
+const showComments = Boolean(
+	dynamicConfig.showComment !== false &&
+		commentConfig.type &&
+		commentConfig.type !== "none",
+);
+const currentUrl = url(`/dynamic/${slug}/`);
+---
+
+<MainGridLayout title={pageTitle} description={pageDescription}>
+	<section class="page-shell" aria-labelledby="dynamic-detail-title">
+		<header class="page-header card-base">
+			<div class="page-heading">
+				<a
+					href={url("/dynamic/")}
+					class="btn-plain flex items-center gap-1.5 text-sm text-(--primary) hover:underline font-medium transition-colors"
+					aria-label={i18n(I18nKey.dynamicBackToList)}
+				>
+					<Icon name="material-symbols:arrow-back-rounded" class="text-base" />
+					<span>{i18n(I18nKey.dynamicBackToList)}</span>
+				</a>
+			</div>
+			<div class="page-count" aria-label={i18n(I18nKey.dynamic)}>
+				<Icon name="material-symbols:dynamic-feed-rounded" />
+				<span>{published}</span>
+			</div>
+		</header>
+
+		<div class="page-feed mb-4">
+			<DynamicItem
+				entry={entry}
+				detailUrl={currentUrl}
+				showInlineComments={false}
+			/>
+		</div>
+
+		{showComments && (
+			<div class="mt-4">
+				<Comment customPath={`/dynamic/${slug}`} title={pageTitle} />
+			</div>
+		)}
+	</section>
+</MainGridLayout>
+
+<script>
+	import { registerDynamicGallery } from "@/components/pages/dynamic/dynamic-gallery";
+	registerDynamicGallery();
+</script>
