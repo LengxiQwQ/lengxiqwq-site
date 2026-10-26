@@ -476,194 +476,83 @@ const config = {
       };
       activeScrollController = controller;
 
-      let isSettled = false;
-      let userInteracted = false;
-      let resizeObserver = null;
-      let realignTimer = null;
-      let settleTimer = null;
+      let isGlowTriggered = false;
+      let hasScrolled = false;
       let scrollDebounceTimer = null;
-      let maxDurationTimer = null;
-      const imageListeners = [];
+      let fallbackTimer = null;
 
       const cleanup = () => {
-        window.removeEventListener("wheel", onUserManualScroll);
-        window.removeEventListener("touchmove", onUserManualScroll);
-        window.removeEventListener("scroll", onScrollDebounce);
+        window.removeEventListener("scroll", onScroll);
         window.removeEventListener("scrollend", onScrollEnd);
-        if (resizeObserver) {
-          resizeObserver.disconnect();
-          resizeObserver = null;
-        }
-        if (realignTimer) clearTimeout(realignTimer);
-        if (settleTimer) clearTimeout(settleTimer);
         if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
-        if (maxDurationTimer) clearTimeout(maxDurationTimer);
-        imageListeners.forEach(({ img, onDone }) => {
-          img.removeEventListener("load", onDone);
-          img.removeEventListener("error", onDone);
-        });
-        imageListeners.length = 0;
+        if (fallbackTimer) clearTimeout(fallbackTimer);
       };
 
-      const onUserManualScroll = () => {
-        userInteracted = true;
-        cleanup();
-      };
-
-      window.addEventListener("wheel", onUserManualScroll, { passive: true, once: true });
-      window.addEventListener("touchmove", onUserManualScroll, { passive: true, once: true });
-
-      const markSettledAndGlow = () => {
-        if (controller.aborted || isSettled) return;
-        isSettled = true;
+      const triggerGlow = () => {
+        if (controller.aborted || isGlowTriggered) return;
+        isGlowTriggered = true;
         cleanup();
 
         try {
           sessionStorage.removeItem("waline-target-comment");
         } catch (_) {}
 
-        // 视线平稳后停顿 500ms（0.5s），然后优雅绽放 3.0s 极光高亮
-        setTimeout(() => {
-          if (controller.aborted || !el || !el.isConnected) return;
+        if (!el || !el.isConnected) return;
 
-          // 若评论存在子回复区域，精确计算底部避让距离，确保仅高亮本条评论自身
-          const quoteEl = el.querySelector(":scope > .wl-card > .wl-quote");
-          if (quoteEl) {
-            el.style.setProperty(
-              "--waline-highlight-bottom",
-              `${quoteEl.offsetHeight + 14}px`,
-            );
-          } else {
-            el.style.setProperty(
-              "--waline-highlight-bottom",
-              "calc(0.5em + 4px)",
-            );
-          }
-
-          el.classList.remove("waline-highlight-target");
-          void el.offsetWidth; // 触发 reflow 重置动画
-          el.classList.add("waline-highlight-target");
-          setTimeout(() => {
-            el.classList.remove("waline-highlight-target");
-          }, 3200);
-        }, 500);
-      };
-
-      const getOffsetFromCenter = () => {
-        if (!el || !el.isConnected) return 0;
-        const rect = el.getBoundingClientRect();
-        const vh = window.innerHeight;
-        // 如果元素超长（比视口还高），则以顶部对齐（避让导航栏 90px）
-        if (rect.height >= vh - 120) {
-          return rect.top - 90;
-        }
-        // 否则严格居中：元素中心与视口中心的纵向差值
-        const elCenter = rect.top + rect.height / 2;
-        const vhCenter = vh / 2;
-        return elCenter - vhCenter;
-      };
-
-      const checkSettled = () => {
-        if (controller.aborted || isSettled || userInteracted) return;
-        const offset = getOffsetFromCenter();
-        if (Math.abs(offset) <= 25) {
-          markSettledAndGlow();
+        // 若评论存在子回复区域，精确计算底部避让距离，确保仅高亮本条评论自身
+        const quoteEl = el.querySelector(":scope > .wl-card > .wl-quote");
+        if (quoteEl) {
+          el.style.setProperty(
+            "--waline-highlight-bottom",
+            `${quoteEl.offsetHeight + 14}px`,
+          );
         } else {
-          scheduleRealign();
+          el.style.setProperty(
+            "--waline-highlight-bottom",
+            "calc(0.5em + 4px)",
+          );
         }
+
+        el.classList.remove("waline-highlight-target");
+        void el.offsetWidth; // 触发 reflow 重置动画
+        el.classList.add("waline-highlight-target");
+        setTimeout(() => {
+          el.classList.remove("waline-highlight-target");
+        }, 3200);
       };
 
-      const onScrollDebounce = () => {
-        if (controller.aborted || isSettled || userInteracted) return;
+      // 滚动停止判定：现代浏览器首选原生 scrollend，同时兼容 80ms 滚动防抖兜底
+      const onScrollEnd = () => {
+        if (controller.aborted || isGlowTriggered) return;
+        triggerGlow();
+      };
+
+      const onScroll = () => {
+        hasScrolled = true;
+        if (controller.aborted || isGlowTriggered) return;
         if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
         scrollDebounceTimer = setTimeout(() => {
-          checkSettled();
-        }, 120);
-      };
-
-      const onScrollEnd = () => {
-        if (controller.aborted || isSettled || userInteracted) return;
-        checkSettled();
-      };
-
-      const scheduleRealign = () => {
-        if (controller.aborted || isSettled || userInteracted) return;
-        if (realignTimer) clearTimeout(realignTimer);
-        realignTimer = setTimeout(() => {
-          if (controller.aborted || isSettled || userInteracted) return;
-          const offset = getOffsetFromCenter();
-          if (Math.abs(offset) > 20) {
-            if (settleTimer) {
-              clearTimeout(settleTimer);
-              settleTimer = null;
-            }
-            const rect = el.getBoundingClientRect();
-            const blockAlign = rect.height >= window.innerHeight - 120 ? "start" : "center";
-            el.scrollIntoView({ behavior: "smooth", block: blockAlign });
-          }
-
-          // 重新等待稳定
-          if (settleTimer) clearTimeout(settleTimer);
-          settleTimer = setTimeout(checkSettled, 350);
-        }, 60);
+          triggerGlow();
+        }, 80);
       };
 
       const start = () => {
-        if (controller.aborted || userInteracted) return;
+        if (controller.aborted) return;
 
-        // 1. 首次平滑滚动定位
-        const rect = el.getBoundingClientRect();
-        const blockAlign = rect.height >= window.innerHeight - 120 ? "start" : "center";
-        el.scrollIntoView({ behavior: "smooth", block: blockAlign });
-
-        // 2. 监听滚动事件，待滚动平稳后检查位置
-        window.addEventListener("scroll", onScrollDebounce, { passive: true });
+        window.addEventListener("scroll", onScroll, { passive: true });
         if ("onscrollend" in window) {
           window.addEventListener("scrollend", onScrollEnd, { passive: true });
         }
 
-        // 3. 监听所有正文图片与评论区图片（未加载完成者），一旦加载完毕自动补偿重位
-        const images = Array.from(
-          document.querySelectorAll("article img, #waline img, .content-panel img")
-        );
-        const uncompleted = images.filter((img) => !img.complete && img !== el);
-        uncompleted.forEach((img) => {
-          const onDone = () => {
-            if (controller.aborted || isSettled || userInteracted) return;
-            scheduleRealign();
-          };
-          img.addEventListener("load", onDone, { once: true });
-          img.addEventListener("error", onDone, { once: true });
-          imageListeners.push({ img, onDone });
-        });
+        // 平滑滚动定位到评论卡片中央
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
 
-        // 4. ResizeObserver 监听评论容器和页面内容区高度变动
-        if (window.ResizeObserver) {
-          resizeObserver = new ResizeObserver(() => {
-            if (controller.aborted || isSettled || userInteracted) return;
-            scheduleRealign();
-          });
-          const walineEl = document.getElementById("waline");
-          if (walineEl) resizeObserver.observe(walineEl);
-          const panel = document.getElementById("content-panel") || document.body;
-          if (panel) resizeObserver.observe(panel);
-        }
-
-        // 初始启动稳定度检查定时器
-        settleTimer = setTimeout(checkSettled, 400);
-
-        // 5. 最大保护兜底：2.8 秒后无论如何完成定位并高亮
-        maxDurationTimer = setTimeout(() => {
-          if (!isSettled && !controller.aborted && !userInteracted) {
-            const offset = getOffsetFromCenter();
-            if (Math.abs(offset) > 25) {
-              const rect = el.getBoundingClientRect();
-              const blockAlign = rect.height >= window.innerHeight - 120 ? "start" : "center";
-              el.scrollIntoView({ behavior: "smooth", block: blockAlign });
-            }
-            markSettledAndGlow();
+        // 兜底：若目标本来就在视口中央无需滚动（未触发 scroll 事件），150ms 后直接高亮
+        fallbackTimer = setTimeout(() => {
+          if (!hasScrolled && !isGlowTriggered) {
+            triggerGlow();
           }
-        }, 2800);
+        }, 150);
       };
 
       // 检查 Swup 页面过渡状态：若切页过渡中，等待过渡彻底完成并回流提交后再滚动
@@ -671,7 +560,7 @@ const config = {
         const transObserver = new MutationObserver(() => {
           if (!document.documentElement.classList.contains("is-page-transitioning")) {
             transObserver.disconnect();
-            setTimeout(start, 60);
+            setTimeout(start, 50);
           }
         });
         transObserver.observe(document.documentElement, {
@@ -681,7 +570,7 @@ const config = {
         setTimeout(() => {
           transObserver.disconnect();
           start();
-        }, 500);
+        }, 400);
       } else {
         start();
       }
