@@ -434,7 +434,8 @@ const config = {
           if (hasTriggered) return;
           hasTriggered = true;
           cleanup();
-          setTimeout(callback, 80);
+          // 滚动停止后给约 0.7 秒的视线聚焦停顿，待用户视线平稳后再优雅绽放高亮
+          setTimeout(callback, 700);
         };
 
         const cleanup = () => {
@@ -456,7 +457,8 @@ const config = {
         }
         window.addEventListener("scroll", onScrollDebounce, { passive: true });
 
-        maxTimeoutTimer = setTimeout(execute, 600);
+        // 最大安全超时兜底（如果无滚动发生或在极端环境下），1000ms 后触发
+        maxTimeoutTimer = setTimeout(execute, 1000);
       };
 
       const highlightAndScroll = (el) => {
@@ -483,7 +485,7 @@ const config = {
           el.classList.add("waline-highlight-target");
           setTimeout(() => {
             el.classList.remove("waline-highlight-target");
-          }, 2600);
+          }, 3600);
         };
 
         // 平滑下滑定位到评论卡片中央并触发极光脉冲高亮特效
@@ -642,7 +644,7 @@ const config = {
     border-radius: 14px;
     pointer-events: none;
     z-index: -1;
-    animation: waline-aurora-glow 2.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: waline-aurora-glow 3.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
   /* 针对回复评论（嵌套在 .wl-quote 内的 .wl-card-item）：
@@ -661,14 +663,14 @@ const config = {
         0 0 0 0 transparent,
         0 0 0 0 transparent;
     }
-    18% {
+    15% {
       background-color: color-mix(in srgb, var(--primary) 12%, transparent);
       box-shadow:
         0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent),
         0 2px 20px -2px color-mix(in srgb, var(--primary) 35%, transparent),
         0 0 30px color-mix(in srgb, var(--primary) 20%, transparent);
     }
-    38% {
+    50% {
       background-color: color-mix(in srgb, var(--primary) 12%, transparent);
       box-shadow:
         0 0 0 2px color-mix(in srgb, var(--primary) 55%, transparent),
