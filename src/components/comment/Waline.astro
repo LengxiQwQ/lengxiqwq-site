@@ -326,11 +326,8 @@ const config = {
       }
 
       const currentPath = getCurrentPath();
-      if (
-        el.getAttribute("data-initialized-path") === currentPath &&
-        el.children.length > 0
-      ) {
-        // 如果已经初始化过，且当前有目标评论或 hash，仍然要执行定位下滑与高亮
+      if (el.getAttribute("data-initialized-path") === currentPath) {
+        // 当前页面已在初始化或已初始化完成，直接执行目标定位与高亮，避免重复销毁重建
         scrollToHashTarget();
         return;
       }
@@ -382,12 +379,242 @@ const config = {
       }
     }
 
+    let activeScrollController = null;
+
+    function highlightAndScroll(el) {
+      if (!el) return;
+
+      // 如果已有正在执行的滚动高亮任务，先终止前一个
+      if (activeScrollController) {
+        activeScrollController.abort();
+        activeScrollController = null;
+      }
+
+      const controller = {
+        aborted: false,
+        abort() {
+          this.aborted = true;
+          cleanup();
+        },
+      };
+      activeScrollController = controller;
+
+      let isSettled = false;
+      let userInteracted = false;
+      let resizeObserver = null;
+      let realignTimer = null;
+      let settleTimer = null;
+      let scrollDebounceTimer = null;
+      let maxDurationTimer = null;
+      const imageListeners = [];
+
+      const cleanup = () => {
+        window.removeEventListener("wheel", onUserManualScroll);
+        window.removeEventListener("touchmove", onUserManualScroll);
+        window.removeEventListener("scroll", onScrollDebounce);
+        window.removeEventListener("scrollend", onScrollEnd);
+        if (resizeObserver) {
+          resizeObserver.disconnect();
+          resizeObserver = null;
+        }
+        if (realignTimer) clearTimeout(realignTimer);
+        if (settleTimer) clearTimeout(settleTimer);
+        if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
+        if (maxDurationTimer) clearTimeout(maxDurationTimer);
+        imageListeners.forEach(({ img, onDone }) => {
+          img.removeEventListener("load", onDone);
+          img.removeEventListener("error", onDone);
+        });
+        imageListeners.length = 0;
+      };
+
+      const onUserManualScroll = () => {
+        userInteracted = true;
+        cleanup();
+      };
+
+      window.addEventListener("wheel", onUserManualScroll, { passive: true, once: true });
+      window.addEventListener("touchmove", onUserManualScroll, { passive: true, once: true });
+
+      const markSettledAndGlow = () => {
+        if (controller.aborted || isSettled) return;
+        isSettled = true;
+        cleanup();
+
+        try {
+          sessionStorage.removeItem("waline-target-comment");
+        } catch (_) {}
+
+        // 视线平稳后停顿 500ms（0.5s），然后优雅绽放 3.0s 极光高亮
+        setTimeout(() => {
+          if (controller.aborted || !el || !el.isConnected) return;
+
+          // 若评论存在子回复区域，精确计算底部避让距离，确保仅高亮本条评论自身
+          const quoteEl = el.querySelector(":scope > .wl-card > .wl-quote");
+          if (quoteEl) {
+            el.style.setProperty(
+              "--waline-highlight-bottom",
+              `${quoteEl.offsetHeight + 14}px`,
+            );
+          } else {
+            el.style.setProperty(
+              "--waline-highlight-bottom",
+              "calc(0.5em + 4px)",
+            );
+          }
+
+          el.classList.remove("waline-highlight-target");
+          void el.offsetWidth; // 触发 reflow 重置动画
+          el.classList.add("waline-highlight-target");
+          setTimeout(() => {
+            el.classList.remove("waline-highlight-target");
+          }, 3200);
+        }, 500);
+      };
+
+      const getOffsetFromCenter = () => {
+        if (!el || !el.isConnected) return 0;
+        const rect = el.getBoundingClientRect();
+        const vh = window.innerHeight;
+        // 如果元素超长（比视口还高），则以顶部对齐（避让导航栏 90px）
+        if (rect.height >= vh - 120) {
+          return rect.top - 90;
+        }
+        // 否则严格居中：元素中心与视口中心的纵向差值
+        const elCenter = rect.top + rect.height / 2;
+        const vhCenter = vh / 2;
+        return elCenter - vhCenter;
+      };
+
+      const checkSettled = () => {
+        if (controller.aborted || isSettled || userInteracted) return;
+        const offset = getOffsetFromCenter();
+        if (Math.abs(offset) <= 25) {
+          markSettledAndGlow();
+        } else {
+          scheduleRealign();
+        }
+      };
+
+      const onScrollDebounce = () => {
+        if (controller.aborted || isSettled || userInteracted) return;
+        if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
+        scrollDebounceTimer = setTimeout(() => {
+          checkSettled();
+        }, 120);
+      };
+
+      const onScrollEnd = () => {
+        if (controller.aborted || isSettled || userInteracted) return;
+        checkSettled();
+      };
+
+      const scheduleRealign = () => {
+        if (controller.aborted || isSettled || userInteracted) return;
+        if (realignTimer) clearTimeout(realignTimer);
+        realignTimer = setTimeout(() => {
+          if (controller.aborted || isSettled || userInteracted) return;
+          const offset = getOffsetFromCenter();
+          if (Math.abs(offset) > 20) {
+            if (settleTimer) {
+              clearTimeout(settleTimer);
+              settleTimer = null;
+            }
+            const rect = el.getBoundingClientRect();
+            const blockAlign = rect.height >= window.innerHeight - 120 ? "start" : "center";
+            el.scrollIntoView({ behavior: "smooth", block: blockAlign });
+          }
+
+          // 重新等待稳定
+          if (settleTimer) clearTimeout(settleTimer);
+          settleTimer = setTimeout(checkSettled, 350);
+        }, 60);
+      };
+
+      const start = () => {
+        if (controller.aborted || userInteracted) return;
+
+        // 1. 首次平滑滚动定位
+        const rect = el.getBoundingClientRect();
+        const blockAlign = rect.height >= window.innerHeight - 120 ? "start" : "center";
+        el.scrollIntoView({ behavior: "smooth", block: blockAlign });
+
+        // 2. 监听滚动事件，待滚动平稳后检查位置
+        window.addEventListener("scroll", onScrollDebounce, { passive: true });
+        if ("onscrollend" in window) {
+          window.addEventListener("scrollend", onScrollEnd, { passive: true });
+        }
+
+        // 3. 监听所有正文图片与评论区图片（未加载完成者），一旦加载完毕自动补偿重位
+        const images = Array.from(
+          document.querySelectorAll("article img, #waline img, .content-panel img")
+        );
+        const uncompleted = images.filter((img) => !img.complete && img !== el);
+        uncompleted.forEach((img) => {
+          const onDone = () => {
+            if (controller.aborted || isSettled || userInteracted) return;
+            scheduleRealign();
+          };
+          img.addEventListener("load", onDone, { once: true });
+          img.addEventListener("error", onDone, { once: true });
+          imageListeners.push({ img, onDone });
+        });
+
+        // 4. ResizeObserver 监听评论容器和页面内容区高度变动
+        if (window.ResizeObserver) {
+          resizeObserver = new ResizeObserver(() => {
+            if (controller.aborted || isSettled || userInteracted) return;
+            scheduleRealign();
+          });
+          const walineEl = document.getElementById("waline");
+          if (walineEl) resizeObserver.observe(walineEl);
+          const panel = document.getElementById("content-panel") || document.body;
+          if (panel) resizeObserver.observe(panel);
+        }
+
+        // 初始启动稳定度检查定时器
+        settleTimer = setTimeout(checkSettled, 400);
+
+        // 5. 最大保护兜底：2.8 秒后无论如何完成定位并高亮
+        maxDurationTimer = setTimeout(() => {
+          if (!isSettled && !controller.aborted && !userInteracted) {
+            const offset = getOffsetFromCenter();
+            if (Math.abs(offset) > 25) {
+              const rect = el.getBoundingClientRect();
+              const blockAlign = rect.height >= window.innerHeight - 120 ? "start" : "center";
+              el.scrollIntoView({ behavior: "smooth", block: blockAlign });
+            }
+            markSettledAndGlow();
+          }
+        }, 2800);
+      };
+
+      // 检查 Swup 页面过渡状态：若切页过渡中，等待过渡彻底完成并回流提交后再滚动
+      if (document.documentElement.classList.contains("is-page-transitioning")) {
+        const transObserver = new MutationObserver(() => {
+          if (!document.documentElement.classList.contains("is-page-transitioning")) {
+            transObserver.disconnect();
+            setTimeout(start, 60);
+          }
+        });
+        transObserver.observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ["class"],
+        });
+        setTimeout(() => {
+          transObserver.disconnect();
+          start();
+        }, 500);
+      } else {
+        start();
+      }
+    }
+
     function scrollToHashTarget(explicitTargetId) {
       let targetId = explicitTargetId;
       if (!targetId) {
         try {
           targetId = sessionStorage.getItem("waline-target-comment");
-          if (targetId) sessionStorage.removeItem("waline-target-comment");
         } catch (_) {}
       }
       if (!targetId) {
@@ -396,6 +623,8 @@ const config = {
           targetId = decodeURIComponent(hash.slice(1));
         }
       }
+      if (!targetId) return;
+      targetId = String(targetId).replace(/^#/, "").trim();
       if (!targetId) return;
 
       const commentCard =
@@ -411,91 +640,24 @@ const config = {
         return;
       }
 
-      let hasFoundTarget = false;
-
       const findTargetEl = (id) => {
         if (!id) return null;
+        const cleanId = String(id).replace(/^#/, "").trim();
+        if (!cleanId) return null;
         return (
-          document.getElementById(id) ||
-          document.getElementById(`wl-${id}`) ||
-          document.getElementById(`waline-${id}`) ||
-          document.getElementById(`comment-${id}`) ||
-          document.querySelector(`.wl-card-item[id="${id}"]`) ||
-          document.querySelector(`.wl-card-item[data-id="${id}"]`)
+          document.getElementById(cleanId) ||
+          document.getElementById(`wl-${cleanId}`) ||
+          document.getElementById(`waline-${cleanId}`) ||
+          document.getElementById(`comment-${cleanId}`) ||
+          document.querySelector(`.wl-card-item[id="${cleanId}"]`) ||
+          document.querySelector(`.wl-card-item[data-id="${cleanId}"]`) ||
+          document.querySelector(`[data-waline-id="${cleanId}"]`)
         );
-      };
-
-      const runAfterScrollFinish = (targetEl, callback) => {
-        let hasTriggered = false;
-        let scrollDebounceTimer = null;
-        let maxTimeoutTimer = null;
-
-        const execute = () => {
-          if (hasTriggered) return;
-          hasTriggered = true;
-          cleanup();
-          // 滚动停止后给 0.5 秒的视线聚焦停顿，待用户视线平稳后再优雅绽放高亮
-          setTimeout(callback, 500);
-        };
-
-        const cleanup = () => {
-          window.removeEventListener("scrollend", onScrollEnd);
-          window.removeEventListener("scroll", onScrollDebounce);
-          if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
-          if (maxTimeoutTimer) clearTimeout(maxTimeoutTimer);
-        };
-
-        const onScrollEnd = () => execute();
-
-        const onScrollDebounce = () => {
-          if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
-          scrollDebounceTimer = setTimeout(execute, 100);
-        };
-
-        if ("onscrollend" in window) {
-          window.addEventListener("scrollend", onScrollEnd, { once: true });
-        }
-        window.addEventListener("scroll", onScrollDebounce, { passive: true });
-
-        // 最大安全超时兜底（如果无滚动发生或在极端环境下），800ms 后触发
-        maxTimeoutTimer = setTimeout(execute, 800);
-      };
-
-      const highlightAndScroll = (el) => {
-        if (!el || hasFoundTarget) return;
-        hasFoundTarget = true;
-
-        // 若评论存在子回复区域，精确计算底部避让距离，确保仅高亮本条评论自身
-        const quoteEl = el.querySelector(":scope > .wl-card > .wl-quote");
-        if (quoteEl) {
-          el.style.setProperty(
-            "--waline-highlight-bottom",
-            `${quoteEl.offsetHeight + 14}px`,
-          );
-        } else {
-          el.style.setProperty(
-            "--waline-highlight-bottom",
-            "calc(0.5em + 4px)",
-          );
-        }
-
-        const startEffect = () => {
-          el.classList.remove("waline-highlight-target");
-          void el.offsetWidth; // 触发 reflow 重置动画
-          el.classList.add("waline-highlight-target");
-          setTimeout(() => {
-            el.classList.remove("waline-highlight-target");
-          }, 3200);
-        };
-
-        // 平滑下滑定位到评论卡片中央并触发极光脉冲高亮特效
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        runAfterScrollFinish(el, startEffect);
       };
 
       const existingEl = findTargetEl(targetId);
       if (existingEl) {
-        setTimeout(() => highlightAndScroll(existingEl), 100);
+        highlightAndScroll(existingEl);
         return;
       }
 
@@ -503,7 +665,7 @@ const config = {
       let timer = null;
       let observer = null;
 
-      const cleanup = () => {
+      const cleanupPolling = () => {
         if (timer) {
           clearInterval(timer);
           timer = null;
@@ -517,8 +679,8 @@ const config = {
       const checkTarget = () => {
         const el = findTargetEl(targetId);
         if (el) {
-          cleanup();
-          setTimeout(() => highlightAndScroll(el), 100);
+          cleanupPolling();
+          highlightAndScroll(el);
           return true;
         }
         return false;
@@ -535,8 +697,8 @@ const config = {
       let attempts = 0;
       timer = setInterval(() => {
         attempts++;
-        if (checkTarget() || attempts > 80) {
-          cleanup();
+        if (checkTarget() || attempts > 100) {
+          cleanupPolling();
         }
       }, 100);
     }
