@@ -60,11 +60,15 @@ const enhancedLinks = link.map((r) => {
 	const starsText =
 		typeof cachedRepo?.stars === "number" ? formatCount(cachedRepo.stars) : "—";
 
+	const buildStars =
+		typeof cachedRepo?.stars === "number" ? cachedRepo.stars : undefined;
+
 	return {
 		...r,
 		resolvedIcon: resolveLinkIcon(r.icon, r.label),
 		githubRepo: repo,
 		starsText,
+		buildStars,
 	};
 });
 ---
@@ -166,6 +170,7 @@ const enhancedLinks = link.map((r) => {
               target="_blank"
               rel="noopener noreferrer"
               data-github-star-repo={r.githubRepo.toLowerCase()}
+              data-build-stars={r.buildStars}
               aria-label={`${r.label} (${r.githubRepo}) - ${r.starsText} stars`}
               class="inline-flex items-center text-xs font-medium rounded-lg border border-(--primary)/30 hover:border-(--primary)/60 bg-(--primary)/8 hover:bg-(--primary)/15 text-(--primary) transition-all overflow-hidden group/star-btn"
             >

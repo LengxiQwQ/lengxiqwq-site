@@ -119,10 +119,30 @@
       });
   }
 
+  function getBuildStars(repoKey: string): number | null {
+    const btn = document.querySelector<HTMLElement>(
+      `[data-github-star-repo="${repoKey}"][data-build-stars]`,
+    );
+    if (!btn) return null;
+    const raw = btn.getAttribute("data-build-stars");
+    if (raw === null || raw === "") return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
   function enhanceRepo(repo: string): void {
     const key = repo.toLowerCase();
     const cached = readCache(key);
+    const buildStars = getBuildStars(key);
+
     if (cached) {
+      // 若构建期获取到的 Star 数量比浏览器本地缓存还要大（说明站点重新构建且数据更新了），
+      // 则优先使用构建期的最新值更新展示和缓存；
+      // 反之，若超过 24h 缓存自然过期，或未来向 API 重新请求后，数据无论增减都会精准以 API 结果为准。
+      if (buildStars !== null && buildStars > cached.stargazers_count) {
+        cached.stargazers_count = buildStars;
+        writeCache(key, cached);
+      }
       applyData(key, cached);
       return;
     }
