@@ -362,21 +362,41 @@ const config = {
           const h = parseInt(match[2], 10);
           if (w > 0 && h > 0) {
             img.style.aspectRatio = `${w} / ${h}`;
-            img.style.maxWidth = `${Math.min(w, 680)}px`;
+            img.style.maxWidth = `${Math.min(w, 600)}px`;
             img.style.width = "100%";
           }
         }
 
+        const applyNaturalDimensions = () => {
+          if (img.naturalWidth && img.naturalHeight) {
+            img.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+            img.style.maxWidth = `${Math.min(img.naturalWidth, 600)}px`;
+          }
+        };
+
         if (!img.complete) {
           img.classList.add("wl-img-loading");
-          const onDone = () => {
-            img.classList.remove("wl-img-loading");
-            img.classList.add("wl-img-loaded");
-          };
-          img.addEventListener("load", onDone, { once: true });
-          img.addEventListener("error", onDone, { once: true });
+          img.addEventListener(
+            "load",
+            () => {
+              img.classList.remove("wl-img-loading");
+              img.classList.add("wl-img-loaded");
+              applyNaturalDimensions();
+            },
+            { once: true }
+          );
+          img.addEventListener(
+            "error",
+            () => {
+              img.classList.remove("wl-img-loading");
+              img.classList.add("wl-img-error");
+              // 错误兜底：严格保留 16:9 比例与外框骨架尺寸，绝不发生高度塌陷
+            },
+            { once: true }
+          );
         } else {
           img.classList.add("wl-img-loaded");
+          applyNaturalDimensions();
         }
       });
     }
@@ -480,6 +500,8 @@ const config = {
       let hasScrolled = false;
       let scrollDebounceTimer = null;
       let fallbackTimer = null;
+      let realignAttempts = 0;
+      let lastTargetTop = 0;
 
       const cleanup = () => {
         window.removeEventListener("scroll", onScroll);
@@ -490,6 +512,22 @@ const config = {
 
       const triggerGlow = () => {
         if (controller.aborted || isGlowTriggered) return;
+
+        // 校验当前目标元素在视口中的垂直位置，确保其处于适宜的视口可视区域内
+        const rect = el.getBoundingClientRect();
+        const viewportHeight =
+          window.innerHeight || document.documentElement.clientHeight;
+        // 允许顶部避让导航栏（50px），底部不严重溢出视口
+        const isWellPositioned =
+          rect.top >= 50 && rect.top <= viewportHeight - 80;
+
+        // 如果上方图片刚刚加载导致元素位移且尚未正对视口，允许最多平滑校准 2 次
+        if (!isWellPositioned && realignAttempts < 2) {
+          realignAttempts++;
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          return;
+        }
+
         isGlowTriggered = true;
         cleanup();
 
@@ -536,18 +574,77 @@ const config = {
         }, 80);
       };
 
-      const start = () => {
+      const start = async () => {
         if (controller.aborted) return;
+
+        // 确保评论区内所有图片均已加上 16:9 骨架与尺寸元数据
+        enhanceCommentImages();
+
+        // 检索排在目标评论 el 之前的所有评论图片
+        const walineRoot =
+          document.getElementById("waline") || el.closest("#waline");
+        let precedingImgs = [];
+        if (walineRoot) {
+          const allWalineImgs = Array.from(
+            walineRoot.querySelectorAll(
+              ".wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji)"
+            )
+          );
+          precedingImgs = allWalineImgs.filter(
+            (img) =>
+              (img.compareDocumentPosition(el) &
+                Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+          );
+        }
+
+        const pendingImgs = precedingImgs.filter((img) => !img.complete);
+
+        // 如果上方有未加载完成的图片，极速等待其加载（上限 350ms，缓存图通常数十毫秒即可就绪）
+        if (pendingImgs.length > 0) {
+          const waitPromises = pendingImgs.map(
+            (img) =>
+              new Promise((resolve) => {
+                if (img.complete) return resolve();
+                img.addEventListener("load", resolve, { once: true });
+                img.addEventListener("error", resolve, { once: true });
+              })
+          );
+          await Promise.race([
+            Promise.all(waitPromises),
+            new Promise((resolve) => setTimeout(resolve, 350)),
+          ]);
+        }
+
+        if (controller.aborted) return;
+
+        // 注册对上方图片的后续加载监听，一旦慢速图片延迟加载导致高度位移，立即平滑校准一次位置
+        const realignIfNeeded = () => {
+          if (controller.aborted || isGlowTriggered) return;
+          const currentTargetTop =
+            el.getBoundingClientRect().top + window.scrollY;
+          if (Math.abs(currentTargetTop - lastTargetTop) > 10) {
+            lastTargetTop = currentTargetTop;
+            el.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        };
+
+        precedingImgs.forEach((img) => {
+          if (!img.complete) {
+            img.addEventListener("load", realignIfNeeded, { once: true });
+            img.addEventListener("error", realignIfNeeded, { once: true });
+          }
+        });
 
         window.addEventListener("scroll", onScroll, { passive: true });
         if ("onscrollend" in window) {
           window.addEventListener("scrollend", onScrollEnd, { passive: true });
         }
 
-        // 平滑滚动定位到评论卡片中央
+        // 记录起始绝对 Y 坐标并执行平滑滚动定位到评论卡片中央
+        lastTargetTop = el.getBoundingClientRect().top + window.scrollY;
         el.scrollIntoView({ behavior: "smooth", block: "center" });
 
-        // 兜底：若目标本来就在视口中央无需滚动（未触发 scroll 事件），150ms 后直接高亮
+        // 兜底：若目标本来就在视口中央无需滚动（未触发 scroll 事件），150ms 后直接判定高亮
         fallbackTimer = setTimeout(() => {
           if (!hasScrolled && !isGlowTriggered) {
             triggerGlow();
@@ -644,6 +741,7 @@ const config = {
       };
 
       const checkTarget = () => {
+        enhanceCommentImages(walineEl);
         const el = findTargetEl(targetId);
         if (el) {
           cleanupPolling();
@@ -722,40 +820,54 @@ const config = {
     --waline-avatar-radius: 50%;
   }
 
-  /* 评论区图片样式与 Fancybox 灯箱支持（保持静态自然，原生支持预留占位与骨架加载） */
+  /* 评论区图片样式与骨架占位（默认 16:9 预留尺寸，无论新旧图片、加载中或加载失败均严格兜底占位，彻底杜绝高度塌陷与错位） */
   #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji) {
     cursor: pointer;
-    max-width: 100%;
+    display: block;
+    width: 100%;
+    max-width: 600px;
+    aspect-ratio: 16 / 9; /* 默认通用 16:9 黄金宽屏比例预留骨架，无论历史旧图还是新图均提前占位 */
     height: auto;
-    max-height: 480px;
+    max-height: 520px;
     border-radius: 10px;
     margin: 0.6rem 0;
     border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.08));
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
-    display: block;
     background-color: color-mix(in srgb, var(--card-bg) 60%, var(--primary) 5%);
-    transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    box-sizing: border-box;
+    object-fit: cover;
+    transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  /* 图片尚未加载完成时的预留占位框（针对无固定宽高的图片提供合理最小高度与骨架流动感，杜绝高度塌陷） */
+  /* 图片尚未加载完成时的预留骨架占位框（保持完整 16:9 比例与动态流动光效） */
   #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji).wl-img-loading {
-    min-height: 180px;
-    min-width: 220px;
+    min-height: 200px;
     background-image: linear-gradient(
       90deg,
       transparent 0%,
-      color-mix(in srgb, var(--primary) 8%, transparent) 50%,
+      color-mix(in srgb, var(--primary) 10%, transparent) 50%,
       transparent 100%
     );
     background-size: 200% 100%;
     animation: wl-img-skeleton 1.6s infinite ease-in-out;
   }
 
+  /* 图片加载完成：移除骨架动画，以图片真实比例展示 */
   #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji).wl-img-loaded {
     min-height: unset;
-    min-width: unset;
     background-image: none;
     animation: none;
+    object-fit: contain;
+  }
+
+  /* 图片加载失败兜底：保留完整大小框框，绝不高度塌陷，维持占位与优雅边框 */
+  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji).wl-img-error {
+    min-height: 200px;
+    background-image: none;
+    animation: none;
+    cursor: default;
+    border: 1px dashed var(--waline-border-color, rgba(0, 0, 0, 0.2));
+    background-color: color-mix(in srgb, var(--card-bg) 85%, var(--primary) 6%);
   }
 
   @keyframes wl-img-skeleton {
