@@ -330,6 +330,8 @@ const config = {
         el.getAttribute("data-initialized-path") === currentPath &&
         el.children.length > 0
       ) {
+        // 如果已经初始化过，且当前有目标评论或 hash，仍然要执行定位下滑与高亮
+        scrollToHashTarget();
         return;
       }
 
@@ -380,13 +382,27 @@ const config = {
       }
     }
 
-    function scrollToHashTarget() {
-      const hash = window.location.hash;
-      if (!hash) return;
+    function scrollToHashTarget(explicitTargetId) {
+      let targetId = explicitTargetId;
+      if (!targetId) {
+        try {
+          targetId = sessionStorage.getItem("waline-target-comment");
+          if (targetId) sessionStorage.removeItem("waline-target-comment");
+        } catch (_) {}
+      }
+      if (!targetId) {
+        const hash = window.location.hash;
+        if (hash) {
+          targetId = decodeURIComponent(hash.slice(1));
+        }
+      }
+      if (!targetId) return;
 
-      const commentCard = document.getElementById("post-comments") || document.getElementById("waline");
+      const commentCard =
+        document.getElementById("post-comments") ||
+        document.getElementById("waline");
 
-      if (hash === "#post-comments" || hash === "#waline") {
+      if (targetId === "post-comments" || targetId === "waline") {
         if (commentCard) {
           setTimeout(() => {
             commentCard.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -395,8 +411,19 @@ const config = {
         return;
       }
 
-      const targetId = decodeURIComponent(hash.slice(1));
       let hasFoundTarget = false;
+
+      const findTargetEl = (id) => {
+        if (!id) return null;
+        return (
+          document.getElementById(id) ||
+          document.getElementById(`wl-${id}`) ||
+          document.getElementById(`waline-${id}`) ||
+          document.getElementById(`comment-${id}`) ||
+          document.querySelector(`.wl-card-item[id="${id}"]`) ||
+          document.querySelector(`.wl-card-item[data-id="${id}"]`)
+        );
+      };
 
       const runAfterScrollFinish = (targetEl, callback) => {
         let hasTriggered = false;
@@ -407,8 +434,7 @@ const config = {
           if (hasTriggered) return;
           hasTriggered = true;
           cleanup();
-          // 滚动停止后给 100ms 视线聚焦停顿，随后精准绽放特效
-          setTimeout(callback, 100);
+          setTimeout(callback, 80);
         };
 
         const cleanup = () => {
@@ -422,8 +448,7 @@ const config = {
 
         const onScrollDebounce = () => {
           if (scrollDebounceTimer) clearTimeout(scrollDebounceTimer);
-          // 滚动事件超过 120ms 未触发，判定平滑滚动完成
-          scrollDebounceTimer = setTimeout(execute, 120);
+          scrollDebounceTimer = setTimeout(execute, 100);
         };
 
         if ("onscrollend" in window) {
@@ -431,8 +456,7 @@ const config = {
         }
         window.addEventListener("scroll", onScrollDebounce, { passive: true });
 
-        // 最大安全超时（即便极端情况下无滚动或事件被吞，800ms 内也必出）
-        maxTimeoutTimer = setTimeout(execute, 800);
+        maxTimeoutTimer = setTimeout(execute, 600);
       };
 
       const highlightAndScroll = (el) => {
@@ -442,43 +466,36 @@ const config = {
         // 若评论存在子回复区域，精确计算底部避让距离，确保仅高亮本条评论自身
         const quoteEl = el.querySelector(":scope > .wl-card > .wl-quote");
         if (quoteEl) {
-          el.style.setProperty("--waline-highlight-bottom", `${quoteEl.offsetHeight + 14}px`);
+          el.style.setProperty(
+            "--waline-highlight-bottom",
+            `${quoteEl.offsetHeight + 14}px`,
+          );
         } else {
-          el.style.setProperty("--waline-highlight-bottom", "calc(0.5em + 4px)");
+          el.style.setProperty(
+            "--waline-highlight-bottom",
+            "calc(0.5em + 4px)",
+          );
         }
 
-        const rect = el.getBoundingClientRect();
-        const isInViewport =
-          rect.top >= 0 &&
-          rect.bottom <= (window.innerHeight || document.documentElement.clientHeight);
-
         const startEffect = () => {
+          el.classList.remove("waline-highlight-target");
+          void el.offsetWidth; // 触发 reflow 重置动画
           el.classList.add("waline-highlight-target");
           setTimeout(() => {
             el.classList.remove("waline-highlight-target");
-          }, 2500);
+          }, 2600);
         };
 
-        if (isInViewport) {
-          setTimeout(startEffect, 120);
-        } else {
-          el.scrollIntoView({ behavior: "smooth", block: "center" });
-          runAfterScrollFinish(el, startEffect);
-        }
+        // 平滑下滑定位到评论卡片中央并触发极光脉冲高亮特效
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        runAfterScrollFinish(el, startEffect);
       };
 
-      const existingEl = document.getElementById(targetId);
+      const existingEl = findTargetEl(targetId);
       if (existingEl) {
-        setTimeout(() => highlightAndScroll(existingEl), 150);
+        setTimeout(() => highlightAndScroll(existingEl), 100);
         return;
       }
-
-      // 若 400ms 后评论尚未加载完毕，先引流页面至评论区卡片
-      const fallbackTimer = setTimeout(() => {
-        if (!hasFoundTarget && commentCard) {
-          commentCard.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      }, 400);
 
       // Waline 评论卡片为异步加载渲染，使用 MutationObserver + 轮询兜底
       let timer = null;
@@ -493,11 +510,10 @@ const config = {
           observer.disconnect();
           observer = null;
         }
-        clearTimeout(fallbackTimer);
       };
 
       const checkTarget = () => {
-        const el = document.getElementById(targetId);
+        const el = findTargetEl(targetId);
         if (el) {
           cleanup();
           setTimeout(() => highlightAndScroll(el), 100);
@@ -524,6 +540,7 @@ const config = {
     }
 
     window.__initWaline = initWaline;
+    window.__scrollToWalineComment = scrollToHashTarget;
 
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", initWaline);
@@ -556,7 +573,12 @@ const config = {
 
       document.addEventListener("firefly:page:loaded", triggerRefresh);
       document.addEventListener("astro:page-load", triggerRefresh);
-      window.addEventListener("hashchange", scrollToHashTarget);
+      window.addEventListener("hashchange", () => scrollToHashTarget());
+      window.addEventListener("waline:scroll-to-comment", (e) => {
+        if (e && e.detail && e.detail.id) {
+          scrollToHashTarget(e.detail.id);
+        }
+      });
     }
   </script>
 </div>

@@ -74,9 +74,14 @@ function getCommentHref(entry: RecentCommentEntry): string {
 	return `${baseUrl}#${entry.id}`;
 }
 
-// 点击跳转拦截，支持同页面直接平滑滚动
+// 点击跳转拦截，支持同页面直接平滑滚动与跨页面定位保障
 function handleCommentClick(e: MouseEvent, entry: RecentCommentEntry) {
 	if (typeof window === "undefined") return;
+
+	// 存入 sessionStorage 供跨页跳转后精准平滑下滑与极光高亮（双重保险）
+	try {
+		sessionStorage.setItem("waline-target-comment", entry.id);
+	} catch {}
 
 	const rawTarget = entry.url.split("#")[0].split("?")[0];
 	let decodedTarget = rawTarget;
@@ -92,13 +97,28 @@ function handleCommentClick(e: MouseEvent, entry: RecentCommentEntry) {
 	const currentPath = decodedCurrent.replace(/\/+$/, "") || "/";
 
 	if (cleanTarget === currentPath) {
-		// 同一页面内点击：更新 hash 并手动派发事件以触发评论平滑滚动高亮
+		// 同一页面内点击：更新地址栏 hash 但阻止浏览器原生生硬瞬移，转由平滑下滑与高亮接管
 		e.preventDefault();
 		const newHash = `#${entry.id}`;
 		if (window.location.hash !== newHash) {
-			window.location.hash = entry.id;
+			window.history.pushState(null, "", newHash);
+		}
+
+		// 调用平滑下滑与极光高亮
+		const scrollToComment = (
+			window as unknown as {
+				__scrollToWalineComment?: (id: string) => void;
+			}
+		).__scrollToWalineComment;
+
+		if (typeof scrollToComment === "function") {
+			scrollToComment(entry.id);
 		} else {
-			window.dispatchEvent(new HashChangeEvent("hashchange"));
+			window.dispatchEvent(
+				new CustomEvent("waline:scroll-to-comment", {
+					detail: { id: entry.id },
+				}),
+			);
 		}
 	}
 }
