@@ -98,6 +98,7 @@ export const en: Translation = {
 
 	// Project showcase
 	[Key.projects]: "Projects",
+	[Key.myProjects]: "My Projects",
 	[Key.projectsDescription]: "Here are the projects I've built",
 	[Key.projectDetails]: "View details",
 	[Key.projectBack]: "Back to projects",
@@ -113,6 +114,34 @@ export const en: Translation = {
 	[Key.devicesDescription]:
 		"The daily companions I use for coding, gaming, music, and tinkering.",
 	[Key.devicesEmpty]: "No devices yet",
+
+	// Steam Gaming Records
+	[Key.steam]: "Steam Games",
+	[Key.steamDescription]: "Gaming records, playtime, and memorable journeys.",
+	[Key.steamPlayingNow]: "Playing Now",
+	[Key.steamStatusOnline]: "Online",
+	[Key.steamStatusOffline]: "Offline",
+	[Key.steamTotalGames]: "Total Games",
+	[Key.steamTotalPlaytime]: "Total Playtime",
+	[Key.steamRecentPlaytime]: "Past 2 Weeks",
+	[Key.steamTabAll]: "All Games",
+	[Key.steamTabRecent]: "Recent",
+	[Key.steamTabHallOfFame]: "Hall of Fame (100h+)",
+	[Key.steamSortPlaytimeDesc]: "Most Played",
+	[Key.steamSortRecentDesc]: "Recently Played",
+	[Key.steamSortNameAsc]: "Alphabetical",
+	[Key.steamSearchPlaceholder]: "Search game titles...",
+	[Key.steamNoResults]: "No matching games found",
+	[Key.steamPlaytimeHours]: "hrs",
+	[Key.steamLastPlayed]: "Last played",
+	[Key.steamViewInStore]: "View in Steam Store",
+	[Key.steamViewProfile]: "View in Steam",
+	[Key.steamLevel]: "Steam Level",
+	[Key.steamBadges]: "Badges",
+	[Key.steamXp]: "XP",
+	[Key.steamNextLevelXp]: "XP to next level",
+	[Key.steamLoadMore]: "Load More Games",
+	[Key.steamRemaining]: "remaining",
 
 	// Timeline
 	[Key.timeline]: "Timeline",

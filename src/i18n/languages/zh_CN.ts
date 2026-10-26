@@ -96,6 +96,7 @@ export const zh_CN: Translation = {
 
 	// 项目展示页
 	[Key.projects]: "项目",
+	[Key.myProjects]: "我的项目",
 	[Key.projectsDescription]: "这里展示我开发过的项目",
 	[Key.projectDetails]: "查看详情",
 	[Key.projectBack]: "返回项目列表",
@@ -111,6 +112,35 @@ export const zh_CN: Translation = {
 	[Key.devicesDescription]:
 		"一些每天陪我写代码、打游戏、听歌和折腾东西的家伙。",
 	[Key.devicesEmpty]: "暂无设备数据",
+
+	// Steam 游戏记录
+	[Key.steam]: "Steam 游戏",
+	[Key.steamDescription]:
+		"电子榨菜与快乐源泉，记录一路以来的游戏时光与通关旅程。",
+	[Key.steamPlayingNow]: "正在游玩",
+	[Key.steamStatusOnline]: "在线",
+	[Key.steamStatusOffline]: "离线",
+	[Key.steamTotalGames]: "拥有游戏",
+	[Key.steamTotalPlaytime]: "累计总时长",
+	[Key.steamRecentPlaytime]: "近两周时长",
+	[Key.steamTabAll]: "全部游戏",
+	[Key.steamTabRecent]: "最近在玩",
+	[Key.steamTabHallOfFame]: "百小时殿堂",
+	[Key.steamSortPlaytimeDesc]: "按时长从高到低",
+	[Key.steamSortRecentDesc]: "最近游玩优先",
+	[Key.steamSortNameAsc]: "按名称排序",
+	[Key.steamSearchPlaceholder]: "搜索游戏名称...",
+	[Key.steamNoResults]: "没有找到匹配的游戏",
+	[Key.steamPlaytimeHours]: "小时",
+	[Key.steamLastPlayed]: "上次游玩",
+	[Key.steamViewInStore]: "在 Steam 商店查看",
+	[Key.steamViewProfile]: "在 Steam 中查看",
+	[Key.steamLevel]: "Steam 等级",
+	[Key.steamBadges]: "徽章总数",
+	[Key.steamXp]: "经验值",
+	[Key.steamNextLevelXp]: "距下一级还需",
+	[Key.steamLoadMore]: "加载更多游戏",
+	[Key.steamRemaining]: "款剩余",
 
 	// 时间线
 	[Key.timeline]: "时间线",

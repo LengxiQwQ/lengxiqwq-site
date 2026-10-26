@@ -96,6 +96,7 @@ export const ru: Translation = {
 
 	// Витрина проектов
 	[Key.projects]: "Проекты",
+	[Key.myProjects]: "Мои проекты",
 	[Key.projectsDescription]: "Мои разработанные проекты",
 	[Key.projectDetails]: "Подробнее",
 	[Key.projectBack]: "К списку проектов",
@@ -111,6 +112,35 @@ export const ru: Translation = {
 	[Key.devicesDescription]:
 		"Устройства, которые ежедневно помогают мне писать код, играть, слушать музыку и экспериментировать.",
 	[Key.devicesEmpty]: "Данные об устройствах отсутствуют",
+
+	// Записи игр Steam
+	[Key.steam]: "Игры Steam",
+	[Key.steamDescription]:
+		"Игровая хроника, время в играх и памятные путешествия.",
+	[Key.steamPlayingNow]: "В игре",
+	[Key.steamStatusOnline]: "В сети",
+	[Key.steamStatusOffline]: "Не в сети",
+	[Key.steamTotalGames]: "Всего игр",
+	[Key.steamTotalPlaytime]: "Общее время",
+	[Key.steamRecentPlaytime]: "За 2 недели",
+	[Key.steamTabAll]: "Все игры",
+	[Key.steamTabRecent]: "Недавние",
+	[Key.steamTabHallOfFame]: "Зал славы (100ч+)",
+	[Key.steamSortPlaytimeDesc]: "По времени в игре",
+	[Key.steamSortRecentDesc]: "Недавно запущенные",
+	[Key.steamSortNameAsc]: "По названию",
+	[Key.steamSearchPlaceholder]: "Поиск по названию игры...",
+	[Key.steamNoResults]: "Игры не найдены",
+	[Key.steamPlaytimeHours]: "ч.",
+	[Key.steamLastPlayed]: "Последний запуск",
+	[Key.steamViewInStore]: "Открыть в магазине Steam",
+	[Key.steamViewProfile]: "Посмотреть в Steam",
+	[Key.steamLevel]: "Уровень Steam",
+	[Key.steamBadges]: "Значки",
+	[Key.steamXp]: "Опыт",
+	[Key.steamNextLevelXp]: "Осталось до уровня",
+	[Key.steamLoadMore]: "Загрузить больше",
+	[Key.steamRemaining]: "осталось",
 
 	// Хронология
 	[Key.timeline]: "Хронология",

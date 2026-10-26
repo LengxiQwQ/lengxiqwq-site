@@ -55,6 +55,13 @@ export type {
 	FontDefinition,
 	FontSelectionConfig,
 } from "../types/fontConfig"; // 字体类型定义
+export type {
+	SteamConfig,
+	SteamData,
+	SteamGameItem,
+	SteamPlayerSummary,
+	SteamStats,
+} from "../types/steamConfig"; // Steam 类型定义
 export type { FeedSubscription } from "../types/subscriptionConfig"; // 独立订阅源类型定义
 export { analyticsConfig } from "./analyticsConfig"; // 统计分析配置
 export { announcementConfig } from "./announcementConfig"; // 公告配置
@@ -90,8 +97,9 @@ export { sidebarLayoutConfig } from "./sidebarConfig"; // 侧边栏布局配置
 // 核心配置
 export { siteConfig } from "./siteConfig"; // 站点基础配置
 export { sponsorConfig } from "./sponsorConfig"; // 打赏配置
+export { steamConfig } from "./steamConfig"; // Steam 游戏记录配置
 export {
-	subscriptionConfig,
 	getEnabledSubscriptions,
+	subscriptionConfig,
 } from "./subscriptionConfig"; // 独立订阅源配置
 export { timelineConfig } from "./timelineConfig"; // 时间线配置

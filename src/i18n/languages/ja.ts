@@ -95,6 +95,7 @@ export const ja: Translation = {
 
 	// プロジェクト展示ページ
 	[Key.projects]: "プロジェクト",
+	[Key.myProjects]: "マイプロジェクト",
 	[Key.projectsDescription]: "私が開発したプロジェクトです",
 	[Key.projectDetails]: "詳細を見る",
 	[Key.projectBack]: "プロジェクト一覧へ戻る",
@@ -110,6 +111,34 @@ export const ja: Translation = {
 	[Key.devicesDescription]:
 		"コーディング、ゲーム、音楽、日々の試行錯誤を共にする愛用デバイスたち。",
 	[Key.devicesEmpty]: "デバイス情報がありません",
+
+	// Steam ゲーム記録
+	[Key.steam]: "Steam ゲーム",
+	[Key.steamDescription]: "ゲームのプレイ記録、プレイ時間、思い出の旅路。",
+	[Key.steamPlayingNow]: "プレイ中",
+	[Key.steamStatusOnline]: "オンライン",
+	[Key.steamStatusOffline]: "オフライン",
+	[Key.steamTotalGames]: "所持ゲーム",
+	[Key.steamTotalPlaytime]: "総プレイ時間",
+	[Key.steamRecentPlaytime]: "過去2週間のプレイ時間",
+	[Key.steamTabAll]: "すべてのゲーム",
+	[Key.steamTabRecent]: "最近プレイ",
+	[Key.steamTabHallOfFame]: "殿堂入り (100時間以上)",
+	[Key.steamSortPlaytimeDesc]: "プレイ時間順",
+	[Key.steamSortRecentDesc]: "最近プレイ順",
+	[Key.steamSortNameAsc]: "タイトル順",
+	[Key.steamSearchPlaceholder]: "ゲームを検索...",
+	[Key.steamNoResults]: "一致するゲームが見つかりません",
+	[Key.steamPlaytimeHours]: "時間",
+	[Key.steamLastPlayed]: "最後にプレイ",
+	[Key.steamViewInStore]: "Steam ストアで見る",
+	[Key.steamViewProfile]: "Steam で見る",
+	[Key.steamLevel]: "Steam レベル",
+	[Key.steamBadges]: "バッジ数",
+	[Key.steamXp]: "経験値",
+	[Key.steamNextLevelXp]: "次レベルまで",
+	[Key.steamLoadMore]: "さらに読み込む",
+	[Key.steamRemaining]: "件残り",
 
 	// タイムライン
 	[Key.timeline]: "タイムライン",

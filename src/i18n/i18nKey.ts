@@ -129,6 +129,7 @@ enum I18nKey {
 
 	// 项目展示页
 	projects = "projects",
+	myProjects = "myProjects",
 	projectsDescription = "projectsDescription",
 	projectDetails = "projectDetails",
 	projectBack = "projectBack",
@@ -143,6 +144,34 @@ enum I18nKey {
 	devices = "devices",
 	devicesDescription = "devicesDescription",
 	devicesEmpty = "devicesEmpty",
+
+	// Steam 游戏记录
+	steam = "steam",
+	steamDescription = "steamDescription",
+	steamPlayingNow = "steamPlayingNow",
+	steamStatusOnline = "steamStatusOnline",
+	steamStatusOffline = "steamStatusOffline",
+	steamTotalGames = "steamTotalGames",
+	steamTotalPlaytime = "steamTotalPlaytime",
+	steamRecentPlaytime = "steamRecentPlaytime",
+	steamTabAll = "steamTabAll",
+	steamTabRecent = "steamTabRecent",
+	steamTabHallOfFame = "steamTabHallOfFame",
+	steamSortPlaytimeDesc = "steamSortPlaytimeDesc",
+	steamSortRecentDesc = "steamSortRecentDesc",
+	steamSortNameAsc = "steamSortNameAsc",
+	steamSearchPlaceholder = "steamSearchPlaceholder",
+	steamNoResults = "steamNoResults",
+	steamPlaytimeHours = "steamPlaytimeHours",
+	steamLastPlayed = "steamLastPlayed",
+	steamViewInStore = "steamViewInStore",
+	steamViewProfile = "steamViewProfile",
+	steamLevel = "steamLevel",
+	steamBadges = "steamBadges",
+	steamXp = "steamXp",
+	steamNextLevelXp = "steamNextLevelXp",
+	steamLoadMore = "steamLoadMore",
+	steamRemaining = "steamRemaining",
 
 	// 时间线
 	timeline = "timeline",

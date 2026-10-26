@@ -1,0 +1,71 @@
+---
+import Comment from "@components/comment/index.astro";
+import { Icon } from "astro-icon/components";
+import SteamDashboard from "@/components/pages/steam/SteamDashboard.astro";
+import SteamGrid from "@/components/pages/steam/SteamGrid.svelte";
+import { commentConfig, siteConfig } from "@/config";
+import { steamConfig } from "@/config/steamConfig";
+import steamDataRaw from "@/constants/steam-data.json";
+import I18nKey from "@/i18n/i18nKey";
+import { i18n } from "@/i18n/translation";
+import MainGridLayout from "@/layouts/MainGridLayout.astro";
+import "@/styles/pages/common.css";
+import "@/styles/pages/media-grid.css";
+import type { SteamData } from "@/types/steamConfig";
+
+// 检查页面是否启用（若明确设为 false 则 404）
+if (siteConfig.pages.steam === false) {
+	return Astro.redirect("/404/");
+}
+
+const title = i18n(I18nKey.steam);
+const description = i18n(I18nKey.steamDescription);
+
+const steamData = steamDataRaw as SteamData;
+const isCommentEnabled = commentConfig?.type && commentConfig.type !== "none";
+---
+
+<MainGridLayout title={title} description={description}>
+	<section class="page-shell">
+		<!-- 统一风格的页面标题面板 -->
+		<header class="card-base page-header">
+			<div class="page-heading">
+				<div class="page-icon" aria-hidden="true">
+					<Icon name="fa7-brands:steam" />
+				</div>
+				<div>
+					<h2>{title}</h2>
+					{description && <p>{description}</p>}
+				</div>
+			</div>
+		</header>
+
+		<!-- 玩家数据看板与近期游玩统计 -->
+		{
+			steamConfig?.showStats !== false && steamData.profile && (
+				<SteamDashboard
+					profile={steamData.profile}
+					stats={steamData.stats}
+					levelInfo={steamData.levelInfo}
+				/>
+			)
+		}
+
+		<!-- 游戏交互网格（Tab筛选、搜索、排序、分页） -->
+		<SteamGrid
+			client:load
+			games={steamData.games}
+			recentGames={steamData.recentGames}
+			pageSize={steamConfig?.pageSize || 60}
+		/>
+
+		<!-- 评论区 -->
+		{
+			isCommentEnabled && (
+				<div class="mt-8">
+					<Comment customPath="/steam/" title={title} />
+				</div>
+			)
+		}
+	</section>
+</MainGridLayout>

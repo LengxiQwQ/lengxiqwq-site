@@ -95,6 +95,7 @@ export const ko: Translation = {
 
 	// 프로젝트 쇼케이스
 	[Key.projects]: "프로젝트",
+	[Key.myProjects]: "내 프로젝트",
 	[Key.projectsDescription]: "제가 개발한 프로젝트입니다",
 	[Key.projectDetails]: "자세히 보기",
 	[Key.projectBack]: "프로젝트 목록으로 돌아가기",
@@ -110,6 +111,34 @@ export const ko: Translation = {
 	[Key.devicesDescription]:
 		"코딩, 게임, 음악, 만들기를 함께하는 매일의 기기들.",
 	[Key.devicesEmpty]: "기기 정보가 없습니다",
+
+	// Steam 게임 기록
+	[Key.steam]: "Steam 게임",
+	[Key.steamDescription]: "게임 플레이 기록, 플레이 시간, 즐거웠던 여정들.",
+	[Key.steamPlayingNow]: "플레이 중",
+	[Key.steamStatusOnline]: "온라인",
+	[Key.steamStatusOffline]: "오프라인",
+	[Key.steamTotalGames]: "보유 게임",
+	[Key.steamTotalPlaytime]: "총 플레이 시간",
+	[Key.steamRecentPlaytime]: "최근 2주 플레이 시간",
+	[Key.steamTabAll]: "모든 게임",
+	[Key.steamTabRecent]: "최근 플레이",
+	[Key.steamTabHallOfFame]: "명예의 전당 (100시간+)",
+	[Key.steamSortPlaytimeDesc]: "플레이 시간 순",
+	[Key.steamSortRecentDesc]: "최근 플레이 순",
+	[Key.steamSortNameAsc]: "이름 순",
+	[Key.steamSearchPlaceholder]: "게임 제목 검색...",
+	[Key.steamNoResults]: "일치하는 게임이 없습니다",
+	[Key.steamPlaytimeHours]: "시간",
+	[Key.steamLastPlayed]: "마지막 플레이",
+	[Key.steamViewInStore]: "Steam 상점에서 보기",
+	[Key.steamViewProfile]: "Steam에서 보기",
+	[Key.steamLevel]: "Steam 레벨",
+	[Key.steamBadges]: "뱃지 수",
+	[Key.steamXp]: "경험치",
+	[Key.steamNextLevelXp]: "다음 레벨까지",
+	[Key.steamLoadMore]: "게임 더 보기",
+	[Key.steamRemaining]: "개 남음",
 
 	// 타임라인
 	[Key.timeline]: "타임라인",

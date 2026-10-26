@@ -34,7 +34,8 @@
     "content:sync": "npx tsx scripts/sync-content.ts",
     "content:reset": "npx tsx scripts/reset-content.ts",
     "upload:covers": "tsx scripts/upload-covers.ts",
-    "upload:img": "tsx scripts/upload-post-image.ts"
+    "upload:img": "tsx scripts/upload-post-image.ts",
+    "update:steam": "npx tsx scripts/generate-steam-data.ts"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.10",
