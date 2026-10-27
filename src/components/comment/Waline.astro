@@ -20,6 +20,75 @@ const config = {
   <link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css" />
   <script is:inline src="https://unpkg.com/@waline/client@v3/dist/waline.umd.js" defer></script>
   <script is:inline define:vars={{ config, KAOMOJI_LIST }}>
+    // 拦截并在提交 Waline 评论前将表情/贴纸 HTML 标签无损转回标准 Markdown 图片语法
+    // 彻底解决邮件通知中展示原始 HTML 标签及相对路径无法显示的问题
+    if (!window.__walineFetchInterceptorInstalled) {
+      window.__walineFetchInterceptorInstalled = true;
+      const originalFetch = window.fetch;
+      window.fetch = async function (input, init) {
+        if (
+          init &&
+          init.method &&
+          (init.method.toUpperCase() === "POST" || init.method.toUpperCase() === "PUT") &&
+          typeof input === "string" &&
+          (input.includes("/comment") || input.includes("/api/comment")) &&
+          typeof init.body === "string"
+        ) {
+          try {
+            const data = JSON.parse(init.body);
+            if (data && typeof data.comment === "string") {
+              const siteOrigin =
+                window.location.hostname === "localhost" ||
+                window.location.hostname === "127.0.0.1"
+                  ? "https://lengxiqwq.com"
+                  : window.location.origin || "https://lengxiqwq.com";
+              let cmt = data.comment;
+
+              // 1. 转换 Waline 客户端内置 Ki() 生成的 <img class="wl-emoji" src="..." alt="...">
+              cmt = cmt.replace(
+                /<img\s+[^>]*?class=["'][^"']*?wl-emoji[^"']*?["'][^>]*?>/gi,
+                (match) => {
+                  const srcMatch = match.match(/src=["']([^"']+)["']/i);
+                  const altMatch = match.match(/alt=["']([^"']*)["']/i);
+                  if (!srcMatch) return match;
+
+                  let src = srcMatch[1];
+                  let alt = altMatch ? altMatch[1] : "";
+
+                  // 相对路径自动补全站点域名（例如 /assets/stickers/... -> https://lengxiqwq.com/assets/stickers/...）
+                  if (src.startsWith("/")) {
+                    src = `${siteOrigin}${src}`;
+                  }
+
+                  // 清理 alt 中的下划线与前缀，避免触发后端的下划线斜体正则
+                  alt = alt.replace(/^miku_|^bmoji_/i, "").replace(/_/g, "-");
+
+                  // 将图片链接中的下划线编码为 %5F，杜绝 Worker 后端 Markdown 贪婪正则误将其匹配为 <em> 斜体导致 HTML 破损
+                  src = src.replace(/_/g, "%5F");
+
+                  return `![${alt}](${src})`;
+                }
+              );
+
+              // 2. 兜底转换尚未被 Ki() 捕获的标准 :miku_xxx: 格式
+              cmt = cmt.replace(
+                /:miku_([^:\s<>"']+?)(?:\.(?:png|gif|webp))?:/gi,
+                (_match, name) => {
+                  const cleanAlt = name.replace(/_/g, "-");
+                  const src = `${siteOrigin}/assets/stickers/miku/miku%5F${encodeURIComponent(name)}.webp`;
+                  return `![${cleanAlt}](${src})`;
+                }
+              );
+
+              data.comment = cmt;
+              init = { ...init, body: JSON.stringify(data) };
+            }
+          } catch (_) {}
+        }
+        return originalFetch.call(this, input, init);
+      };
+    }
+
     function getCurrentPath() {
       const requestedPath = new URLSearchParams(window.location.search).get("path");
       let path = requestedPath;
@@ -347,7 +416,7 @@ const config = {
       if (!root) return;
 
       const imgs = root.querySelectorAll(
-        ".wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji)"
+        ".wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):not([src*='/assets/stickers/']):not([src*='@waline/emojis'])"
       );
 
       imgs.forEach((img) => {
@@ -408,6 +477,16 @@ const config = {
 
       const contents = root.querySelectorAll(".wl-content");
       contents.forEach((content) => {
+        // 给所有贴纸与自定义表情图片添加 .wl-emoji 类名（防止被普通大图 16:9 样式捕获）
+        const stickerImgs = content.querySelectorAll(
+          'img[src*="/assets/stickers/"], img[src*="@waline/emojis"]'
+        );
+        stickerImgs.forEach((img) => {
+          if (!img.classList.contains("wl-emoji")) {
+            img.classList.add("wl-emoji");
+          }
+        });
+
         const oldHtml = content.innerHTML;
         let html = oldHtml;
 
@@ -431,11 +510,11 @@ const config = {
         }
 
         // 2. 兼容历史转义的贴纸代码（如 <img class="wl-emoji" src="/assets/stickers/..." />）
-        if (html.includes("&lt;img") && html.includes("stickers/")) {
+        if (html.includes("&lt;img") && (html.includes("stickers/") || html.includes("emojis"))) {
           html = html.replace(
             /&lt;img([\s\S]*?)&gt;/gi,
             (match, attrs) => {
-              if (attrs.includes("stickers/")) {
+              if (attrs.includes("stickers/") || attrs.includes("emojis")) {
                 let clean = attrs.replace(/&quot;/g, '"').replace(/<\/?em>/gi, "_");
                 return `<img${clean}>`;
               }
@@ -680,8 +759,8 @@ const config = {
 
       try {
         window.__walineInstance = walineLib.init(dynamicConfig);
-        enhanceCommentImages(el);
         renderCustomStickers(el);
+        enhanceCommentImages(el);
         setupKaomoji(el);
         scrollToHashTarget();
 
@@ -716,8 +795,8 @@ const config = {
               debounceTimer = setTimeout(() => {
                 isProcessingMutations = true;
                 try {
-                  enhanceCommentImages(el);
                   renderCustomStickers(el);
+                  enhanceCommentImages(el);
                   setupKaomoji(el);
                   updateEmojiPopupStickerState(el);
                   document.dispatchEvent(new CustomEvent("waline:rendered"));
@@ -847,7 +926,7 @@ const config = {
         if (walineRoot) {
           const allWalineImgs = Array.from(
             walineRoot.querySelectorAll(
-              ".wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji)"
+              ".wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):not([src*='/assets/stickers/']):not([src*='@waline/emojis'])"
             )
           );
           precedingImgs = allWalineImgs.filter(
@@ -1081,7 +1160,7 @@ const config = {
   }
 
   /* 评论区图片样式与骨架占位（默认 16:9 预留尺寸，无论新旧图片、加载中或加载失败均严格兜底占位，彻底杜绝高度塌陷与错位） */
-  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji) {
+  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):not([src*="/assets/stickers/"]):not([src*="@waline/emojis"]) {
     cursor: pointer;
     display: block;
     width: 100%;
@@ -1100,7 +1179,7 @@ const config = {
   }
 
   /* 图片尚未加载完成时的预留骨架占位框（保持完整 16:9 比例与动态流动光效） */
-  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji).wl-img-loading {
+  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):not([src*="/assets/stickers/"]):not([src*="@waline/emojis"]).wl-img-loading {
     min-height: 200px;
     background-image: linear-gradient(
       90deg,
@@ -1113,7 +1192,7 @@ const config = {
   }
 
   /* 图片加载完成：移除骨架动画，以图片真实比例展示 */
-  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji).wl-img-loaded {
+  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):not([src*="/assets/stickers/"]):not([src*="@waline/emojis"]).wl-img-loaded {
     min-height: unset;
     background-image: none;
     animation: none;
@@ -1121,7 +1200,7 @@ const config = {
   }
 
   /* 图片加载失败兜底：保留完整大小框框，绝不高度塌陷，维持占位与优雅边框 */
-  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji).wl-img-error {
+  #waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):not([src*="/assets/stickers/"]):not([src*="@waline/emojis"]).wl-img-error {
     min-height: 200px;
     background-image: none;
     animation: none;
@@ -1413,6 +1492,8 @@ const config = {
   }
 
   /* 自定义大贴纸（Miku 静态 / 动态）在评论正文与实时预览中以适中的贴纸尺寸展示，避免被当作行内小文字表情压缩 */
+  #waline .wl-content img[src*="/assets/stickers/"],
+  #waline .wl-preview img[src*="/assets/stickers/"],
   #waline .wl-content img.wl-emoji[src*="/assets/stickers/"],
   #waline .wl-preview img.wl-emoji[src*="/assets/stickers/"] {
     display: inline-block !important;
@@ -1423,6 +1504,29 @@ const config = {
     object-fit: contain !important;
     vertical-align: middle !important;
     margin: 4px 2px !important;
+    aspect-ratio: auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+  }
+
+  /* 普通 emoji 表情（Bmoji 等）在评论正文与实时预览中以标准行内表情尺寸展示 */
+  #waline .wl-content img[src*="@waline/emojis"],
+  #waline .wl-preview img[src*="@waline/emojis"],
+  #waline .wl-content img.wl-emoji:not([src*="/assets/stickers/"]),
+  #waline .wl-preview img.wl-emoji:not([src*="/assets/stickers/"]) {
+    display: inline-block !important;
+    height: 1.75em !important;
+    max-height: 2em !important;
+    width: auto !important;
+    max-width: 2.5em !important;
+    object-fit: contain !important;
+    vertical-align: -0.25em !important;
+    margin: 0 2px !important;
+    aspect-ratio: auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
   }
 
   /* ==========================================================================
