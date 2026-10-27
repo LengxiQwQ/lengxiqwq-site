@@ -14,11 +14,29 @@ const config = {
 	...(commentConfig.waline?.visitorCount ? { pageview: true } : {}),
 };
 ---
-<!-- Waline -->
+<!-- Waline Container with Zero-CLS Skeleton -->
 <div class="relative w-full">
-  <div id="waline" data-path={Astro.props.path}></div>
-  <link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css" />
-  <script is:inline src="https://unpkg.com/@waline/client@v3/dist/waline.umd.js" defer></script>
+  <div id="waline" data-path={Astro.props.path}>
+    <div class="wl-skeleton-placeholder" aria-hidden="true">
+      <div class="wl-skeleton-panel">
+        <div class="wl-skeleton-header">
+          <div class="wl-skeleton-input"></div>
+          <div class="wl-skeleton-input"></div>
+          <div class="wl-skeleton-input"></div>
+        </div>
+        <div class="wl-skeleton-textarea"></div>
+        <div class="wl-skeleton-footer">
+          <div class="wl-skeleton-tools">
+            <div class="wl-skeleton-icon"></div>
+            <div class="wl-skeleton-icon"></div>
+            <div class="wl-skeleton-icon"></div>
+          </div>
+          <div class="wl-skeleton-button"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script is:inline define:vars={{ config, KAOMOJI_LIST }}>
     // 拦截并在提交 Waline 评论前将表情/贴纸 HTML 标签无损转回标准 Markdown 图片语法
     // 彻底解决邮件通知中展示原始 HTML 标签及相对路径无法显示的问题
@@ -104,6 +122,72 @@ const config = {
       return path && path.endsWith("/") && path.length > 1
         ? path.slice(0, -1)
         : path || "/";
+    }
+
+    // 动态载入本地已固化的静态资源（严格单例，杜绝重复插入）
+    let walineResourcePromise = null;
+
+    function loadWalineResources() {
+      if (window.Waline && typeof window.Waline.init === "function") {
+        return Promise.resolve();
+      }
+      if (walineResourcePromise) {
+        return walineResourcePromise;
+      }
+
+      walineResourcePromise = new Promise((resolve, reject) => {
+        // 1. 动态加载本地 CSS
+        if (!document.querySelector('link[data-waline-css="true"]')) {
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = "/assets/vendor/waline/waline.css";
+          link.setAttribute("data-waline-css", "true");
+          document.head.appendChild(link);
+        }
+
+        // 2. 动态加载本地 JS
+        if (window.Waline && typeof window.Waline.init === "function") {
+          resolve();
+          return;
+        }
+
+        let script = document.querySelector('script[data-waline-js="true"]');
+        if (!script) {
+          script = document.createElement("script");
+          script.src = "/assets/vendor/waline/waline.umd.js";
+          script.async = true;
+          script.setAttribute("data-waline-js", "true");
+          script.onload = () => resolve();
+          script.onerror = (err) => {
+            walineResourcePromise = null;
+            reject(err);
+          };
+          document.head.appendChild(script);
+        } else {
+          script.addEventListener("load", () => resolve(), { once: true });
+          script.addEventListener("error", (err) => {
+            walineResourcePromise = null;
+            reject(err);
+          }, { once: true });
+        }
+      });
+
+      return walineResourcePromise;
+    }
+
+    function hasTargetAnchor() {
+      try {
+        if (sessionStorage.getItem("waline-target-comment")) return true;
+      } catch (_) {}
+      const hash = window.location.hash;
+      if (!hash) return false;
+      const clean = decodeURIComponent(hash.slice(1)).trim();
+      return (
+        clean === "waline" ||
+        clean === "post-comments" ||
+        clean.startsWith("comment-") ||
+        clean.startsWith("wl-")
+      );
     }
 
     function resetExifOrientation(app1Seg) {
@@ -471,6 +555,7 @@ const config = {
       });
     }
 
+    // 精细化 TextNode 替换贴纸，杜绝直接覆写 innerHTML 破坏 DOM 状态和引起 MutationObserver 级联震荡
     function renderCustomStickers(container) {
       const root = container || document.getElementById("waline");
       if (!root) return;
@@ -487,45 +572,89 @@ const config = {
           }
         });
 
-        const oldHtml = content.innerHTML;
-        let html = oldHtml;
+        const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
+          acceptNode: (node) => {
+            if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+            const parent = node.parentElement;
+            if (
+              parent &&
+              (parent.tagName === "CODE" ||
+                parent.tagName === "PRE" ||
+                parent.tagName === "SCRIPT" ||
+                parent.tagName === "STYLE")
+            ) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            if (
+              node.nodeValue.includes(":miku_") ||
+              (node.nodeValue.includes("<img") &&
+                (node.nodeValue.includes("stickers/") || node.nodeValue.includes("emojis")))
+            ) {
+              return NodeFilter.FILTER_ACCEPT;
+            }
+            return NodeFilter.FILTER_SKIP;
+          },
+        });
 
-        // 1. 将评论正文或实时预览中的 :miku_xxx: 或 :miku_xxx.ext: 替换为实际 WebP 贴纸图片
-        if (html.includes(":miku_")) {
-          // 优先匹配带扩展名历史或显式写法（如 :miku_01.png:、:miku_打call.gif:、:miku_真的吗.webp:）
-          html = html.replace(
-            /:miku_([^:\s<>"']+?\.(?:png|gif|webp)):/gi,
-            (_match, file) => {
-              const name = file.replace(/\.(png|gif|webp)$/i, "");
-              return `<img class="wl-emoji" src="/assets/stickers/miku/miku_${file}" alt="${name}" loading="lazy" />`;
-            }
-          );
-          // 匹配统一 WebP 贴纸（Waline 点击直接插入的标准 :miku_xxx:）
-          html = html.replace(
-            /:miku_([^:\s<>"']+?):/gi,
-            (_match, name) => {
-              return `<img class="wl-emoji" src="/assets/stickers/miku/miku_${name}.webp" alt="${name}" loading="lazy" />`;
-            }
-          );
+        const nodesToProcess = [];
+        let currNode;
+        while ((currNode = walker.nextNode())) {
+          nodesToProcess.push(currNode);
         }
 
-        // 2. 兼容历史转义的贴纸代码（如 <img class="wl-emoji" src="/assets/stickers/..." />）
-        if (html.includes("&lt;img") && (html.includes("stickers/") || html.includes("emojis"))) {
-          html = html.replace(
-            /&lt;img([\s\S]*?)&gt;/gi,
-            (match, attrs) => {
-              if (attrs.includes("stickers/") || attrs.includes("emojis")) {
-                let clean = attrs.replace(/&quot;/g, '"').replace(/<\/?em>/gi, "_");
-                return `<img${clean}>`;
+        const mikuRegex = /:miku_([^:\s<>"']+?)(?:\.(?:png|gif|webp))?:/gi;
+
+        for (const textNode of nodesToProcess) {
+          const text = textNode.nodeValue;
+          if (!text) continue;
+
+          // 1. 替换 :miku_xxx: 为实际 WebP 贴纸图片
+          if (mikuRegex.test(text)) {
+            mikuRegex.lastIndex = 0;
+            const fragment = document.createDocumentFragment();
+            let lastIdx = 0;
+            let m;
+            while ((m = mikuRegex.exec(text)) !== null) {
+              if (m.index > lastIdx) {
+                fragment.appendChild(
+                  document.createTextNode(text.slice(lastIdx, m.index))
+                );
               }
-              return match;
+              const name = m[1].replace(/\.(png|gif|webp)$/i, "");
+              const img = document.createElement("img");
+              img.className = "wl-emoji";
+              img.src = `/assets/stickers/miku/miku_${name}.webp`;
+              img.alt = name;
+              img.loading = "lazy";
+              fragment.appendChild(img);
+              lastIdx = mikuRegex.lastIndex;
             }
-          );
-        }
+            if (lastIdx < text.length) {
+              fragment.appendChild(document.createTextNode(text.slice(lastIdx)));
+            }
+            textNode.replaceWith(fragment);
+            continue;
+          }
 
-        // 严格只有内容发生实际改变时才写入 DOM，彻底杜绝死循环触发 MutationObserver
-        if (html !== oldHtml) {
-          content.innerHTML = html;
+          // 2. 兼容历史转义的贴纸代码（如 <img class="wl-emoji" src="/assets/stickers/..." />）
+          if (
+            text.includes("<img") &&
+            (text.includes("stickers/") || text.includes("emojis"))
+          ) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(text, "text/html");
+            if (doc.body.firstChild) {
+              const fragment = document.createDocumentFragment();
+              while (doc.body.firstChild) {
+                const child = doc.body.firstChild;
+                if (child.nodeType === Node.ELEMENT_NODE && child.tagName === "IMG") {
+                  child.classList.add("wl-emoji");
+                }
+                fragment.appendChild(child);
+              }
+              textNode.replaceWith(fragment);
+            }
+          }
         }
       });
     }
@@ -642,7 +771,7 @@ const config = {
               popup.classList.remove("display");
               kaomojiBtn.classList.remove("active");
             } else {
-              // 关闭当前面板或其他面板上的原生表情弹窗（联动 Vue 点击事件以同步其内部状态）
+              // 关闭当前面板或其他面板上的原生表情弹窗
               const nativeEmojiBtn = actions.querySelector(
                 'button[title*="Emoji"], button[title*="表情"]'
               );
@@ -696,7 +825,7 @@ const config = {
       const popups = root.querySelectorAll(".wl-emoji-popup");
       popups.forEach((popup) => {
         const hasSticker = !!popup.querySelector(
-          '.wl-tab-wrapper img[src*="/assets/stickers/"]'
+          '.wl-tab-wrapper img[src*="/assets/stickers/miku/"]'
         );
         popup.classList.toggle("wl-tab-is-sticker", hasSticker);
       });
@@ -715,37 +844,52 @@ const config = {
       });
     }
 
-    function initWaline() {
-      const el = document.getElementById("waline");
-      if (!el) {
-        if (window.__walineInstance && typeof window.__walineInstance.destroy === "function") {
-          try {
-            window.__walineInstance.destroy();
-          } catch (_) {}
-          window.__walineInstance = null;
-        }
-        return;
-      }
-
-      const walineLib = window.Waline;
-      if (!walineLib || typeof walineLib.init !== "function") {
-        setTimeout(initWaline, 100);
-        return;
-      }
-
-      const currentPath = getCurrentPath();
-      if (el.getAttribute("data-initialized-path") === currentPath) {
-        // 当前页面已在初始化或已初始化完成，直接执行目标定位与高亮，避免重复销毁重建
-        scrollToHashTarget();
-        return;
-      }
-
+    // 清理全局 Waline 实例及内部监听
+    function cleanupInstance() {
       if (window.__walineInstance && typeof window.__walineInstance.destroy === "function") {
         try {
           window.__walineInstance.destroy();
         } catch (_) {}
         window.__walineInstance = null;
       }
+      if (window.__walineDomObserver) {
+        try {
+          window.__walineDomObserver.disconnect();
+        } catch (_) {}
+        window.__walineDomObserver = null;
+      }
+    }
+
+    let initAttempts = 0;
+
+    function initWaline() {
+      const el = document.getElementById("waline");
+      if (!el) {
+        cleanupInstance();
+        return;
+      }
+
+      const walineLib = window.Waline;
+      if (!walineLib || typeof walineLib.init !== "function") {
+        initAttempts++;
+        if (initAttempts > 30) {
+          console.warn("[Waline] Init timeout: Waline library not available after 30 attempts.");
+          initAttempts = 0;
+          return;
+        }
+        setTimeout(initWaline, 100);
+        return;
+      }
+      initAttempts = 0;
+
+      const currentPath = getCurrentPath();
+      if (el.getAttribute("data-initialized-path") === currentPath) {
+        // 当前页面已在初始化或已初始化完成，直接执行目标定位与高亮
+        scrollToHashTarget();
+        return;
+      }
+
+      cleanupInstance();
 
       el.innerHTML = "";
       el.setAttribute("data-initialized-path", currentPath);
@@ -777,11 +921,11 @@ const config = {
         ensureKaomoji();
 
         // 监听评论区 DOM 变动（如拉取评论、分页、发表回复），及时唤醒 Fancybox 灯箱绑定与图片预留排版
-        if (el && !el.__fancyboxObserverInstalled && window.MutationObserver) {
+        if (!el.__fancyboxObserverInstalled && window.MutationObserver) {
           el.__fancyboxObserverInstalled = true;
           let debounceTimer = null;
           let isProcessingMutations = false;
-          const walineObserver = new MutationObserver((mutations) => {
+          const walineDomObserver = new MutationObserver((mutations) => {
             if (isProcessingMutations) return;
             let hasAddedNode = false;
             for (const m of mutations) {
@@ -808,23 +952,89 @@ const config = {
               }, 60);
             }
           });
-          walineObserver.observe(el, { childList: true, subtree: true });
+          walineDomObserver.observe(el, { childList: true, subtree: true });
+          window.__walineDomObserver = walineDomObserver;
         }
       } catch (error) {
         console.error("[Waline] Init error:", error);
       }
     }
 
+    let walineViewportObserver = null;
+
+    function setupViewportLazyLoad() {
+      const el = document.getElementById("waline");
+      if (!el) return;
+
+      const currentPath = getCurrentPath();
+      if (el.getAttribute("data-initialized-path") === currentPath) {
+        scrollToHashTarget();
+        return;
+      }
+
+      // 如果带有锚点或直接定位目标，跳过视口判定，全速载入
+      if (hasTargetAnchor()) {
+        triggerLoadAndInit();
+        return;
+      }
+
+      if (!("IntersectionObserver" in window)) {
+        triggerLoadAndInit();
+        return;
+      }
+
+      if (walineViewportObserver) {
+        walineViewportObserver.disconnect();
+        walineViewportObserver = null;
+      }
+
+      walineViewportObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              if (walineViewportObserver) {
+                walineViewportObserver.disconnect();
+                walineViewportObserver = null;
+              }
+              triggerLoadAndInit();
+              break;
+            }
+          }
+        },
+        { rootMargin: "300px 0px" }
+      );
+
+      walineViewportObserver.observe(el);
+    }
+
+    function triggerLoadAndInit() {
+      if (walineViewportObserver) {
+        walineViewportObserver.disconnect();
+        walineViewportObserver = null;
+      }
+      loadWalineResources()
+        .then(() => {
+          initWaline();
+        })
+        .catch((err) => {
+          console.error("[Waline] Failed to load local Waline resources:", err);
+        });
+    }
+
     let activeScrollController = null;
+
+    function cleanupActiveScroll() {
+      if (activeScrollController) {
+        activeScrollController.abort();
+        activeScrollController = null;
+      }
+    }
 
     function highlightAndScroll(el) {
       if (!el) return;
 
       // 如果已有正在执行的滚动高亮任务，先终止前一个
-      if (activeScrollController) {
-        activeScrollController.abort();
-        activeScrollController = null;
-      }
+      cleanupActiveScroll();
 
       const controller = {
         aborted: false,
@@ -1012,7 +1222,23 @@ const config = {
       }
     }
 
+    let scrollTargetTimer = null;
+    let scrollTargetObserver = null;
+
+    function cleanupTargetPolling() {
+      if (scrollTargetTimer) {
+        clearInterval(scrollTargetTimer);
+        scrollTargetTimer = null;
+      }
+      if (scrollTargetObserver) {
+        scrollTargetObserver.disconnect();
+        scrollTargetObserver = null;
+      }
+    }
+
     function scrollToHashTarget(explicitTargetId) {
+      cleanupTargetPolling();
+
       let targetId = explicitTargetId;
       if (!targetId) {
         try {
@@ -1064,85 +1290,92 @@ const config = {
         return;
       }
 
-      // Waline 评论卡片为异步加载渲染，使用 MutationObserver + 轮询兜底
-      let timer = null;
-      let observer = null;
-
-      const cleanupPolling = () => {
-        if (timer) {
-          clearInterval(timer);
-          timer = null;
-        }
-        if (observer) {
-          observer.disconnect();
-          observer = null;
-        }
-      };
-
+      const walineEl = document.getElementById("waline");
       const checkTarget = () => {
         enhanceCommentImages(walineEl);
         const el = findTargetEl(targetId);
         if (el) {
-          cleanupPolling();
+          cleanupTargetPolling();
           highlightAndScroll(el);
           return true;
         }
         return false;
       };
 
-      const walineEl = document.getElementById("waline");
       if (walineEl && window.MutationObserver) {
-        observer = new MutationObserver(() => {
+        scrollTargetObserver = new MutationObserver(() => {
           checkTarget();
         });
-        observer.observe(walineEl, { childList: true, subtree: true });
+        scrollTargetObserver.observe(walineEl, { childList: true, subtree: true });
       }
 
       let attempts = 0;
-      timer = setInterval(() => {
+      scrollTargetTimer = setInterval(() => {
         attempts++;
-        if (checkTarget() || attempts > 100) {
-          cleanupPolling();
+        if (checkTarget() || attempts > 60) {
+          cleanupTargetPolling();
         }
       }, 100);
     }
 
-    window.__initWaline = initWaline;
-    window.__scrollToWalineComment = scrollToHashTarget;
+    window.__initWaline = triggerLoadAndInit;
+    window.__scrollToWalineComment = (id) => {
+      triggerLoadAndInit();
+      scrollToHashTarget(id);
+    };
 
     if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", initWaline);
+      document.addEventListener("DOMContentLoaded", setupViewportLazyLoad);
     } else {
-      initWaline();
+      setupViewportLazyLoad();
     }
 
     if (!window.__walineListenersInstalled) {
       window.__walineListenersInstalled = true;
 
-      const triggerRefresh = () => {
-        if (typeof window.__initWaline === "function") {
-          window.__initWaline();
+      // 切页开始（离开旧页面）：彻底终止所有旧定时器、观察者与滚动任务
+      const onVisitStart = () => {
+        if (walineViewportObserver) {
+          walineViewportObserver.disconnect();
+          walineViewportObserver = null;
         }
+        cleanupActiveScroll();
+        cleanupTargetPolling();
+        cleanupInstance();
+      };
+
+      // 切页结束（进入新页面）：重新监听视口或直接按锚点加载
+      let refreshDebounceTimer = null;
+      const onPageReady = () => {
+        if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+        refreshDebounceTimer = setTimeout(() => {
+          setupViewportLazyLoad();
+        }, 60);
       };
 
       if (window.swup && window.swup.hooks) {
-        window.swup.hooks.on("page:view", triggerRefresh);
-        window.swup.hooks.on("visit:end", triggerRefresh);
-        window.swup.hooks.on("content:replace", triggerRefresh);
+        window.swup.hooks.on("visit:start", onVisitStart);
       } else {
         document.addEventListener("swup:enable", () => {
           if (window.swup && window.swup.hooks) {
-            window.swup.hooks.on("page:view", triggerRefresh);
-            window.swup.hooks.on("visit:end", triggerRefresh);
-            window.swup.hooks.on("content:replace", triggerRefresh);
+            window.swup.hooks.on("visit:start", onVisitStart);
           }
         });
       }
 
-      document.addEventListener("firefly:page:loaded", triggerRefresh);
-      document.addEventListener("astro:page-load", triggerRefresh);
-      window.addEventListener("hashchange", () => scrollToHashTarget());
+      // 仅监听单一的页面就绪事件 firefly:page:loaded（由 swup-transitions.ts 在 page:view 延时 300ms 触发），避免 4~5 个钩子连环并发
+      document.addEventListener("firefly:page:loaded", onPageReady);
+      document.addEventListener("astro:page-load", onPageReady);
+
+      window.addEventListener("hashchange", () => {
+        if (hasTargetAnchor()) {
+          triggerLoadAndInit();
+        }
+        scrollToHashTarget();
+      });
+
       window.addEventListener("waline:scroll-to-comment", (e) => {
+        triggerLoadAndInit();
         if (e && e.detail && e.detail.id) {
           scrollToHashTarget(e.detail.id);
         }
@@ -1157,6 +1390,80 @@ const config = {
     --waline-active-color: var(--primary);
     --waline-border-color: var(--line-divider);
     --waline-avatar-radius: 50%;
+  }
+
+  /* Waline 骨架屏占位动画（消除首屏 CLS 布局跳动） */
+  .wl-skeleton-placeholder {
+    width: 100%;
+    min-height: 210px;
+    padding: 1.25rem;
+    border-radius: 12px;
+    border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.08));
+    background: color-mix(in srgb, var(--card-bg) 80%, var(--primary) 3%);
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    animation: wl-skeleton-pulse 1.8s infinite ease-in-out;
+  }
+
+  .wl-skeleton-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+  }
+
+  .wl-skeleton-header {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  .wl-skeleton-input {
+    height: 36px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--card-bg) 50%, var(--primary) 8%);
+  }
+
+  .wl-skeleton-textarea {
+    height: 84px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--card-bg) 50%, var(--primary) 8%);
+  }
+
+  .wl-skeleton-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .wl-skeleton-tools {
+    display: flex;
+    gap: 8px;
+  }
+
+  .wl-skeleton-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--card-bg) 50%, var(--primary) 8%);
+  }
+
+  .wl-skeleton-button {
+    width: 80px;
+    height: 32px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--primary) 35%, transparent);
+  }
+
+  @keyframes wl-skeleton-pulse {
+    0%, 100% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 0.95;
+    }
   }
 
   /* 评论区图片样式与骨架占位（默认 16:9 预留尺寸，无论新旧图片、加载中或加载失败均严格兜底占位，彻底杜绝高度塌陷与错位） */
@@ -1226,15 +1533,11 @@ const config = {
 
   /* 各分类表情数量不同，切换时面板布局会跟着变，下面逐项消除 */
   .wl-tab-wrapper {
-    /* 内容溢出时出现的滚动条会挤掉约 6px 宽度，网格随之重排 */
     scrollbar-gutter: stable;
-    /* 内容不足时网格区按内容收缩，比顶满时矮 1px；固定高度使其恒定。
-       145px 取自 Waline 自身的 max-height，其大版本若调整需同步 */
     height: 145px;
   }
 
-  /* Waline 给选中态加了 0 1px 1px 边框，激活的 tab 比未激活宽 2px、高 1px，
-     切换时相邻 tab 会左右挪；给未选中的补等宽透明边框统一占位 */
+  /* Waline 给选中态加了 0 1px 1px 边框，补等宽透明边框统一占位 */
   .wl-tabs .wl-tab:not(.active) {
     border: solid transparent;
     border-width: 0 1px 1px;
@@ -1259,9 +1562,7 @@ const config = {
     animation: waline-aurora-glow 3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
-  /* 针对回复评论（嵌套在 .wl-quote 内的 .wl-card-item）：
-     Waline 官方对嵌套评论设置了 padding-inline-end: 0，导致右侧比普通评论少了 0.5em。
-     在此将高亮伪元素的右侧外扩 0.5em，使回复评论的右侧边距与普通根评论完全统一对称 */
+  /* 针对回复评论（嵌套在 .wl-quote 内的 .wl-card-item） */
   .wl-quote .wl-card-item.waline-highlight-target::before,
   .wl-card-item .wl-card-item.waline-highlight-target::before {
     right: calc(-0.5em + 2px);
@@ -1337,7 +1638,7 @@ const config = {
     order: 5 !important;
   }
 
-  /* 修复 Markdown 图标被 Waline 内置 [data-waline] a { display: inline-block } 导致偏上的问题 */
+  /* 修复 Markdown 图标居中 */
   #waline .wl-actions a.wl-action,
   #waline a.wl-action {
     display: inline-flex !important;
@@ -1367,7 +1668,7 @@ const config = {
     border: none;
     background: transparent;
     color: var(--waline-color, #555);
-    font-size: 15px; /* 精致小巧，与相邻图标协调自然 */
+    font-size: 15px;
     font-weight: 600;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     line-height: 1;
@@ -1379,7 +1680,7 @@ const config = {
   #waline .wl-action.wl-action-kaomoji .wl-action-kaomoji-text {
     display: inline-block;
     line-height: 1;
-    transform: translateY(1.2px); /* 往下微移约 1.5 像素，与整排图标物理中心严格齐平 */
+    transform: translateY(1.2px); /* 往下微移约 1.2 像素，与整排图标物理中心齐平 */
   }
 
   #waline .wl-action.wl-action-kaomoji:hover,
@@ -1452,7 +1753,7 @@ const config = {
     background: color-mix(in srgb, var(--primary) 40%, rgba(0, 0, 0, 0.2));
   }
 
-  /* 颜文字单项：无椭圆/圆圈边框，直接正常文本显示；文字大小统一加大，宽度随字符自适应 */
+  /* 颜文字单项：无椭圆边框，直接正常文本显示；文字大小统一加大，宽度随字符自适应 */
   #waline .wl-kaomoji-item {
     display: inline-flex !important;
     align-items: center;
@@ -1460,15 +1761,15 @@ const config = {
     border: none !important;
     background: transparent !important;
     color: var(--waline-color, #333) !important;
-    font-size: 1.05rem !important; /* 文字统一加大，清晰可辨 */
+    font-size: 1.05rem !important;
     line-height: 1.4 !important;
-    white-space: nowrap !important; /* 绝不折行 */
+    white-space: nowrap !important;
     padding: 4px 8px !important;
     margin: 0 !important;
-    width: auto !important; /* 宽度随内容自然伸展，不要求固定一致 */
+    width: auto !important;
     min-width: unset !important;
     max-width: 100% !important;
-    border-radius: 6px !important; /* 轻微圆角仅用于鼠标 hover 底色反馈，绝非圆圈椭圆 */
+    border-radius: 6px !important;
     cursor: pointer;
     transition: color 0.15s ease, background-color 0.15s ease, transform 0.12s ease;
     user-select: none;
@@ -1492,10 +1793,10 @@ const config = {
   }
 
   /* 自定义大贴纸（Miku 静态 / 动态）在评论正文与实时预览中以适中的贴纸尺寸展示，避免被当作行内小文字表情压缩 */
-  #waline .wl-content img[src*="/assets/stickers/"],
-  #waline .wl-preview img[src*="/assets/stickers/"],
-  #waline .wl-content img.wl-emoji[src*="/assets/stickers/"],
-  #waline .wl-preview img.wl-emoji[src*="/assets/stickers/"] {
+  #waline .wl-content img[src*="/assets/stickers/miku/"],
+  #waline .wl-preview img[src*="/assets/stickers/miku/"],
+  #waline .wl-content img.wl-emoji[src*="/assets/stickers/miku/"],
+  #waline .wl-preview img.wl-emoji[src*="/assets/stickers/miku/"] {
     display: inline-block !important;
     height: 5.5em !important;
     max-height: 128px !important;
@@ -1511,10 +1812,12 @@ const config = {
   }
 
   /* 普通 emoji 表情（Bmoji 等）在评论正文与实时预览中以标准行内表情尺寸展示 */
+  #waline .wl-content img[src*="/assets/stickers/bmoji/"],
+  #waline .wl-preview img[src*="/assets/stickers/bmoji/"],
   #waline .wl-content img[src*="@waline/emojis"],
   #waline .wl-preview img[src*="@waline/emojis"],
-  #waline .wl-content img.wl-emoji:not([src*="/assets/stickers/"]),
-  #waline .wl-preview img.wl-emoji:not([src*="/assets/stickers/"]) {
+  #waline .wl-content img.wl-emoji:not([src*="/assets/stickers/miku/"]),
+  #waline .wl-preview img.wl-emoji:not([src*="/assets/stickers/miku/"]) {
     display: inline-block !important;
     height: 1.75em !important;
     max-height: 2em !important;
@@ -1612,7 +1915,7 @@ const config = {
 
   /* 当是贴纸标签页时，平铺网格采用 7 列等分网格，间距更紧凑（5px），左右彻底占满消除右侧空白 */
   #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper,
-  #waline .wl-emoji-popup .wl-tab-wrapper:has(img[src*="/assets/stickers/"]) {
+  #waline .wl-emoji-popup .wl-tab-wrapper:has(img[src*="/assets/stickers/miku/"]) {
     display: grid !important;
     grid-template-columns: repeat(7, 1fr) !important;
     gap: 5px !important;
@@ -1622,7 +1925,7 @@ const config = {
 
   @media (max-width: 480px) {
     #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper,
-    #waline .wl-emoji-popup .wl-tab-wrapper:has(img[src*="/assets/stickers/"]) {
+    #waline .wl-emoji-popup .wl-tab-wrapper:has(img[src*="/assets/stickers/miku/"]) {
       grid-template-columns: repeat(5, 1fr) !important;
       gap: 4px !important;
     }
@@ -1630,7 +1933,7 @@ const config = {
 
   /* 贴纸单元按钮：自适应撑满所在网格，每格大小相比之前增加约 2~3 像素，形成等宽正方形 */
   #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper button,
-  #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/"]) {
+  #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/miku/"]) {
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
@@ -1646,21 +1949,21 @@ const config = {
   }
 
   #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper button:hover,
-  #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/"]):hover {
+  #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/miku/"]):hover {
     background: color-mix(in srgb, var(--primary, #27ae60) 15%, transparent) !important;
     transform: scale(1.08) !important;
     z-index: 2 !important;
   }
 
   #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper button:active,
-  #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/"]):active {
+  #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/miku/"]):active {
     transform: scale(0.96) !important;
   }
 
   /* 贴纸图片自身增加 2 像素（从 3.2em 增至 3.35em），画面更饱满充实 */
   #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper .wl-emoji,
-  #waline .wl-emoji-popup .wl-tab-wrapper img.wl-emoji[src*="/assets/stickers/"],
-  #waline .wl-emoji-popup .wl-tab-wrapper button img[src*="/assets/stickers/"] {
+  #waline .wl-emoji-popup .wl-tab-wrapper img.wl-emoji[src*="/assets/stickers/miku/"],
+  #waline .wl-emoji-popup .wl-tab-wrapper button img[src*="/assets/stickers/miku/"] {
     width: 100% !important;
     height: 100% !important;
     max-width: 3.35em !important;
@@ -1673,8 +1976,8 @@ const config = {
     display: none !important;
   }
 
-  /* 仅当悬停的是初音未来贴纸（/assets/stickers/）时，才显示悬停放大预览窗（放大至 5.8em / 约 92px） */
-  #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/"] {
+  /* 仅当悬停的是初音未来贴纸（/assets/stickers/miku/）时，才显示悬停放大预览窗（放大至 5.8em / 约 92px） */
+  #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/miku/"] {
     display: block !important;
     z-index: 50 !important;
     width: auto !important;
