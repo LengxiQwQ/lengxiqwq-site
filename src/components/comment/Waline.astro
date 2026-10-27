@@ -81,6 +81,11 @@ const config = {
                   // 清理 alt 中的下划线与前缀，避免触发后端的下划线斜体正则
                   alt = alt.replace(/^miku_|^bmoji_/i, "").replace(/_/g, "-");
 
+                  // 为邮件通知定向到 100px 紧凑尺寸版本（/assets/stickers/miku/mail/），使邮件排版精致协调，绝不修改破坏根目录 200px 高清原图
+                  if (src.includes("/assets/stickers/miku/") && !src.includes("/assets/stickers/miku/mail/")) {
+                    src = src.replace("/assets/stickers/miku/", "/assets/stickers/miku/mail/");
+                  }
+
                   // 将图片链接中的下划线编码为 %5F，杜绝 Worker 后端 Markdown 贪婪正则误将其匹配为 <em> 斜体导致 HTML 破损
                   src = src.replace(/_/g, "%5F");
 
@@ -88,12 +93,12 @@ const config = {
                 }
               );
 
-              // 2. 兜底转换尚未被 Ki() 捕获的标准 :miku_xxx: 格式
+              // 2. 兜底转换尚未被 Ki() 捕获的标准 :miku_xxx: 格式（指向 100px 邮件专版）
               cmt = cmt.replace(
                 /:miku_([^:\s<>"']+?)(?:\.(?:png|gif|webp))?:/gi,
                 (_match, name) => {
                   const cleanAlt = name.replace(/_/g, "-");
-                  const src = `${siteOrigin}/assets/stickers/miku/miku%5F${encodeURIComponent(name)}.webp`;
+                  const src = `${siteOrigin}/assets/stickers/miku/mail/miku%5F${encodeURIComponent(name)}.webp`;
                   return `![${cleanAlt}](${src})`;
                 }
               );
@@ -569,6 +574,14 @@ const config = {
         stickerImgs.forEach((img) => {
           if (!img.classList.contains("wl-emoji")) {
             img.classList.add("wl-emoji");
+          }
+          // 在博客网页端无缝重定向加载 200px 高清原图（邮件端则保留 100px 紧凑版）
+          const currentSrc = img.getAttribute("src") || "";
+          if (currentSrc.includes("/assets/stickers/miku/mail/")) {
+            img.setAttribute(
+              "src",
+              currentSrc.replace("/assets/stickers/miku/mail/", "/assets/stickers/miku/")
+            );
           }
         });
 
