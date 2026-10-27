@@ -560,12 +560,11 @@ const config = {
       });
     }
 
-    // 精细化 TextNode 替换贴纸，杜绝直接覆写 innerHTML 破坏 DOM 状态和引起 MutationObserver 级联震荡
     function renderCustomStickers(container) {
       const root = container || document.getElementById("waline");
       if (!root) return;
 
-      const contents = root.querySelectorAll(".wl-content");
+      const contents = root.querySelectorAll(".wl-content, .wl-preview");
       contents.forEach((content) => {
         // 给所有贴纸与自定义表情图片添加 .wl-emoji 类名（防止被普通大图 16:9 样式捕获）
         const stickerImgs = content.querySelectorAll(
@@ -585,89 +584,49 @@ const config = {
           }
         });
 
-        const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT, {
-          acceptNode: (node) => {
-            if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
-            const parent = node.parentElement;
-            if (
-              parent &&
-              (parent.tagName === "CODE" ||
-                parent.tagName === "PRE" ||
-                parent.tagName === "SCRIPT" ||
-                parent.tagName === "STYLE")
-            ) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            if (
-              node.nodeValue.includes(":miku_") ||
-              (node.nodeValue.includes("<img") &&
-                (node.nodeValue.includes("stickers/") || node.nodeValue.includes("emojis")))
-            ) {
-              return NodeFilter.FILTER_ACCEPT;
-            }
-            return NodeFilter.FILTER_SKIP;
-          },
-        });
+        const oldHtml = content.innerHTML;
+        let html = oldHtml;
 
-        const nodesToProcess = [];
-        let currNode;
-        while ((currNode = walker.nextNode())) {
-          nodesToProcess.push(currNode);
+        // 1. 将评论正文或实时预览中的 :miku_xxx: 或 :miku_xxx.ext: 替换为实际 WebP 贴纸图片
+        if (html.includes(":miku_")) {
+          // 优先匹配带扩展名历史或显式写法（如 :miku_01.png:、:miku_打call.gif:、:miku_真的吗.webp:）
+          html = html.replace(
+            /:miku_([^:\s<>"']+?\.(?:png|gif|webp)):/gi,
+            (_match, file) => {
+              const name = file.replace(/\.(png|gif|webp)$/i, "");
+              return `<img class="wl-emoji" src="/assets/stickers/miku/miku_${name}.webp" alt="${name}" loading="lazy" />`;
+            }
+          );
+          // 匹配统一 WebP 贴纸（Waline 点击直接插入的标准 :miku_xxx:）
+          html = html.replace(
+            /:miku_([^:\s<>"']+?):/gi,
+            (_match, name) => {
+              return `<img class="wl-emoji" src="/assets/stickers/miku/miku_${name}.webp" alt="${name}" loading="lazy" />`;
+            }
+          );
         }
 
-        const mikuRegex = /:miku_([^:\s<>"']+?)(?:\.(?:png|gif|webp))?:/gi;
-
-        for (const textNode of nodesToProcess) {
-          const text = textNode.nodeValue;
-          if (!text) continue;
-
-          // 1. 替换 :miku_xxx: 为实际 WebP 贴纸图片
-          if (mikuRegex.test(text)) {
-            mikuRegex.lastIndex = 0;
-            const fragment = document.createDocumentFragment();
-            let lastIdx = 0;
-            let m;
-            while ((m = mikuRegex.exec(text)) !== null) {
-              if (m.index > lastIdx) {
-                fragment.appendChild(
-                  document.createTextNode(text.slice(lastIdx, m.index))
-                );
+        // 2. 兼容历史转义的贴纸代码（如 <img class="wl-emoji" src="/assets/stickers/..." />）
+        // 关键点：Markdown 解析器常将下划线（如 miku_元气打气）误转为 <em>元气打气</em>，跨节点断裂了 HTML 语法
+        if (
+          html.includes("&lt;img") &&
+          (html.includes("stickers/") || html.includes("emojis"))
+        ) {
+          html = html.replace(
+            /&lt;img([\s\S]*?)&gt;/gi,
+            (match, attrs) => {
+              if (attrs.includes("stickers/") || attrs.includes("emojis")) {
+                let clean = attrs.replace(/&quot;/g, '"').replace(/<\/?em>/gi, "_");
+                return `<img${clean}>`;
               }
-              const name = m[1].replace(/\.(png|gif|webp)$/i, "");
-              const img = document.createElement("img");
-              img.className = "wl-emoji";
-              img.src = `/assets/stickers/miku/miku_${name}.webp`;
-              img.alt = name;
-              img.loading = "lazy";
-              fragment.appendChild(img);
-              lastIdx = mikuRegex.lastIndex;
+              return match;
             }
-            if (lastIdx < text.length) {
-              fragment.appendChild(document.createTextNode(text.slice(lastIdx)));
-            }
-            textNode.replaceWith(fragment);
-            continue;
-          }
+          );
+        }
 
-          // 2. 兼容历史转义的贴纸代码（如 <img class="wl-emoji" src="/assets/stickers/..." />）
-          if (
-            text.includes("<img") &&
-            (text.includes("stickers/") || text.includes("emojis"))
-          ) {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(text, "text/html");
-            if (doc.body.firstChild) {
-              const fragment = document.createDocumentFragment();
-              while (doc.body.firstChild) {
-                const child = doc.body.firstChild;
-                if (child.nodeType === Node.ELEMENT_NODE && child.tagName === "IMG") {
-                  child.classList.add("wl-emoji");
-                }
-                fragment.appendChild(child);
-              }
-              textNode.replaceWith(fragment);
-            }
-          }
+        // 严格只有内容发生实际改变时才写入 DOM，彻底杜绝无谓重绘与死循环触发 MutationObserver
+        if (html !== oldHtml) {
+          content.innerHTML = html;
         }
       });
     }
