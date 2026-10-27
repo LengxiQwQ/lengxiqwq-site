@@ -1574,35 +1574,29 @@ const config = {
     object-fit: contain !important;
   }
 
-  /* 普通 emoji 悬停预览：保持精致适中（约 3.5em / 56px） */
+  /* 普通 emoji 悬停预览：彻底禁用隐藏，不显示任何预览弹窗 */
   #waline .wl-emoji-popup .wl-emoji-preview {
+    display: none !important;
+  }
+
+  /* 仅当悬停的是初音未来贴纸（/assets/stickers/）时，才显示悬停放大预览窗（放大至 5.8em / 约 92px） */
+  #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/"] {
+    display: block !important;
     z-index: 50 !important;
     width: auto !important;
     height: auto !important;
-    max-width: 3.5em !important;
-    max-height: 3.5em !important;
-    min-width: unset !important;
-    min-height: unset !important;
-    object-fit: contain !important;
-    padding: 4px !important;
-    margin-top: -6px !important;
-    border-radius: 6px !important;
-    border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
-    background: var(--waline-bg-color, #ffffff) !important;
-    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15) !important;
-    pointer-events: none !important;
-    animation: none !important;
-  }
-
-  /* 贴纸悬停预览窗单独放大：贴纸大而清晰（放大至 5.8em / 约 92px），文字与动作细节一目了然 */
-  #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/"] {
     max-width: 5.8em !important;
     max-height: 5.8em !important;
     min-width: 4.2em !important;
     min-height: 4.2em !important;
+    object-fit: contain !important;
     padding: 6px !important;
     margin-top: -10px !important;
     border-radius: 8px !important;
+    border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
+    background: var(--waline-bg-color, #ffffff) !important;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18) !important;
+    pointer-events: none !important;
+    animation: none !important;
   }
 </style>
