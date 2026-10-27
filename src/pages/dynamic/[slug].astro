@@ -56,9 +56,10 @@ const currentUrl = url(`/dynamic/${slug}/`);
 		<header class="page-header card-base">
 			<div class="page-heading">
 				<a
-					href={url("/dynamic/")}
+					href={url(`/dynamic/#dynamic-${slug.replace(/[^a-zA-Z0-9_-]/g, "-")}`)}
 					class="btn-plain flex items-center gap-1.5 text-sm text-(--primary) hover:underline font-medium transition-colors"
 					aria-label={i18n(I18nKey.dynamicBackToList)}
+					data-dynamic-back-btn
 				>
 					<Icon name="material-symbols:arrow-back-rounded" class="text-base" />
 					<span>{i18n(I18nKey.dynamicBackToList)}</span>
@@ -89,4 +90,48 @@ const currentUrl = url(`/dynamic/${slug}/`);
 <script>
 	import { registerDynamicGallery } from "@/components/pages/dynamic/dynamic-gallery";
 	registerDynamicGallery();
+
+	// 记录返回锚点
+	const backBtn = document.querySelector<HTMLAnchorElement>("[data-dynamic-back-btn]");
+	backBtn?.addEventListener("click", () => {
+		const targetSlug = backBtn.getAttribute("href")?.split("#")[1];
+		if (targetSlug) {
+			try {
+				sessionStorage.setItem("last-dynamic-anchor", targetSlug);
+			} catch {}
+		}
+	});
+
+	// 平滑滚动至评论区（消除跨页跳转与滚动抽搐）
+	function initScrollToComment() {
+		const shouldScroll =
+			window.location.search.includes("to=comment") ||
+			window.location.hash === "#post-comments" ||
+			sessionStorage.getItem("dynamic-scroll-to-comment") === "true";
+
+		if (!shouldScroll) return;
+		try {
+			sessionStorage.removeItem("dynamic-scroll-to-comment");
+		} catch {}
+
+		// 等待进场过渡完全稳定（约 280ms），再触发平滑滚动
+		setTimeout(() => {
+			const commentSection = document.getElementById("post-comments");
+			if (commentSection) {
+				commentSection.scrollIntoView({ behavior: "smooth", block: "start" });
+				if (window.location.hash !== "#post-comments") {
+					history.replaceState(history.state, "", "#post-comments");
+				}
+				setTimeout(() => {
+					const input = commentSection.querySelector<HTMLTextAreaElement | HTMLInputElement>(
+						"textarea, input[type='text'], .wl-editor",
+					);
+					input?.focus();
+				}, 350);
+			}
+		}, 280);
+	}
+
+	initScrollToComment();
+	document.addEventListener("swup:page:view", initScrollToComment);
 </script>

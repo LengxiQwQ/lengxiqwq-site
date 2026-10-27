@@ -72,7 +72,8 @@ const enhancedLinks = link.map((r) => {
 	const starsText =
 		typeof cachedRepo?.stars === "number" ? formatCount(cachedRepo.stars) : "—";
 
-	const buildStars = typeof cachedRepo?.stars === "number" ? cachedRepo.stars : undefined;
+	const buildStars =
+		typeof cachedRepo?.stars === "number" ? cachedRepo.stars : undefined;
 
 	return {
 		...r,

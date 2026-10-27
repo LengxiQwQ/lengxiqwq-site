@@ -550,53 +550,312 @@ dynamic-feed {
 
 .page-inline-comments {
 	display: block;
-	margin: 0.75rem 0 0 3.75rem;
-	border-top: 1px solid color-mix(in srgb, var(--content-meta) 16%, transparent);
-	padding-top: 0.35rem;
+	margin: 0.65rem 0 0 3.75rem;
 }
 
-.page-comment-toggle {
+/* 返回动态卡片时的柔和脉冲高亮 */
+@keyframes dynamicPulse {
+	0% {
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 40%, transparent);
+	}
+	50% {
+		box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 20%, transparent);
+	}
+	100% {
+		box-shadow: 0 0 0 0 transparent;
+	}
+}
+
+.dynamic-highlight-pulse {
+	animation: dynamicPulse 1.8s ease-out;
+}
+
+/* 初始/视口前轻量骨架微光 */
+.dynamic-comments-loading-skeleton {
 	display: inline-flex;
-	min-height: 2.25rem;
 	align-items: center;
-	gap: 0.4rem;
-	padding: 0 0.25rem;
-	border-radius: 0;
-	background: transparent;
+	gap: 0.35rem;
+	padding: 0.25rem 0.5rem;
+	font-size: 0.8rem;
 	color: var(--content-meta);
-	font-size: 0.85rem;
+	opacity: 0.6;
 }
 
-.page-comment-toggle:hover,
-.page-comment-toggle:focus-visible,
-.page-inline-comments[data-expanded="true"] .page-comment-toggle {
-	background: transparent;
+.dynamic-skeleton-icon {
+	display: inline-flex;
+	font-size: 0.9rem;
+}
+
+/* 1. 无评论状态：精简胶囊条 */
+.dynamic-empty-comments-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0.4rem 0.85rem;
+	border-radius: 0.75rem;
+	background: color-mix(in srgb, var(--primary) 3%, transparent);
+	border: 1px solid color-mix(in srgb, var(--content-meta) 12%, transparent);
+	font-size: 0.8rem;
+	transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+:root.dark .dynamic-empty-comments-bar {
+	background: rgba(255, 255, 255, 0.025);
+}
+
+.dynamic-empty-hint {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	color: var(--content-meta);
+	text-decoration: none;
+	transition: color 0.15s ease;
+}
+
+.dynamic-empty-hint:hover {
 	color: var(--primary);
 }
 
-.page-comment-chevron {
-	transition: transform 180ms ease;
+.dynamic-hint-icon {
+	display: inline-flex;
+	font-size: 0.95rem;
+	opacity: 0.8;
 }
 
-.page-inline-comments[data-expanded="true"] .page-comment-chevron {
-	transform: rotate(180deg);
+.dynamic-write-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.2rem 0.5rem;
+	border-radius: 0.5rem;
+	color: var(--primary);
+	font-weight: 500;
+	text-decoration: none;
+	transition: background-color 0.15s ease, opacity 0.15s ease;
 }
 
-.page-comment-panel {
-	margin-top: 0.5rem;
+.dynamic-write-btn:hover {
+	background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+.dynamic-write-icon {
+	display: inline-flex;
+	font-size: 0.85rem;
+}
+
+/* 2. 有评论状态：预览卡片容器 */
+.dynamic-comments-preview-box {
+	display: flex;
+	flex-direction: column;
+	padding: 0.75rem 0.95rem;
+	border-radius: 0.85rem;
+	background: color-mix(in srgb, var(--primary) 3%, transparent);
+	border: 1px solid color-mix(in srgb, var(--content-meta) 12%, transparent);
+	transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+:root.dark .dynamic-comments-preview-box {
+	background: rgba(255, 255, 255, 0.025);
+}
+
+.dynamic-comments-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding-bottom: 0.5rem;
+	border-bottom: 1px solid color-mix(in srgb, var(--content-meta) 10%, transparent);
+	margin-bottom: 0.55rem;
+}
+
+.dynamic-header-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	font-size: 0.825rem;
+	color: var(--content-meta);
+}
+
+.dynamic-header-label strong {
+	color: var(--primary);
+	font-weight: 700;
+}
+
+.dynamic-label-icon {
+	display: inline-flex;
+	font-size: 0.95rem;
+	color: var(--primary);
+}
+
+.dynamic-header-write {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.15rem 0.45rem;
+	border-radius: 0.4rem;
+	font-size: 0.8rem;
+	font-weight: 500;
+	color: var(--primary);
+	text-decoration: none;
+	transition: background-color 0.15s ease;
+}
+
+.dynamic-header-write:hover {
+	background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+/* 评论条目列表 */
+.dynamic-comments-list {
+	display: flex;
+	flex-direction: column;
+	gap: 0.65rem;
+}
+
+.dynamic-comment-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 0.6rem;
+	font-size: 0.85rem;
+}
+
+.dynamic-comment-avatar {
+	width: 1.65rem;
+	height: 1.65rem;
+	flex: 0 0 1.65rem;
+	border-radius: 50%;
 	overflow: hidden;
+	margin-top: 0.15rem;
+	background: var(--btn-regular-bg);
 }
 
-.page-comment-panel[hidden] {
-	display: none;
-}
-
-.page-comment-frame {
-	display: block;
+.dynamic-comment-avatar img {
 	width: 100%;
-	height: 240px;
-	border: 0;
-	background: transparent;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+
+.dynamic-comment-main {
+	flex: 1;
+	min-width: 0;
+}
+
+.dynamic-comment-head {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	line-height: 1.25;
+}
+
+.dynamic-comment-author-name,
+.dynamic-comment-author-link {
+	font-size: 0.825rem;
+	font-weight: 600;
+	color: var(--content-main, currentColor);
+	text-decoration: none;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.dynamic-comment-author-link:hover {
+	color: var(--primary);
+	text-decoration: underline;
+}
+
+.dynamic-comment-admin-badge {
+	font-size: 0.65rem;
+	line-height: 1;
+	padding: 0.12rem 0.35rem;
+	border-radius: 9999px;
+	background: color-mix(in srgb, var(--primary) 16%, transparent);
+	color: var(--primary);
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}
+
+.dynamic-comment-date {
+	font-size: 0.75rem;
+	color: var(--content-meta);
+	margin-left: auto;
+	white-space: nowrap;
+}
+
+.dynamic-comment-content {
+	margin-top: 0.2rem;
+	font-size: 0.825rem;
+	line-height: 1.45;
+	color: var(--content-meta);
+	word-break: break-word;
+}
+
+.dynamic-comment-content p {
+	margin: 0;
+}
+
+.dynamic-comment-content p + p {
+	margin-top: 0.25rem;
+}
+
+.dynamic-comment-content img.wl-emoji {
+	display: inline-block;
+	width: 1.15rem;
+	height: 1.15rem;
+	margin: 0 0.12em;
+	vertical-align: -0.2em;
+}
+
+.dynamic-comment-content a {
+	color: var(--primary);
+	text-decoration: none;
+}
+
+.dynamic-comment-content a:hover {
+	text-decoration: underline;
+}
+
+.dynamic-comment-content code {
+	font-size: 0.75rem;
+	padding: 0.1rem 0.25rem;
+	border-radius: 0.25rem;
+	background: color-mix(in srgb, var(--content-meta) 12%, transparent);
+}
+
+/* 底部操作区（展开/收起/前往详情页） */
+.dynamic-comments-footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-top: 0.55rem;
+	padding-top: 0.5rem;
+	border-top: 1px solid color-mix(in srgb, var(--content-meta) 10%, transparent);
+	gap: 0.5rem;
+}
+
+.dynamic-expand-btn,
+.dynamic-collapse-btn,
+.dynamic-to-detail-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	font-size: 0.8rem;
+	font-weight: 500;
+	color: var(--primary);
+	text-decoration: none;
+	cursor: pointer;
+	padding: 0.15rem 0.35rem;
+	border-radius: 0.35rem;
+	transition: background-color 0.15s ease, opacity 0.15s ease;
+}
+
+.dynamic-expand-btn:hover,
+.dynamic-collapse-btn:hover,
+.dynamic-to-detail-link:hover {
+	background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.dynamic-btn-icon {
+	display: inline-flex;
+	font-size: 0.85rem;
 }
 
 .page-empty {

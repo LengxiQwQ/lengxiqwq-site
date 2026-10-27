@@ -49,6 +49,12 @@ enum I18nKey {
 	dynamicNextImage = "dynamicNextImage",
 	dynamicViewImage = "dynamicViewImage",
 	dynamicSelectImage = "dynamicSelectImage",
+	dynamicViewDetail = "dynamicViewDetail",
+	dynamicNoComments = "dynamicNoComments",
+	dynamicWriteComment = "dynamicWriteComment",
+	dynamicExpandComments = "dynamicExpandComments",
+	dynamicCollapseComments = "dynamicCollapseComments",
+	dynamicGoToDetailComments = "dynamicGoToDetailComments",
 
 	// 公告栏
 	announcement = "announcement",

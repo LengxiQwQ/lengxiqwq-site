@@ -8,7 +8,7 @@ import { dynamicConfig, profileConfig, siteConfig } from "@/config";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import { formatDynamicDate, formatTimezoneOffset } from "@/utils/date-utils";
-import { dynamicAnchor } from "@/utils/dynamic-utils";
+import { dynamicAnchor, dynamicSlug } from "@/utils/dynamic-utils";
 import { url } from "@/utils/url-utils";
 
 interface Props {
@@ -35,7 +35,7 @@ const itemYear = new Intl.DateTimeFormat("en-US", {
 	timeZone: siteConfig.timezone || "UTC",
 	year: "numeric",
 }).format(entry.data.published);
-const permalink = detailUrl || `#${anchorId}`;
+const permalink = detailUrl || url(`/dynamic/${dynamicSlug(entry.id)}/`);
 const location = entry.data.location?.trim() || "";
 const profileLabel = i18n(I18nKey.dynamicProfile).replace(
 	"{name}",

@@ -1,6 +1,6 @@
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
 import sharp from "sharp";
 
 /**
@@ -171,7 +171,7 @@ async function main() {
 				{ stdio: "pipe" },
 			);
 			successCount++;
-			console.log(`      ✅ 上传成功`);
+			console.log("      ✅ 上传成功");
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
 			console.error(`      ❌ 上传失败: ${msg}`);

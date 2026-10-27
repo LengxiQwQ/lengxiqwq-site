@@ -1,23 +1,52 @@
 ---
 import { Icon } from "astro-icon/components";
+import { commentConfig, profileConfig } from "@/config";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 
 interface Props {
-	src: string;
+	src?: string;
+	path?: string;
+	slug?: string;
+	detailUrl?: string;
 }
 
-const { src } = Astro.props;
+const { src = "", path = "", slug = "", detailUrl = "" } = Astro.props;
+
+const commentType = commentConfig?.type || "none";
+const serverUrl =
+	commentType === "waline"
+		? commentConfig.waline?.serverURL || ""
+		: commentType === "twikoo"
+			? commentConfig.twikoo?.envId || ""
+			: commentType === "artalk"
+				? commentConfig.artalk?.server || ""
+				: "";
 ---
 
-<dynamic-inline-comments class="page-inline-comments" data-src={src}>
-	<button type="button" class="page-comment-toggle btn-plain" data-comment-toggle>
-		<Icon name="material-symbols:chat-bubble-outline-rounded" />
-		<span>{i18n(I18nKey.comments)}</span>
-		<Icon
-			name="material-symbols:expand-more-rounded"
-			class="page-comment-chevron"
-		/>
-	</button>
-	<div class="page-comment-panel" data-comment-panel hidden></div>
+<dynamic-inline-comments
+	class="page-inline-comments"
+	data-src={src}
+	data-path={path}
+	data-slug={slug}
+	data-detail-url={detailUrl}
+	data-comment-type={commentType}
+	data-server-url={serverUrl}
+	data-author-name={profileConfig.name}
+	data-i18n-comments={i18n(I18nKey.comments)}
+	data-i18n-no-comments={i18n(I18nKey.dynamicNoComments)}
+	data-i18n-write-comment={i18n(I18nKey.dynamicWriteComment)}
+	data-i18n-expand-comments={i18n(I18nKey.dynamicExpandComments)}
+	data-i18n-collapse-comments={i18n(I18nKey.dynamicCollapseComments)}
+	data-i18n-detail-comments={i18n(I18nKey.dynamicGoToDetailComments)}
+	data-i18n-view-detail={i18n(I18nKey.dynamicViewDetail)}
+>
+	<div class="dynamic-comments-container" data-comment-container>
+		<div class="dynamic-comments-loading-skeleton" aria-hidden="true">
+			<span class="dynamic-skeleton-icon">
+				<Icon name="material-symbols:chat-bubble-outline-rounded" />
+			</span>
+			<span class="dynamic-skeleton-text">{i18n(I18nKey.comments)}</span>
+		</div>
+	</div>
 </dynamic-inline-comments>

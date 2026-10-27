@@ -3,6 +3,7 @@ import { onMount, tick } from "svelte";
 import ClientPagination from "@/components/common/ClientPagination.svelte";
 import { formatTimezoneOffset } from "@/utils/date-utils";
 import { fetchMemos } from "@/utils/memos-adapter";
+import { url } from "@/utils/url-utils";
 import { registerDynamicGallery } from "./dynamic-gallery";
 import { registerDynamicInlineComments } from "./dynamic-inline-comments";
 
@@ -129,9 +130,10 @@ function createItem(entry: DynamicData) {
 	const root = fragment.querySelector<HTMLElement>("[data-dynamic-entry]");
 	if (!root) return null;
 	const anchorId = `dynamic-${entry.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-	const permalinkUrl = new URL(window.location.href);
-	permalinkUrl.hash = anchorId;
-	const permalink = `${permalinkUrl.pathname}${permalinkUrl.search}${permalinkUrl.hash}`;
+	const isRemoteMemo = Boolean(memos?.enable || source.startsWith("http"));
+	const detailUrl = isRemoteMemo
+		? `#${anchorId}`
+		: url(`/dynamic/${entry.id}/`);
 	root.id = anchorId;
 	root.dataset.year = getEntryYear(entry.published);
 
@@ -140,25 +142,27 @@ function createItem(entry: DynamicData) {
 		author.id = `${anchorId}-author`;
 		root.querySelector("article")?.setAttribute("aria-labelledby", author.id);
 	}
+	// 时间戳链接与右上角独立详情图标：均直达详情页
 	root
 		.querySelectorAll<HTMLAnchorElement>("[data-dynamic-permalink]")
 		.forEach((link) => {
-			link.href = permalink;
-			link.dataset.noSwup = "";
-			link.addEventListener("click", (event) => {
-				if (
-					event.button !== 0 ||
-					event.metaKey ||
-					event.ctrlKey ||
-					event.shiftKey ||
-					event.altKey
-				)
-					return;
-				event.preventDefault();
-				event.stopPropagation();
-				history.replaceState(history.state, "", permalink);
-			});
+			link.href = detailUrl;
 		});
+	root
+		.querySelectorAll<HTMLAnchorElement>("[data-dynamic-detail-link]")
+		.forEach((link) => {
+			link.href = detailUrl;
+		});
+
+	// 点击卡片上的任何交互链接时，记录锚点便于返回时精准恢复视口
+	root.addEventListener("click", (e) => {
+		const target = (e.target as HTMLElement)?.closest("a, button");
+		if (target) {
+			try {
+				sessionStorage.setItem("last-dynamic-anchor", anchorId);
+			} catch {}
+		}
+	});
 	const time = root.querySelector<HTMLTimeElement>("[data-dynamic-time]");
 	if (time) {
 		const date = new Date(entry.published);
@@ -236,9 +240,13 @@ function createItem(entry: DynamicData) {
 	const comments = root.querySelector<HTMLElement>("dynamic-inline-comments");
 	if (comments) {
 		if (showComments) {
+			const commentPath = `/dynamic/${entry.id}`;
 			comments.dataset.src = `/dynamic/comments/?path=${encodeURIComponent(
-				`/dynamic/${entry.id}/`,
+				`${commentPath}/`,
 			)}`;
+			comments.dataset.path = commentPath;
+			comments.dataset.slug = entry.id;
+			comments.dataset.detailUrl = detailUrl;
 		} else {
 			comments.remove();
 		}
@@ -254,12 +262,33 @@ async function renderItems(items: DynamicData[]) {
 		const item = createItem(entry);
 		if (item) list.append(item);
 	}
-	if (restoreAnchorAfterRender) {
-		restoreAnchorAfterRender = false;
-		const target = document.getElementById(
-			decodeURIComponent(window.location.hash.slice(1)),
-		);
-		target?.scrollIntoView({ behavior: "auto", block: "start" });
+
+	// 恢复视口定位：优先读取 URL hash，兜底读取 sessionStorage 记忆的最后浏览锚点
+	const targetAnchorId =
+		decodeURIComponent(window.location.hash.slice(1)) ||
+		(() => {
+			try {
+				return sessionStorage.getItem("last-dynamic-anchor") || "";
+			} catch {
+				return "";
+			}
+		})();
+
+	if (targetAnchorId) {
+		setTimeout(() => {
+			const target = document.getElementById(targetAnchorId);
+			if (target) {
+				target.scrollIntoView({ behavior: "smooth", block: "center" });
+				target.classList.add("dynamic-highlight-pulse");
+				setTimeout(
+					() => target.classList.remove("dynamic-highlight-pulse"),
+					2500,
+				);
+				try {
+					sessionStorage.removeItem("last-dynamic-anchor");
+				} catch {}
+			}
+		}, 150);
 	}
 }
 
@@ -308,7 +337,12 @@ onMount(() => {
 			currentPage = pageFromUrl();
 			applyFilters(false);
 			const handleHashAnchor = () => {
-				const anchorId = decodeURIComponent(window.location.hash.slice(1));
+				let anchorId = decodeURIComponent(window.location.hash.slice(1));
+				if (!anchorId) {
+					try {
+						anchorId = sessionStorage.getItem("last-dynamic-anchor") || "";
+					} catch {}
+				}
 				if (!anchorId) return;
 				const anchorIndex = filtered.findIndex(
 					(entry) =>
@@ -321,11 +355,6 @@ onMount(() => {
 						updateUrl();
 					}
 					restoreAnchorAfterRender = true;
-					const target = document.getElementById(anchorId);
-					if (target) {
-						restoreAnchorAfterRender = false;
-						target.scrollIntoView({ behavior: "smooth", block: "start" });
-					}
 				}
 			};
 

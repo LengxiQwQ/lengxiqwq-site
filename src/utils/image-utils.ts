@@ -1,6 +1,6 @@
-import coversManifestData from "../constants/covers-manifest.json";
 import { coverImageConfig } from "../config/coverImageConfig";
 import { siteConfig } from "../config/siteConfig";
+import coversManifestData from "../constants/covers-manifest.json";
 import type { ImageFormat } from "../types/config";
 
 interface CoversManifest {
