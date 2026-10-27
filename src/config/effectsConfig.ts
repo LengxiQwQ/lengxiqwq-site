@@ -5,8 +5,6 @@ import type { CursorConfig, SakuraConfig } from "../types/effectsConfig";
 export const cursorConfig: CursorConfig = {
 	// 是否启用自定义光标特效
 	enable: true,
-	// 是否启用眨眼动画（若关闭则保持静态）
-	animated: true,
 };
 
 export const sakuraConfig: SakuraConfig = {

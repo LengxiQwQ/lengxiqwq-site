@@ -27,5 +27,5 @@ export type SakuraConfig = {
 
 export type CursorConfig = {
 	enable: boolean; // 是否启用自定义鼠标指针
-	animated: boolean; // 是否启用 Miku 12 帧动态跟随 (false 则使用纯原生静态光标)
+	animated?: boolean; // 可选配置
 };

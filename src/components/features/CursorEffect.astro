@@ -4,69 +4,24 @@ import { cursorConfig } from "@/config";
 if (!cursorConfig?.enable) {
 	return null;
 }
-
-const isAnimated = !!cursorConfig?.animated;
 ---
 
-<div id="miku-cursor-sentinel" aria-hidden="true" data-animated={isAnimated ? "true" : "false"}></div>
-
 <style is:global id="miku-static-cursor-style">
-	/* 静态基础规则（在 JS 动态对齐生效前提供安全底座） */
+	/* 静态基础规则（在 JS 动态高分屏对齐生效前提供安全底座） */
 	@media (pointer: fine) {
-		/* 1. 默认常规指针：全站基础背景与容器自然继承（优先级最低） */
+		/* 1. 默认常规指针：全站基础背景与容器自然继承，保持纯粹系统级稳定性 */
 		html,
 		body,
-		#swup,
-		#swup-container,
-		main,
-		header,
-		footer,
-		aside,
-		nav,
-		section,
-		article,
-		div,
-		figure,
-		canvas,
-		svg,
 		.cursor-default,
-		[data-cursor="default"] {
+		[data-cursor="default"],
+		[style*="cursor: default"],
+		[style*="cursor:default"],
+		[style*="cursor: auto"],
+		[style*="cursor:auto"] {
 			cursor: url('/assets/cursors/normal.png') 0 0, auto;
 		}
 
-		/* 2. 通用排版与文本内容区域：只要是文字阅读与选词区域，全局自然显示工字选中光标 */
-		p,
-		h1,
-		h2,
-		h3,
-		h4,
-		h5,
-		h6,
-		li,
-		dt,
-		dd,
-		blockquote,
-		q,
-		cite,
-		code,
-		pre,
-		kbd,
-		samp,
-		time,
-		b,
-		strong,
-		i,
-		em,
-		mark,
-		small,
-		sub,
-		sup,
-		span,
-		label,
-		th,
-		td,
-		.description,
-		.description *,
+		/* 2. 文本输入与选词编辑区（高优先级文本输入控件） */
 		input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="image"]),
 		textarea,
 		[contenteditable="true"],
@@ -77,7 +32,41 @@ const isAnimated = !!cursorConfig?.animated;
 			cursor: url('/assets/cursors/text.png') 3 7, text !important;
 		}
 
-		/* 3. 通用可交互元素：链接、按钮、交互角色与放大图片（高优先级覆盖文字规则） */
+		/* 3. 正文排版与文章阅读选词区（不加 !important，保证段落内链接手型高优生效） */
+		article p,
+		article p *,
+		article h1,
+		article h2,
+		article h3,
+		article h4,
+		article h5,
+		article h6,
+		article li,
+		article blockquote,
+		article code,
+		article pre,
+		.custom-md p,
+		.custom-md p *,
+		.custom-md h1,
+		.custom-md h2,
+		.custom-md h3,
+		.custom-md h4,
+		.custom-md h5,
+		.custom-md h6,
+		.custom-md li,
+		.custom-md blockquote,
+		.custom-md code,
+		.custom-md pre,
+		.post-container p,
+		.post-container p *,
+		#waline .wl-content,
+		#waline .wl-content p,
+		#twikoo .tk-content,
+		#twikoo .tk-content p {
+			cursor: url('/assets/cursors/text.png') 3 7, text;
+		}
+
+		/* 4. 通用可交互元素：链接、按钮、交互角色与放大图片（高优先级覆盖文字规则） */
 		a,
 		a *,
 		button,
@@ -134,7 +123,7 @@ const isAnimated = !!cursorConfig?.animated;
 			cursor: url('/assets/cursors/pointer.png') 1 1, pointer !important;
 		}
 
-		/* 4. 禁用状态（后置最高优先级，杜绝禁用按钮误显手型） */
+		/* 5. 禁用状态（后置最高优先级，杜绝禁用按钮误显手型） */
 		[disabled],
 		[disabled] *,
 		:disabled,
@@ -160,10 +149,8 @@ const isAnimated = !!cursorConfig?.animated;
 	 * - 桌面大屏 (DPR < 1.4，如 100%, 125% 缩放)：启用 1x 物理点阵 (32px)，1 图像像素 = 1 物理液晶点，小巧锐利；
 	 * - 笔记本高密屏 (1.4 <= DPR < 1.8，如 150% 缩放)：启用方案三 48px 母盘高锐超采样，黄金适中尺寸，杜绝拉伸浑浊；
 	 * - 4K 超高分屏 (DPR >= 1.8，如 200% 缩放)：启用 2x 整数超采样 (64px)。
-	 * 并在启用 animated 时，以 116.7ms/帧循环播放原版 Miku 眨眼动画，纯硬件零延迟！
+	 * 纯静态硬件光标驱动，零计时器开销，零抽搐闪烁，绝对顺滑跟手！
 	 */
-	const sentinel = document.getElementById("miku-cursor-sentinel");
-	const isAnimated = sentinel?.dataset.animated === "true";
 
 	// 针对各档缩放尺寸由母盘严格测算的热点坐标映射
 	const hotspots: Record<string, { "1x": [number, number]; "1.5x": [number, number]; "2x": [number, number] }> = {
@@ -181,9 +168,6 @@ const isAnimated = !!cursorConfig?.animated;
 		"nwse-resize": { "1x": [15, 16], "1.5x": [23, 24], "2x": [30, 32] },
 		"nesw-resize": { "1x": [16, 16], "1.5x": [24, 23], "2x": [32, 32] },
 	};
-
-	let animInterval: number | null = null;
-	let currentAnimFrame = 0;
 
 	function getTierConfig() {
 		const dpr = window.devicePixelRatio || 1;
@@ -232,57 +216,16 @@ const isAnimated = !!cursorConfig?.animated;
 				/* 1. 默认常规指针 (Tier 1 底座)：全站基础背景与容器自然继承，保持正常箭头光标 */
 				html,
 				body,
-				#swup,
-				#swup-container,
-				main,
-				header,
-				footer,
-				aside,
-				nav,
-				section,
-				article,
-				div,
-				figure,
-				canvas,
-				svg,
 				.cursor-default,
-				[data-cursor="default"] {
+				[data-cursor="default"],
+				[style*="cursor: default"],
+				[style*="cursor:default"],
+				[style*="cursor: auto"],
+				[style*="cursor:auto"] {
 					${cur("normal", "auto", false)}
 				}
 
-				/* 2. 全局通用文本与选词区域 (Tier 2 语义文本)：任何段落、列表、正文、简介，自然呈现工字光标 */
-				p,
-				h1,
-				h2,
-				h3,
-				h4,
-				h5,
-				h6,
-				li,
-				dt,
-				dd,
-				blockquote,
-				q,
-				cite,
-				code,
-				pre,
-				kbd,
-				samp,
-				time,
-				b,
-				strong,
-				i,
-				em,
-				mark,
-				small,
-				sub,
-				sup,
-				span,
-				label,
-				th,
-				td,
-				.description,
-				.description *,
+				/* 2. 文本输入与选词编辑区 (Tier 2 语义输入) */
 				input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="image"]),
 				textarea,
 				[contenteditable="true"],
@@ -293,7 +236,41 @@ const isAnimated = !!cursorConfig?.animated;
 					${cur("text", "text", true)}
 				}
 
-				/* 3. 全局通用可交互元素 (Tier 3 动作交互)：原生链接、按钮、显式操作，高优先级覆盖文本 */
+				/* 3. 正文排版与文章阅读选词区 (Tier 3 选词正文，不加 !important，使段落内链接手型高优生效) */
+				article p,
+				article p *,
+				article h1,
+				article h2,
+				article h3,
+				article h4,
+				article h5,
+				article h6,
+				article li,
+				article blockquote,
+				article code,
+				article pre,
+				.custom-md p,
+				.custom-md p *,
+				.custom-md h1,
+				.custom-md h2,
+				.custom-md h3,
+				.custom-md h4,
+				.custom-md h5,
+				.custom-md h6,
+				.custom-md li,
+				.custom-md blockquote,
+				.custom-md code,
+				.custom-md pre,
+				.post-container p,
+				.post-container p *,
+				#waline .wl-content,
+				#waline .wl-content p,
+				#twikoo .tk-content,
+				#twikoo .tk-content p {
+					${cur("text", "text", false)}
+				}
+
+				/* 4. 全局通用可交互元素 (Tier 4 动作交互)：原生链接、按钮、显式操作，高优先级覆盖文本 */
 				a,
 				a *,
 				button,
@@ -352,7 +329,7 @@ const isAnimated = !!cursorConfig?.animated;
 					${cur("pointer", "pointer", true)}
 				}
 
-				/* 4. 禁用状态 (Tier 4 状态覆盖)：禁用按钮优先显示禁止图标，绝不显示手型 */
+				/* 5. 禁用状态 (Tier 5 状态覆盖)：禁用按钮优先显示禁止图标，绝不显示手型 */
 				[disabled],
 				[disabled] *,
 				:disabled,
@@ -369,7 +346,7 @@ const isAnimated = !!cursorConfig?.animated;
 					${cur("not-allowed", "not-allowed", true)}
 				}
 
-				/* 5. 辅助功能与特种光标 (Tier 5 特效) */
+				/* 6. 辅助功能与特种光标 (Tier 6 特效) */
 				abbr[title],
 				abbr[title] *,
 				[data-tooltip],
@@ -436,120 +413,6 @@ const isAnimated = !!cursorConfig?.animated;
 				}
 			}
 		`;
-
-		// 如果启用了动态模式，初始化帧循环引擎
-		if (isAnimated) {
-			initCursorAnimation();
-		}
-	}
-
-	/**
-	 * Miku 原版眨眼硬件光标帧循环引擎
-	 * 采用原生 CSS 光标帧快速切换，保持 100% 硬件零延迟，绝无虚拟 DOM 跟随的拖影感
-	 */
-	function initCursorAnimation(): void {
-		if (animInterval !== null) {
-			clearInterval(animInterval);
-			animInterval = null;
-		}
-
-		const { dpr, suffix, tier } = getTierConfig();
-		const [tx, ty] = hotspots.text?.[tier] || [3, 7];
-
-		// 内存预加载 12 帧，确保换帧瞬间完成，绝不白块闪烁
-		for (let i = 0; i < 12; i++) {
-			const nImg = new Image();
-			nImg.src = `/assets/cursors/anim/normal_${i}${suffix}.png`;
-			const tImg = new Image();
-			tImg.src = `/assets/cursors/anim/text_${i}${suffix}.png`;
-		}
-
-		let animStyleEl = document.getElementById("miku-anim-style") as HTMLStyleElement | null;
-		if (!animStyleEl) {
-			animStyleEl = document.createElement("style");
-			animStyleEl.id = "miku-anim-style";
-			document.head.appendChild(animStyleEl);
-		}
-
-		function updateFrame(frame: number) {
-			if (!animStyleEl) return;
-			const nUrl = `/assets/cursors/anim/normal_${frame}${suffix}.png`;
-			const tUrl = `/assets/cursors/anim/text_${frame}${suffix}.png`;
-			animStyleEl.textContent = `
-				@media (pointer: fine) {
-					html,
-					body,
-					#swup,
-					#swup-container,
-					main,
-					header,
-					footer,
-					aside,
-					nav,
-					section,
-					article,
-					div,
-					figure,
-					canvas,
-					svg,
-					.cursor-default,
-					[data-cursor="default"] {
-						cursor: -webkit-image-set(url('${nUrl}') ${dpr}x) 0 0, url('${nUrl}') 0 0, auto;
-						cursor: image-set(url('${nUrl}') ${dpr}x) 0 0, url('${nUrl}') 0 0, auto;
-					}
-
-					p,
-					h1,
-					h2,
-					h3,
-					h4,
-					h5,
-					h6,
-					li,
-					dt,
-					dd,
-					blockquote,
-					q,
-					cite,
-					code,
-					pre,
-					kbd,
-					samp,
-					time,
-					b,
-					strong,
-					i,
-					em,
-					mark,
-					small,
-					sub,
-					sup,
-					span,
-					label,
-					th,
-					td,
-					.description,
-					.description *,
-					input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="image"]),
-					textarea,
-					[contenteditable="true"],
-					.cursor-text,
-					[data-cursor="text"] {
-						cursor: -webkit-image-set(url('${tUrl}') ${dpr}x) ${tx} ${ty}, url('${tUrl}') ${tx} ${ty}, text !important;
-						cursor: image-set(url('${tUrl}') ${dpr}x) ${tx} ${ty}, url('${tUrl}') ${tx} ${ty}, text !important;
-					}
-				}
-			`;
-		}
-
-		// 按照原版 .ani 的 116.7ms 节拍器进行循环 (12 帧 = 1.4秒/次眨眼)
-		animInterval = window.setInterval(() => {
-			if (document.hidden) return; // 网页切至后台时不计算，极致节能
-			currentAnimFrame = (currentAnimFrame + 1) % 12;
-			updateFrame(currentAnimFrame);
-		}, 116.7);
-
-		updateFrame(0);
 	}
 
 	// 1. 立即执行并监听系统缩放率变化（如拖拽窗口到不同 DPI 屏幕或浏览器缩放）
@@ -574,7 +437,7 @@ const isAnimated = !!cursorConfig?.animated;
 	document.addEventListener("astro:page-load", applyPixelPerfectCursor);
 	document.addEventListener("astro:after-swap", applyPixelPerfectCursor);
 
-	// Swup 切页全生命周期钩子（解决切换页面后部分动态内容退回普通光标的问题）
+	// Swup 切页全生命周期钩子
 	document.addEventListener("swup:enable", applyPixelPerfectCursor);
 	document.addEventListener("swup:page:view", applyPixelPerfectCursor);
 	document.addEventListener("swup:content:replace", applyPixelPerfectCursor);
@@ -585,9 +448,6 @@ const isAnimated = !!cursorConfig?.animated;
 	const headObserver = new MutationObserver(() => {
 		if (!document.getElementById("miku-pixel-perfect-style")) {
 			applyPixelPerfectCursor();
-		}
-		if (isAnimated && !document.getElementById("miku-anim-style")) {
-			initCursorAnimation();
 		}
 	});
 	headObserver.observe(document.head, { childList: true });
