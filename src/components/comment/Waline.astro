@@ -408,8 +408,8 @@ const config = {
 
       const contents = root.querySelectorAll(".wl-content");
       contents.forEach((content) => {
-        let html = content.innerHTML;
-        let modified = false;
+        const oldHtml = content.innerHTML;
+        let html = oldHtml;
 
         // 1. 将评论正文或实时预览中的 :miku_xxx.png: / :miku_xxx.gif: 替换为实际贴纸图片
         if (html.includes(":miku_")) {
@@ -438,19 +438,24 @@ const config = {
               return `<img class="wl-emoji" src="/assets/stickers/miku/miku_${name}.${ext}" alt="${name}" loading="lazy" />`;
             }
           );
-          modified = true;
         }
 
         // 2. 兼容历史转义的贴纸代码（如 <img class="wl-emoji" src="/assets/stickers/..." />）
         if (html.includes("&lt;img") && html.includes("stickers/")) {
           html = html.replace(
-            /&lt;img\s+class=&quot;wl-emoji&quot;\s+src=&quot;([^&]+)&quot;\s+alt=&quot;([^&]+)&quot;&gt;/gi,
-            '<img class="wl-emoji" src="$1" alt="$2" loading="lazy" />'
+            /&lt;img([\s\S]*?)&gt;/gi,
+            (match, attrs) => {
+              if (attrs.includes("stickers/")) {
+                let clean = attrs.replace(/&quot;/g, '"').replace(/<\/?em>/gi, "_");
+                return `<img${clean}>`;
+              }
+              return match;
+            }
           );
-          modified = true;
         }
 
-        if (modified) {
+        // 严格只有内容发生实际改变时才写入 DOM，彻底杜绝死循环触发 MutationObserver
+        if (html !== oldHtml) {
           content.innerHTML = html;
         }
       });
@@ -706,7 +711,9 @@ const config = {
         if (el && !el.__fancyboxObserverInstalled && window.MutationObserver) {
           el.__fancyboxObserverInstalled = true;
           let debounceTimer = null;
+          let isProcessingMutations = false;
           const walineObserver = new MutationObserver((mutations) => {
+            if (isProcessingMutations) return;
             let hasAddedNode = false;
             for (const m of mutations) {
               if (m.addedNodes.length > 0) {
@@ -715,18 +722,21 @@ const config = {
               }
             }
             if (hasAddedNode) {
-              enhanceCommentImages(el);
-              renderCustomStickers(el);
-              setupKaomoji(el);
-              updateEmojiPopupStickerState(el);
               if (debounceTimer) clearTimeout(debounceTimer);
               debounceTimer = setTimeout(() => {
-                enhanceCommentImages(el);
-                renderCustomStickers(el);
-                setupKaomoji(el);
-                updateEmojiPopupStickerState(el);
-                document.dispatchEvent(new CustomEvent("waline:rendered"));
-              }, 80);
+                isProcessingMutations = true;
+                try {
+                  enhanceCommentImages(el);
+                  renderCustomStickers(el);
+                  setupKaomoji(el);
+                  updateEmojiPopupStickerState(el);
+                  document.dispatchEvent(new CustomEvent("waline:rendered"));
+                } finally {
+                  setTimeout(() => {
+                    isProcessingMutations = false;
+                  }, 60);
+                }
+              }, 60);
             }
           });
           walineObserver.observe(el, { childList: true, subtree: true });
