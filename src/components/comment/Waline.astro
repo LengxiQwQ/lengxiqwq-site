@@ -1,5 +1,6 @@
 ---
 import { commentConfig } from "@/config";
+import { KAOMOJI_LIST } from "@/constants/kaomoji";
 
 interface Props {
 	path: string;
@@ -18,7 +19,7 @@ const config = {
   <div id="waline" data-path={Astro.props.path}></div>
   <link rel="stylesheet" href="https://unpkg.com/@waline/client@v3/dist/waline.css" />
   <script is:inline src="https://unpkg.com/@waline/client@v3/dist/waline.umd.js" defer></script>
-  <script is:inline define:vars={{ config }}>
+  <script is:inline define:vars={{ config, KAOMOJI_LIST }}>
     function getCurrentPath() {
       const requestedPath = new URLSearchParams(window.location.search).get("path");
       let path = requestedPath;
@@ -401,6 +402,224 @@ const config = {
       });
     }
 
+    function renderCustomStickers(container) {
+      const root = container || document.getElementById("waline");
+      if (!root) return;
+
+      const contents = root.querySelectorAll(".wl-content");
+      contents.forEach((content) => {
+        let html = content.innerHTML;
+        let modified = false;
+
+        // 1. 将评论正文或实时预览中的 :miku_01.png: 替换为实际贴纸图片
+        if (html.includes(":miku_")) {
+          html = html.replace(
+            /:miku_(\d+)\.(png|gif):/gi,
+            '<img class="wl-emoji" src="/assets/stickers/miku/miku_$1.$2" alt="miku_$1" loading="lazy" />'
+          );
+          modified = true;
+        }
+
+        // 2. 兼容历史转义的贴纸代码（如 <img class="wl-emoji" src="/assets/stickers/..." />）
+        if (html.includes("&lt;img") && html.includes("stickers/")) {
+          html = html.replace(
+            /&lt;img\s+class=&quot;wl-emoji&quot;\s+src=&quot;([^&]+)&quot;\s+alt=&quot;([^&]+)&quot;&gt;/gi,
+            '<img class="wl-emoji" src="$1" alt="$2" loading="lazy" />'
+          );
+          modified = true;
+        }
+
+        if (modified) {
+          content.innerHTML = html;
+        }
+      });
+    }
+
+    function setupKaomoji(container) {
+      const root = container || document.getElementById("waline");
+      if (!root) return;
+
+      // 全局点击监听（仅绑定一次）：点击外部时自动收起所有外置颜文字面板
+      if (!window.__walineKaomojiGlobalInstalled) {
+        window.__walineKaomojiGlobalInstalled = true;
+        document.addEventListener("click", (e) => {
+          if (
+            e.target.closest(".wl-kaomoji-popup") ||
+            e.target.closest(".wl-action-kaomoji")
+          ) {
+            return;
+          }
+          document
+            .querySelectorAll(".wl-kaomoji-popup.display")
+            .forEach((popup) => {
+              popup.classList.remove("display");
+            });
+          document
+            .querySelectorAll(".wl-action-kaomoji.active")
+            .forEach((btn) => {
+              btn.classList.remove("active");
+            });
+        });
+      }
+
+      const panels = root.querySelectorAll(".wl-panel");
+      panels.forEach((panel) => {
+        const actions = panel.querySelector(".wl-actions");
+        if (!actions) return;
+
+        // 1. 确保在 .wl-actions 工具栏中插入独立 [OωO] 按钮
+        let kaomojiBtn = actions.querySelector(".wl-action-kaomoji");
+        if (!kaomojiBtn) {
+          kaomojiBtn = document.createElement("button");
+          kaomojiBtn.type = "button";
+          kaomojiBtn.className = "wl-action wl-action-kaomoji";
+          kaomojiBtn.title = "颜文字 (OωO)";
+          kaomojiBtn.setAttribute("aria-label", "颜文字");
+          kaomojiBtn.innerHTML = '<span class="wl-action-kaomoji-text">OωO</span>';
+          actions.appendChild(kaomojiBtn);
+        }
+
+        // 2. 确保在 .wl-panel 下挂载独立的 .wl-kaomoji-popup 面板（无分类菜单、无推荐条、一页平铺）
+        let popup = panel.querySelector(".wl-kaomoji-popup");
+        if (!popup) {
+          popup = document.createElement("div");
+          popup.className = "wl-kaomoji-popup";
+
+          let contentHtml = '<div class="wl-kaomoji-content">';
+          (KAOMOJI_LIST || []).forEach((item) => {
+            contentHtml += `<button type="button" class="wl-kaomoji-item" data-kaomoji="${encodeURIComponent(item)}" title="${item}">${item}</button>`;
+          });
+          contentHtml += "</div>";
+
+          popup.innerHTML = contentHtml;
+          panel.appendChild(popup);
+
+          // 颜文字点击：纯字符光标就地插入
+          popup.addEventListener("click", (e) => {
+            const itemBtn = e.target.closest(".wl-kaomoji-item");
+            if (!itemBtn) return;
+            e.stopPropagation();
+
+            const encoded = itemBtn.getAttribute("data-kaomoji");
+            const rawText = encoded
+              ? decodeURIComponent(encoded)
+              : itemBtn.textContent.trim();
+            if (!rawText) return;
+
+            const textarea =
+              panel.querySelector(".wl-editor") ||
+              panel.querySelector("textarea") ||
+              document.getElementById("wl-edit");
+            if (!textarea) return;
+
+            textarea.focus();
+            let success = false;
+            try {
+              success = document.execCommand("insertText", false, rawText);
+            } catch (_) {
+              success = false;
+            }
+
+            if (!success) {
+              const start = textarea.selectionStart || 0;
+              const end = textarea.selectionEnd || 0;
+              const val = textarea.value || "";
+              textarea.value = val.slice(0, start) + rawText + val.slice(end);
+              textarea.selectionStart = textarea.selectionEnd =
+                start + rawText.length;
+            }
+
+            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+            textarea.dispatchEvent(new Event("change", { bubbles: true }));
+
+            itemBtn.classList.add("wl-kaomoji-picked");
+            setTimeout(() => itemBtn.classList.remove("wl-kaomoji-picked"), 260);
+          });
+        }
+
+        // 3. 点击独立按钮展开/收起颜文字面板，并与原生表情互斥
+        if (!kaomojiBtn.__kaomojiListenerInstalled) {
+          kaomojiBtn.__kaomojiListenerInstalled = true;
+          kaomojiBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const isOpen = popup.classList.contains("display");
+            if (isOpen) {
+              popup.classList.remove("display");
+              kaomojiBtn.classList.remove("active");
+            } else {
+              // 关闭当前面板或其他面板上的原生表情弹窗（联动 Vue 点击事件以同步其内部状态）
+              const nativeEmojiBtn = actions.querySelector(
+                'button[title*="Emoji"], button[title*="表情"]'
+              );
+              if (
+                nativeEmojiBtn &&
+                nativeEmojiBtn.classList.contains("active")
+              ) {
+                nativeEmojiBtn.click();
+              }
+              const nativeEmojiPopup = panel.querySelector(".wl-emoji-popup");
+              if (nativeEmojiPopup) {
+                nativeEmojiPopup.classList.remove("display");
+              }
+
+              // 关闭其他可能打开的颜文字弹窗
+              document
+                .querySelectorAll(".wl-kaomoji-popup.display")
+                .forEach((p) => {
+                  if (p !== popup) p.classList.remove("display");
+                });
+              document
+                .querySelectorAll(".wl-action-kaomoji.active")
+                .forEach((b) => {
+                  if (b !== kaomojiBtn) b.classList.remove("active");
+                });
+
+              popup.classList.add("display");
+              kaomojiBtn.classList.add("active");
+            }
+          });
+        }
+
+        // 4. 监听原生表情按钮点击时，自动关闭外置颜文字面板
+        const nativeEmojiBtn = actions.querySelector(
+          'button[title*="Emoji"], button[title*="表情"]'
+        );
+        if (nativeEmojiBtn && !nativeEmojiBtn.__kaomojiWatcherInstalled) {
+          nativeEmojiBtn.__kaomojiWatcherInstalled = true;
+          nativeEmojiBtn.addEventListener("click", () => {
+            popup.classList.remove("display");
+            kaomojiBtn.classList.remove("active");
+            setTimeout(updateEmojiPopupStickerState, 30);
+          });
+        }
+      });
+    }
+
+    function updateEmojiPopupStickerState(container) {
+      const root = container || document.getElementById("waline");
+      if (!root) return;
+      const popups = root.querySelectorAll(".wl-emoji-popup");
+      popups.forEach((popup) => {
+        const hasSticker = !!popup.querySelector(
+          '.wl-tab-wrapper img[src*="/assets/stickers/"]'
+        );
+        popup.classList.toggle("wl-tab-is-sticker", hasSticker);
+      });
+    }
+
+    // 全局监听：当点击表情面板标签页切换（如 Bmoji 与 Miku 贴纸之间切换）时，实时标记状态
+    if (!window.__walineTabWatcherInstalled) {
+      window.__walineTabWatcherInstalled = true;
+      document.addEventListener("click", (e) => {
+        if (
+          e.target.closest(".wl-tabs") ||
+          e.target.closest('button[title*="Emoji"], button[title*="表情"]')
+        ) {
+          setTimeout(updateEmojiPopupStickerState, 30);
+        }
+      });
+    }
+
     function initWaline() {
       const el = document.getElementById("waline");
       if (!el) {
@@ -446,7 +665,21 @@ const config = {
       try {
         window.__walineInstance = walineLib.init(dynamicConfig);
         enhanceCommentImages(el);
+        renderCustomStickers(el);
+        setupKaomoji(el);
         scrollToHashTarget();
+
+        // 异步初次渲染 CommentBox 兜底扫描
+        let kaomojiAttempts = 0;
+        const ensureKaomoji = () => {
+          setupKaomoji(el);
+          renderCustomStickers(el);
+          if (kaomojiAttempts < 10) {
+            kaomojiAttempts++;
+            setTimeout(ensureKaomoji, 150);
+          }
+        };
+        ensureKaomoji();
 
         // 监听评论区 DOM 变动（如拉取评论、分页、发表回复），及时唤醒 Fancybox 灯箱绑定与图片预留排版
         if (el && !el.__fancyboxObserverInstalled && window.MutationObserver) {
@@ -462,9 +695,15 @@ const config = {
             }
             if (hasAddedNode) {
               enhanceCommentImages(el);
+              renderCustomStickers(el);
+              setupKaomoji(el);
+              updateEmojiPopupStickerState(el);
               if (debounceTimer) clearTimeout(debounceTimer);
               debounceTimer = setTimeout(() => {
                 enhanceCommentImages(el);
+                renderCustomStickers(el);
+                setupKaomoji(el);
+                updateEmojiPopupStickerState(el);
                 document.dispatchEvent(new CustomEvent("waline:rendered"));
               }, 80);
             }
@@ -957,5 +1196,382 @@ const config = {
         0 0 0 0 transparent,
         0 0 0 0 transparent;
     }
+  }
+
+  /* ==========================================================================
+     Waline 独立外置颜文字面板系统（无分类菜单、无推荐条、纯文本大字号显示）
+     ========================================================================== */
+
+  /* 工具栏整排按钮统一严格垂直居中并按指定顺序排列：
+     1. Markdown 2. 预览 3. 插图片 4. 表情 5. 颜文字 */
+  #waline .wl-actions {
+    display: flex !important;
+    align-items: center !important;
+  }
+
+  /* 1. Markdown */
+  #waline .wl-actions a.wl-action {
+    order: 1 !important;
+  }
+
+  /* 2. 预览 */
+  #waline .wl-actions button[title*="预览"],
+  #waline .wl-actions button[title*="preview" i] {
+    order: 2 !important;
+  }
+
+  /* 3. 插图片 */
+  #waline .wl-actions label[for="wl-image-upload"],
+  #waline .wl-actions label.wl-action {
+    order: 3 !important;
+  }
+
+  /* 4. 表情 (原生 Emoji) */
+  #waline .wl-actions button[title*="表情"],
+  #waline .wl-actions button[title*="emoji" i] {
+    order: 4 !important;
+  }
+
+  /* 5. 颜文字 (OωO) */
+  #waline .wl-actions .wl-action.wl-action-kaomoji {
+    order: 5 !important;
+  }
+
+  /* 修复 Markdown 图标被 Waline 内置 [data-waline] a { display: inline-block } 导致偏上的问题 */
+  #waline .wl-actions a.wl-action,
+  #waline a.wl-action {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 24px !important;
+    width: 24px !important;
+    line-height: 1 !important;
+    vertical-align: middle !important;
+    box-sizing: border-box !important;
+  }
+
+  #waline .wl-actions a.wl-action svg {
+    display: block !important;
+    margin: auto !important;
+  }
+
+  /* 独立颜文字工具栏按钮：纯文本 OωO，精致小巧，视觉大小自然匀称 */
+  #waline .wl-action.wl-action-kaomoji {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: auto;
+    height: 24px;
+    margin: 2px 2px;
+    padding: 0 4px;
+    border: none;
+    background: transparent;
+    color: var(--waline-color, #555);
+    font-size: 15px; /* 精致小巧，与相邻图标协调自然 */
+    font-weight: 600;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1;
+    cursor: pointer;
+    transition: color 0.15s ease, transform 0.15s ease;
+    user-select: none;
+  }
+
+  #waline .wl-action.wl-action-kaomoji .wl-action-kaomoji-text {
+    display: inline-block;
+    line-height: 1;
+    transform: translateY(1.2px); /* 往下微移约 1.5 像素，与整排图标物理中心严格齐平 */
+  }
+
+  #waline .wl-action.wl-action-kaomoji:hover,
+  #waline .wl-action.wl-action-kaomoji.active {
+    color: var(--primary, var(--waline-theme-color, #27ae60));
+  }
+
+  #waline .wl-action.wl-action-kaomoji:active {
+    transform: scale(0.94);
+  }
+
+  /* 独立颜文字外置弹窗面板 */
+  #waline .wl-kaomoji-popup {
+    position: absolute;
+    inset-inline-start: 1.25em;
+    top: 100%;
+    z-index: 15;
+    display: none;
+    width: calc(100% - 2.5em);
+    max-width: 526px;
+    border: var(--waline-border, 1px solid var(--waline-border-color, #ddd));
+    border-radius: 8px;
+    background: var(--waline-bg-color, #ffffff);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+    margin-top: 4px;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
+  #waline .wl-kaomoji-popup.display {
+    display: block;
+    animation: wlKaomojiFadeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes wlKaomojiFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* 颜文字滚动内容区：纯平铺，一页显示全部 */
+  #waline .wl-kaomoji-content {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    padding: 12px 14px;
+    max-height: 230px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    box-sizing: border-box;
+  }
+
+  #waline .wl-kaomoji-content::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  #waline .wl-kaomoji-content::-webkit-scrollbar-track-piece:vertical {
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  #waline .wl-kaomoji-content::-webkit-scrollbar-thumb:vertical {
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--primary) 40%, rgba(0, 0, 0, 0.2));
+  }
+
+  /* 颜文字单项：无椭圆/圆圈边框，直接正常文本显示；文字大小统一加大，宽度随字符自适应 */
+  #waline .wl-kaomoji-item {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    border: none !important;
+    background: transparent !important;
+    color: var(--waline-color, #333) !important;
+    font-size: 1.05rem !important; /* 文字统一加大，清晰可辨 */
+    line-height: 1.4 !important;
+    white-space: nowrap !important; /* 绝不折行 */
+    padding: 4px 8px !important;
+    margin: 0 !important;
+    width: auto !important; /* 宽度随内容自然伸展，不要求固定一致 */
+    min-width: unset !important;
+    max-width: 100% !important;
+    border-radius: 6px !important; /* 轻微圆角仅用于鼠标 hover 底色反馈，绝非圆圈椭圆 */
+    cursor: pointer;
+    transition: color 0.15s ease, background-color 0.15s ease, transform 0.12s ease;
+    user-select: none;
+    box-sizing: border-box;
+  }
+
+  #waline .wl-kaomoji-item:hover {
+    color: var(--primary, var(--waline-theme-color, #27ae60)) !important;
+    background: color-mix(in srgb, var(--primary) 12%, transparent) !important;
+    transform: translateY(-1px);
+  }
+
+  #waline .wl-kaomoji-item:active {
+    transform: scale(0.95);
+  }
+
+  #waline .wl-kaomoji-item.wl-kaomoji-picked {
+    color: #ffffff !important;
+    background: var(--primary) !important;
+    transform: scale(0.94);
+  }
+
+  /* 自定义大贴纸（Miku 静态 / 动态）在评论正文与实时预览中以适中的贴纸尺寸展示，避免被当作行内小文字表情压缩 */
+  #waline .wl-content img.wl-emoji[src*="/assets/stickers/"],
+  #waline .wl-preview img.wl-emoji[src*="/assets/stickers/"] {
+    display: inline-block !important;
+    height: 5.5em !important;
+    max-height: 128px !important;
+    width: auto !important;
+    max-width: 128px !important;
+    object-fit: contain !important;
+    vertical-align: middle !important;
+    margin: 4px 2px !important;
+  }
+
+  /* ==========================================================================
+     表情面板顶部 Tab 栏与固定高度布局（置顶防跳动 + 统一稳定高度）
+     ========================================================================== */
+  #waline .wl-emoji-popup {
+    flex-direction: column !important;
+  }
+
+  #waline .wl-emoji-popup.display {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  /* Tab 标签栏置顶：通过 order: -1 视觉排到最上方 */
+  #waline .wl-emoji-popup .wl-tabs {
+    order: -1 !important;
+    display: flex !important;
+    align-items: center !important;
+    padding: 6px 8px !important;
+    gap: 6px !important;
+    background: var(--waline-bg-color-light, #f8f8f8) !important;
+    border-bottom: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.08)) !important;
+    border-top-left-radius: 6px !important;
+    border-top-right-radius: 6px !important;
+    overflow-x: auto !important;
+    scrollbar-width: none !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+  }
+
+  #waline .wl-emoji-popup .wl-tabs::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  /* 移除 Waline 原生位于底部的分割横线伪元素 */
+  #waline .wl-emoji-popup .wl-tabs::before {
+    display: none !important;
+  }
+
+  /* 单个 Tab 按钮卡片/胶囊风格设计 */
+  #waline .wl-emoji-popup .wl-tab {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    border: 1px solid transparent !important;
+    border-radius: 6px !important;
+    padding: 4px 8px !important;
+    margin: 0 !important;
+    background: transparent !important;
+    cursor: pointer !important;
+    transition: all 0.15s ease !important;
+    box-shadow: none !important;
+  }
+
+  #waline .wl-emoji-popup .wl-tab:hover {
+    background: color-mix(in srgb, var(--primary, #27ae60) 10%, transparent) !important;
+  }
+
+  #waline .wl-emoji-popup .wl-tab.active {
+    background: var(--waline-bg-color, #ffffff) !important;
+    border-color: var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06) !important;
+  }
+
+  #waline .wl-emoji-popup .wl-tab .wl-emoji {
+    width: 1.5em !important;
+    height: 1.5em !important;
+    object-fit: contain !important;
+  }
+
+  /* 内容展示区域：统一固定高度，切换 Tab 时面板高度纹丝不动，杜绝来回跳动 */
+  #waline .wl-emoji-popup .wl-tab-wrapper {
+    order: 1 !important;
+    height: 230px !important;
+    min-height: 230px !important;
+    max-height: 230px !important;
+    overflow-y: auto !important;
+    padding: 8px !important;
+    box-sizing: border-box !important;
+    scrollbar-gutter: stable !important;
+  }
+
+  /* 当是贴纸标签页时，平铺网格采用 7 列等分网格，间距更紧凑（5px），左右彻底占满消除右侧空白 */
+  #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper,
+  #waline .wl-emoji-popup .wl-tab-wrapper:has(img[src*="/assets/stickers/"]) {
+    display: grid !important;
+    grid-template-columns: repeat(7, 1fr) !important;
+    gap: 5px !important;
+    align-content: flex-start !important;
+    padding: 8px !important;
+  }
+
+  @media (max-width: 480px) {
+    #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper,
+    #waline .wl-emoji-popup .wl-tab-wrapper:has(img[src*="/assets/stickers/"]) {
+      grid-template-columns: repeat(5, 1fr) !important;
+      gap: 4px !important;
+    }
+  }
+
+  /* 贴纸单元按钮：自适应撑满所在网格，每格大小相比之前增加约 2~3 像素，形成等宽正方形 */
+  #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper button,
+  #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/"]) {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 1 / 1 !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 3px !important;
+    border-radius: 8px !important;
+    box-sizing: border-box !important;
+    transition: background 0.15s ease, transform 0.12s ease !important;
+  }
+
+  #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper button:hover,
+  #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/"]):hover {
+    background: color-mix(in srgb, var(--primary, #27ae60) 15%, transparent) !important;
+    transform: scale(1.08) !important;
+    z-index: 2 !important;
+  }
+
+  #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper button:active,
+  #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/"]):active {
+    transform: scale(0.96) !important;
+  }
+
+  /* 贴纸图片自身增加 2 像素（从 3.2em 增至 3.35em），画面更饱满充实 */
+  #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper .wl-emoji,
+  #waline .wl-emoji-popup .wl-tab-wrapper img.wl-emoji[src*="/assets/stickers/"],
+  #waline .wl-emoji-popup .wl-tab-wrapper button img[src*="/assets/stickers/"] {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: 3.35em !important;
+    max-height: 3.35em !important;
+    object-fit: contain !important;
+  }
+
+  /* 普通 emoji 悬停预览：保持精致适中（约 3.5em / 56px） */
+  #waline .wl-emoji-popup .wl-emoji-preview {
+    z-index: 50 !important;
+    width: auto !important;
+    height: auto !important;
+    max-width: 3.5em !important;
+    max-height: 3.5em !important;
+    min-width: unset !important;
+    min-height: unset !important;
+    object-fit: contain !important;
+    padding: 4px !important;
+    margin-top: -6px !important;
+    border-radius: 6px !important;
+    border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
+    background: var(--waline-bg-color, #ffffff) !important;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15) !important;
+    pointer-events: none !important;
+    animation: none !important;
+  }
+
+  /* 贴纸悬停预览窗单独放大：贴纸大而清晰（放大至 5.8em / 约 92px），文字与动作细节一目了然 */
+  #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/"] {
+    max-width: 5.8em !important;
+    max-height: 5.8em !important;
+    min-width: 4.2em !important;
+    min-height: 4.2em !important;
+    padding: 6px !important;
+    margin-top: -10px !important;
+    border-radius: 8px !important;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18) !important;
   }
 </style>
