@@ -30,6 +30,18 @@ const BROWSER_UA =
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
 
 /**
+ * 朋友圈黑名单/排除域名列表
+ * 即使在友链配置中添加了该站点，也绝不抓取或展示其文章（如发布未来穿越文章恶意置顶的站点）
+ */
+const FCIRCLE_BLOCKED_DOMAINS = ["benlao.top"];
+
+function isFcircleBlockedUrl(url?: string): boolean {
+	if (!url) return false;
+	const lower = url.toLowerCase();
+	return FCIRCLE_BLOCKED_DOMAINS.some((domain) => lower.includes(domain));
+}
+
+/**
  * 通用 Feed 解析函数：支持 RSS 2.0 / 1.0、Atom 以及 JSON Feed
  */
 async function fetchAndParseFeed(
@@ -135,34 +147,53 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 		sourceType: "self" as const,
 	};
 
-	// 2. 启用的友链列表（筛选博客分类）
-	const friends = getEnabledFriends().map((f) => ({
-		title: f.title,
-		siteurl: f.siteurl,
-		imgurl: f.imgurl,
-		feedUrl: f.feedUrl,
-		tags: f.tags,
-		sourceType: "friend" as const,
-	}));
+	// 2. 启用的友链列表（筛选博客分类，并排除禁用朋友圈或处于黑名单的站点）
+	const friends = getEnabledFriends()
+		.filter(
+			(f) =>
+				f.fcircle !== false &&
+				!isFcircleBlockedUrl(f.siteurl) &&
+				!isFcircleBlockedUrl(f.feedUrl),
+		)
+		.map((f) => ({
+			title: f.title,
+			siteurl: f.siteurl,
+			imgurl: f.imgurl,
+			feedUrl: f.feedUrl,
+			tags: f.tags,
+			sourceType: "friend" as const,
+		}));
 
 	// 3. 启用的独立订阅列表（不展示在友链页面，但文章动态聚合到朋友圈）
-	const subscriptions = getEnabledSubscriptions().map((s) => ({
-		title: s.title,
-		siteurl: s.siteurl || s.feedUrl,
-		imgurl:
-			s.imgurl ||
-			(s.siteurl
-				? `${s.siteurl.replace(/\/$/, "")}/favicon.ico`
-				: "/favicon/favicon.ico"),
-		feedUrl: s.feedUrl,
-		tags: s.tags && s.tags.length > 0 ? s.tags : ["订阅"],
-		sourceType: "subscription" as const,
-	}));
+	const subscriptions = getEnabledSubscriptions()
+		.filter(
+			(s) => !isFcircleBlockedUrl(s.siteurl) && !isFcircleBlockedUrl(s.feedUrl),
+		)
+		.map((s) => ({
+			title: s.title,
+			siteurl: s.siteurl || s.feedUrl,
+			imgurl:
+				s.imgurl ||
+				(s.siteurl
+					? `${s.siteurl.replace(/\/$/, "")}/favicon.ico`
+					: "/favicon/favicon.ico"),
+			feedUrl: s.feedUrl,
+			tags: s.tags && s.tags.length > 0 ? s.tags : ["订阅"],
+			sourceType: "subscription" as const,
+		}));
 
 	const allSources = [selfFriend, ...friends, ...subscriptions];
 	const items: FcircleItem[] = [];
 
 	const promises = allSources.map(async (source) => {
+		// 再次确保黑名单域名绝对不会发起网络请求
+		if (
+			isFcircleBlockedUrl(source.siteurl) ||
+			isFcircleBlockedUrl(source.feedUrl)
+		) {
+			return;
+		}
+
 		// 若为友链，严格只在“博客”分类中抓取朋友圈动态，排除导航、工具等其他分类
 		if (source.sourceType === "friend") {
 			const isBlog = source.tags?.some(
@@ -220,10 +251,25 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 	// 按时间倒序排序
 	items.sort((a, b) => b.pubDate.getTime() - a.pubDate.getTime());
 
-	// 过滤无效日期
-	const validItems = items.filter(
-		(item) => !Number.isNaN(item.pubDate.getTime()),
-	);
+	// 过滤无效日期、未来时间（拦截2053年等时空穿越异常文章置顶）以及黑名单链接
+	const MAX_FUTURE_BUFFER_MS = 10 * 60 * 1000; // 允许10分钟时钟偏差
+	const currentTimestamp = Date.now();
+	const validItems = items.filter((item) => {
+		const time = item.pubDate.getTime();
+		if (Number.isNaN(time)) return false;
+		// 拦截发布时间处于未来的文章，防止时间错误或恶意未来时间霸占置顶
+		if (time > currentTimestamp + MAX_FUTURE_BUFFER_MS) {
+			console.warn(
+				`[Fcircle] Filtered out future-dated post: "${item.title}" (${item.link}) dated ${item.pubDate.toISOString()}`,
+			);
+			return false;
+		}
+		// 拦截黑名单站点的文章链接与博客地址
+		if (isFcircleBlockedUrl(item.link) || isFcircleBlockedUrl(item.friendUrl)) {
+			return false;
+		}
+		return true;
+	});
 
 	// 根据文章链接去重，防止相同文章重复显示
 	const seenLinks = new Set<string>();

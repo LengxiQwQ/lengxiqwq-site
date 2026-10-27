@@ -9,6 +9,7 @@ export type FriendLink = {
 	weight: number; // 权重，数字越大排序越靠前
 	enabled: boolean; // 是否启用
 	pinned?: boolean; // 是否置顶（始终固定在分区最上方）
+	fcircle?: boolean; // 是否加入友链朋友圈（默认 true，设为 false 时不抓取、不聚合到朋友圈中）
 };
 
 export type FriendsPageConfig = {
