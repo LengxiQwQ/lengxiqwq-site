@@ -169,7 +169,7 @@ export const LinkPresets: Record<string, NavBarLink> = {
 		pageKey: "friends",
 	},
 	Fcircle: {
-		name: "友链朋友圈",
+		name: "朋友圈",
 		url: "/fcircle/",
 		icon: "mingcute:moment-line",
 		pageKey: "fcircle",

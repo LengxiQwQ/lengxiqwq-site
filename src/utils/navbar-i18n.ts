@@ -25,6 +25,8 @@ const NAVBAR_DEFAULT_NAMES: Record<string, I18nKey> = {
 	"Atom 订阅": I18nKey.atom,
 	友链: I18nKey.friends,
 	友情链接: I18nKey.friends,
+	朋友圈: I18nKey.fcircle,
+	友链朋友圈: I18nKey.fcircle,
 	留言: I18nKey.guestbook,
 	留言板: I18nKey.guestbook,
 	动态: I18nKey.dynamic,

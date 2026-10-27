@@ -28,6 +28,7 @@ export type {
 	BooknavPageConfig,
 	CommentConfig,
 	CoverImageConfig,
+	CursorConfig,
 	DisplaySettingsConfig,
 	DynamicConfig,
 	ExpressiveCodeConfig,
@@ -74,7 +75,7 @@ export { coverImageConfig } from "./coverImageConfig"; // 封面图配置
 export { devicesConfig } from "./devicesConfig"; // 设备列表配置
 export { displaySettingsConfig } from "./displaySettingsConfig"; // 显示设置面板开关配置
 export { dynamicConfig } from "./dynamicConfig"; // 动态页面配置
-export { sakuraConfig } from "./effectsConfig"; // 动画特效配置（樱花等）
+export { cursorConfig, sakuraConfig } from "./effectsConfig"; // 动画特效配置（鼠标光标、樱花等）
 export { expressiveCodeConfig } from "./expressiveCodeConfig"; // 代码高亮配置
 export { fontConfig, fontsList } from "./fontConfig"; // 字体配置
 export {

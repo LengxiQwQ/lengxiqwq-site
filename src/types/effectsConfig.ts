@@ -24,3 +24,8 @@ export type SakuraConfig = {
 	};
 	zIndex: number; // 层级，确保樱花在合适的层级显示
 };
+
+export type CursorConfig = {
+	enable: boolean; // 是否启用自定义鼠标指针
+	animated: boolean; // 是否启用 Miku 12 帧动态跟随 (false 则使用纯原生静态光标)
+};

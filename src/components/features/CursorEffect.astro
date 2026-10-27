@@ -1,0 +1,594 @@
+---
+import { cursorConfig } from "@/config";
+
+if (!cursorConfig?.enable) {
+	return null;
+}
+
+const isAnimated = !!cursorConfig?.animated;
+---
+
+<div id="miku-cursor-sentinel" aria-hidden="true" data-animated={isAnimated ? "true" : "false"}></div>
+
+<style is:global id="miku-static-cursor-style">
+	/* 静态基础规则（在 JS 动态对齐生效前提供安全底座） */
+	@media (pointer: fine) {
+		/* 1. 默认常规指针：全站基础背景与容器自然继承（优先级最低） */
+		html,
+		body,
+		#swup,
+		#swup-container,
+		main,
+		header,
+		footer,
+		aside,
+		nav,
+		section,
+		article,
+		div,
+		figure,
+		canvas,
+		svg,
+		.cursor-default,
+		[data-cursor="default"] {
+			cursor: url('/assets/cursors/normal.png') 0 0, auto;
+		}
+
+		/* 2. 通用排版与文本内容区域：只要是文字阅读与选词区域，全局自然显示工字选中光标 */
+		p,
+		h1,
+		h2,
+		h3,
+		h4,
+		h5,
+		h6,
+		li,
+		dt,
+		dd,
+		blockquote,
+		q,
+		cite,
+		code,
+		pre,
+		kbd,
+		samp,
+		time,
+		b,
+		strong,
+		i,
+		em,
+		mark,
+		small,
+		sub,
+		sup,
+		span,
+		label,
+		th,
+		td,
+		.description,
+		.description *,
+		input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="image"]),
+		textarea,
+		[contenteditable="true"],
+		.cursor-text,
+		[data-cursor="text"],
+		[style*="cursor: text"],
+		[style*="cursor:text"] {
+			cursor: url('/assets/cursors/text.png') 3 7, text !important;
+		}
+
+		/* 3. 通用可交互元素：链接、按钮、交互角色与放大图片（高优先级覆盖文字规则） */
+		a,
+		a *,
+		button,
+		button *,
+		[role="button"],
+		[role="button"] *,
+		[role="tab"],
+		[role="tab"] *,
+		[role="link"],
+		[role="link"] *,
+		[role="menuitem"],
+		[role="menuitem"] *,
+		input[type="submit"],
+		input[type="button"],
+		input[type="reset"],
+		input[type="checkbox"],
+		input[type="radio"],
+		select,
+		summary,
+		summary *,
+		.cursor-pointer,
+		.cursor-pointer *,
+		.cursor-zoom-in,
+		.cursor-zoom-in *,
+		[data-cursor="pointer"],
+		[style*="cursor: pointer"],
+		[style*="cursor:pointer"],
+		[style*="cursor: zoom-in"],
+		[style*="cursor:zoom-in"],
+		#post-cover img,
+		.custom-md img:not(.card-wiki-link img),
+		.moment-images img,
+		#waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji),
+		#twikoo .tk-content img,
+		[data-fancybox],
+		[data-fancybox] *,
+		.fancybox__container button,
+		.fancybox__container a,
+		.fancybox__container [role="button"],
+		.fancybox__slide [data-src],
+		.aplayer-button,
+		.aplayer-icon,
+		.aplayer-bar,
+		.aplayer-pic,
+		.aplayer-list li,
+		.floating-btn,
+		.floating-btn *,
+		#back-to-top,
+		#back-to-top *,
+		.copy-code-button,
+		.copy-code-button *,
+		pre button,
+		pre button * {
+			cursor: url('/assets/cursors/pointer.png') 1 1, pointer !important;
+		}
+
+		/* 4. 禁用状态（后置最高优先级，杜绝禁用按钮误显手型） */
+		[disabled],
+		[disabled] *,
+		:disabled,
+		:disabled *,
+		[aria-disabled="true"],
+		[aria-disabled="true"] *,
+		.disabled,
+		.disabled *,
+		.cursor-not-allowed,
+		.cursor-not-allowed *,
+		[data-cursor="not-allowed"],
+		[style*="cursor: not-allowed"],
+		[style*="cursor:not-allowed"] {
+			cursor: url('/assets/cursors/not-allowed.png') 0 0, not-allowed !important;
+		}
+	}
+</style>
+
+<script>
+	/**
+	 * Miku 屏幕物理像素绝对点对点与跨屏多档超采样渲染引擎
+	 * 能够实时感知当前屏幕的物理分辨率、Windows 缩放率 (DPR: 100%, 125%, 150%, 175%, 200%)
+	 * - 桌面大屏 (DPR < 1.4，如 100%, 125% 缩放)：启用 1x 物理点阵 (32px)，1 图像像素 = 1 物理液晶点，小巧锐利；
+	 * - 笔记本高密屏 (1.4 <= DPR < 1.8，如 150% 缩放)：启用方案三 48px 母盘高锐超采样，黄金适中尺寸，杜绝拉伸浑浊；
+	 * - 4K 超高分屏 (DPR >= 1.8，如 200% 缩放)：启用 2x 整数超采样 (64px)。
+	 * 并在启用 animated 时，以 116.7ms/帧循环播放原版 Miku 眨眼动画，纯硬件零延迟！
+	 */
+	const sentinel = document.getElementById("miku-cursor-sentinel");
+	const isAnimated = sentinel?.dataset.animated === "true";
+
+	// 针对各档缩放尺寸由母盘严格测算的热点坐标映射
+	const hotspots: Record<string, { "1x": [number, number]; "1.5x": [number, number]; "2x": [number, number] }> = {
+		normal: { "1x": [0, 0], "1.5x": [0, 0], "2x": [0, 0] },
+		pointer: { "1x": [1, 1], "1.5x": [1, 1], "2x": [2, 2] },
+		text: { "1x": [3, 7], "1.5x": [5, 10], "2x": [6, 14] },
+		"not-allowed": { "1x": [0, 0], "1.5x": [0, 0], "2x": [0, 0] },
+		help: { "1x": [0, 0], "1.5x": [0, 0], "2x": [0, 0] },
+		wait: { "1x": [0, 0], "1.5x": [0, 0], "2x": [0, 0] },
+		progress: { "1x": [2, 2], "1.5x": [2, 3], "2x": [4, 4] },
+		move: { "1x": [15, 16], "1.5x": [23, 24], "2x": [30, 32] },
+		crosshair: { "1x": [6, 6], "1.5x": [10, 10], "2x": [12, 12] },
+		"ew-resize": { "1x": [16, 16], "1.5x": [24, 24], "2x": [32, 32] },
+		"ns-resize": { "1x": [15, 16], "1.5x": [23, 23], "2x": [30, 32] },
+		"nwse-resize": { "1x": [15, 16], "1.5x": [23, 24], "2x": [30, 32] },
+		"nesw-resize": { "1x": [16, 16], "1.5x": [24, 23], "2x": [32, 32] },
+	};
+
+	let animInterval: number | null = null;
+	let currentAnimFrame = 0;
+
+	function getTierConfig() {
+		const dpr = window.devicePixelRatio || 1;
+		let suffix = "";
+		let tier: "1x" | "1.5x" | "2x" = "1x";
+		if (dpr >= 1.8) {
+			suffix = "@2x";
+			tier = "2x";
+		} else if (dpr >= 1.4) {
+			suffix = "@1.5x";
+			tier = "1.5x";
+		}
+		return { dpr, suffix, tier };
+	}
+
+	function applyPixelPerfectCursor(): void {
+		if (!window.matchMedia("(pointer: fine)").matches) {
+			return;
+		}
+
+		const { dpr, suffix, tier } = getTierConfig();
+
+		let styleEl = document.getElementById("miku-pixel-perfect-style") as HTMLStyleElement | null;
+		if (!styleEl) {
+			styleEl = document.createElement("style");
+			styleEl.id = "miku-pixel-perfect-style";
+			document.head.appendChild(styleEl);
+		}
+
+		// 构造单条规范的 cursor 规则
+		const cur = (name: string, fallback = "auto", important = true): string => {
+			const [hx, hy] = hotspots[name]?.[tier] || [0, 0];
+			const imp = important ? " !important" : "";
+			return `
+				cursor: -webkit-image-set(url('/assets/cursors/${name}${suffix}.png') ${dpr}x) ${hx} ${hy},
+					url('/assets/cursors/${name}${suffix}.png') ${hx} ${hy},
+					${fallback}${imp};
+				cursor: image-set(url('/assets/cursors/${name}${suffix}.png') ${dpr}x) ${hx} ${hy},
+					url('/assets/cursors/${name}${suffix}.png') ${hx} ${hy},
+					${fallback}${imp};
+			`;
+		};
+
+		styleEl.textContent = `
+			@media (pointer: fine) {
+				/* 1. 默认常规指针 (Tier 1 底座)：全站基础背景与容器自然继承，保持正常箭头光标 */
+				html,
+				body,
+				#swup,
+				#swup-container,
+				main,
+				header,
+				footer,
+				aside,
+				nav,
+				section,
+				article,
+				div,
+				figure,
+				canvas,
+				svg,
+				.cursor-default,
+				[data-cursor="default"] {
+					${cur("normal", "auto", false)}
+				}
+
+				/* 2. 全局通用文本与选词区域 (Tier 2 语义文本)：任何段落、列表、正文、简介，自然呈现工字光标 */
+				p,
+				h1,
+				h2,
+				h3,
+				h4,
+				h5,
+				h6,
+				li,
+				dt,
+				dd,
+				blockquote,
+				q,
+				cite,
+				code,
+				pre,
+				kbd,
+				samp,
+				time,
+				b,
+				strong,
+				i,
+				em,
+				mark,
+				small,
+				sub,
+				sup,
+				span,
+				label,
+				th,
+				td,
+				.description,
+				.description *,
+				input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="image"]),
+				textarea,
+				[contenteditable="true"],
+				.cursor-text,
+				[data-cursor="text"],
+				[style*="cursor: text"],
+				[style*="cursor:text"] {
+					${cur("text", "text", true)}
+				}
+
+				/* 3. 全局通用可交互元素 (Tier 3 动作交互)：原生链接、按钮、显式操作，高优先级覆盖文本 */
+				a,
+				a *,
+				button,
+				button *,
+				[role="button"],
+				[role="button"] *,
+				[role="tab"],
+				[role="tab"] *,
+				[role="link"],
+				[role="link"] *,
+				[role="menuitem"],
+				[role="menuitem"] *,
+				input[type="submit"],
+				input[type="button"],
+				input[type="reset"],
+				input[type="checkbox"],
+				input[type="radio"],
+				select,
+				summary,
+				summary *,
+				.cursor-pointer,
+				.cursor-pointer *,
+				.cursor-zoom-in,
+				.cursor-zoom-in *,
+				[data-cursor="pointer"],
+				[style*="cursor: pointer"],
+				[style*="cursor:pointer"],
+				[style*="cursor: zoom-in"],
+				[style*="cursor:zoom-in"],
+				/* 灯箱与博客插图 */
+				#post-cover img,
+				.custom-md img:not(.card-wiki-link img),
+				.moment-images img,
+				#waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji),
+				#twikoo .tk-content img,
+				[data-fancybox],
+				[data-fancybox] *,
+				.fancybox__container button,
+				.fancybox__container a,
+				.fancybox__container [role="button"],
+				.fancybox__slide [data-src],
+				/* 播放器、悬浮按钮、复制按钮等功能控件 */
+				.aplayer-button,
+				.aplayer-icon,
+				.aplayer-bar,
+				.aplayer-pic,
+				.aplayer-list li,
+				.floating-btn,
+				.floating-btn *,
+				#back-to-top,
+				#back-to-top *,
+				.copy-code-button,
+				.copy-code-button *,
+				pre button,
+				pre button * {
+					${cur("pointer", "pointer", true)}
+				}
+
+				/* 4. 禁用状态 (Tier 4 状态覆盖)：禁用按钮优先显示禁止图标，绝不显示手型 */
+				[disabled],
+				[disabled] *,
+				:disabled,
+				:disabled *,
+				[aria-disabled="true"],
+				[aria-disabled="true"] *,
+				.disabled,
+				.disabled *,
+				.cursor-not-allowed,
+				.cursor-not-allowed *,
+				[data-cursor="not-allowed"],
+				[style*="cursor: not-allowed"],
+				[style*="cursor:not-allowed"] {
+					${cur("not-allowed", "not-allowed", true)}
+				}
+
+				/* 5. 辅助功能与特种光标 (Tier 5 特效) */
+				abbr[title],
+				abbr[title] *,
+				[data-tooltip],
+				[data-tooltip] *,
+				[data-tippy-content],
+				.cursor-help,
+				[data-cursor="help"],
+				[style*="cursor: help"],
+				[style*="cursor:help"] {
+					${cur("help", "help", true)}
+				}
+
+				[aria-busy="true"],
+				.is-loading,
+				.cursor-wait,
+				[data-cursor="wait"],
+				[style*="cursor: wait"],
+				[style*="cursor:wait"] {
+					${cur("wait", "wait", true)}
+				}
+				.cursor-progress,
+				[data-cursor="progress"],
+				[style*="cursor: progress"],
+				[style*="cursor:progress"] {
+					${cur("progress", "progress", true)}
+				}
+
+				.cursor-move,
+				.drag-handle,
+				[data-cursor="move"],
+				.cursor-grab,
+				.cursor-grabbing,
+				[style*="cursor: move"],
+				[style*="cursor: grab"],
+				[style*="cursor: grabbing"] {
+					${cur("move", "move", true)}
+				}
+
+				.cursor-crosshair,
+				[data-cursor="crosshair"],
+				[style*="cursor: crosshair"] {
+					${cur("crosshair", "crosshair", true)}
+				}
+
+				.cursor-ew-resize,
+				.cursor-col-resize,
+				[style*="cursor: ew-resize"],
+				[style*="cursor: col-resize"] {
+					${cur("ew-resize", "ew-resize", true)}
+				}
+				.cursor-ns-resize,
+				.cursor-row-resize,
+				[style*="cursor: ns-resize"],
+				[style*="cursor: row-resize"] {
+					${cur("ns-resize", "ns-resize", true)}
+				}
+				.cursor-nwse-resize,
+				[style*="cursor: nwse-resize"] {
+					${cur("nwse-resize", "nwse-resize", true)}
+				}
+				.cursor-nesw-resize,
+				[style*="cursor: nesw-resize"] {
+					${cur("nesw-resize", "nesw-resize", true)}
+				}
+			}
+		`;
+
+		// 如果启用了动态模式，初始化帧循环引擎
+		if (isAnimated) {
+			initCursorAnimation();
+		}
+	}
+
+	/**
+	 * Miku 原版眨眼硬件光标帧循环引擎
+	 * 采用原生 CSS 光标帧快速切换，保持 100% 硬件零延迟，绝无虚拟 DOM 跟随的拖影感
+	 */
+	function initCursorAnimation(): void {
+		if (animInterval !== null) {
+			clearInterval(animInterval);
+			animInterval = null;
+		}
+
+		const { dpr, suffix, tier } = getTierConfig();
+		const [tx, ty] = hotspots.text?.[tier] || [3, 7];
+
+		// 内存预加载 12 帧，确保换帧瞬间完成，绝不白块闪烁
+		for (let i = 0; i < 12; i++) {
+			const nImg = new Image();
+			nImg.src = `/assets/cursors/anim/normal_${i}${suffix}.png`;
+			const tImg = new Image();
+			tImg.src = `/assets/cursors/anim/text_${i}${suffix}.png`;
+		}
+
+		let animStyleEl = document.getElementById("miku-anim-style") as HTMLStyleElement | null;
+		if (!animStyleEl) {
+			animStyleEl = document.createElement("style");
+			animStyleEl.id = "miku-anim-style";
+			document.head.appendChild(animStyleEl);
+		}
+
+		function updateFrame(frame: number) {
+			if (!animStyleEl) return;
+			const nUrl = `/assets/cursors/anim/normal_${frame}${suffix}.png`;
+			const tUrl = `/assets/cursors/anim/text_${frame}${suffix}.png`;
+			animStyleEl.textContent = `
+				@media (pointer: fine) {
+					html,
+					body,
+					#swup,
+					#swup-container,
+					main,
+					header,
+					footer,
+					aside,
+					nav,
+					section,
+					article,
+					div,
+					figure,
+					canvas,
+					svg,
+					.cursor-default,
+					[data-cursor="default"] {
+						cursor: -webkit-image-set(url('${nUrl}') ${dpr}x) 0 0, url('${nUrl}') 0 0, auto;
+						cursor: image-set(url('${nUrl}') ${dpr}x) 0 0, url('${nUrl}') 0 0, auto;
+					}
+
+					p,
+					h1,
+					h2,
+					h3,
+					h4,
+					h5,
+					h6,
+					li,
+					dt,
+					dd,
+					blockquote,
+					q,
+					cite,
+					code,
+					pre,
+					kbd,
+					samp,
+					time,
+					b,
+					strong,
+					i,
+					em,
+					mark,
+					small,
+					sub,
+					sup,
+					span,
+					label,
+					th,
+					td,
+					.description,
+					.description *,
+					input:not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="color"]):not([type="image"]),
+					textarea,
+					[contenteditable="true"],
+					.cursor-text,
+					[data-cursor="text"] {
+						cursor: -webkit-image-set(url('${tUrl}') ${dpr}x) ${tx} ${ty}, url('${tUrl}') ${tx} ${ty}, text !important;
+						cursor: image-set(url('${tUrl}') ${dpr}x) ${tx} ${ty}, url('${tUrl}') ${tx} ${ty}, text !important;
+					}
+				}
+			`;
+		}
+
+		// 按照原版 .ani 的 116.7ms 节拍器进行循环 (12 帧 = 1.4秒/次眨眼)
+		animInterval = window.setInterval(() => {
+			if (document.hidden) return; // 网页切至后台时不计算，极致节能
+			currentAnimFrame = (currentAnimFrame + 1) % 12;
+			updateFrame(currentAnimFrame);
+		}, 116.7);
+
+		updateFrame(0);
+	}
+
+	// 1. 立即执行并监听系统缩放率变化（如拖拽窗口到不同 DPI 屏幕或浏览器缩放）
+	applyPixelPerfectCursor();
+
+	let mqListener: MediaQueryList | null = null;
+	function watchDprChanges(): void {
+		if (mqListener) {
+			mqListener.removeEventListener("change", applyPixelPerfectCursor);
+		}
+		mqListener = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+		mqListener.addEventListener("change", () => {
+			applyPixelPerfectCursor();
+			watchDprChanges();
+		}, { once: true });
+	}
+
+	watchDprChanges();
+
+	// 2. 页面就绪与 Swup 切页生命周期全面接管
+	document.addEventListener("DOMContentLoaded", applyPixelPerfectCursor);
+	document.addEventListener("astro:page-load", applyPixelPerfectCursor);
+	document.addEventListener("astro:after-swap", applyPixelPerfectCursor);
+
+	// Swup 切页全生命周期钩子（解决切换页面后部分动态内容退回普通光标的问题）
+	document.addEventListener("swup:enable", applyPixelPerfectCursor);
+	document.addEventListener("swup:page:view", applyPixelPerfectCursor);
+	document.addEventListener("swup:content:replace", applyPixelPerfectCursor);
+	document.addEventListener("swup:contentReplaced", applyPixelPerfectCursor);
+	document.addEventListener("swup:visit:end", applyPixelPerfectCursor);
+
+	// 3. MutationObserver 守护进程：防止动态异步加载（如 Waline 评论渲染、Swup 替换 head）抹除样式
+	const headObserver = new MutationObserver(() => {
+		if (!document.getElementById("miku-pixel-perfect-style")) {
+			applyPixelPerfectCursor();
+		}
+		if (isAnimated && !document.getElementById("miku-anim-style")) {
+			initCursorAnimation();
+		}
+	});
+	headObserver.observe(document.head, { childList: true });
+</script>

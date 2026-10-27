@@ -1,6 +1,13 @@
-import type { SakuraConfig } from "../types/effectsConfig";
+import type { CursorConfig, SakuraConfig } from "../types/effectsConfig";
 
 // 特效配置 - 集中管理所有动画特效
+
+export const cursorConfig: CursorConfig = {
+	// 是否启用自定义光标特效
+	enable: true,
+	// 是否启用眨眼动画（若关闭则保持静态）
+	animated: true,
+};
 
 export const sakuraConfig: SakuraConfig = {
 	// 是否启用樱花特效

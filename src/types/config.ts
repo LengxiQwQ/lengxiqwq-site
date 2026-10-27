@@ -19,7 +19,7 @@ export type {
 } from "./devicesConfig";
 export type { DisplaySettingsConfig } from "./displaySettingsConfig";
 export type { DynamicConfig } from "./dynamicConfig";
-export type { SakuraConfig } from "./effectsConfig";
+export type { CursorConfig, SakuraConfig } from "./effectsConfig";
 export type {
 	ExpressiveCodeConfig,
 	PluginCollapsibleConfig,
