@@ -23,7 +23,22 @@ export type CommentConfig = {
 	waline?: {
 		serverURL: string;
 		lang?: string;
-		emoji: string[];
+		/**
+		 * Waline 表情预设，支持以下两种格式混用：
+		 * - string: 指向预设目录的 CDN URL（如 "@waline/emojis" 官方包）
+		 * - object: 内联颜文字/文本表情预设，无需图片和 CDN
+		 *   - name: string        Tab 显示名称
+		 *   - icon: string        Tab 图标（填预设中第一个颜文字即可）
+		 *   - items: string[]     颜文字列表
+		 */
+		emoji: (
+			| string
+			| {
+					name: string;
+					icon: string;
+					items: string[];
+			  }
+		)[];
 		login?: "enable" | "force" | "disable";
 		visitorCount?: boolean; // 是否统计访问量，true 启用访问量，false 关闭
 		imageUploader?: boolean; // 是否启用评论区图片上传功能，设为 false 可禁用图片上传按钮
