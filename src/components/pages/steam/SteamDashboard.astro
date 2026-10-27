@@ -15,10 +15,6 @@ interface Props {
 }
 
 const { profile, stats, levelInfo } = Astro.props;
-
-// 状态映射：0=离线, 1=在线, 2=忙碌, 3=离开, 4=打瞌睡, 5=想交易, 6=想玩
-const isPlaying = Boolean(profile.gameextrainfo);
-const isOnline = profile.personastate > 0;
 ---
 
 <div class="card-base p-5 md:p-6 mb-6 rounded-2xl">
@@ -57,42 +53,18 @@ const isOnline = profile.personastate > 0;
 						<Icon name="material-symbols:open-in-new" class="text-sm opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-(--primary) shrink-0" />
 					</a>
 
-					<!-- 徽章组：在线状态 + Steam等级 (统一采用圆角矩形高级中性风) -->
-					<div class="flex items-center gap-2 shrink-0">
-						<!-- 在线状态徽章 -->
-						{
-							(isOnline || isPlaying) && (
-								<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 shadow-2xs">
-									<span class="relative flex h-2 w-2 items-center justify-center">
-										<span class="absolute inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400/40 blur-[2px]"></span>
-										<span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_6px_#10b981]"></span>
-									</span>
-									<span>{isPlaying ? i18n(I18nKey.steamPlayingNow) : i18n(I18nKey.steamStatusOnline)}</span>
-								</span>
-							)
-						}
-
-						<!-- 等级徽章 -->
-						{
-							levelInfo?.player_level !== undefined && (
+					<!-- 等级徽章 (统一采用圆角矩形高级中性风) -->
+					{
+						levelInfo?.player_level !== undefined && (
+							<div class="flex items-center gap-2 shrink-0">
 								<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 border border-neutral-200 dark:border-neutral-700 shadow-2xs">
 									<Icon name="material-symbols:military-tech" class="text-sm text-amber-500 dark:text-amber-400" />
 									Lv.{levelInfo.player_level}
 								</span>
-							)
-						}
-					</div>
+							</div>
+						)
+					}
 				</div>
-
-				<!-- 如果正在玩游戏，显示游戏标题 -->
-				{
-					isPlaying && (
-						<div class="mt-1 flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-medium truncate">
-							<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0"></span>
-							<span class="truncate">{i18n(I18nKey.steamPlayingNow)}: {profile.gameextrainfo}</span>
-						</div>
-					)
-				}
 
 				<!-- 经验条与进度 -->
 				{
