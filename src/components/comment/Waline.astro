@@ -411,31 +411,21 @@ const config = {
         const oldHtml = content.innerHTML;
         let html = oldHtml;
 
-        // 1. 将评论正文或实时预览中的 :miku_xxx.png: / :miku_xxx.gif: 替换为实际贴纸图片
+        // 1. 将评论正文或实时预览中的 :miku_xxx: 或 :miku_xxx.ext: 替换为实际 WebP 贴纸图片
         if (html.includes(":miku_")) {
-          // 带扩展名匹配（如 :miku_真的吗.png: 或 :miku_打call.gif: 或历史 :miku_01.png:）
+          // 优先匹配带扩展名历史或显式写法（如 :miku_01.png:、:miku_打call.gif:、:miku_真的吗.webp:）
           html = html.replace(
-            /:miku_([^:\s<>"']+?\.(?:png|gif)):/gi,
+            /:miku_([^:\s<>"']+?\.(?:png|gif|webp)):/gi,
             (_match, file) => {
-              const name = file.replace(/\.(png|gif)$/i, "");
+              const name = file.replace(/\.(png|gif|webp)$/i, "");
               return `<img class="wl-emoji" src="/assets/stickers/miku/miku_${file}" alt="${name}" loading="lazy" />`;
             }
           );
-          // 不带扩展名兜底匹配（如 :miku_真的吗: 或 :miku_打call:）
-          const gifNames = new Set([
-            "呜啊很棒的", "打call", "转圈跳舞", "甩葱舞", "疯狂点头", "摇摆",
-            "挥手打招呼", "拍手鼓掌", "委屈抹泪", "摇头晃脑", "眨眼wink",
-            "害羞搓手", "得意扭动", "呆呆眨眼", "左右张望", "飞吻比心", "元气打气"
-          ]);
+          // 匹配统一 WebP 贴纸（Waline 点击直接插入的标准 :miku_xxx:）
           html = html.replace(
             /:miku_([^:\s<>"']+?):/gi,
             (_match, name) => {
-              const isNum = /^\d+$/.test(name);
-              let ext = "png";
-              if (gifNames.has(name) || (isNum && (name === "02" || (parseInt(name, 10) >= 24 && parseInt(name, 10) <= 39)))) {
-                ext = "gif";
-              }
-              return `<img class="wl-emoji" src="/assets/stickers/miku/miku_${name}.${ext}" alt="${name}" loading="lazy" />`;
+              return `<img class="wl-emoji" src="/assets/stickers/miku/miku_${name}.webp" alt="${name}" loading="lazy" />`;
             }
           );
         }
