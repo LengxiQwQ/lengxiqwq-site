@@ -9,9 +9,16 @@ if (!cursorConfig?.enable) {
 <style is:global id="miku-static-cursor-style">
 	/* 静态基础规则（在 JS 动态高分屏对齐生效前提供安全底座） */
 	@media (pointer: fine) {
-		/* 1. 默认常规指针：全站基础背景与容器自然继承，保持纯粹系统级稳定性 */
+		/* 1. 默认常规指针：全站基础背景、多媒体图像与 Replaced Elements 自然呈现普通光标 */
 		html,
 		body,
+		img,
+		video,
+		canvas,
+		svg,
+		iframe,
+		embed,
+		object,
 		.cursor-default,
 		[data-cursor="default"],
 		[style*="cursor: default"],
@@ -32,9 +39,8 @@ if (!cursorConfig?.enable) {
 			cursor: url('/assets/cursors/text.png') 3 7, text !important;
 		}
 
-		/* 3. 正文排版与文章阅读选词区（不加 !important，保证段落内链接手型高优生效） */
+		/* 3. 正文排版与文章阅读选词区（纯文本排版自然选词，不加 * 避免污染图片） */
 		article p,
-		article p *,
 		article h1,
 		article h2,
 		article h3,
@@ -42,11 +48,12 @@ if (!cursorConfig?.enable) {
 		article h5,
 		article h6,
 		article li,
+		article dt,
+		article dd,
 		article blockquote,
 		article code,
 		article pre,
 		.custom-md p,
-		.custom-md p *,
 		.custom-md h1,
 		.custom-md h2,
 		.custom-md h3,
@@ -54,19 +61,33 @@ if (!cursorConfig?.enable) {
 		.custom-md h5,
 		.custom-md h6,
 		.custom-md li,
+		.custom-md dt,
+		.custom-md dd,
 		.custom-md blockquote,
 		.custom-md code,
 		.custom-md pre,
 		.post-container p,
-		.post-container p *,
-		#waline .wl-content,
+		.post-container h1,
+		.post-container h2,
+		.post-container h3,
+		.post-container h4,
+		.post-container h5,
+		.post-container h6,
+		.post-container li,
 		#waline .wl-content p,
-		#twikoo .tk-content,
-		#twikoo .tk-content p {
+		#waline .wl-content li,
+		#waline .wl-content blockquote,
+		#waline .wl-content code,
+		#waline .wl-content pre,
+		#twikoo .tk-content p,
+		#twikoo .tk-content li,
+		#twikoo .tk-content blockquote,
+		#twikoo .tk-content code,
+		#twikoo .tk-content pre {
 			cursor: url('/assets/cursors/text.png') 3 7, text;
 		}
 
-		/* 4. 通用可交互元素：链接、按钮、交互角色与放大图片（高优先级覆盖文字规则） */
+		/* 4. 通用可交互元素：链接、按钮、交互角色与可放大图片（高优先级覆盖文字规则） */
 		a,
 		a *,
 		button,
@@ -99,7 +120,7 @@ if (!cursorConfig?.enable) {
 		#post-cover img,
 		.custom-md img:not(.card-wiki-link img),
 		.moment-images img,
-		#waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji),
+		#waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):not([src*="/assets/stickers/"]):not([src*="@waline/emojis"]),
 		#twikoo .tk-content img,
 		[data-fancybox],
 		[data-fancybox] *,
@@ -213,9 +234,16 @@ if (!cursorConfig?.enable) {
 
 		styleEl.textContent = `
 			@media (pointer: fine) {
-				/* 1. 默认常规指针 (Tier 1 底座)：全站基础背景与容器自然继承，保持正常箭头光标 */
+				/* 1. 默认常规指针 (Tier 1 底座)：全站基础背景、多媒体图像与 Replaced Elements 自然呈现普通光标 */
 				html,
 				body,
+				img,
+				video,
+				canvas,
+				svg,
+				iframe,
+				embed,
+				object,
 				.cursor-default,
 				[data-cursor="default"],
 				[style*="cursor: default"],
@@ -236,9 +264,8 @@ if (!cursorConfig?.enable) {
 					${cur("text", "text", true)}
 				}
 
-				/* 3. 正文排版与文章阅读选词区 (Tier 3 选词正文，不加 !important，使段落内链接手型高优生效) */
+				/* 3. 正文排版与文章阅读选词区 (Tier 3 选词正文，纯文本排版自然选词，不加 * 避免污染图片) */
 				article p,
-				article p *,
 				article h1,
 				article h2,
 				article h3,
@@ -246,11 +273,12 @@ if (!cursorConfig?.enable) {
 				article h5,
 				article h6,
 				article li,
+				article dt,
+				article dd,
 				article blockquote,
 				article code,
 				article pre,
 				.custom-md p,
-				.custom-md p *,
 				.custom-md h1,
 				.custom-md h2,
 				.custom-md h3,
@@ -258,19 +286,33 @@ if (!cursorConfig?.enable) {
 				.custom-md h5,
 				.custom-md h6,
 				.custom-md li,
+				.custom-md dt,
+				.custom-md dd,
 				.custom-md blockquote,
 				.custom-md code,
 				.custom-md pre,
 				.post-container p,
-				.post-container p *,
-				#waline .wl-content,
+				.post-container h1,
+				.post-container h2,
+				.post-container h3,
+				.post-container h4,
+				.post-container h5,
+				.post-container h6,
+				.post-container li,
 				#waline .wl-content p,
-				#twikoo .tk-content,
-				#twikoo .tk-content p {
+				#waline .wl-content li,
+				#waline .wl-content blockquote,
+				#waline .wl-content code,
+				#waline .wl-content pre,
+				#twikoo .tk-content p,
+				#twikoo .tk-content li,
+				#twikoo .tk-content blockquote,
+				#twikoo .tk-content code,
+				#twikoo .tk-content pre {
 					${cur("text", "text", false)}
 				}
 
-				/* 4. 全局通用可交互元素 (Tier 4 动作交互)：原生链接、按钮、显式操作，高优先级覆盖文本 */
+				/* 4. 全局通用可交互元素 (Tier 4 动作交互)：原生链接、按钮、显式操作，高优先级覆盖 */
 				a,
 				a *,
 				button,
@@ -304,7 +346,7 @@ if (!cursorConfig?.enable) {
 				#post-cover img,
 				.custom-md img:not(.card-wiki-link img),
 				.moment-images img,
-				#waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji),
+				#waline .wl-content img:not(.wl-emoji):not(.vemoji):not([data-emoji]):not(.wl-bmoji):not([src*="/assets/stickers/"]):not([src*="@waline/emojis"]),
 				#twikoo .tk-content img,
 				[data-fancybox],
 				[data-fancybox] *,
