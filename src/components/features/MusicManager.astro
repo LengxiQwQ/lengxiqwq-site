@@ -134,7 +134,7 @@ const managerConfigStr = JSON.stringify({
 
     // ── Media Session & Play State helpers ───────────────────
     function getAbsoluteUrl(url) {
-        if (!url) return '';
+        if (!url) return "";
         try {
             return new URL(url, window.location.href).href;
         } catch (e) {
@@ -143,7 +143,7 @@ const managerConfigStr = JSON.stringify({
     }
 
     function updateMediaSessionPlaybackState(playbackState) {
-        if ('mediaSession' in navigator) {
+        if ("mediaSession" in navigator) {
             try {
                 navigator.mediaSession.playbackState = playbackState;
             } catch (e) {
@@ -153,7 +153,7 @@ const managerConfigStr = JSON.stringify({
     }
 
     function updateMediaSessionMetadata(track) {
-        if (!('mediaSession' in navigator) || !window.MediaMetadata) return;
+        if (!("mediaSession" in navigator) || !window.MediaMetadata) return;
         if (!track) {
             navigator.mediaSession.metadata = null;
             return;
@@ -162,29 +162,29 @@ const managerConfigStr = JSON.stringify({
         if (track.pic) {
             var picUrl = getAbsoluteUrl(track.pic);
             artwork = [
-                { src: picUrl, sizes: '96x96' },
-                { src: picUrl, sizes: '128x128' },
-                { src: picUrl, sizes: '192x192' },
-                { src: picUrl, sizes: '256x256' },
-                { src: picUrl, sizes: '384x384' },
-                { src: picUrl, sizes: '512x512' }
+                { src: picUrl, sizes: "96x96" },
+                { src: picUrl, sizes: "128x128" },
+                { src: picUrl, sizes: "192x192" },
+                { src: picUrl, sizes: "256x256" },
+                { src: picUrl, sizes: "384x384" },
+                { src: picUrl, sizes: "512x512" }
             ];
         }
         try {
             navigator.mediaSession.metadata = new MediaMetadata({
-                title: track.name || '',
-                artist: track.artist || '',
-                album: config.siteTitle || 'Firefly Music',
+                title: track.name || "",
+                artist: track.artist || "",
+                album: config.siteTitle || "Firefly Music",
                 artwork: artwork
             });
         } catch (e) {
-            console.warn('Failed to set MediaMetadata:', e);
+            console.warn("Failed to set MediaMetadata:", e);
         }
     }
 
     var lastPositionUpdate = 0;
     function updateMediaSessionPositionState(force) {
-        if (!('mediaSession' in navigator) || !('setPositionState' in navigator.mediaSession)) return;
+        if (!("mediaSession" in navigator) || !("setPositionState" in navigator.mediaSession)) return;
         var now = Date.now();
         if (!force && now - lastPositionUpdate < 1000) return;
         lastPositionUpdate = now;
@@ -206,52 +206,53 @@ const managerConfigStr = JSON.stringify({
         state.isPlaying = isPlaying;
         if (isPlaying) {
             state.error = null;
-            updateMediaSessionPlaybackState('playing');
+            updateMediaSessionPlaybackState("playing");
         } else {
-            updateMediaSessionPlaybackState('paused');
+            updateMediaSessionPlaybackState("paused");
         }
         updateMediaSessionPositionState(true);
-        emit('fm:play-state', { isPlaying: isPlaying });
+        emit("fm:play-state", { isPlaying: isPlaying });
     }
 
     function setupMediaSession() {
-        if (!('mediaSession' in navigator)) return;
+        if (!("mediaSession" in navigator)) return;
+        if (!state.playlist || state.playlist.length === 0) return;
 
         var actions = [
-            ['play', function () {
+            ["play", function () {
                 if (!state.playlist || state.playlist.length === 0) return;
                 if (audio.paused) {
                     audio.play().catch(function (e) {
-                        if (e.name === 'AbortError') return;
-                        console.warn('Playback failed:', e);
+                        if (e.name === "AbortError") return;
+                        console.warn("Playback failed:", e);
                     });
                 }
             }],
-            ['pause', function () {
+            ["pause", function () {
                 if (!audio.paused) {
                     audio.pause();
                 }
             }],
-            ['previoustrack', function () {
+            ["previoustrack", function () {
                 playPrev();
             }],
-            ['nexttrack', function () {
+            ["nexttrack", function () {
                 playNext(false);
             }],
-            ['seekto', function (details) {
+            ["seekto", function (details) {
                 if (details && details.seekTime !== undefined && details.seekTime !== null && !isNaN(details.seekTime)) {
                     seekToTime(details.seekTime);
                 }
             }],
-            ['seekbackward', function (details) {
+            ["seekbackward", function (details) {
                 var offset = (details && details.seekOffset) || 10;
                 seekToTime(audio.currentTime - offset);
             }],
-            ['seekforward', function (details) {
+            ["seekforward", function (details) {
                 var offset = (details && details.seekOffset) || 10;
                 seekToTime(audio.currentTime + offset);
             }],
-            ['stop', function () {
+            ["stop", function () {
                 audio.pause();
                 audio.currentTime = 0;
             }]
@@ -265,8 +266,6 @@ const managerConfigStr = JSON.stringify({
             }
         });
     }
-
-    setupMediaSession();
 
     // ── Meting fetch ─────────────────────────────────────────
     async function fetchMetingData() {
@@ -601,6 +600,7 @@ const managerConfigStr = JSON.stringify({
                 });
 
                 loadTrack(startIndex, false);
+                setupMediaSession();
             } else {
                 state.initialized = true;
                 emit('fm:init', {

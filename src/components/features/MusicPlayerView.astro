@@ -145,6 +145,7 @@ const viewConfigStr = JSON.stringify({
             scrollTimeout: null,
             currentLrcIndex: -1,
             isDraggingProgress: false,
+            progressPointerId: null,
             isDraggingVolume: false,
             vs: {
                 playlist: [],
@@ -582,6 +583,20 @@ const viewConfigStr = JSON.stringify({
 
         on('fm:track', function (e) {
             var d = e.detail;
+            if (local.isDraggingProgress) {
+                local.isDraggingProgress = false;
+                try {
+                    if (local.progressPointerId !== null) {
+                        ui.progressContainer.releasePointerCapture(local.progressPointerId);
+                    }
+                } catch (err) {}
+                local.progressPointerId = null;
+                ui.progressBar.style.transition = '';
+                ui.progressThumb.style.transition = '';
+                if (ui.progressThumb) {
+                    ui.progressThumb.classList.remove('scale-100');
+                }
+            }
             updateTrackUI(d.track);
             updatePlaylistActiveUI(d.index);
         });
@@ -671,19 +686,19 @@ const viewConfigStr = JSON.stringify({
             }
             mgr.togglePlay();
         });
-        ui.btnNext.addEventListener('click', function (e) {
+        ui.btnNext.addEventListener("click", function (e) {
             if (e.detail > 0) ui.btnNext.blur();
             mgr.playNext();
         });
-        ui.btnPrev.addEventListener('click', function (e) {
+        ui.btnPrev.addEventListener("click", function (e) {
             if (e.detail > 0) ui.btnPrev.blur();
             mgr.playPrev();
         });
-        ui.btnRepeat.addEventListener('click', function (e) {
+        ui.btnRepeat.addEventListener("click", function (e) {
             if (e.detail > 0) ui.btnRepeat.blur();
             mgr.cyclePlayMode();
         });
-        ui.btnMute.addEventListener('click', function (e) {
+        ui.btnMute.addEventListener("click", function (e) {
             if (e.detail > 0) ui.btnMute.blur();
             mgr.toggleMute();
         });
@@ -703,10 +718,10 @@ const viewConfigStr = JSON.stringify({
                 ui.volContainer.setPointerCapture(e.pointerId);
             } catch (err) {}
             if (ui.volThumb) {
-                ui.volThumb.classList.add('scale-100');
-                ui.volThumb.style.transition = 'none';
+                ui.volThumb.classList.add("scale-100");
+                ui.volThumb.style.transition = "none";
             }
-            ui.volBar.style.transition = 'none';
+            ui.volBar.style.transition = "none";
             var val = getVolumePercent(e);
             mgr.setVolume(val);
         }
@@ -724,18 +739,33 @@ const viewConfigStr = JSON.stringify({
                 ui.volContainer.releasePointerCapture(e.pointerId);
             } catch (err) {}
             if (ui.volThumb) {
-                ui.volThumb.classList.remove('scale-100');
-                ui.volThumb.style.transition = '';
+                ui.volThumb.classList.remove("scale-100");
+                ui.volThumb.style.transition = "";
             }
-            ui.volBar.style.transition = '';
+            ui.volBar.style.transition = "";
             var val = getVolumePercent(e);
             mgr.setVolume(val);
         }
 
-        ui.volContainer.addEventListener('pointerdown', onVolumePointerDown);
-        ui.volContainer.addEventListener('pointermove', onVolumePointerMove);
-        ui.volContainer.addEventListener('pointerup', onVolumePointerUp);
-        ui.volContainer.addEventListener('pointercancel', onVolumePointerUp);
+        function onVolumePointerCancel(e) {
+            if (!local.isDraggingVolume) return;
+            local.isDraggingVolume = false;
+            try {
+                ui.volContainer.releasePointerCapture(e.pointerId);
+            } catch (err) {}
+            if (ui.volThumb) {
+                ui.volThumb.classList.remove("scale-100");
+                ui.volThumb.style.transition = "";
+            }
+            ui.volBar.style.transition = "";
+            var s = mgr.getState();
+            updateVolumeUI(s.volume, s.isMuted);
+        }
+
+        ui.volContainer.addEventListener("pointerdown", onVolumePointerDown);
+        ui.volContainer.addEventListener("pointermove", onVolumePointerMove);
+        ui.volContainer.addEventListener("pointerup", onVolumePointerUp);
+        ui.volContainer.addEventListener("pointercancel", onVolumePointerCancel);
 
         // ── Progress Bar Drag & Click ────────────────────────────
         function getProgressPercent(e) {
@@ -746,10 +776,10 @@ const viewConfigStr = JSON.stringify({
         }
 
         function updateProgressVisual(percent) {
-            var pct = (percent * 100) + '%';
+            var pct = (percent * 100) + "%";
             ui.progressBar.style.width = pct;
             ui.progressThumb.style.left = pct;
-            ui.progressContainer.setAttribute('aria-valuenow', Math.round(percent * 100).toString());
+            ui.progressContainer.setAttribute("aria-valuenow", Math.round(percent * 100).toString());
             var dur = mgr.getState().duration;
             if (dur > 0) {
                 ui.currentTime.innerText = formatTime(percent * dur);
@@ -759,12 +789,13 @@ const viewConfigStr = JSON.stringify({
         function onProgressPointerDown(e) {
             if (e.button !== 0) return;
             local.isDraggingProgress = true;
+            local.progressPointerId = e.pointerId;
             try {
                 ui.progressContainer.setPointerCapture(e.pointerId);
             } catch (err) {}
-            ui.progressBar.style.transition = 'none';
-            ui.progressThumb.style.transition = 'none';
-            ui.progressThumb.classList.add('scale-100');
+            ui.progressBar.style.transition = "none";
+            ui.progressThumb.style.transition = "none";
+            ui.progressThumb.classList.add("scale-100");
 
             var percent = getProgressPercent(e);
             updateProgressVisual(percent);
@@ -776,31 +807,50 @@ const viewConfigStr = JSON.stringify({
             updateProgressVisual(percent);
         }
 
-        function onProgressPointerUp(e) {
+        function onProgressPointerCancel(e) {
             if (!local.isDraggingProgress) return;
             local.isDraggingProgress = false;
             try {
                 ui.progressContainer.releasePointerCapture(e.pointerId);
             } catch (err) {}
-            ui.progressBar.style.transition = '';
-            ui.progressThumb.style.transition = '';
-            ui.progressThumb.classList.remove('scale-100');
+            local.progressPointerId = null;
+            ui.progressBar.style.transition = "";
+            ui.progressThumb.style.transition = "";
+            if (ui.progressThumb) {
+                ui.progressThumb.classList.remove("scale-100");
+            }
+            var s = mgr.getState();
+            if (s.duration > 0) {
+                updateProgressVisual(s.progress / 100);
+            }
+        }
+
+        function onProgressPointerUp(e) {
+            if (!local.isDraggingProgress) return;
+            local.isDraggingProgress = false;
+            local.progressPointerId = null;
+            try {
+                ui.progressContainer.releasePointerCapture(e.pointerId);
+            } catch (err) {}
+            ui.progressBar.style.transition = "";
+            ui.progressThumb.style.transition = "";
+            ui.progressThumb.classList.remove("scale-100");
 
             var percent = getProgressPercent(e);
             updateProgressVisual(percent);
             mgr.seek(percent);
         }
 
-        ui.progressContainer.addEventListener('pointerdown', onProgressPointerDown);
-        ui.progressContainer.addEventListener('pointermove', onProgressPointerMove);
-        ui.progressContainer.addEventListener('pointerup', onProgressPointerUp);
-        ui.progressContainer.addEventListener('pointercancel', onProgressPointerUp);
+        ui.progressContainer.addEventListener("pointerdown", onProgressPointerDown);
+        ui.progressContainer.addEventListener("pointermove", onProgressPointerMove);
+        ui.progressContainer.addEventListener("pointerup", onProgressPointerUp);
+        ui.progressContainer.addEventListener("pointercancel", onProgressPointerCancel);
 
         // ── Drawer logic (local state) ───────────────────────────
         if (ui.btnLrc) {
-            ui.btnLrc.addEventListener('click', function (e) {
+            ui.btnLrc.addEventListener("click", function (e) {
                 if (e.detail > 0) ui.btnLrc.blur();
-                var isOpen = ui.lrcDrawer.style.gridTemplateRows === '1fr';
+                var isOpen = ui.lrcDrawer.style.gridTemplateRows === "1fr";
                 if (isOpen) {
                     closeLyricsDrawer();
                 } else {
@@ -809,9 +859,9 @@ const viewConfigStr = JSON.stringify({
             });
         }
 
-        ui.btnDrawer.addEventListener('click', function (e) {
+        ui.btnDrawer.addEventListener("click", function (e) {
             if (e.detail > 0) ui.btnDrawer.blur();
-            var isOpen = ui.playlistDrawer.style.gridTemplateRows === '1fr';
+            var isOpen = ui.playlistDrawer.style.gridTemplateRows === "1fr";
             if (isOpen) {
                 ui.playlistDrawer.style.gridTemplateRows = '0fr';
                 ui.playlistDrawer.classList.remove('opacity-100');
