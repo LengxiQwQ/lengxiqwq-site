@@ -22,6 +22,9 @@ on:
       feedurl:
         description: "RSS 订阅链接（可选）"
         required: false
+      email:
+        description: "联系邮箱（选填，仅保存在私有内容仓）"
+        required: false
 
 permissions:
   issues: write
@@ -79,6 +82,7 @@ jobs:
           INPUT_IMGURL: ${{ github.event.inputs.imgurl }}
           INPUT_DESC: ${{ github.event.inputs.desc }}
           INPUT_FEEDURL: ${{ github.event.inputs.feedurl }}
+          INPUT_EMAIL: ${{ github.event.inputs.email }}
           CONTENT_REPO_DIR: .content-repo
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}

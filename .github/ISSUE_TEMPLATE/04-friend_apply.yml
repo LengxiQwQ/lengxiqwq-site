@@ -64,3 +64,11 @@ body:
       placeholder: https://example.com/friends
     validations:
       required: true
+  - type: input
+    id: email
+    attributes:
+      label: 联系邮箱
+      description: 您的常用联系邮箱（必填，仅用于友链信息变更或站点失联时联系，审核通过后将归档至私有仓库并自动从 Issue 正文中抹除）
+      placeholder: example@example.com
+    validations:
+      required: true

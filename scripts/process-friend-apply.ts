@@ -8,6 +8,7 @@ interface FriendLinkEntry {
 	imgurl: string;
 	checkurl?: string;
 	feedurl?: string;
+	email?: string;
 }
 
 const issueBody = process.env.ISSUE_BODY || "";
@@ -31,6 +32,7 @@ const inputSiteUrl = process.env.INPUT_SITEURL || "";
 const inputImgUrl = process.env.INPUT_IMGURL || "";
 const inputDesc = process.env.INPUT_DESC || "";
 const inputFeedUrl = process.env.INPUT_FEEDURL || "";
+const inputEmail = process.env.INPUT_EMAIL || "";
 
 // 动态解析站点配置，提取主站域名与链接
 function resolveSiteInfo(repoDir: string) {
@@ -140,6 +142,25 @@ async function closeIssue() {
 	});
 }
 
+// 脱敏并抹除 Issue 正文中的明文邮箱
+async function redactEmailInIssue(originalBody: string) {
+	if (!issueNumber || !originalBody) return;
+	const redactedBody = originalBody.replace(
+		/(###\s*(?:联系邮箱|邮箱)[^\r\n]*\r?\n+)([\s\S]*?)(?=(?:\r?\n###\s*|$))/,
+		"$1🔒 [已归档至私有仓库并自动隐藏]\n",
+	);
+	if (redactedBody !== originalBody) {
+		try {
+			await githubRequest(`/issues/${issueNumber}`, "PATCH", {
+				body: redactedBody,
+			});
+			console.log("[friend-apply] 已自动将 Issue 正文中的邮箱脱敏隐藏");
+		} catch {
+			// 忽略脱敏更新失败，不阻断主流程
+		}
+	}
+}
+
 // 解析 Issue Form markdown 内容
 function parseIssueBody(body: string): Partial<FriendLinkEntry> {
 	const result: Partial<FriendLinkEntry> = {};
@@ -171,6 +192,8 @@ function parseIssueBody(body: string): Partial<FriendLinkEntry> {
 			result.checkurl = cleanVal;
 		} else if (fieldName.includes("RSS 订阅链接")) {
 			result.feedurl = cleanVal;
+		} else if (fieldName.includes("联系邮箱") || fieldName.includes("邮箱")) {
+			result.email = cleanVal;
 		}
 	}
 
@@ -212,6 +235,19 @@ function isValidHttpUrl(string: string) {
 	} catch (_) {
 		return false;
 	}
+}
+
+// 清洗邮箱字符串（去除可能附带的 mailto: 前缀）
+function cleanEmail(emailStr: string): string {
+	return emailStr
+		.trim()
+		.replace(/^mailto:/i, "")
+		.trim();
+}
+
+// 校验邮箱格式有效性
+function isValidEmail(emailStr: string): boolean {
+	return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
 }
 
 // 伪装浏览器请求头
@@ -384,6 +420,7 @@ async function run() {
 				imgurl: inputImgUrl,
 				desc: inputDesc,
 				feedurl: inputFeedUrl,
+				email: inputEmail,
 				checkurl: inputSiteUrl,
 			}
 		: parseIssueBody(issueBody);
@@ -393,6 +430,7 @@ async function run() {
 	if (parsed.imgurl) parsed.imgurl = ensureProtocol(parsed.imgurl);
 	if (parsed.checkurl) parsed.checkurl = ensureProtocol(parsed.checkurl);
 	if (parsed.feedurl) parsed.feedurl = ensureProtocol(parsed.feedurl);
+	if (parsed.email) parsed.email = cleanEmail(parsed.email);
 
 	// 必填项检查
 	if (
@@ -400,7 +438,8 @@ async function run() {
 		!parsed.siteurl ||
 		!parsed.imgurl ||
 		!parsed.desc ||
-		(!isManualDispatch && !parsed.checkurl)
+		(!isManualDispatch && !parsed.checkurl) ||
+		(!isManualDispatch && !parsed.email)
 	) {
 		const missingFields: string[] = [];
 		if (!parsed.title) missingFields.push("站点名称");
@@ -409,6 +448,7 @@ async function run() {
 		if (!parsed.desc) missingFields.push("站点描述");
 		if (!isManualDispatch && !parsed.checkurl)
 			missingFields.push("友链所在页面");
+		if (!isManualDispatch && !parsed.email) missingFields.push("联系邮箱");
 
 		const msg = `⚠️ **申请信息不完整**\n\n缺少以下必填字段：${missingFields.map((f) => `\`${f}\``).join("、")}。\n请补充完整后重试。`;
 		await postComment(msg);
@@ -429,6 +469,7 @@ async function run() {
 	const desc = parsed.desc.trim();
 	const checkurl = (parsed.checkurl || siteurl).trim();
 	const feedurl = parsed.feedurl?.trim();
+	const email = (parsed.email || "").trim();
 
 	// URL 格式校验
 	if (!isValidHttpUrl(siteurl)) {
@@ -467,6 +508,20 @@ async function run() {
 		if (isManualDispatch) {
 			console.error(
 				`::error title=友链页面格式不正确::您填写的检测页面链接 "${checkurl}" 不是合法的 http/https 网址`,
+			);
+			process.exit(1);
+		}
+		return;
+	}
+
+	if (email && !isValidEmail(email)) {
+		const msg = `⚠️ **联系邮箱格式不正确**\n\n您填写的联系邮箱 \`${email}\` 不是合法的电子邮箱格式，请检查后重新编辑。`;
+		await postComment(msg);
+		await addLabels(["invalid-format"]);
+		console.log(msg);
+		if (isManualDispatch) {
+			console.error(
+				`::error title=联系邮箱格式不正确::您填写的联系邮箱 "${email}" 不是合法的电子邮箱格式`,
 			);
 			process.exit(1);
 		}
@@ -546,7 +601,7 @@ async function run() {
 		console.log("[friend-apply] 反向链接验证成功！");
 	}
 
-	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\tfeedUrl: ${JSON.stringify(feedurl || "")},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
+	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\tfeedUrl: ${JSON.stringify(feedurl || "")},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\temail: ${JSON.stringify(email)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
 
 	let updatedContent = "";
 	const targetPattern =
@@ -582,10 +637,16 @@ async function run() {
 			? `
 - **RSS 订阅（可选）**：${feedurl}`
 			: ""
+	}${
+		email
+			? `
+- **联系邮箱**：🔒 已归档至私有仓库`
+			: ""
 	}
 
 更改已自动推送至内容仓，构建部署已触发。稍后即可在 [${siteInfo.siteTitle} - 友情链接](${siteInfo.siteUrl.replace(/\/$/, "")}/friends/) 查看到您的站点！欢迎常来互访交流~✨`;
 
+	await redactEmailInIssue(issueBody);
 	await postComment(successMsg);
 	await removeLabel("check-failed");
 	await removeLabel("invalid-format");
