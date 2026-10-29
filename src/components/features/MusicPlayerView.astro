@@ -259,7 +259,8 @@ const viewConfigStr = JSON.stringify({
             ui.cover.classList.remove('animate-spin-slow');
             void ui.cover.offsetWidth;
             ui.cover.classList.add('animate-spin-slow');
-            ui.cover.style.animationPlayState = 'paused';
+            var isPlaying = mgr.getState().isPlaying;
+            ui.cover.style.animationPlayState = isPlaying ? 'running' : 'paused';
 
             // Reset progress
             ui.progressBar.style.width = '0%';
@@ -599,6 +600,9 @@ const viewConfigStr = JSON.stringify({
             }
             updateTrackUI(d.track);
             updatePlaylistActiveUI(d.index);
+            if (d.autoPlay || mgr.getState().isPlaying) {
+                updatePlayStateUI(true);
+            }
         });
 
         on('fm:play-state', function (e) {

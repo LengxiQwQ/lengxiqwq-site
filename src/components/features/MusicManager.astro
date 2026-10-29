@@ -201,8 +201,8 @@ const managerConfigStr = JSON.stringify({
         }
     }
 
-    function emitPlayState(isPlaying) {
-        if (state.isPlaying === isPlaying) return;
+    function emitPlayState(isPlaying, force) {
+        if (!force && state.isPlaying === isPlaying) return;
         state.isPlaying = isPlaying;
         if (isPlaying) {
             state.error = null;
@@ -351,15 +351,15 @@ const managerConfigStr = JSON.stringify({
         if (autoPlay) {
             audio.play().then(function () {
                 if (ver !== loadVersion) return; // stale, discard
-                emitPlayState(true);
+                emitPlayState(true, true);
             }).catch(function (e) {
                 if (ver !== loadVersion) return; // stale, discard
                 if (e.name === 'AbortError') return; // interrupted by new load
                 console.warn('Autoplay blocked:', e);
-                emitPlayState(false);
+                emitPlayState(false, true);
             });
         } else {
-            emitPlayState(false);
+            emitPlayState(false, true);
         }
     }
 
@@ -494,11 +494,11 @@ const managerConfigStr = JSON.stringify({
 
     // ── Audio events → broadcast ─────────────────────────────
     audio.addEventListener('play', function () {
-        emitPlayState(true);
+        emitPlayState(true, true);
     });
 
     audio.addEventListener('pause', function () {
-        emitPlayState(false);
+        emitPlayState(false, true);
     });
 
     audio.addEventListener('volumechange', function () {
@@ -550,7 +550,7 @@ const managerConfigStr = JSON.stringify({
     });
 
     audio.addEventListener('error', function () {
-        emitPlayState(false);
+        emitPlayState(false, true);
         var ver = loadVersion;
         if (currentTrackUrlIndex < currentTrackUrls.length - 1) {
             currentTrackUrlIndex++;
