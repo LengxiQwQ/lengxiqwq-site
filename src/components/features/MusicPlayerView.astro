@@ -59,6 +59,13 @@ const viewConfigStr = JSON.stringify({
     var mgr = window.__fireflyMusic;
     if (!mgr) return;
 
+    function formatTime(seconds) {
+        if (!seconds || isNaN(seconds)) return '0:00';
+        var min = Math.floor(seconds / 60);
+        var sec = Math.floor(seconds % 60);
+        return min + ':' + (sec < 10 ? '0' : '') + sec;
+    }
+
     var initScheduled = false;
     function scheduleInit() {
         if (initScheduled) return;
@@ -111,6 +118,7 @@ const viewConfigStr = JSON.stringify({
             iconVolMute: widget.querySelector('.icon-vol-mute'),
             volContainer: widget.querySelector('.vol-container'),
             volBar: widget.querySelector('.vol-bar'),
+            volThumb: widget.querySelector('.vol-thumb'),
             btnLrc: root.querySelector('.btn-lrc-toggle'),
             iconLrcOn: root.querySelector('.icon-lrc-on'),
             iconLrcOff: root.querySelector('.icon-lrc-off'),
@@ -136,6 +144,8 @@ const viewConfigStr = JSON.stringify({
             isUserScrolling: false,
             scrollTimeout: null,
             currentLrcIndex: -1,
+            isDraggingProgress: false,
+            isDraggingVolume: false,
             vs: {
                 playlist: [],
                 currentIndex: -1,
@@ -214,6 +224,9 @@ const viewConfigStr = JSON.stringify({
         function updateVolumeUI(volume, isMuted) {
             var pct = isMuted ? 0 : volume * 100;
             ui.volBar.style.width = pct + '%';
+            if (ui.volThumb) {
+                ui.volThumb.style.left = pct + '%';
+            }
             ui.volContainer.setAttribute('aria-valuenow', Math.round(pct).toString());
             if (isMuted || volume === 0) {
                 ui.iconVolHigh.classList.add('hidden');
@@ -579,10 +592,12 @@ const viewConfigStr = JSON.stringify({
 
         on('fm:time', function (e) {
             var d = e.detail;
-            ui.progressBar.style.width = d.progress + '%';
-            ui.progressThumb.style.left = d.progress + '%';
-            ui.progressContainer.setAttribute('aria-valuenow', Math.round(d.progress).toString());
-            ui.currentTime.innerText = d.currentTimeStr;
+            if (!local.isDraggingProgress) {
+                ui.progressBar.style.width = d.progress + '%';
+                ui.progressThumb.style.left = d.progress + '%';
+                ui.progressContainer.setAttribute('aria-valuenow', Math.round(d.progress).toString());
+                ui.currentTime.innerText = d.currentTimeStr;
+            }
             ui.totalTime.innerText = d.durationStr;
         });
 
@@ -646,7 +661,8 @@ const viewConfigStr = JSON.stringify({
         }
 
         // ── Button click delegates ───────────────────────────────
-        ui.btnPlay.addEventListener('click', function () {
+        ui.btnPlay.addEventListener('click', function (e) {
+            if (e.detail > 0) ui.btnPlay.blur();
             var st = mgr.getState();
             // 进入网站首次点击播放时，左侧播放器自动展开展歌词
             if (cfg.showLyrics && ui.btnLrc && !st.isPlaying && !window.__fireflyHasAutoOpenedLyrics) {
@@ -655,28 +671,135 @@ const viewConfigStr = JSON.stringify({
             }
             mgr.togglePlay();
         });
-        ui.btnNext.addEventListener('click', function () { mgr.playNext(); });
-        ui.btnPrev.addEventListener('click', function () { mgr.playPrev(); });
-        ui.btnRepeat.addEventListener('click', function () { mgr.cyclePlayMode(); });
-        ui.btnMute.addEventListener('click', function () { mgr.toggleMute(); });
+        ui.btnNext.addEventListener('click', function (e) {
+            if (e.detail > 0) ui.btnNext.blur();
+            mgr.playNext();
+        });
+        ui.btnPrev.addEventListener('click', function (e) {
+            if (e.detail > 0) ui.btnPrev.blur();
+            mgr.playPrev();
+        });
+        ui.btnRepeat.addEventListener('click', function (e) {
+            if (e.detail > 0) ui.btnRepeat.blur();
+            mgr.cyclePlayMode();
+        });
+        ui.btnMute.addEventListener('click', function (e) {
+            if (e.detail > 0) ui.btnMute.blur();
+            mgr.toggleMute();
+        });
 
-        ui.volContainer.addEventListener('click', function (e) {
+        // ── Volume Bar Drag & Click ──────────────────────────────
+        function getVolumePercent(e) {
             var rect = ui.volContainer.getBoundingClientRect();
+            if (!rect.width) return 0;
             var x = e.clientX - rect.left;
-            var val = Math.max(0, Math.min(1, x / rect.width));
-            mgr.setVolume(val);
-        });
+            return Math.max(0, Math.min(1, x / rect.width));
+        }
 
-        ui.progressContainer.addEventListener('click', function (e) {
+        function onVolumePointerDown(e) {
+            if (e.button !== 0) return;
+            local.isDraggingVolume = true;
+            try {
+                ui.volContainer.setPointerCapture(e.pointerId);
+            } catch (err) {}
+            if (ui.volThumb) {
+                ui.volThumb.classList.add('scale-100');
+                ui.volThumb.style.transition = 'none';
+            }
+            ui.volBar.style.transition = 'none';
+            var val = getVolumePercent(e);
+            mgr.setVolume(val);
+        }
+
+        function onVolumePointerMove(e) {
+            if (!local.isDraggingVolume) return;
+            var val = getVolumePercent(e);
+            mgr.setVolume(val);
+        }
+
+        function onVolumePointerUp(e) {
+            if (!local.isDraggingVolume) return;
+            local.isDraggingVolume = false;
+            try {
+                ui.volContainer.releasePointerCapture(e.pointerId);
+            } catch (err) {}
+            if (ui.volThumb) {
+                ui.volThumb.classList.remove('scale-100');
+                ui.volThumb.style.transition = '';
+            }
+            ui.volBar.style.transition = '';
+            var val = getVolumePercent(e);
+            mgr.setVolume(val);
+        }
+
+        ui.volContainer.addEventListener('pointerdown', onVolumePointerDown);
+        ui.volContainer.addEventListener('pointermove', onVolumePointerMove);
+        ui.volContainer.addEventListener('pointerup', onVolumePointerUp);
+        ui.volContainer.addEventListener('pointercancel', onVolumePointerUp);
+
+        // ── Progress Bar Drag & Click ────────────────────────────
+        function getProgressPercent(e) {
             var rect = ui.progressContainer.getBoundingClientRect();
+            if (!rect.width) return 0;
             var clickX = e.clientX - rect.left;
-            var percent = Math.min(Math.max(clickX / rect.width, 0), 1);
+            return Math.min(Math.max(clickX / rect.width, 0), 1);
+        }
+
+        function updateProgressVisual(percent) {
+            var pct = (percent * 100) + '%';
+            ui.progressBar.style.width = pct;
+            ui.progressThumb.style.left = pct;
+            ui.progressContainer.setAttribute('aria-valuenow', Math.round(percent * 100).toString());
+            var dur = mgr.getState().duration;
+            if (dur > 0) {
+                ui.currentTime.innerText = formatTime(percent * dur);
+            }
+        }
+
+        function onProgressPointerDown(e) {
+            if (e.button !== 0) return;
+            local.isDraggingProgress = true;
+            try {
+                ui.progressContainer.setPointerCapture(e.pointerId);
+            } catch (err) {}
+            ui.progressBar.style.transition = 'none';
+            ui.progressThumb.style.transition = 'none';
+            ui.progressThumb.classList.add('scale-100');
+
+            var percent = getProgressPercent(e);
+            updateProgressVisual(percent);
+        }
+
+        function onProgressPointerMove(e) {
+            if (!local.isDraggingProgress) return;
+            var percent = getProgressPercent(e);
+            updateProgressVisual(percent);
+        }
+
+        function onProgressPointerUp(e) {
+            if (!local.isDraggingProgress) return;
+            local.isDraggingProgress = false;
+            try {
+                ui.progressContainer.releasePointerCapture(e.pointerId);
+            } catch (err) {}
+            ui.progressBar.style.transition = '';
+            ui.progressThumb.style.transition = '';
+            ui.progressThumb.classList.remove('scale-100');
+
+            var percent = getProgressPercent(e);
+            updateProgressVisual(percent);
             mgr.seek(percent);
-        });
+        }
+
+        ui.progressContainer.addEventListener('pointerdown', onProgressPointerDown);
+        ui.progressContainer.addEventListener('pointermove', onProgressPointerMove);
+        ui.progressContainer.addEventListener('pointerup', onProgressPointerUp);
+        ui.progressContainer.addEventListener('pointercancel', onProgressPointerUp);
 
         // ── Drawer logic (local state) ───────────────────────────
         if (ui.btnLrc) {
-            ui.btnLrc.addEventListener('click', function () {
+            ui.btnLrc.addEventListener('click', function (e) {
+                if (e.detail > 0) ui.btnLrc.blur();
                 var isOpen = ui.lrcDrawer.style.gridTemplateRows === '1fr';
                 if (isOpen) {
                     closeLyricsDrawer();
@@ -686,7 +809,8 @@ const viewConfigStr = JSON.stringify({
             });
         }
 
-        ui.btnDrawer.addEventListener('click', function () {
+        ui.btnDrawer.addEventListener('click', function (e) {
+            if (e.detail > 0) ui.btnDrawer.blur();
             var isOpen = ui.playlistDrawer.style.gridTemplateRows === '1fr';
             if (isOpen) {
                 ui.playlistDrawer.style.gridTemplateRows = '0fr';
