@@ -57,6 +57,14 @@ body:
     validations:
       required: false
   - type: input
+    id: screenshot
+    attributes:
+      label: 站点截图（可选）
+      description: 您的站点主页或代表性页面截图地址（需支持外链访问，选填）
+      placeholder: https://example.com/screenshot.jpg
+    validations:
+      required: false
+  - type: input
     id: checkurl
     attributes:
       label: 友链所在页面

@@ -8,6 +8,7 @@ interface FriendLinkEntry {
 	imgurl: string;
 	checkurl?: string;
 	feedurl?: string;
+	screenshot?: string;
 	email?: string;
 }
 
@@ -32,6 +33,7 @@ const inputSiteUrl = process.env.INPUT_SITEURL || "";
 const inputImgUrl = process.env.INPUT_IMGURL || "";
 const inputDesc = process.env.INPUT_DESC || "";
 const inputFeedUrl = process.env.INPUT_FEEDURL || "";
+const inputScreenshot = process.env.INPUT_SCREENSHOT || "";
 const inputEmail = process.env.INPUT_EMAIL || "";
 
 // 动态解析站点配置，提取主站域名与链接
@@ -192,6 +194,12 @@ function parseIssueBody(body: string): Partial<FriendLinkEntry> {
 			result.checkurl = cleanVal;
 		} else if (fieldName.includes("RSS 订阅链接")) {
 			result.feedurl = cleanVal;
+		} else if (
+			fieldName.includes("站点截图") ||
+			fieldName.includes("网页截图") ||
+			fieldName.includes("截图")
+		) {
+			result.screenshot = cleanVal;
 		} else if (fieldName.includes("联系邮箱") || fieldName.includes("邮箱")) {
 			result.email = cleanVal;
 		}
@@ -420,6 +428,7 @@ async function run() {
 				imgurl: inputImgUrl,
 				desc: inputDesc,
 				feedurl: inputFeedUrl,
+				screenshot: inputScreenshot,
 				email: inputEmail,
 				checkurl: inputSiteUrl,
 			}
@@ -430,6 +439,7 @@ async function run() {
 	if (parsed.imgurl) parsed.imgurl = ensureProtocol(parsed.imgurl);
 	if (parsed.checkurl) parsed.checkurl = ensureProtocol(parsed.checkurl);
 	if (parsed.feedurl) parsed.feedurl = ensureProtocol(parsed.feedurl);
+	if (parsed.screenshot) parsed.screenshot = ensureProtocol(parsed.screenshot);
 	if (parsed.email) parsed.email = cleanEmail(parsed.email);
 
 	// 必填项检查
@@ -469,6 +479,7 @@ async function run() {
 	const desc = parsed.desc.trim();
 	const checkurl = (parsed.checkurl || siteurl).trim();
 	const feedurl = parsed.feedurl?.trim();
+	const screenshot = (parsed.screenshot || "").trim();
 	const email = (parsed.email || "").trim();
 
 	// URL 格式校验
@@ -508,6 +519,20 @@ async function run() {
 		if (isManualDispatch) {
 			console.error(
 				`::error title=友链页面格式不正确::您填写的检测页面链接 "${checkurl}" 不是合法的 http/https 网址`,
+			);
+			process.exit(1);
+		}
+		return;
+	}
+
+	if (screenshot && !isValidHttpUrl(screenshot)) {
+		const msg = `⚠️ **站点截图链接格式不正确**\n\n您填写的站点截图链接 \`${screenshot}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
+		await postComment(msg);
+		await addLabels(["invalid-format"]);
+		console.log(msg);
+		if (isManualDispatch) {
+			console.error(
+				`::error title=站点截图链接格式不正确::您填写的站点截图链接 "${screenshot}" 不是合法的 http/https 网址`,
 			);
 			process.exit(1);
 		}
@@ -601,7 +626,7 @@ async function run() {
 		console.log("[friend-apply] 反向链接验证成功！");
 	}
 
-	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\tfeedUrl: ${JSON.stringify(feedurl || "")},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\temail: ${JSON.stringify(email)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
+	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\tfeedUrl: ${JSON.stringify(feedurl || "")},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\tscreenshot: ${JSON.stringify(screenshot)},\n\t\temail: ${JSON.stringify(email)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
 
 	let updatedContent = "";
 	const targetPattern =
@@ -636,6 +661,11 @@ async function run() {
 		feedurl
 			? `
 - **RSS 订阅（可选）**：${feedurl}`
+			: ""
+	}${
+		screenshot
+			? `
+- **站点截图（可选）**：${screenshot}`
 			: ""
 	}${
 		email
