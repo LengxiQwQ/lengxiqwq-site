@@ -9,7 +9,7 @@ on:
   repository_dispatch:
     types: [content-updated]
   schedule:
-    - cron: '0 0 * * *' # 每天北京时间 08:00 (UTC 00:00) 定时抓取友链朋友圈并自动重新构建部署
+    - cron: '47 0 * * *' # 每天北京时间 08:47 (UTC 00:47) 定时抓取友链朋友圈并自动重新构建部署
   workflow_dispatch:
     inputs:
       content_ref:

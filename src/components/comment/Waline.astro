@@ -175,19 +175,66 @@ const config = {
       return walineResourcePromise;
     }
 
-    function hasTargetAnchor() {
+    function getTargetCommentId() {
+      // 1. 优先读取 sessionStorage（侧边栏“最新评论”或前置写入的目标）
       try {
-        if (sessionStorage.getItem("waline-target-comment")) return true;
+        const stored = sessionStorage.getItem("waline-target-comment");
+        if (stored) return stored.trim();
       } catch (_) {}
+
+      // 2. 检查 URL hash 锚点（邮件通知、外链直接访问或站内跳转，如 #17、#wl-17、#comment-17 等）
       const hash = window.location.hash;
-      if (!hash) return false;
-      const clean = decodeURIComponent(hash.slice(1)).trim();
-      return (
-        clean === "waline" ||
-        clean === "post-comments" ||
-        clean.startsWith("comment-") ||
-        clean.startsWith("wl-")
-      );
+      if (hash) {
+        const clean = decodeURIComponent(hash.slice(1)).split("?")[0].split("&")[0].trim();
+        if (clean) {
+          // 显式评论区标识或常见评论前缀
+          if (
+            clean === "waline" ||
+            clean === "post-comments" ||
+            clean.startsWith("comment-") ||
+            clean.startsWith("wl-") ||
+            clean.startsWith("waline-") ||
+            clean.startsWith("wl_") ||
+            clean.startsWith("waline_")
+          ) {
+            return clean;
+          }
+
+          // Waline 数据库自增评论 ID（纯数字，如邮件中的 #17）或 MongoDB ObjectId / UUID
+          if (
+            /^\d+$/.test(clean) ||
+            /^[0-9a-fA-F]{24}$/.test(clean) ||
+            /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(clean)
+          ) {
+            return clean;
+          }
+
+          // 排除当前页面已存在的非评论区静态 DOM 元素（如文章目录标题 #heading-id）
+          const existingEl = document.getElementById(clean);
+          const walineRoot =
+            document.getElementById("waline") ||
+            document.getElementById("post-comments");
+          if (existingEl && (!walineRoot || !walineRoot.contains(existingEl))) {
+            return null;
+          }
+
+          // 静态 DOM 中不存在该元素，判定为动态渲染的评论锚点
+          return clean;
+        }
+      }
+
+      // 3. 兜底检查 URL query 参数（例如 ?comment=17 或 ?reply=17）
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const queryId = params.get("comment") || params.get("reply") || params.get("wl");
+        if (queryId) return queryId.trim();
+      } catch (_) {}
+
+      return null;
+    }
+
+    function hasTargetAnchor() {
+      return Boolean(getTargetCommentId());
     }
 
     function resetExifOrientation(app1Seg) {
@@ -941,6 +988,12 @@ const config = {
 
       // 如果带有锚点或直接定位目标，跳过视口判定，全速载入
       if (hasTargetAnchor()) {
+        const targetId = getTargetCommentId();
+        if (targetId) {
+          try {
+            sessionStorage.setItem("waline-target-comment", targetId);
+          } catch (_) {}
+        }
         triggerLoadAndInit();
         return;
       }
@@ -1206,18 +1259,7 @@ const config = {
     function scrollToHashTarget(explicitTargetId) {
       cleanupTargetPolling();
 
-      let targetId = explicitTargetId;
-      if (!targetId) {
-        try {
-          targetId = sessionStorage.getItem("waline-target-comment");
-        } catch (_) {}
-      }
-      if (!targetId) {
-        const hash = window.location.hash;
-        if (hash) {
-          targetId = decodeURIComponent(hash.slice(1));
-        }
-      }
+      let targetId = explicitTargetId || getTargetCommentId();
       if (!targetId) return;
       targetId = String(targetId).replace(/^#/, "").trim();
       if (!targetId) return;
@@ -1239,14 +1281,22 @@ const config = {
         if (!id) return null;
         const cleanId = String(id).replace(/^#/, "").trim();
         if (!cleanId) return null;
+        const rawNumId = cleanId.replace(/^(wl|waline|comment)[-_]/, "");
         return (
           document.getElementById(cleanId) ||
+          document.getElementById(rawNumId) ||
           document.getElementById(`wl-${cleanId}`) ||
+          document.getElementById(`wl-${rawNumId}`) ||
           document.getElementById(`waline-${cleanId}`) ||
+          document.getElementById(`waline-${rawNumId}`) ||
           document.getElementById(`comment-${cleanId}`) ||
+          document.getElementById(`comment-${rawNumId}`) ||
           document.querySelector(`.wl-card-item[id="${cleanId}"]`) ||
+          document.querySelector(`.wl-card-item[id="${rawNumId}"]`) ||
           document.querySelector(`.wl-card-item[data-id="${cleanId}"]`) ||
-          document.querySelector(`[data-waline-id="${cleanId}"]`)
+          document.querySelector(`.wl-card-item[data-id="${rawNumId}"]`) ||
+          document.querySelector(`[data-waline-id="${cleanId}"]`) ||
+          document.querySelector(`[data-waline-id="${rawNumId}"]`)
         );
       };
 
@@ -1336,6 +1386,12 @@ const config = {
 
       window.addEventListener("hashchange", () => {
         if (hasTargetAnchor()) {
+          const targetId = getTargetCommentId();
+          if (targetId) {
+            try {
+              sessionStorage.setItem("waline-target-comment", targetId);
+            } catch (_) {}
+          }
           triggerLoadAndInit();
         }
         scrollToHashTarget();

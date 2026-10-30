@@ -4,8 +4,8 @@
 		"language": "Astro",
 		"avatarUrl": "https://avatars.githubusercontent.com/u/43440669?v=4",
 		"license": "MIT",
-		"stars": 2376,
-		"forks": 1907
+		"stars": 2397,
+		"forks": 1914
 	},
 	"lengxiqwq/capslock-ime-switcher": {
 		"description": "按下 CapsLock，轻松切换中英文输入法，支持多输入法，多种软件兼容，快乐编码！🎉 Press CapsLock to switch between Chinese and English IMEs with ease. Multi-IME support, compatible with many apps, happy coding! ",
@@ -20,7 +20,7 @@
 		"language": "Java",
 		"avatarUrl": "https://avatars.githubusercontent.com/u/97082679?v=4",
 		"license": "MIT",
-		"stars": 1,
+		"stars": 2,
 		"forks": 0
 	},
 	"lengxiqwq/lengxiqwq-site": {
@@ -36,7 +36,7 @@
 		"language": "C#",
 		"avatarUrl": "https://avatars.githubusercontent.com/u/97082679?v=4",
 		"license": "GPL-3.0",
-		"stars": 57,
+		"stars": 58,
 		"forks": 2
 	},
 	"lengxiqwq/playlistout": {
@@ -44,7 +44,7 @@
 		"language": "TypeScript",
 		"avatarUrl": "https://avatars.githubusercontent.com/u/97082679?v=4",
 		"license": "MIT",
-		"stars": 82,
+		"stars": 87,
 		"forks": 4
 	}
 }
