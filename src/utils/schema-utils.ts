@@ -94,6 +94,8 @@ export function buildPersonEntity(
 		"@type": "Person",
 		"@id": `${siteUrl}#person`,
 		name: opts.profileConfig.name,
+		alternateName: ["冷汐", "LengxiQwQ", "冷汐OωO"],
+		jobTitle: "独立开发者",
 		url: opts.authorUrl,
 		...(opts.avatarUrl ? { image: opts.avatarUrl } : {}),
 		...(opts.description ? { description: opts.description } : {}),
@@ -129,7 +131,11 @@ export function buildPublisherEntity(opts: {
 		"@type": "Organization",
 		"@id": `${siteUrl}#organization`,
 		name: opts.siteConfig.title,
+		...(opts.siteConfig.alternateNames?.length
+			? { alternateName: opts.siteConfig.alternateNames }
+			: {}),
 		url: siteUrl,
+		sameAs: ["https://github.com/LengxiQwQ"],
 		...(logo
 			? {
 					logo: {
@@ -185,8 +191,16 @@ export function buildSiteGraph(opts: {
 				...(opts.siteConfig.alternateNames?.length
 					? { alternateName: opts.siteConfig.alternateNames }
 					: {}),
+				headline: opts.siteConfig.subtitle || "冷汐 (LengxiQwQ) 的个人独立博客",
 				description: opts.siteConfig.description,
 				inLanguage: opts.lang,
+				sameAs: ["https://github.com/LengxiQwQ"],
+				about: {
+					"@type": "Thing",
+					name: "个人独立技术博客",
+					description: "记录代码、桌面应用与实用工具开发的个人技术博客",
+				},
+				genre: ["Technology", "Software Engineering", "Personal Blog"],
 				publisher: { "@id": `${siteUrl}#person` },
 				potentialAction: {
 					"@type": "SearchAction",

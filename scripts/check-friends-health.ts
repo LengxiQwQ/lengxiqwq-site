@@ -201,6 +201,7 @@ async function run() {
 	}
 
 	console.log("[friends-health] 友链健康检测完成");
+	process.exit(0);
 }
 
 run().catch((err) => {
