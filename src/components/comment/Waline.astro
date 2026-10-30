@@ -974,9 +974,22 @@ const config = {
       }
     }
 
-    let walineViewportObserver = null;
+    let walineIdlePreloadTimer = null;
+    let walineIdleCallbackId = null;
 
-    function setupViewportLazyLoad() {
+    function cancelIdlePreload() {
+      if (walineIdleCallbackId && "cancelIdleCallback" in window) {
+        window.cancelIdleCallback(walineIdleCallbackId);
+        walineIdleCallbackId = null;
+      }
+      if (walineIdlePreloadTimer) {
+        clearTimeout(walineIdlePreloadTimer);
+        walineIdlePreloadTimer = null;
+      }
+      window.removeEventListener("scroll", triggerLoadAndInit);
+    }
+
+    function setupSmartCommentLoad() {
       const el = document.getElementById("waline");
       if (!el) return;
 
@@ -986,8 +999,9 @@ const config = {
         return;
       }
 
-      // 如果带有锚点或直接定位目标，跳过视口判定，全速载入
+      // 1. 如果带有锚点或直接定位目标（邮件通知、最新评论点击或外链评论定位），0 延迟即刻拉起！
       if (hasTargetAnchor()) {
+        cancelIdlePreload();
         const targetId = getTargetCommentId();
         if (targetId) {
           try {
@@ -998,40 +1012,33 @@ const config = {
         return;
       }
 
-      if (!("IntersectionObserver" in window)) {
-        triggerLoadAndInit();
-        return;
+      // 2. 正常阅读场景（方案 B 闲时静默预加载）：
+      // 文章渲染好后，在后台利用浏览器空闲或 600ms 静默预加载，滑到底部秒开无等待
+      cancelIdlePreload();
+
+      // 双保险：若用户在此期间已开始滑动屏幕，第一次滑动时直接提前拉起
+      window.addEventListener("scroll", triggerLoadAndInit, { once: true, passive: true });
+
+      if ("requestIdleCallback" in window) {
+        walineIdleCallbackId = window.requestIdleCallback(
+          () => {
+            walineIdleCallbackId = null;
+            triggerLoadAndInit();
+          },
+          { timeout: 1000 }
+        );
+      } else {
+        walineIdlePreloadTimer = setTimeout(() => {
+          walineIdlePreloadTimer = null;
+          triggerLoadAndInit();
+        }, 600);
       }
-
-      if (walineViewportObserver) {
-        walineViewportObserver.disconnect();
-        walineViewportObserver = null;
-      }
-
-      walineViewportObserver = new IntersectionObserver(
-        (entries) => {
-          for (const entry of entries) {
-            if (entry.isIntersecting) {
-              if (walineViewportObserver) {
-                walineViewportObserver.disconnect();
-                walineViewportObserver = null;
-              }
-              triggerLoadAndInit();
-              break;
-            }
-          }
-        },
-        { rootMargin: "300px 0px" }
-      );
-
-      walineViewportObserver.observe(el);
     }
 
+    const setupViewportLazyLoad = setupSmartCommentLoad;
+
     function triggerLoadAndInit() {
-      if (walineViewportObserver) {
-        walineViewportObserver.disconnect();
-        walineViewportObserver = null;
-      }
+      cancelIdlePreload();
       loadWalineResources()
         .then(() => {
           initWaline();
@@ -1350,12 +1357,9 @@ const config = {
     if (!window.__walineListenersInstalled) {
       window.__walineListenersInstalled = true;
 
-      // 切页开始（离开旧页面）：彻底终止所有旧定时器、观察者与滚动任务
+      // 切页开始（离开旧页面）：彻底终止所有旧定时器、闲时预载与滚动任务
       const onVisitStart = () => {
-        if (walineViewportObserver) {
-          walineViewportObserver.disconnect();
-          walineViewportObserver = null;
-        }
+        cancelIdlePreload();
         cleanupActiveScroll();
         cleanupTargetPolling();
         cleanupInstance();
