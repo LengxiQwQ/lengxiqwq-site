@@ -105,6 +105,8 @@ export const zh_TW: Translation = {
 	[Key.fcircleSiteUnit]: "位",
 	[Key.fcirclePostsUpdated]: "篇更新",
 	[Key.fcircleBuildHint]: "動態內容於站點構建時自動抓取，並非即時同步",
+	[Key.fcircleAuthor]: "博主",
+	[Key.fcircleSubscription]: "訂閱",
 	[Key.searchFriends]: "搜尋友鏈...",
 	[Key.friendsEmpty]: "暫無友情連結",
 	[Key.booknav]: "書籤導航",

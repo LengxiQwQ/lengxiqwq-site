@@ -107,6 +107,8 @@ export const ru: Translation = {
 	[Key.fcirclePostsUpdated]: "обновлений",
 	[Key.fcircleBuildHint]:
 		"Контент автоматически собирается во время сборки сайта и не синхронизируется в реальном времени",
+	[Key.fcircleAuthor]: "Автор",
+	[Key.fcircleSubscription]: "Подписка",
 	[Key.searchFriends]: "Поиск друзей...",
 	[Key.friendsEmpty]: "Друзей пока нет.",
 	[Key.booknav]: "Каталог закладок",

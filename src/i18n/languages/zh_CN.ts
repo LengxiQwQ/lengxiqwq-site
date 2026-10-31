@@ -105,6 +105,8 @@ export const zh_CN: Translation = {
 	[Key.fcircleSiteUnit]: "位",
 	[Key.fcirclePostsUpdated]: "篇更新",
 	[Key.fcircleBuildHint]: "动态内容于站点构建时自动抓取，并非实时同步",
+	[Key.fcircleAuthor]: "博主",
+	[Key.fcircleSubscription]: "订阅",
 	[Key.searchFriends]: "搜索友链...",
 	[Key.friendsEmpty]: "暂无友情链接",
 	[Key.booknav]: "书签导航",

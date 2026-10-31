@@ -1,9 +1,9 @@
 import {
 	getFcircleDatePresentation,
 	getFcircleRelativeDays,
-} from "@/utils/fcircle-date-utils";
+} from "./fcircle-date-utils";
 
-const STORAGE_KEYS = ["moments-view", "fcircle_preferred_view"];
+const STORAGE_KEY = "fcircle_preferred_view";
 
 const TODAY_MARKER_CLASSES = [
 	"border-(--primary)",
@@ -84,6 +84,7 @@ export function refreshFcircleRelativeDates(): void {
 	if (!root) return;
 
 	const timeZone = root.dataset.timeZone || "UTC";
+	const lang = document.documentElement.lang || "zh-CN";
 	const now = new Date();
 
 	root
@@ -92,7 +93,12 @@ export function refreshFcircleRelativeDates(): void {
 			const dateIso = group.dataset.dateIso;
 			if (!dateIso) return;
 
-			const presentation = getFcircleDatePresentation(dateIso, now, timeZone);
+			const presentation = getFcircleDatePresentation(
+				dateIso,
+				now,
+				timeZone,
+				lang,
+			);
 			const label = group.querySelector<HTMLElement>(".fcircle-date-label");
 			const subLabel = group.querySelector<HTMLElement>(
 				".fcircle-date-sublabel",
@@ -109,7 +115,7 @@ export function refreshFcircleRelativeDates(): void {
 
 	root
 		.querySelectorAll<HTMLElement>(
-			"#fcircle-timeline-view .fcircle-timeline-card[data-pub-date], #timeline-view .fcircle-timeline-card[data-pub-date]",
+			"#timeline-view .fcircle-timeline-card[data-pub-date]",
 		)
 		.forEach((card) => {
 			const dateIso = card.dataset.pubDate;
@@ -128,34 +134,21 @@ export function refreshFcircleRelativeDates(): void {
 }
 
 /** 应用时间线或平铺视图 */
-export function switchFcircleView(mode: "timeline" | "grid" | "list"): void {
+export function switchFcircleView(mode: "timeline" | "grid"): void {
+	const timelineView = document.getElementById("timeline-view");
+	const gridView = document.getElementById("grid-view");
+	if (!timelineView && !gridView) return;
+
 	const isTimeline = mode === "timeline";
-	const effectiveMode = isTimeline ? "timeline" : "grid";
-
-	const timelineView =
-		document.getElementById("timeline-view") ||
-		document.getElementById("fcircle-timeline-view");
-	const gridView =
-		document.getElementById("grid-view") ||
-		document.getElementById("fcircle-list-view");
-
-	const btnTimeline =
-		document.getElementById("view-timeline") ||
-		document.querySelector<HTMLElement>(
-			'.fcircle-view-btn[data-view="timeline"]',
-		);
-	const btnGrid =
-		document.getElementById("view-grid") ||
-		document.querySelector<HTMLElement>(
-			'.fcircle-view-btn[data-view="grid"], .fcircle-view-btn[data-view="list"]',
-		);
 
 	if (timelineView) timelineView.classList.toggle("hidden", !isTimeline);
 	if (gridView) gridView.classList.toggle("hidden", isTimeline);
 
+	const btnTimeline = document.getElementById("view-timeline");
+	const btnGrid = document.getElementById("view-grid");
+
 	if (btnTimeline) {
 		btnTimeline.classList.toggle("bg-(--primary)", isTimeline);
-		btnTimeline.classList.toggle("bg-[var(--primary)]", isTimeline);
 		btnTimeline.classList.toggle("text-white", isTimeline);
 		btnTimeline.classList.toggle("font-medium", isTimeline);
 		btnTimeline.classList.toggle("opacity-60", !isTimeline);
@@ -164,7 +157,6 @@ export function switchFcircleView(mode: "timeline" | "grid" | "list"): void {
 
 	if (btnGrid) {
 		btnGrid.classList.toggle("bg-(--primary)", !isTimeline);
-		btnGrid.classList.toggle("bg-[var(--primary)]", !isTimeline);
 		btnGrid.classList.toggle("text-white", !isTimeline);
 		btnGrid.classList.toggle("font-medium", !isTimeline);
 		btnGrid.classList.toggle("opacity-60", isTimeline);
@@ -172,43 +164,32 @@ export function switchFcircleView(mode: "timeline" | "grid" | "list"): void {
 	}
 
 	try {
-		for (const key of STORAGE_KEYS) {
-			localStorage.setItem(key, effectiveMode);
-		}
+		localStorage.setItem(STORAGE_KEY, mode);
 	} catch {
-		// 忽略隐私模式等存储异常
+		// 忽略隐私模式等存储受限异常
 	}
 }
 
 /** 恢复当前保存的偏好视图 */
 export function applySavedFcircleView(): void {
-	const timelineView =
-		document.getElementById("timeline-view") ||
-		document.getElementById("fcircle-timeline-view");
-	const gridView =
-		document.getElementById("grid-view") ||
-		document.getElementById("fcircle-list-view");
+	const root = document.getElementById("fcircle-root");
+	if (!root) return;
 
-	if (!timelineView && !gridView) return;
-
-	let saved: "timeline" | "grid" | "list" = "timeline";
+	let saved: "timeline" | "grid" = "timeline";
 	try {
-		for (const key of STORAGE_KEYS) {
-			const val = localStorage.getItem(key);
-			if (val === "grid" || val === "list" || val === "timeline") {
-				saved = val;
-				break;
-			}
+		const val = localStorage.getItem(STORAGE_KEY);
+		if (val === "grid" || val === "timeline") {
+			saved = val;
 		}
 	} catch {
-		// 忽略隐私模式等存储异常
+		// 忽略隐私模式等存储受限异常
 	}
 
 	switchFcircleView(saved);
 	refreshFcircleRelativeDates();
 }
 
-/** 全局初始化友链朋友圈控制器（随全站布局常驻内存） */
+/** 全局初始化友链朋友圈控制器（随全站布局常驻监听） */
 export function initFcircleManager(): void {
 	const fcircleWindow = window as Window & {
 		__fcircleManagerInitialized?: boolean;
@@ -220,7 +201,7 @@ export function initFcircleManager(): void {
 	}
 	fcircleWindow.__fcircleManagerInitialized = true;
 
-	// 全局事件委托：捕获视图切换按钮点击（无论切页与否均 100% 响应）
+	// 全局事件委托：捕获视图切换按钮点击
 	document.addEventListener("click", (e) => {
 		const target = e.target as HTMLElement | null;
 		const btn = target?.closest<HTMLElement>(
@@ -233,15 +214,17 @@ export function initFcircleManager(): void {
 		switchFcircleView(isTimeline ? "timeline" : "grid");
 	});
 
-	// 监听 Swup / Astro 切页完成，还原视图与刷新相对时间
+	// 监听 Swup / Astro 切页完成
 	document.addEventListener("astro:page-load", applySavedFcircleView);
 	document.addEventListener("swup:content:replace", applySavedFcircleView);
 	document.addEventListener("swup:contentReplaced", applySavedFcircleView);
 
-	// 定时器与前后台切换刷新
+	// 页面可见性变化时刷新
 	document.addEventListener("visibilitychange", () => {
 		if (!document.hidden) refreshFcircleRelativeDates();
 	});
+
+	// 定时刷新相对日期
 	window.setInterval(refreshFcircleRelativeDates, 60_000);
 
 	// 初始触发一次

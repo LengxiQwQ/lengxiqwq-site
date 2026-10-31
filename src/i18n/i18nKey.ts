@@ -132,6 +132,8 @@ enum I18nKey {
 	fcircleSiteUnit = "fcircleSiteUnit",
 	fcirclePostsUpdated = "fcirclePostsUpdated",
 	fcircleBuildHint = "fcircleBuildHint",
+	fcircleAuthor = "fcircleAuthor",
+	fcircleSubscription = "fcircleSubscription",
 	searchFriends = "searchFriends",
 	friendsEmpty = "friendsEmpty",
 	guestbook = "guestbook",

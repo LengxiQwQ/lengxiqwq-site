@@ -12,10 +12,12 @@ interface ZonedDateParts {
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const WEEK_DAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 
 const dateFormatterCache = new Map<string, Intl.DateTimeFormat>();
 const timeFormatterCache = new Map<string, Intl.DateTimeFormat>();
+const weekdayFormatterCache = new Map<string, Intl.DateTimeFormat>();
+const monthDayFormatterCache = new Map<string, Intl.DateTimeFormat>();
+const relativeTimeFormatterCache = new Map<string, Intl.RelativeTimeFormat>();
 
 function asDate(dateInput: Date | string): Date {
 	return dateInput instanceof Date ? dateInput : new Date(dateInput);
@@ -35,7 +37,7 @@ function getDateFormatter(timeZone: string): Intl.DateTimeFormat {
 	return formatter;
 }
 
-function getTimeFormatter(timeZone: string): Intl.DateTimeFormat {
+export function getTimeFormatter(timeZone: string): Intl.DateTimeFormat {
 	let formatter = timeFormatterCache.get(timeZone);
 	if (!formatter) {
 		formatter = new Intl.DateTimeFormat("zh-CN", {
@@ -93,47 +95,86 @@ export function getFcircleRelativeDays(
 	);
 }
 
+function normalizeLocale(lang = "zh-CN"): string {
+	return (lang || "zh-CN").replace(/_/g, "-");
+}
+
+function getWeekdayString(
+	date: Date,
+	timeZone: string,
+	lang = "zh-CN",
+): string {
+	const normalized = normalizeLocale(lang);
+	const cacheKey = `${normalized}_${timeZone}`;
+	let formatter = weekdayFormatterCache.get(cacheKey);
+	if (!formatter) {
+		formatter = new Intl.DateTimeFormat(normalized, {
+			weekday: "short",
+			timeZone,
+		});
+		weekdayFormatterCache.set(cacheKey, formatter);
+	}
+	return formatter.format(date);
+}
+
+function getMonthDayString(
+	date: Date,
+	timeZone: string,
+	lang = "zh-CN",
+): string {
+	const normalized = normalizeLocale(lang);
+	const cacheKey = `${normalized}_${timeZone}`;
+	let formatter = monthDayFormatterCache.get(cacheKey);
+	if (!formatter) {
+		formatter = new Intl.DateTimeFormat(normalized, {
+			month: "numeric",
+			day: "numeric",
+			timeZone,
+		});
+		monthDayFormatterCache.set(cacheKey, formatter);
+	}
+	return formatter.format(date);
+}
+
+function getRelativeTimeFormatter(
+	normalizedLang: string,
+): Intl.RelativeTimeFormat {
+	let formatter = relativeTimeFormatterCache.get(normalizedLang);
+	if (!formatter) {
+		formatter = new Intl.RelativeTimeFormat(normalizedLang, {
+			numeric: "auto",
+		});
+		relativeTimeFormatterCache.set(normalizedLang, formatter);
+	}
+	return formatter;
+}
+
 export function getFcircleDatePresentation(
 	dateInput: Date | string,
 	referenceInput: Date | string,
 	timeZone: string,
+	lang = "zh-CN",
 ): FcircleDatePresentation {
+	const date = asDate(dateInput);
 	const itemParts = getZonedDateParts(dateInput, timeZone);
 	const referenceParts = getZonedDateParts(referenceInput, timeZone);
 	const relativeDays = Math.round(
 		(dateSerial(referenceParts) - dateSerial(itemParts)) / ONE_DAY_MS,
 	);
 	const dateKey = `${itemParts.year}-${String(itemParts.month).padStart(2, "0")}-${String(itemParts.day).padStart(2, "0")}`;
-	const weekDayStr =
-		WEEK_DAYS[
-			new Date(
-				Date.UTC(itemParts.year, itemParts.month - 1, itemParts.day),
-			).getUTCDay()
-		];
+	const weekDayStr = getWeekdayString(date, timeZone, lang);
+	const monthDayStr = getMonthDayString(date, timeZone, lang);
 
-	if (relativeDays === 0) {
+	if (relativeDays >= 0 && relativeDays <= 2) {
+		const normalized = normalizeLocale(lang);
+		const rtf = getRelativeTimeFormatter(normalized);
+		const rawRelative = rtf.format(-relativeDays, "day");
+		const displayDate =
+			rawRelative.charAt(0).toUpperCase() + rawRelative.slice(1);
 		return {
 			dateKey,
-			displayDate: "今天",
-			subLabel: `${itemParts.month}月${itemParts.day}日 · ${weekDayStr}`,
-			relativeDays,
-		};
-	}
-
-	if (relativeDays === 1) {
-		return {
-			dateKey,
-			displayDate: "昨天",
-			subLabel: `${itemParts.month}月${itemParts.day}日 · ${weekDayStr}`,
-			relativeDays,
-		};
-	}
-
-	if (relativeDays === 2) {
-		return {
-			dateKey,
-			displayDate: "前天",
-			subLabel: `${itemParts.month}月${itemParts.day}日 · ${weekDayStr}`,
+			displayDate,
+			subLabel: `${monthDayStr} · ${weekDayStr}`,
 			relativeDays,
 		};
 	}
@@ -142,24 +183,31 @@ export function getFcircleDatePresentation(
 		dateKey,
 		displayDate:
 			itemParts.year === referenceParts.year
-				? `${itemParts.month}月${itemParts.day}日`
-				: `${itemParts.year}年${itemParts.month}月${itemParts.day}日`,
+				? monthDayStr
+				: `${itemParts.year} / ${monthDayStr}`,
 		subLabel: weekDayStr,
 		relativeDays,
 	};
+}
+
+export function formatFcircleDate(
+	dateInput: Date | string,
+	timeZone: string,
+	lang = "zh-CN",
+): string {
+	const date = asDate(dateInput);
+	return new Intl.DateTimeFormat(normalizeLocale(lang), {
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+		timeZone,
+	}).format(date);
 }
 
 export function formatFcircleTime(
 	dateInput: Date | string,
 	timeZone: string,
 ): string {
-	return getTimeFormatter(timeZone).format(asDate(dateInput));
-}
-
-export function formatFcircleDate(
-	dateInput: Date | string,
-	timeZone: string,
-): string {
-	const parts = getZonedDateParts(dateInput, timeZone);
-	return `${parts.year}/${String(parts.month).padStart(2, "0")}/${String(parts.day).padStart(2, "0")}`;
+	const date = asDate(dateInput);
+	return getTimeFormatter(timeZone).format(date);
 }

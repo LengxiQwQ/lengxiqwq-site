@@ -1,5 +1,7 @@
 ---
 import { Icon } from "astro-icon/components";
+import I18nKey from "@/i18n/i18nKey";
+import { i18n } from "@/i18n/translation";
 import type { FcircleStats } from "@/utils/fcircle-utils";
 
 interface Props {
@@ -9,7 +11,7 @@ interface Props {
 const { stats } = Astro.props;
 ---
 
-<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4 select-none">
 	<!-- 今日更新 -->
 	<div
 		id="fcircle-today-stat-card"
@@ -33,7 +35,7 @@ const { stats } = Astro.props;
 			<Icon name="mingcute:flash-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
-			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">今日更新</span>
+			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">{i18n(I18nKey.fcircleToday)}</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
 				<span
 					id="fcircle-today-count"
@@ -46,7 +48,7 @@ const { stats } = Astro.props;
 				>
 					{stats.todayCount}
 				</span>
-				<span class="text-xs text-neutral-400">篇</span>
+				<span class="text-xs text-neutral-400">{i18n(I18nKey.fcirclePostUnit)}</span>
 			</div>
 		</div>
 	</div>
@@ -62,12 +64,12 @@ const { stats } = Astro.props;
 			<Icon name="mingcute:calendar-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
-			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">近 7 天</span>
+			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">{i18n(I18nKey.fcircleWeek)}</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
 				<span id="fcircle-week-count" class="text-lg font-bold tabular-nums leading-tight text-neutral-800 dark:text-neutral-200">
 					{stats.weekCount}
 				</span>
-				<span class="text-xs text-neutral-400">篇</span>
+				<span class="text-xs text-neutral-400">{i18n(I18nKey.fcirclePostUnit)}</span>
 			</div>
 		</div>
 	</div>
@@ -83,12 +85,12 @@ const { stats } = Astro.props;
 			<Icon name="mingcute:document-2-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
-			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">最新动态</span>
+			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">{i18n(I18nKey.fcircleTotal)}</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
 				<span class="text-lg font-bold tabular-nums leading-tight text-neutral-800 dark:text-neutral-200">
 					{stats.totalCount}
 				</span>
-				<span class="text-xs text-neutral-400">篇</span>
+				<span class="text-xs text-neutral-400">{i18n(I18nKey.fcirclePostUnit)}</span>
 			</div>
 		</div>
 	</div>
@@ -104,12 +106,12 @@ const { stats } = Astro.props;
 			<Icon name="mingcute:earth-2-line" class="text-lg" />
 		</div>
 		<div class="flex flex-col min-w-0">
-			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">订阅博主</span>
+			<span class="text-xs text-neutral-500 dark:text-neutral-400 font-medium">{i18n(I18nKey.fcircleSites)}</span>
 			<div class="flex items-baseline gap-1 mt-0.5">
 				<span class="text-lg font-bold tabular-nums leading-tight text-neutral-800 dark:text-neutral-200">
 					{stats.siteCount}
 				</span>
-				<span class="text-xs text-neutral-400">位</span>
+				<span class="text-xs text-neutral-400">{i18n(I18nKey.fcircleSiteUnit)}</span>
 			</div>
 		</div>
 	</div>

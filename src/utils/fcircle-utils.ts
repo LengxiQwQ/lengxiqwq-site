@@ -1,12 +1,16 @@
 import Parser from "rss-parser";
-import { profileConfig, siteConfig } from "../config";
-import { getEnabledFriends } from "../config/friendsConfig";
-import { getEnabledSubscriptions } from "../config/subscriptionConfig";
+import {
+	getEnabledFriends,
+	getEnabledSubscriptions,
+	profileConfig,
+	siteConfig,
+} from "@/config";
 import { getSortedPostsList } from "./content-utils";
 import {
 	getFcircleDatePresentation,
 	getFcircleRelativeDays,
 } from "./fcircle-date-utils";
+import { getAuthorAvatarUrl } from "./schema-image";
 import { url as formatUrl } from "./url-utils";
 
 export interface FcircleItem {
@@ -31,6 +35,17 @@ interface FeedEntry {
 const BROWSER_UA =
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
 
+const REQUEST_TIMEOUT_MS = 6000;
+const MAX_FEED_BYTES = 5 * 1024 * 1024; // 单个 Feed 最大 5MB
+const MAX_ENTRIES_PER_FEED = 15; // 单个 Feed 最多保留 15 篇
+const CONCURRENT_LIMIT = 5; // 抓取并发池上限
+
+const SOURCE_ORDER: Record<string, number> = {
+	self: 0,
+	friend: 1,
+	subscription: 2,
+};
+
 /**
  * 朋友圈黑名单/排除域名列表
  * 即使在友链配置中添加了该站点，也绝不抓取或展示其文章（如发布未来穿越文章恶意置顶的站点）
@@ -44,19 +59,203 @@ function isFcircleBlockedUrl(url?: string): boolean {
 }
 
 /**
- * 通用 Feed 解析函数：支持 RSS 2.0 / 1.0、Atom 以及 JSON Feed
+ * 校验是否为合法 HTTP/HTTPS 链接（防范 javascript: / data: 等 XSS 伪协议）
  */
-async function fetchAndParseFeed(
-	url: string,
+export function isValidHttpUrl(urlString: string | null | undefined): boolean {
+	if (!urlString) return false;
+	try {
+		const parsed = new URL(urlString);
+		return parsed.protocol === "http:" || parsed.protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 判断主机名是否为私有/回环/本地保留地址（防范 SSRF）
+ */
+function isPrivateOrLocalHost(hostname: string): boolean {
+	const host = hostname.toLowerCase().trim();
+	if (
+		host === "localhost" ||
+		host.endsWith(".localhost") ||
+		host.endsWith(".local") ||
+		host === "::1" ||
+		host === "[::1]" ||
+		host === "0.0.0.0"
+	) {
+		return true;
+	}
+
+	const ipv4Match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+	if (ipv4Match) {
+		const a = Number(ipv4Match[1]);
+		const b = Number(ipv4Match[2]);
+		const c = Number(ipv4Match[3]);
+		const d = Number(ipv4Match[4]);
+		if (a > 255 || b > 255 || c > 255 || d > 255) return true;
+		if (a === 127) return true; // 127.0.0.0/8 回环
+		if (a === 10) return true; // 10.0.0.0/8 A类私网
+		if (a === 192 && b === 168) return true; // 192.168.0.0/16 C类私网
+		if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 B类私网
+		if (a === 169 && b === 254) return true; // 169.254.0.0/16 链路本地
+		if (a === 0) return true;
+	}
+
+	return false;
+}
+
+/**
+ * 校验是否为安全的公共网络可访问 URL（用于发起抓取前的 SSRF 防御）
+ */
+export function isSafePublicUrl(urlString: string | null | undefined): boolean {
+	if (!urlString) return false;
+	if (isFcircleBlockedUrl(urlString)) return false;
+	try {
+		const parsed = new URL(urlString);
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+			return false;
+		}
+		if (isPrivateOrLocalHost(parsed.hostname)) {
+			return false;
+		}
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * 安全抓取远程 Feed 文本：校验每一跳重定向（防范 SSRF 重定向穿透），并统一应用 5MB 流量截断与超时控制
+ */
+async function fetchSafeFeedText(
+	initialUrl: string,
+	signal: AbortSignal,
+): Promise<string | null> {
+	let currentUrl = initialUrl;
+	const MAX_REDIRECTS = 3;
+
+	for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount++) {
+		if (!isSafePublicUrl(currentUrl)) {
+			return null;
+		}
+
+		try {
+			const res = await fetch(currentUrl, {
+				headers: {
+					"User-Agent": BROWSER_UA,
+					Accept:
+						"application/rss+xml, application/atom+xml, application/feed+json, application/xml, text/xml, application/json, */*",
+				},
+				signal,
+				redirect: "manual",
+			});
+
+			// 严格校验每一跳重定向，阻断内网与私有目标
+			if ([301, 302, 303, 307, 308].includes(res.status)) {
+				const location = res.headers.get("location");
+				if (!location) return null;
+				const nextUrl = new URL(location, currentUrl).toString();
+				if (!isSafePublicUrl(nextUrl)) {
+					return null;
+				}
+				currentUrl = nextUrl;
+				continue;
+			}
+
+			if (!res.ok || !res.body) {
+				return null;
+			}
+
+			const contentLength = res.headers.get("content-length");
+			if (
+				contentLength &&
+				Number.parseInt(contentLength, 10) > MAX_FEED_BYTES
+			) {
+				return null;
+			}
+
+			const reader = res.body.getReader();
+			const chunks: Uint8Array[] = [];
+			let receivedBytes = 0;
+
+			while (true) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				if (value) {
+					receivedBytes += value.length;
+					if (receivedBytes > MAX_FEED_BYTES) {
+						await reader.cancel();
+						return null;
+					}
+					chunks.push(value);
+				}
+			}
+
+			const decoder = new TextDecoder();
+			let result = "";
+			for (const chunk of chunks) {
+				result += decoder.decode(chunk, { stream: true });
+			}
+			result += decoder.decode();
+			return result;
+		} catch {
+			return null;
+		}
+	}
+
+	return null;
+}
+
+/**
+ * 解析 Feed 原始文本（自动兼容 RSS 2.0 / Atom 与 JSON Feed）
+ */
+async function parseFeedText(
+	rawText: string,
 	parser: Parser,
 ): Promise<FeedEntry[]> {
-	// 1. 优先使用 rss-parser 解析 XML 格式（RSS / Atom）
+	const trimmed = rawText.trim();
+	if (!trimmed) return [];
+
+	// 1. JSON Feed 尝试
+	if (trimmed.startsWith("{")) {
+		try {
+			const json = JSON.parse(trimmed);
+			if (Array.isArray(json.items)) {
+				const entries: FeedEntry[] = [];
+				for (const item of json.items) {
+					if (entries.length >= MAX_ENTRIES_PER_FEED) break;
+					const link = item.url || item.id;
+					const dateStr = item.date_published || item.date_modified;
+					if (item.title && link && dateStr && isValidHttpUrl(link)) {
+						const pubDate = new Date(dateStr);
+						if (!Number.isNaN(pubDate.getTime())) {
+							entries.push({
+								title: String(item.title).trim(),
+								link: String(link).trim(),
+								pubDate,
+								excerpt: item.summary
+									? String(item.summary).substring(0, 150)
+									: undefined,
+							});
+						}
+					}
+				}
+				if (entries.length > 0) return entries;
+			}
+		} catch {
+			// 非有效 JSON，回退至 XML 解析
+		}
+	}
+
+	// 2. RSS / Atom XML 解析
 	try {
-		const feed = await parser.parseURL(url);
+		const feed = await parser.parseString(trimmed);
 		const entries: FeedEntry[] = [];
-		for (const item of feed.items) {
+		for (const item of feed.items || []) {
+			if (entries.length >= MAX_ENTRIES_PER_FEED) break;
 			const dateStr = item.pubDate || item.date || item.updated;
-			if (item.title && item.link && dateStr) {
+			if (item.title && item.link && dateStr && isValidHttpUrl(item.link)) {
 				const pubDate = new Date(dateStr);
 				if (!Number.isNaN(pubDate.getTime())) {
 					entries.push({
@@ -70,59 +269,91 @@ async function fetchAndParseFeed(
 				}
 			}
 		}
-		if (entries.length > 0) return entries;
+		return entries;
 	} catch {
-		// rss-parser 失败，继续尝试兜底 JSON Feed 或直接 fetch
+		return [];
 	}
+}
 
-	// 2. 兜底尝试 JSON Feed 格式
-	try {
-		const res = await fetch(url, {
-			headers: {
-				"User-Agent": BROWSER_UA,
-				Accept:
-					"application/feed+json, application/json, application/xml, text/xml, */*",
-			},
-			signal: AbortSignal.timeout(6000),
-		});
+/**
+ * 通用 Feed 抓取与解析函数
+ */
+async function fetchAndParseFeed(
+	feedUrl: string,
+	parser: Parser,
+	signal: AbortSignal,
+): Promise<FeedEntry[]> {
+	const rawText = await fetchSafeFeedText(feedUrl, signal);
+	if (!rawText) return [];
+	return parseFeedText(rawText, parser);
+}
 
-		if (res.ok) {
-			const text = await res.text();
-			if (text.trim().startsWith("{")) {
-				const json = JSON.parse(text);
-				if (Array.isArray(json.items)) {
-					const entries: FeedEntry[] = [];
-					for (const item of json.items) {
-						const link = item.url || item.id;
-						const dateStr = item.date_published || item.date_modified;
-						if (item.title && link && dateStr) {
-							const pubDate = new Date(dateStr);
-							if (!Number.isNaN(pubDate.getTime())) {
-								entries.push({
-									title: item.title.trim(),
-									link: link.trim(),
-									pubDate,
-									excerpt: item.summary
-										? String(item.summary).substring(0, 150)
-										: undefined,
-								});
-							}
-						}
-					}
-					return entries;
-				}
+/**
+ * 当未显式指定 feedUrl 时，依序轻量嗅探常用 RSS/Atom 规范路径，首个成功者即作为结果并终止后续探测
+ */
+async function discoverAndFetchFeed(
+	siteUrl: string,
+	parser: Parser,
+	signal: AbortSignal,
+): Promise<FeedEntry[]> {
+	if (!isSafePublicUrl(siteUrl)) {
+		return [];
+	}
+	const base = siteUrl.replace(/\/+$/, "");
+	const candidates = [
+		`${base}/atom.xml`,
+		`${base}/rss.xml`,
+		`${base}/feed/`,
+		`${base}/feed.xml`,
+		`${base}/index.xml`,
+	];
+
+	for (const candidateUrl of candidates) {
+		if (signal.aborted) break;
+		try {
+			const entries = await fetchAndParseFeed(candidateUrl, parser, signal);
+			if (entries && entries.length > 0) {
+				return entries;
 			}
+		} catch {
+			// 单个探测路径失败，继续依序探测下一个
 		}
-	} catch {
-		// 忽略错误
 	}
 
 	return [];
 }
 
+/**
+ * 轻量级并发池执行器
+ */
+async function mapConcurrent<T, R>(
+	items: T[],
+	concurrency: number,
+	fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let nextIndex = 0;
+
+	async function worker() {
+		while (nextIndex < items.length) {
+			const index = nextIndex++;
+			results[index] = await fn(items[index]);
+		}
+	}
+
+	const workers = Array.from(
+		{ length: Math.min(concurrency, items.length) },
+		() => worker(),
+	);
+	await Promise.all(workers);
+	return results;
+}
+
+/**
+ * 聚合全站朋友圈动态：包含博主自身本地文章、启用的友链博客文章、独立订阅源文章
+ */
 export async function getFcircleItems(): Promise<FcircleItem[]> {
 	const parser = new Parser({
-		timeout: 6000,
 		headers: {
 			"User-Agent": BROWSER_UA,
 			Accept:
@@ -137,12 +368,8 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 
 	// 1. 本地博主文章（0 外部网络依赖，离线可用且构建即最新）
 	try {
-		const selfAvatar =
-			profileConfig.avatarUrl ||
-			(profileConfig.avatar?.startsWith("http") ||
-			profileConfig.avatar?.startsWith("/")
-				? profileConfig.avatar
-				: `${siteConfig.site_url.replace(/\/$/, "")}/${profileConfig.avatar || "avatar.webp"}`);
+		const authorAvatar = await getAuthorAvatarUrl();
+		const selfAvatar = authorAvatar || "/favicon/favicon.ico";
 
 		const localPosts = await getSortedPostsList();
 		for (const post of localPosts) {
@@ -163,7 +390,7 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 		console.warn("[Fcircle] Failed to load local self posts:", err);
 	}
 
-	// 2. 启用的友链列表（筛选博客分类，并排除禁用朋友圈或处于黑名单的站点）
+	// 2. 启用的友链列表（排除显式标记 fcircle === false 或黑名单站点的条目）
 	const friends = getEnabledFriends()
 		.filter(
 			(f) =>
@@ -180,113 +407,118 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 			sourceType: "friend" as const,
 		}));
 
-	// 3. 启用的独立订阅列表（不展示在友链页面，但文章动态聚合到朋友圈）
+	// 3. 启用的独立订阅源（支持 feedUrl 自动提取 origin 与默认 favicon）
 	const subscriptions = getEnabledSubscriptions()
 		.filter(
 			(s) => !isFcircleBlockedUrl(s.siteurl) && !isFcircleBlockedUrl(s.feedUrl),
 		)
-		.map((s) => ({
-			title: s.title,
-			siteurl: s.siteurl || s.feedUrl,
-			imgurl:
-				s.imgurl ||
-				(s.siteurl
-					? `${s.siteurl.replace(/\/$/, "")}/favicon.ico`
-					: "/favicon/favicon.ico"),
-			feedUrl: s.feedUrl,
-			tags: s.tags && s.tags.length > 0 ? s.tags : ["订阅"],
-			sourceType: "subscription" as const,
-		}));
-
-	const allSources = [...friends, ...subscriptions];
-
-	const promises = allSources.map(async (source) => {
-		// 再次确保黑名单域名绝对不会发起网络请求
-		if (
-			isFcircleBlockedUrl(source.siteurl) ||
-			isFcircleBlockedUrl(source.feedUrl)
-		) {
-			return;
-		}
-
-		// 若为友链，严格只在“博客”分类中抓取朋友圈动态，排除导航、工具等其他分类
-		if (source.sourceType === "friend") {
-			const isBlog = source.tags?.some(
-				(tag) => tag.includes("博客") || tag.toLowerCase().includes("blog"),
-			);
-			if (!isBlog) return;
-		}
-
-		const cleanFeedUrl = source.feedUrl?.trim();
-		const base = source.siteurl.replace(/\/+$/, "");
-		const urlsToTry = cleanFeedUrl
-			? [cleanFeedUrl]
-			: [
-					`${base}/atom.xml`,
-					`${base}/rss.xml`,
-					`${base}/feed/`,
-					`${base}/feed.xml`,
-				];
-
-		for (const url of urlsToTry) {
-			try {
-				const entries = await fetchAndParseFeed(url, parser);
-				if (entries.length > 0) {
-					for (const entry of entries) {
-						items.push({
-							friendName: source.title,
-							friendAvatar: source.imgurl,
-							friendUrl: source.siteurl,
-							title: entry.title,
-							link: entry.link,
-							pubDate: entry.pubDate,
-							excerpt: entry.excerpt,
-							sourceType: source.sourceType,
-							tags: source.tags,
-						});
-					}
-					// 成功抓取后跳出尝试循环
-					return;
+		.map((s) => {
+			let derivedSiteUrl = s.siteurl;
+			if (!derivedSiteUrl && s.feedUrl) {
+				try {
+					derivedSiteUrl = new URL(s.feedUrl).origin;
+				} catch {
+					derivedSiteUrl = s.feedUrl;
 				}
-			} catch {
-				// 发生异常时继续尝试下一个备选地址
 			}
+			const finalSiteUrl = derivedSiteUrl || "";
+			const defaultFavicon = finalSiteUrl
+				? `${finalSiteUrl.replace(/\/+$/, "")}/favicon.ico`
+				: "/favicon/favicon.ico";
 
-			// 如果是用户指定的特定URL失败，或者所有猜测的URL都失败了，输出警告
-			if (url === source.feedUrl || url === urlsToTry[urlsToTry.length - 1]) {
-				console.warn(
-					`[Fcircle] Failed to fetch feed for ${source.title} (${url})`,
+			return {
+				title: s.title,
+				siteurl: finalSiteUrl,
+				imgurl: s.imgurl || defaultFavicon,
+				feedUrl: s.feedUrl,
+				tags: s.tags && s.tags.length > 0 ? s.tags : undefined,
+				sourceType: "subscription" as const,
+			};
+		});
+
+	const remoteSources = [...friends, ...subscriptions];
+
+	// 并发池控制抓取各远程源，单源硬超时 6 秒
+	await mapConcurrent(remoteSources, CONCURRENT_LIMIT, async (source) => {
+		try {
+			if (
+				isFcircleBlockedUrl(source.siteurl) ||
+				isFcircleBlockedUrl(source.feedUrl)
+			) {
+				return;
+			}
+			const siteSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+			const cleanFeedUrl = source.feedUrl?.trim();
+			let entries: FeedEntry[] = [];
+
+			if (cleanFeedUrl) {
+				entries = await fetchAndParseFeed(cleanFeedUrl, parser, siteSignal);
+			} else if (source.siteurl) {
+				entries = await discoverAndFetchFeed(
+					source.siteurl,
+					parser,
+					siteSignal,
 				);
 			}
+
+			if (entries.length > 0) {
+				for (const entry of entries) {
+					items.push({
+						friendName: source.title,
+						friendAvatar: source.imgurl,
+						friendUrl: source.siteurl,
+						title: entry.title,
+						link: entry.link,
+						pubDate: entry.pubDate,
+						excerpt: entry.excerpt,
+						sourceType: source.sourceType,
+						tags: source.tags,
+					});
+				}
+			}
+		} catch {
+			// 单站抓取异常不中断全站构建
 		}
 	});
 
-	await Promise.allSettled(promises);
+	// 按时间倒序排序，遇到时间戳一致时执行确定性次级排序（类型 self > friend > sub -> 名称 -> 链接）
+	items.sort((a, b) => {
+		const diff = b.pubDate.getTime() - a.pubDate.getTime();
+		if (diff !== 0) return diff;
 
-	// 按时间倒序排序
-	items.sort((a, b) => b.pubDate.getTime() - a.pubDate.getTime());
+		const orderA = SOURCE_ORDER[a.sourceType || "friend"] ?? 99;
+		const orderB = SOURCE_ORDER[b.sourceType || "friend"] ?? 99;
+		if (orderA !== orderB) return orderA - orderB;
 
-	// 过滤无效日期、未来时间（拦截2053年等时空穿越异常文章置顶）以及黑名单链接
-	const MAX_FUTURE_BUFFER_MS = 10 * 60 * 1000; // 允许10分钟时钟偏差
+		const nameDiff = (a.friendName || "").localeCompare(b.friendName || "");
+		if (nameDiff !== 0) return nameDiff;
+
+		return (a.link || "").localeCompare(b.link || "");
+	});
+
+	// 数据合规清洗：过滤无效日期、未来穿越文章（允许 10 分钟时钟误差）、黑名单域名、非 HTTP(S) 外链
+	const MAX_FUTURE_BUFFER_MS = 10 * 60 * 1000;
 	const currentTimestamp = Date.now();
 	const validItems = items.filter((item) => {
 		const time = item.pubDate.getTime();
 		if (Number.isNaN(time)) return false;
-		// 拦截发布时间处于未来的文章，防止时间错误或恶意未来时间霸占置顶
 		if (time > currentTimestamp + MAX_FUTURE_BUFFER_MS) {
-			console.warn(
-				`[Fcircle] Filtered out future-dated post: "${item.title}" (${item.link}) dated ${item.pubDate.toISOString()}`,
-			);
 			return false;
 		}
-		// 拦截黑名单站点的文章链接与博客地址
 		if (isFcircleBlockedUrl(item.link) || isFcircleBlockedUrl(item.friendUrl)) {
 			return false;
+		}
+		if (!item.link || !item.title) return false;
+		if (!isValidHttpUrl(item.link)) {
+			// 允许博主自身站内相对路径 /posts/...
+			if (item.sourceType !== "self" || !item.link.startsWith("/")) {
+				return false;
+			}
 		}
 		return true;
 	});
 
-	// 根据文章链接去重，防止相同文章重复显示
+	// 根据文章链接去重
 	const seenLinks = new Set<string>();
 	const uniqueItems: FcircleItem[] = [];
 	for (const item of validItems) {
@@ -297,7 +529,7 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 		}
 	}
 
-	// 限制最多 100 篇最新动态
+	// 限制最多保留 100 篇最新动态
 	return uniqueItems.slice(0, 100);
 }
 
@@ -318,17 +550,22 @@ export interface FcircleStats {
 
 /**
  * 将朋友圈文章按站点时区的自然日聚类为时间线分组。
- * 服务端构建与浏览器端都使用同一套时区算法，避免部署环境的 UTC 时区影响结果。
  */
 export function groupFcircleByDate(
 	items: FcircleItem[],
 	now: Date = new Date(),
 	timeZone: string = siteConfig.timezone || "UTC",
+	lang = "zh-CN",
 ): FcircleDateGroup[] {
 	const groupsMap = new Map<string, FcircleDateGroup>();
 
 	for (const item of items) {
-		const dateInfo = getFcircleDatePresentation(item.pubDate, now, timeZone);
+		const dateInfo = getFcircleDatePresentation(
+			item.pubDate,
+			now,
+			timeZone,
+			lang,
+		);
 
 		if (!groupsMap.has(dateInfo.dateKey)) {
 			groupsMap.set(dateInfo.dateKey, {
@@ -348,7 +585,6 @@ export function groupFcircleByDate(
 
 /**
  * 计算朋友圈动态核心统计指标。
- * “今日”和“近 7 天”均按站点时区的自然日计算，避免 DST 与构建机时区造成偏移。
  */
 export function getFcircleStats(
 	items: FcircleItem[],
@@ -367,7 +603,19 @@ export function getFcircleStats(
 		if (relativeDays >= 0 && relativeDays <= 6) {
 			weekCount++;
 		}
-		sites.add(item.friendUrl || item.friendName);
+
+		if (item.sourceType === "self") {
+			sites.add("__self__");
+		} else if (item.friendUrl) {
+			try {
+				const origin = new URL(item.friendUrl).hostname.toLowerCase();
+				sites.add(origin || item.friendName.toLowerCase());
+			} catch {
+				sites.add(item.friendName.toLowerCase());
+			}
+		} else {
+			sites.add(item.friendName.toLowerCase());
+		}
 	}
 
 	return {

@@ -1,6 +1,10 @@
-/* 朋友圈页面样式增强 */
+/* 朋友圈页面样式 */
 
-/* 纵向贯穿细轨道 */
+#timeline-view.hidden,
+#grid-view.hidden {
+	display: none !important;
+}
+
 .fcircle-track {
 	position: absolute;
 	left: 1rem;
@@ -23,10 +27,17 @@
 	}
 }
 
-/* 隐藏视图辅助类 */
-#timeline-view.hidden,
-#grid-view.hidden,
-#fcircle-timeline-view.hidden,
-#fcircle-list-view.hidden {
-	display: none !important;
+.fcircle-date-marker {
+	transition: all 0.3s ease;
+}
+
+.fcircle-timeline-card {
+	transition:
+		border-color 0.3s ease,
+		box-shadow 0.3s ease,
+		transform 0.3s ease;
+}
+
+.fcircle-timeline-card:hover {
+	transform: translateY(-1px);
 }

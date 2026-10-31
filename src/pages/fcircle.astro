@@ -11,6 +11,7 @@ import {
 	getFcircleItems,
 	getFcircleStats,
 	groupFcircleByDate,
+	isValidHttpUrl,
 } from "@/utils/fcircle-utils";
 import "@/styles/pages/common.css";
 import "@/styles/pages/fcircle.css";
@@ -23,10 +24,11 @@ if (!siteConfig.pages.fcircle) {
 // 获取友链与订阅文章
 const items = await getFcircleItems();
 
-// 所有自然日判断都以站点配置时区为唯一真源，不依赖 GitHub Actions 构建机时区
+// 遵循站点配置时区与语言
 const fcircleTimeZone = siteConfig.timezone || "UTC";
+const lang = siteConfig.lang || "zh_CN";
 const buildNow = new Date();
-const dateGroups = groupFcircleByDate(items, buildNow, fcircleTimeZone);
+const dateGroups = groupFcircleByDate(items, buildNow, fcircleTimeZone, lang);
 const stats = getFcircleStats(items, buildNow, fcircleTimeZone);
 
 // 页面标题和描述
@@ -118,7 +120,7 @@ const description = i18n(I18nKey.fcircleDescription);
                     <!-- 节点圆环 Marker -->
                     <div
                       class:list={[
-                        "fcircle-date-marker relative z-10 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 transition-all duration-300 shrink-0",
+                        "fcircle-date-marker relative z-10 w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border-2 shrink-0",
                         isToday
                           ? "border-(--primary) bg-(--primary) text-white shadow-md shadow-(--primary)/20 ring-4 ring-(--primary)/15"
                           : isYesterday
@@ -173,11 +175,16 @@ const description = i18n(I18nKey.fcircleDescription);
           class="fcircle-grid mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hidden transition-opacity duration-300"
         >
           {items.map((item) => {
-            const dateStr = formatFcircleDate(item.pubDate, fcircleTimeZone);
+            const dateStr = formatFcircleDate(item.pubDate, fcircleTimeZone, lang);
+            const safeLink =
+              isValidHttpUrl(item.link) ||
+              (item.sourceType === "self" && item.link.startsWith("/"))
+                ? item.link
+                : "#";
 
             return (
               <a
-                href={item.link}
+                href={safeLink}
                 target="_blank"
                 rel="noopener noreferrer"
                 class="group flex flex-col justify-start p-4 sm:p-5 rounded-2xl border border-(--line-divider) bg-(--card-bg) hover:border-(--primary) transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 relative overflow-hidden"
@@ -204,13 +211,13 @@ const description = i18n(I18nKey.fcircleDescription);
 
                   {item.sourceType === "subscription" && (
                     <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/10 text-(--primary) font-normal border border-(--primary)/20 shrink-0">
-                      {item.tags?.[0] || "订阅"}
+                      {item.tags?.[0] || i18n(I18nKey.fcircleSubscription)}
                     </span>
                   )}
 
                   {item.sourceType === "self" && (
                     <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/15 text-(--primary) font-medium border border-(--primary)/30 shrink-0">
-                      博主
+                      {i18n(I18nKey.fcircleAuthor)}
                     </span>
                   )}
 
