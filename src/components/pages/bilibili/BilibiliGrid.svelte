@@ -1,6 +1,7 @@
 <script lang="ts">
 import ClientPagination from "@components/common/ClientPagination.svelte";
 import { untrack } from "svelte";
+import Select from "@/components/common/Select.svelte";
 import TabNav from "@/components/common/TabNav.svelte";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
@@ -32,6 +33,25 @@ let sortBy = $state<"rating-desc" | "rating-asc" | "date-desc" | "date-asc">(
 );
 let currentPage = $state(1);
 let selectedAnime = $state<StandardizedAnime | null>(null);
+
+const sortOptions = $derived([
+	{
+		value: "rating-desc" as const,
+		label: i18n(I18nKey.animeRatingDesc),
+	},
+	{
+		value: "rating-asc" as const,
+		label: i18n(I18nKey.animeRatingAsc),
+	},
+	{
+		value: "date-desc" as const,
+		label: i18n(I18nKey.animeDateDesc),
+	},
+	{
+		value: "date-asc" as const,
+		label: i18n(I18nKey.animeDateAsc),
+	},
+]);
 
 // season_type 到 i18n key 的映射
 const SEASON_TYPE_I18N: Record<number, I18nKey> = {
@@ -155,16 +175,12 @@ function closeDetail() {
 					class="w-full rounded-xl border border-(--line-divider) bg-(--card-bg) py-2.5 pl-10 pr-4 text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 outline-none transition-colors focus:border-(--primary)"
 				/>
 			</div>
-			<select
-				value={sortBy}
-				onchange={(e) => setSort((e.target as HTMLSelectElement).value as typeof sortBy)}
-				class="rounded-xl border border-(--line-divider) bg-(--card-bg) px-3 text-sm text-neutral-600 dark:text-neutral-400 outline-none cursor-pointer shrink-0"
-			>
-				<option value="rating-desc">{i18n(I18nKey.animeRatingDesc)}</option>
-				<option value="rating-asc">{i18n(I18nKey.animeRatingAsc)}</option>
-				<option value="date-desc">{i18n(I18nKey.animeDateDesc)}</option>
-				<option value="date-asc">{i18n(I18nKey.animeDateAsc)}</option>
-			</select>
+			<Select
+				bind:value={sortBy}
+				options={sortOptions}
+				class="py-2.5 shrink-0"
+				onChange={() => resetPage()}
+			/>
 		</div>
 
 		<!-- 类型筛选 -->

@@ -1,16 +1,35 @@
 <script lang="ts">
+import Select from "@/components/common/Select.svelte";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
-import type { SteamGameItem } from "@/types/steamConfig";
+import type {
+	SteamGameItem,
+	SteamLevelInfo,
+	SteamPlayerSummary,
+	SteamStats,
+} from "@/types/steamConfig";
 import SteamCard from "./SteamCard.svelte";
+import SteamDashboard from "./SteamDashboard.svelte";
 
 interface Props {
 	games: SteamGameItem[];
 	recentGames: SteamGameItem[];
 	pageSize?: number;
+	profile?: SteamPlayerSummary;
+	stats?: SteamStats;
+	levelInfo?: SteamLevelInfo;
+	showStats?: boolean;
 }
 
-const { games = [], recentGames = [], pageSize = 24 }: Props = $props();
+const {
+	games = [],
+	recentGames = [],
+	pageSize = 24,
+	profile,
+	stats,
+	levelInfo,
+	showStats = true,
+}: Props = $props();
 
 type TabType = "all" | "recent" | "hall_of_fame";
 type SortType = "playtime_desc" | "recent_desc" | "name_asc";
@@ -19,6 +38,21 @@ let currentTab = $state<TabType>("all");
 let searchQuery = $state("");
 let currentSort = $state<SortType>("playtime_desc");
 let displayLimit = $state(pageSize);
+
+const sortOptions = $derived([
+	{
+		value: "playtime_desc" as const,
+		label: i18n(I18nKey.steamSortPlaytimeDesc),
+	},
+	{
+		value: "recent_desc" as const,
+		label: i18n(I18nKey.steamSortRecentDesc),
+	},
+	{
+		value: "name_asc" as const,
+		label: i18n(I18nKey.steamSortNameAsc),
+	},
+]);
 
 // 百小时殿堂游戏
 const hallOfFameGames = $derived(
@@ -80,8 +114,12 @@ function handleTabChange(tab: TabType) {
 }
 </script>
 
-<!-- 工具栏：Tab 筛选 + 搜索框 + 排序 -->
-<div class="card-base p-4 md:p-5 mb-6 rounded-2xl">
+<!-- 整合控制面板：玩家数据看板 + Tab 筛选/搜索/排序工具栏 -->
+<div class="card-base card-toolbar-panel !overflow-visible p-5 md:p-6 mb-6 rounded-2xl flex flex-col gap-5 md:gap-6 relative z-30">
+	{#if showStats && profile && stats}
+		<SteamDashboard {profile} {stats} {levelInfo} />
+	{/if}
+
 	<div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
 		<!-- 分类 Tab 胶囊 (带按压弹性与平滑过渡动效) -->
 		<div class="flex items-center gap-1.5 p-1 bg-(--btn-regular-bg) rounded-xl overflow-x-auto">
@@ -151,14 +189,13 @@ function handleTabChange(tab: TabType) {
 			</div>
 
 			<!-- 排序下拉 -->
-			<select
+			<Select
 				bind:value={currentSort}
-				class="px-3 py-1.5 text-xs md:text-sm rounded-xl bg-(--card-bg) border border-(--line-divider) text-neutral-700 dark:text-neutral-300 focus:outline-hidden focus:border-(--primary) cursor-pointer shadow-2xs"
-			>
-				<option value="playtime_desc">{i18n(I18nKey.steamSortPlaytimeDesc)}</option>
-				<option value="recent_desc">{i18n(I18nKey.steamSortRecentDesc)}</option>
-				<option value="name_asc">{i18n(I18nKey.steamSortNameAsc)}</option>
-			</select>
+				options={sortOptions}
+				onChange={() => {
+					displayLimit = pageSize;
+				}}
+			/>
 		</div>
 	</div>
 </div>
@@ -196,6 +233,10 @@ function handleTabChange(tab: TabType) {
 {/if}
 
 <style>
+	.card-toolbar-panel {
+		overflow: visible !important;
+	}
+
 	.steam-grid-wrapper {
 		animation: steamGridFade 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 	}

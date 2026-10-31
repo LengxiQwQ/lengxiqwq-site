@@ -40,6 +40,7 @@ type ProjectLink = {
 	label: string;
 	icon: string;
 	value: string;
+	disabled?: boolean;
 };
 
 type ProjectData = {
@@ -135,7 +136,8 @@ const projectsCollection: ContentCollection<ProjectData> = defineCollection({
 				z.object({
 					label: z.string(),
 					icon: z.string().optional().default(""),
-					value: z.string(),
+					value: z.string().optional().default(""),
+					disabled: z.boolean().optional().default(false),
 				}),
 			)
 			.optional()

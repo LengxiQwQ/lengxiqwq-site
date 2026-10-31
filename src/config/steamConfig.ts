@@ -10,9 +10,6 @@ export const steamConfig: SteamConfig = {
 	// Steam Web API 密钥（建议在私有内容仓或环境变量中配置）
 	apiKey: "",
 
-	// 隐藏游玩总时长少于此分钟数的游戏
-	hideGamesUnderMinutes: 10,
-
 	// 是否显示顶部玩家数据看板
 	showStats: true,
 

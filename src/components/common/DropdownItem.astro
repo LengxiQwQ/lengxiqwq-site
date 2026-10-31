@@ -8,9 +8,10 @@ interface Props {
 	target?: string;
 	isActive?: boolean;
 	isLast?: boolean;
+	disabled?: boolean;
 	class?: string;
 	onclick?: string;
-	[key: string]: any;
+	[key: string]: unknown;
 }
 
 const {
@@ -18,26 +19,32 @@ const {
 	target,
 	isActive = false,
 	isLast = false,
+	disabled = false,
 	class: className,
 	onclick,
 	...rest
 } = Astro.props;
 
 const baseClasses =
-	"flex transition whitespace-nowrap items-center justify-start! w-full btn-plain scale-animation rounded-lg h-9 px-3 font-medium active:scale-95";
+	"flex transition whitespace-nowrap items-center justify-start! w-full rounded-lg h-9 px-3 font-medium";
+const interactiveClasses = disabled
+	? "btn-disabled"
+	: "btn-plain scale-animation active:scale-95";
 const spacingClass = isLast ? "" : "mb-0.5";
 const activeClass = isActive ? "current-theme-btn" : "";
 const allClasses =
-	`${baseClasses} ${spacingClass} ${activeClass} ${className || ""}`.trim();
+	`${baseClasses} ${interactiveClasses} ${spacingClass} ${activeClass} ${className || ""}`.trim();
 
-const Tag = href ? "a" : "button";
+const Tag = href && !disabled ? "a" : "button";
 ---
 
 <Tag 
-	href={href}
-	target={target}
+	href={disabled ? undefined : href}
+	target={disabled ? undefined : target}
+	disabled={disabled ? true : undefined}
+	aria-disabled={disabled ? "true" : undefined}
 	class={allClasses}
-	onclick={onclick}
+	onclick={disabled ? undefined : onclick}
 	{...rest}
 >
 	<slot />

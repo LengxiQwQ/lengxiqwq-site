@@ -19,7 +19,7 @@ interface Props {
 	tags?: string[];
 	published?: Date;
 	status?: string;
-	link?: { label: string; icon: string; value: string }[];
+	link?: { label: string; icon: string; value?: string; disabled?: boolean }[];
 }
 
 const {
@@ -163,6 +163,33 @@ const enhancedLinks = link.map((r) => {
     <!-- 底部：link 按钮 + 查看详情（右下角，底对齐不随描述高度） -->
     <div class="mt-auto pt-4 flex flex-wrap items-center gap-2">
       {enhancedLinks.map((r) => {
+        if (r.disabled) {
+          return (
+            <span
+              class="btn-disabled inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border"
+              aria-disabled="true"
+              title="暂未开放"
+            >
+              {r.resolvedIcon.kind === "icon" && (
+                <Icon name={r.resolvedIcon.value} class="text-sm" />
+              )}
+              {r.resolvedIcon.kind === "image" && (
+                <img
+                  src={r.resolvedIcon.value}
+                  alt=""
+                  class="w-3.5 h-3.5 object-contain"
+                  loading="lazy"
+                  decoding="async"
+                />
+              )}
+              {r.resolvedIcon.kind === "letter" && (
+                <span class="text-sm font-bold">{r.resolvedIcon.value}</span>
+              )}
+              <span>{r.label}</span>
+            </span>
+          );
+        }
+
         if (r.githubRepo) {
           return (
             <a

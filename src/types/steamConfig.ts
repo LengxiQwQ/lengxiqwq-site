@@ -71,8 +71,10 @@ export interface SteamConfig {
 	steamId: string;
 	/** Steam Web API Key（请在私有内容仓或环境变量中配置，避免提交到公开仓） */
 	apiKey?: string;
-	/** 隐藏游戏时间少于多少分钟的游戏（避免大量挂卡游戏污染列表，默认 10） */
-	hideGamesUnderMinutes?: number;
+	/** 明确排除的游戏 AppID 列表（不拉取、不展示） */
+	excludeAppIds?: number[];
+	/** 明确排除的游戏名称或关键词列表（模糊匹配，不区分大小写） */
+	excludeGames?: string[];
 	/** 是否显示顶部数据看板卡片 */
 	showStats?: boolean;
 	/** 是否在数据看板展示最近游玩板块 */

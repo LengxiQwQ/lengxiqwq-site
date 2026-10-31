@@ -20,6 +20,7 @@ export type SiteSwitcherItem = {
 	url: string;
 	key?: string;
 	external?: boolean;
+	disabled?: boolean;
 };
 
 export type SiteSwitcherConfig = {

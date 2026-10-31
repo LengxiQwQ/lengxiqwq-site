@@ -1,7 +1,6 @@
 ---
 import Comment from "@components/comment/index.astro";
 import { Icon } from "astro-icon/components";
-import SteamDashboard from "@/components/pages/steam/SteamDashboard.astro";
 import SteamGrid from "@/components/pages/steam/SteamGrid.svelte";
 import { commentConfig, siteConfig } from "@/config";
 import { steamConfig } from "@/config/steamConfig";
@@ -40,23 +39,16 @@ const isCommentEnabled = commentConfig?.type && commentConfig.type !== "none";
 			</div>
 		</header>
 
-		<!-- 玩家数据看板与近期游玩统计 -->
-		{
-			steamConfig?.showStats !== false && steamData.profile && (
-				<SteamDashboard
-					profile={steamData.profile}
-					stats={steamData.stats}
-					levelInfo={steamData.levelInfo}
-				/>
-			)
-		}
-
-		<!-- 游戏交互网格（Tab筛选、搜索、排序、分页） -->
+		<!-- 整合控制面板与游戏交互网格（玩家数据看板 + 筛选/搜索/排序合并为单一大卡片） -->
 		<SteamGrid
 			client:load
 			games={steamData.games}
 			recentGames={steamData.recentGames}
 			pageSize={steamConfig?.pageSize || 60}
+			profile={steamData.profile}
+			stats={steamData.stats}
+			levelInfo={steamData.levelInfo}
+			showStats={steamConfig?.showStats !== false}
 		/>
 
 		<!-- 评论区 -->

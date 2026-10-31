@@ -438,8 +438,40 @@ html {
         @apply transition-colors duration-150 flex items-center justify-center bg-(--card-bg) hover:bg-(--btn-card-bg-hover)
         active:bg-(--btn-card-bg-active)
     }
-    .btn-card.disabled {
-        @apply pointer-events-none text-black/10 dark:text-white/10
+    /* 全局通用禁用按钮/链接样式规范 */
+    .btn-disabled,
+    :is(button, a, span, .btn, .btn-plain, .btn-regular, .btn-card):is(:disabled, [aria-disabled="true"], .disabled) {
+        opacity: 0.45 !important;
+        color: rgb(156 163 175) !important;
+        border-color: rgba(156, 163, 175, 0.3) !important;
+        background-color: rgba(156, 163, 175, 0.08) !important;
+        cursor: not-allowed !important;
+        pointer-events: auto !important;
+        user-select: none !important;
+        transform: none !important;
+        box-shadow: none !important;
+        text-decoration: none !important;
+    }
+    :is(button, a, span, .btn, .btn-plain, .btn-regular, .btn-card):is(:disabled, [aria-disabled="true"], .disabled):hover {
+        background-color: rgba(156, 163, 175, 0.08) !important;
+        color: rgb(156 163 175) !important;
+        border-color: rgba(156, 163, 175, 0.3) !important;
+    }
+    :is(button, a, span, .btn, .btn-plain, .btn-regular, .btn-card):is(:disabled, [aria-disabled="true"], .disabled) * {
+        color: inherit !important;
+        fill: currentColor !important;
+        pointer-events: none !important;
+    }
+
+    :is(.dark, .dark *) :is(button, a, span, .btn, .btn-plain, .btn-regular, .btn-card):is(:disabled, [aria-disabled="true"], .disabled) {
+        color: rgb(115 115 115) !important;
+        border-color: rgba(115, 115, 115, 0.25) !important;
+        background-color: rgba(255, 255, 255, 0.04) !important;
+    }
+    :is(.dark, .dark *) :is(button, a, span, .btn, .btn-plain, .btn-regular, .btn-card):is(:disabled, [aria-disabled="true"], .disabled):hover {
+        background-color: rgba(255, 255, 255, 0.04) !important;
+        color: rgb(115 115 115) !important;
+        border-color: rgba(115, 115, 115, 0.25) !important;
     }
     .btn-plain {
         @apply transition-colors duration-150 relative flex items-center justify-center bg-none;

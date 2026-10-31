@@ -221,17 +221,18 @@ const hasSiteSwitcher =
                     <div class="float-panel p-2 dropdown-content min-w-48" role="none">
                         {siteSwitcher.items?.map((item, idx) => (
                             <DropdownItem
-                                href={item.url.startsWith("http") ? item.url : url(item.url)}
-                                target={item.external ? "_blank" : undefined}
-                                rel={item.external ? "noopener noreferrer" : undefined}
+                                href={item.disabled ? undefined : (item.url.startsWith("http") ? item.url : url(item.url))}
+                                target={!item.disabled && item.external ? "_blank" : undefined}
+                                rel={!item.disabled && item.external ? "noopener noreferrer" : undefined}
                                 isLast={idx === (siteSwitcher.items?.length || 0) - 1}
+                                disabled={item.disabled}
                                 class="dropdown-item focus-ring-inset h-10 site-option-item"
                                 data-site={item.key || item.url}
                             >
                                 <span>{item.title}</span>
                                 <Icon is:inline name="material-symbols:check-rounded" class="site-check-icon text-[1.1rem] text-(--primary) ml-auto shrink-0 hidden" />
                                 {item.external && (
-                                    <Icon is:inline name="fa7-solid:arrow-up-right-from-square" class="site-external-icon text-[0.75rem] text-25 ml-auto shrink-0" />
+                                    <Icon is:inline name="fa7-solid:arrow-up-right-from-square" class={`site-external-icon text-[0.75rem] ml-auto shrink-0 ${item.disabled ? "text-neutral-400 dark:text-neutral-600" : "text-25"}`} />
                                 )}
                             </DropdownItem>
                         ))}
@@ -433,6 +434,11 @@ function loadButtonScript() {
         const siteOptions = siteSwitcherContainer.querySelectorAll(".site-option-item");
         siteOptions.forEach((opt) => {
             opt.addEventListener("click", (e) => {
+                if (opt.hasAttribute("disabled") || opt.getAttribute("aria-disabled") === "true") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
                 siteSwitcherContainer.classList.remove("is-open");
                 siteSwitcherBtn.setAttribute("aria-expanded", "false");
 
@@ -663,7 +669,8 @@ if (document.readyState === 'loading') {
     .site-switcher-container .dropdown-menu {
         position: absolute;
         top: 100%;
-        left: 0;
+        left: 50%;
+        transform: translateX(-50%);
         padding-top: 0.5rem;
         pointer-events: none;
         z-index: 50;

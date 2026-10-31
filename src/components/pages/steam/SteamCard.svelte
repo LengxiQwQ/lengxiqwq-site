@@ -9,15 +9,30 @@ interface Props {
 
 const { game }: Props = $props();
 
-let imgError = $state(false);
-// 16:9 比例优先使用横版 header 封面
-let currentCover = $state(game.header_url || game.cover_url);
+let attempt = $state(0);
+let loadFailed = $state(false);
+
+const communityIcon = game.img_icon_url
+	? `https://media.steampowered.com/steamcommunity/public/images/apps/${game.appid}/${game.img_icon_url}.jpg`
+	: null;
+
+// 封面候选链：横版 header -> 竖版 cover -> 社区图标
+const candidateUrls = $derived.by(() => {
+	const list: string[] = [];
+	if (game.header_url) list.push(game.header_url);
+	if (game.cover_url && game.cover_url !== game.header_url)
+		list.push(game.cover_url);
+	if (communityIcon && !list.includes(communityIcon)) list.push(communityIcon);
+	return list;
+});
+
+let currentCover = $derived(candidateUrls[attempt] || "");
 
 function handleImageError() {
-	if (!imgError && currentCover !== game.cover_url) {
-		// 若横版 header 不存在，回退到竖版 cover
-		currentCover = game.cover_url;
-		imgError = true;
+	if (attempt < candidateUrls.length - 1) {
+		attempt += 1;
+	} else {
+		loadFailed = true;
 	}
 }
 </script>
@@ -30,16 +45,23 @@ function handleImageError() {
 	title={`${game.name} - ${game.playtime_hours} ${i18n(I18nKey.steamPlaytimeHours)}`}
 >
 	<!-- 封面区域 (16:9 横版纯净展示，不遮挡画面) -->
-	<div class="relative aspect-video w-full overflow-hidden bg-neutral-100 dark:bg-neutral-800">
-		<img
-			src={currentCover}
-			alt={game.name}
-			loading="lazy"
-			decoding="async"
-			referrerpolicy="no-referrer"
-			onerror={handleImageError}
-			class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
-		/>
+	<div class="relative aspect-video w-full overflow-hidden bg-neutral-100 dark:bg-neutral-800 flex items-center justify-center">
+		{#if !loadFailed && currentCover}
+			<img
+				src={currentCover}
+				alt={game.name}
+				loading="lazy"
+				decoding="async"
+				referrerpolicy="no-referrer"
+				onerror={handleImageError}
+				class="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+			/>
+		{:else}
+			<div class="w-full h-full flex flex-col items-center justify-center p-3 text-center bg-gradient-to-br from-neutral-200 to-neutral-300 dark:from-neutral-800 dark:to-neutral-900 text-neutral-400">
+				<span class="text-2xl mb-1">🎮</span>
+				<span class="text-xs font-medium text-neutral-600 dark:text-neutral-300 line-clamp-1">{game.name}</span>
+			</div>
+		{/if}
 
 		<!-- 仅当最近两周活跃时，在左上角展示一个小巧的药丸角标 -->
 		{#if (game.playtime_2weeks_hours || 0) > 0}
