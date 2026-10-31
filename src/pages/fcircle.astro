@@ -13,6 +13,7 @@ import {
 	groupFcircleByDate,
 } from "@/utils/fcircle-utils";
 import "@/styles/pages/common.css";
+import "@/styles/pages/fcircle.css";
 
 // 检查页面是否启用
 if (!siteConfig.pages.fcircle) {
@@ -41,14 +42,14 @@ const description = i18n(I18nKey.fcircleDescription);
   >
     <div class="card-base z-10 px-5 sm:px-9 py-6 relative w-full">
       <!-- 页面标题、描述与视图切换开关 -->
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2 pb-4 border-b border-(--line-divider)">
-        <div class="page-heading mb-0">
-          <div class="page-icon" aria-hidden="true">
+      <div class="flex items-center justify-between gap-3 mb-2 pb-4 border-b border-(--line-divider)">
+        <div class="page-heading flex-nowrap mb-0 min-w-0 flex-1">
+          <div class="page-icon shrink-0" aria-hidden="true">
             <Icon is:inline name="mingcute:moment-line" />
           </div>
-          <div>
-            <h2>{title}</h2>
-            {description && <p>{description}</p>}
+          <div class="min-w-0">
+            <h2 class="truncate text-lg sm:text-2xl font-bold">{title}</h2>
+            {description && <p class="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">{description}</p>}
           </div>
         </div>
 
@@ -56,29 +57,29 @@ const description = i18n(I18nKey.fcircleDescription);
         {items.length > 0 && (
           <div
             id="fcircle-view-switcher"
-            class="flex gap-1 p-1 rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 shrink-0 self-start sm:self-auto select-none"
+            class="flex gap-1 p-1 rounded-xl border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 shrink-0 select-none"
             role="tablist"
             aria-label="视图切换"
           >
             <button
               id="view-timeline"
               type="button"
-              class="fcircle-view-btn px-4 py-1.5 text-sm rounded-lg bg-(--primary) text-white font-medium transition-colors cursor-pointer"
+              class="fcircle-view-btn px-2.5 sm:px-4 py-1 sm:py-1.5 text-xs sm:text-sm rounded-lg bg-(--primary) text-white font-medium transition-colors cursor-pointer"
               data-view="timeline"
               role="tab"
               aria-selected="true"
             >
-              时间线
+              {i18n(I18nKey.fcircleTimeline)}
             </button>
             <button
               id="view-grid"
               type="button"
-              class="fcircle-view-btn px-4 py-1.5 text-sm rounded-lg opacity-60 hover:opacity-100 transition-colors cursor-pointer"
+              class="fcircle-view-btn px-2.5 sm:px-4 py-1 sm:py-1.5 text-xs sm:text-sm rounded-lg opacity-60 hover:opacity-100 transition-colors cursor-pointer"
               data-view="grid"
               role="tab"
               aria-selected="false"
             >
-              平铺
+              {i18n(I18nKey.fcircleGrid)}
             </button>
           </div>
         )}
@@ -91,7 +92,7 @@ const description = i18n(I18nKey.fcircleDescription);
       {items.length === 0 && (
         <div class="flex flex-col items-center justify-center py-16 text-neutral-400 dark:text-neutral-500">
           <Icon is:inline name="mingcute:moment-line" class="text-5xl mb-3 opacity-50" />
-          <div class="text-sm">暂无最新动态，可能是友链没有配置 feedUrl，或文章尚未更新。</div>
+          <div class="text-sm">{i18n(I18nKey.fcircleEmpty)}</div>
         </div>
       )}
 
@@ -100,10 +101,7 @@ const description = i18n(I18nKey.fcircleDescription);
         <div id="timeline-view" class="mt-8 transition-opacity duration-300">
           <div class="relative flex flex-col">
             <!-- 纵向贯穿细轨道 -->
-            <div
-              class="fcircle-track absolute left-4 sm:left-5 top-4 bottom-4 w-0.5 bg-gradient-to-b from-(--line-divider) via-(--line-divider) to-transparent -translate-x-1/2 pointer-events-none"
-              aria-hidden="true"
-            />
+            <div class="fcircle-track" aria-hidden="true" />
 
             <!-- 日期分组列表 -->
             {dateGroups.map((group) => {
@@ -150,7 +148,7 @@ const description = i18n(I18nKey.fcircleDescription);
                       )}
 
                       <span class="text-xs px-2 py-0.5 rounded-full bg-(--btn-regular-bg) text-neutral-600 dark:text-neutral-400 font-medium tabular-nums border border-(--line-divider)">
-                        {group.items.length} 篇更新
+                        {group.items.length} {i18n(I18nKey.fcirclePostsUpdated)}
                       </span>
                     </div>
                   </div>
@@ -210,6 +208,12 @@ const description = i18n(I18nKey.fcircleDescription);
                     </span>
                   )}
 
+                  {item.sourceType === "self" && (
+                    <span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/15 text-(--primary) font-medium border border-(--primary)/30 shrink-0">
+                      博主
+                    </span>
+                  )}
+
                   <span class="text-neutral-300 dark:text-neutral-600 shrink-0">·</span>
                   <span class="text-neutral-400 dark:text-neutral-500 shrink-0 tabular-nums">
                     {dateStr}
@@ -232,67 +236,19 @@ const description = i18n(I18nKey.fcircleDescription);
           })}
         </div>
       )}
+
+      <!-- 底部构建抓取说明 -->
+      {items.length > 0 && (
+        <div class="mt-8 pt-4 border-t border-(--line-divider) flex items-center justify-center gap-1.5 text-xs text-neutral-400 dark:text-neutral-500 select-none">
+          <Icon is:inline name="material-symbols:info-outline-rounded" class="text-sm shrink-0" />
+          <span>{i18n(I18nKey.fcircleBuildHint)}</span>
+        </div>
+      )}
     </div>
   </div>
 </MainGridLayout>
 
-<style>
-  #timeline-view.hidden,
-  #grid-view.hidden,
-  #fcircle-timeline-view.hidden,
-  #fcircle-list-view.hidden {
-    display: none !important;
-  }
-</style>
-
-<script is:inline>
-  (function () {
-    function setupSwitcher() {
-      var t = document.getElementById("view-timeline"),
-          i = document.getElementById("view-grid"),
-          s = document.getElementById("timeline-view") || document.getElementById("fcircle-timeline-view"),
-          n = document.getElementById("grid-view") || document.getElementById("fcircle-list-view");
-
-      function apply(mode) {
-        var isTimeline = mode === "timeline";
-        if (s) s.classList.toggle("hidden", !isTimeline);
-        if (n) n.classList.toggle("hidden", isTimeline);
-
-        if (t) {
-          t.classList.toggle("bg-(--primary)", isTimeline);
-          t.classList.toggle("bg-[var(--primary)]", isTimeline);
-          t.classList.toggle("text-white", isTimeline);
-          t.classList.toggle("font-medium", isTimeline);
-          t.classList.toggle("opacity-60", !isTimeline);
-        }
-
-        if (i) {
-          i.classList.toggle("bg-(--primary)", !isTimeline);
-          i.classList.toggle("bg-[var(--primary)]", !isTimeline);
-          i.classList.toggle("text-white", !isTimeline);
-          i.classList.toggle("font-medium", !isTimeline);
-          i.classList.toggle("opacity-60", isTimeline);
-        }
-
-        try {
-          localStorage.setItem("moments-view", mode);
-          localStorage.setItem("fcircle_preferred_view", mode);
-        } catch (e) {}
-      }
-
-      if (t) t.onclick = function () { apply("timeline"); };
-      if (i) i.onclick = function () { apply("grid"); };
-
-      try {
-        var saved = localStorage.getItem("moments-view") || localStorage.getItem("fcircle_preferred_view");
-        if (saved === "grid" || saved === "list") {
-          apply("grid");
-        }
-      } catch (e) {}
-    }
-
-    setupSwitcher();
-    document.addEventListener("astro:page-load", setupSwitcher);
-    document.addEventListener("swup:content:replace", setupSwitcher);
-  })();
+<script>
+  import { initFcircleManager } from "@/utils/fcircle-manager";
+  initFcircleManager();
 </script>

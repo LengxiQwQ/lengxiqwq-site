@@ -2,10 +2,12 @@ import Parser from "rss-parser";
 import { profileConfig, siteConfig } from "../config";
 import { getEnabledFriends } from "../config/friendsConfig";
 import { getEnabledSubscriptions } from "../config/subscriptionConfig";
+import { getSortedPostsList } from "./content-utils";
 import {
 	getFcircleDatePresentation,
 	getFcircleRelativeDays,
 } from "./fcircle-date-utils";
+import { url as formatUrl } from "./url-utils";
 
 export interface FcircleItem {
 	friendName: string;
@@ -131,21 +133,35 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 		},
 	});
 
-	// 1. 本站自身
-	const myAvatar =
-		profileConfig.avatarUrl ||
-		(profileConfig.avatar?.startsWith("http")
-			? profileConfig.avatar
-			: `${siteConfig.site_url.replace(/\/$/, "")}${profileConfig.avatar?.startsWith("/") ? "" : "/"}${profileConfig.avatar || "avatar.webp"}`);
+	const items: FcircleItem[] = [];
 
-	const selfFriend = {
-		title: siteConfig.title,
-		siteurl: siteConfig.site_url,
-		imgurl: myAvatar,
-		feedUrl: `${siteConfig.site_url.replace(/\/$/, "")}/rss.xml`,
-		tags: ["博客"],
-		sourceType: "self" as const,
-	};
+	// 1. 本地博主文章（0 外部网络依赖，离线可用且构建即最新）
+	try {
+		const selfAvatar =
+			profileConfig.avatarUrl ||
+			(profileConfig.avatar?.startsWith("http") ||
+			profileConfig.avatar?.startsWith("/")
+				? profileConfig.avatar
+				: `${siteConfig.site_url.replace(/\/$/, "")}/${profileConfig.avatar || "avatar.webp"}`);
+
+		const localPosts = await getSortedPostsList();
+		for (const post of localPosts) {
+			if (post.data.draft || post.data.password) continue;
+			items.push({
+				friendName: profileConfig.name || siteConfig.title,
+				friendAvatar: selfAvatar,
+				friendUrl: "/",
+				title: post.data.title,
+				link: formatUrl(`/posts/${post.id}/`),
+				pubDate: new Date(post.data.published),
+				excerpt: post.data.description,
+				sourceType: "self",
+				tags: post.data.tags || [],
+			});
+		}
+	} catch (err) {
+		console.warn("[Fcircle] Failed to load local self posts:", err);
+	}
 
 	// 2. 启用的友链列表（筛选博客分类，并排除禁用朋友圈或处于黑名单的站点）
 	const friends = getEnabledFriends()
@@ -182,8 +198,7 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 			sourceType: "subscription" as const,
 		}));
 
-	const allSources = [selfFriend, ...friends, ...subscriptions];
-	const items: FcircleItem[] = [];
+	const allSources = [...friends, ...subscriptions];
 
 	const promises = allSources.map(async (source) => {
 		// 再次确保黑名单域名绝对不会发起网络请求

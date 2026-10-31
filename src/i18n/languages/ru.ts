@@ -92,6 +92,21 @@ export const ru: Translation = {
 	[Key.friends]: "Ссылки",
 	[Key.friendsDescription]:
 		"Вот мои друзья, добро пожаловать посетить и общаться друг с другом",
+	[Key.fcircle]: "Круг друзей",
+	[Key.fcircleDescription]: "Последние обновления из блогов друзей",
+	[Key.fcircleEmpty]:
+		"Пока нет обновлений. Возможно, у друзей не настроен feedUrl или статьи еще не опубликованы",
+	[Key.fcircleTimeline]: "Хроника",
+	[Key.fcircleGrid]: "Сетка",
+	[Key.fcircleToday]: "Сегодня",
+	[Key.fcircleWeek]: "За 7 дней",
+	[Key.fcircleTotal]: "Всего",
+	[Key.fcircleSites]: "Блогов",
+	[Key.fcirclePostUnit]: "статей",
+	[Key.fcircleSiteUnit]: "сайтов",
+	[Key.fcirclePostsUpdated]: "обновлений",
+	[Key.fcircleBuildHint]:
+		"Контент автоматически собирается во время сборки сайта и не синхронизируется в реальном времени",
 	[Key.searchFriends]: "Поиск друзей...",
 	[Key.friendsEmpty]: "Друзей пока нет.",
 	[Key.booknav]: "Каталог закладок",
@@ -595,6 +610,4 @@ export const ru: Translation = {
 	[Key.exitImmersiveReading]: "Выйти из режима чтения",
 	[Key.tocExpand]: "Развернуть оглавление",
 	[Key.tocCollapse]: "Свернуть оглавление",
-	[Key.fcircle]: "Friend Circle",
-	[Key.fcircleDescription]: "Latest updates from friend blogs",
 };

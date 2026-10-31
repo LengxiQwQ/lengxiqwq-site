@@ -92,6 +92,21 @@ export const ko: Translation = {
 	[Key.friends]: "친구",
 	[Key.friendsDescription]:
 		"여기는 제 친구들입니다. 방문하여 서로 교류해 보세요",
+	[Key.fcircle]: "친구 서클",
+	[Key.fcircleDescription]: "링크된 블로거들의 최신 글 업데이트",
+	[Key.fcircleEmpty]:
+		"최신 소식이 없습니다. 링크에 feedUrl이 설정되지 않았거나 새 글이 등록되지 않았을 수 있습니다",
+	[Key.fcircleTimeline]: "타임라인",
+	[Key.fcircleGrid]: "그리드",
+	[Key.fcircleToday]: "오늘 업데이트",
+	[Key.fcircleWeek]: "최근 7일",
+	[Key.fcircleTotal]: "총 글 수",
+	[Key.fcircleSites]: "구독 블로그",
+	[Key.fcirclePostUnit]: "개",
+	[Key.fcircleSiteUnit]: "곳",
+	[Key.fcirclePostsUpdated]: "개 업데이트",
+	[Key.fcircleBuildHint]:
+		"콘텐츠는 사이트 빌드 시 자동으로 수집되며 실시간으로 동기화되지 않습니다",
 	[Key.searchFriends]: "친구 검색...",
 	[Key.friendsEmpty]: "아직 친구가 없습니다.",
 	[Key.booknav]: "북마크 모음",
@@ -590,6 +605,4 @@ export const ko: Translation = {
 	[Key.exitImmersiveReading]: "몰입형 읽기 종료",
 	[Key.tocExpand]: "목차 펼치기",
 	[Key.tocCollapse]: "목차 접기",
-	[Key.fcircle]: "Friend Circle",
-	[Key.fcircleDescription]: "Latest updates from friend blogs",
 };

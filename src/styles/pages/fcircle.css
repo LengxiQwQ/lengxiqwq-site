@@ -1,0 +1,32 @@
+/* 朋友圈页面样式增强 */
+
+/* 纵向贯穿细轨道 */
+.fcircle-track {
+	position: absolute;
+	left: 1rem;
+	top: 1rem;
+	bottom: 1rem;
+	width: 2px;
+	background: linear-gradient(
+		to bottom,
+		var(--line-divider),
+		var(--line-divider),
+		transparent
+	);
+	transform: translateX(-50%);
+	pointer-events: none;
+}
+
+@media (min-width: 640px) {
+	.fcircle-track {
+		left: 1.25rem;
+	}
+}
+
+/* 隐藏视图辅助类 */
+#timeline-view.hidden,
+#grid-view.hidden,
+#fcircle-timeline-view.hidden,
+#fcircle-list-view.hidden {
+	display: none !important;
+}

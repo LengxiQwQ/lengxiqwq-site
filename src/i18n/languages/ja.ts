@@ -92,6 +92,21 @@ export const ja: Translation = {
 	[Key.friends]: "友達",
 	[Key.friendsDescription]:
 		"ここは私の友達です、お互いに訪問して交流することを歓迎します",
+	[Key.fcircle]: "友達サークル",
+	[Key.fcircleDescription]: "リンク先のブロガーによる最新記事の更新",
+	[Key.fcircleEmpty]:
+		"最新の動向はありません。リンク先に feedUrl が設定されていないか、まだ記事が更新されていない可能性があります",
+	[Key.fcircleTimeline]: "タイムライン",
+	[Key.fcircleGrid]: "グリッド",
+	[Key.fcircleToday]: "本日更新",
+	[Key.fcircleWeek]: "過去7日間",
+	[Key.fcircleTotal]: "総更新数",
+	[Key.fcircleSites]: "購読ブログ",
+	[Key.fcirclePostUnit]: "件",
+	[Key.fcircleSiteUnit]: "サイト",
+	[Key.fcirclePostsUpdated]: "件の更新",
+	[Key.fcircleBuildHint]:
+		"コンテンツはサイトビルド時に自動収集され、リアルタイム同期ではありません",
 	[Key.searchFriends]: "友達を検索...",
 	[Key.friendsEmpty]: "まだ友達がいません",
 	[Key.booknav]: "ブックマーク集",
@@ -590,6 +605,4 @@ export const ja: Translation = {
 	[Key.exitImmersiveReading]: "没入型リーディングを終了する",
 	[Key.tocExpand]: "目錄を開く",
 	[Key.tocCollapse]: "目錄をたたむ",
-	[Key.fcircle]: "Friend Circle",
-	[Key.fcircleDescription]: "Latest updates from friend blogs",
 };
