@@ -43,11 +43,6 @@ cache/
 package/
 .obsidian/
 
-# vibe coding
-.codex*
-.claude
-.mimocode
-
 # temp covers
 temp-covers/
 .temp-*/
@@ -58,8 +53,3 @@ temp-covers/
 .env.local
 .dev.lock
 
-# project agent rules
-AGENTS.md
-CLAUDE.md
-.cursorrules
-.windsurfrules
