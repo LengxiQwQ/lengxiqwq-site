@@ -122,7 +122,7 @@ function handleTabChange(tab: TabType) {
 <div class="card-base card-toolbar-panel !overflow-visible p-5 md:p-6 mb-6 rounded-2xl flex flex-col gap-5 md:gap-6 relative z-30">
 	<!-- 顶部：Steam 游戏标题区 -->
 	{#if title}
-		<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+		<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-(--line-divider)">
 			<div class="page-heading">
 				<div class="page-icon shrink-0" aria-hidden="true">
 					<svg
