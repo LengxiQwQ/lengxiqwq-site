@@ -158,7 +158,7 @@ function handleTabChange(tab: TabType) {
 	{/if}
 
 	<!-- 底部：Tab 筛选/搜索/排序工具栏 -->
-	<div class="pt-5 border-t border-(--line-divider) flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+	<div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
 		<!-- 分类 Tab 胶囊 (带按压弹性与平滑过渡动效) -->
 		<div class="flex items-center gap-1.5 p-1 bg-(--btn-regular-bg) rounded-xl overflow-x-auto">
 			<button
