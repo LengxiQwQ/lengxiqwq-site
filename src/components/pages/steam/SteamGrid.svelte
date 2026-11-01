@@ -12,6 +12,8 @@ import SteamCard from "./SteamCard.svelte";
 import SteamDashboard from "./SteamDashboard.svelte";
 
 interface Props {
+	title?: string;
+	description?: string;
 	games: SteamGameItem[];
 	recentGames: SteamGameItem[];
 	pageSize?: number;
@@ -22,6 +24,8 @@ interface Props {
 }
 
 const {
+	title = "",
+	description = "",
 	games = [],
 	recentGames = [],
 	pageSize = 24,
@@ -114,13 +118,47 @@ function handleTabChange(tab: TabType) {
 }
 </script>
 
-<!-- 整合控制面板：玩家数据看板 + Tab 筛选/搜索/排序工具栏 -->
+<!-- 整合主面板：Steam 游戏标题 + 玩家个人资料与数据看板 + 筛选/搜索/排序工具栏 -->
 <div class="card-base card-toolbar-panel !overflow-visible p-5 md:p-6 mb-6 rounded-2xl flex flex-col gap-5 md:gap-6 relative z-30">
+	<!-- 顶部：Steam 游戏标题区 -->
+	{#if title}
+		<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-(--line-divider)">
+			<div class="page-heading">
+				<div class="page-icon shrink-0" aria-hidden="true">
+					<svg
+						xmlns="http://www.w3.org/2000/svg"
+						viewBox="0 0 640 640"
+						class="w-7 h-7 md:w-8 md:h-8 fill-current"
+					>
+						<path d="M568 320c0 137-111.2 248-248.4 248c-113.8 0-209.6-76.3-239-180.4l95.2 39.3c6.4 32.1 34.9 56.4 68.9 56.4c39.2 0 71.9-32.4 70.2-73.5l84.5-60.2c52.1 1.3 95.8-40.9 95.8-93.5c0-51.6-42-93.5-93.7-93.5s-93.7 42-93.7 93.5v1.2L248.6 343c-15.5-.9-30.7 3.4-43.5 12.1L72 300.1C82.2 172.4 189.1 72 319.6 72C456.8 72 568 183 568 320M227.7 448.3l-30.5-12.6c5.6 11.6 15.3 20.8 27.2 25.8c26.9 11.2 57.8-1.6 69-28.4c5.4-13 5.5-27.3.1-40.3S278 369.6 265 364.2c-12.9-5.4-26.7-5.2-38.9-.6l31.5 13c19.8 8.2 29.2 30.9 20.9 50.7c-8.3 19.9-31 29.2-50.8 21m173.8-254.5c34.4 0 62.3 27.9 62.3 62.3s-27.9 62.3-62.3 62.3s-62.3-27.9-62.3-62.3s27.9-62.3 62.3-62.3m.1 109c25.8 0 46.8-21 46.8-46.8s-21-46.8-46.8-46.8s-46.8 21-46.8 46.8s21 46.8 46.8 46.8"/>
+					</svg>
+				</div>
+				<div>
+					<h2>{title}</h2>
+					{#if description}
+						<p>{description}</p>
+					{/if}
+				</div>
+			</div>
+
+			{#if stats?.lastUpdated}
+				<div class="text-xs text-neutral-400 dark:text-neutral-500 self-start sm:self-center shrink-0">
+					<span>{i18n(I18nKey.animeLastUpdated)}</span>
+					<span class="font-medium text-neutral-600 dark:text-neutral-300 ml-1">
+						{new Date(stats.lastUpdated).toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" })}
+					</span>
+				</div>
+			{/if}
+		</div>
+	{/if}
+
+	<!-- 中部：玩家数据看板 -->
 	{#if showStats && profile && stats}
 		<SteamDashboard {profile} {stats} {levelInfo} />
 	{/if}
 
-	<div class="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
+	<!-- 底部：Tab 筛选/搜索/排序工具栏 -->
+	<div class="pt-5 border-t border-(--line-divider) flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
 		<!-- 分类 Tab 胶囊 (带按压弹性与平滑过渡动效) -->
 		<div class="flex items-center gap-1.5 p-1 bg-(--btn-regular-bg) rounded-xl overflow-x-auto">
 			<button

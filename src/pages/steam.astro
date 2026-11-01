@@ -1,6 +1,5 @@
 ---
 import Comment from "@components/comment/index.astro";
-import { Icon } from "astro-icon/components";
 import SteamGrid from "@/components/pages/steam/SteamGrid.svelte";
 import { commentConfig, siteConfig } from "@/config";
 import { steamConfig } from "@/config/steamConfig";
@@ -26,22 +25,11 @@ const isCommentEnabled = commentConfig?.type && commentConfig.type !== "none";
 
 <MainGridLayout title={title} description={description}>
 	<section class="page-shell">
-		<!-- 统一风格的页面标题面板 -->
-		<header class="card-base page-header">
-			<div class="page-heading">
-				<div class="page-icon" aria-hidden="true">
-					<Icon name="fa7-brands:steam" />
-				</div>
-				<div>
-					<h2>{title}</h2>
-					{description && <p>{description}</p>}
-				</div>
-			</div>
-		</header>
-
-		<!-- 整合控制面板与游戏交互网格（玩家数据看板 + 筛选/搜索/排序合并为单一大卡片） -->
+		<!-- 整合控制面板与游戏交互网格（标题、玩家数据看板与筛选搜索排序整合成单一大面板） -->
 		<SteamGrid
 			client:load
+			title={title}
+			description={description}
 			games={steamData.games}
 			recentGames={steamData.recentGames}
 			pageSize={steamConfig?.pageSize || 60}
