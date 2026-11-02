@@ -2189,17 +2189,56 @@ const config = {
      移动端响应式与内联抽屉流适配（彻底解决表情面板被外层裁剪、下方元素遮挡问题）
      ========================================================================== */
   @media (max-width: 768px) {
-    /* 1. 评论区输入框放开 overflow，并杜绝 iOS 自动缩放（Input 计算字号必须 >= 16px） */
+    /* 1. 提升输入面板交互优先级，聚焦时确保在悬浮按钮之上（z-index: 1001 > 1000） */
     #waline .wl-panel {
       overflow: visible !important;
     }
 
-    #waline .wl-header input,
-    #waline .wl-editor {
-      font-size: 16px !important;
+    #waline .wl-panel:focus-within {
+      z-index: 1001 !important;
     }
 
-    /* 2. 表情弹窗与颜文字面板转为内联文档流展开（Inline Fluid Accordion）
+    /* 2. 移动端子评论回复框（.wl-panel）拉平缩进，自适应拉满可用宽度，彻底解决细窄变形 */
+    #waline .wl-quote .wl-panel,
+    #waline .wl-card .wl-panel {
+      margin-inline-start: -2.25rem !important;
+      width: calc(100% + 2.25rem) !important;
+      box-sizing: border-box !important;
+    }
+
+    /* 3. 恢复移动端输入框精致小巧的自然字号（0.875rem / 14px），与评论正文比例和谐统一 */
+    #waline .wl-header input {
+      font-size: 0.875rem !important;
+      padding: 0.45em 0.35em !important;
+    }
+
+    #waline .wl-editor {
+      font-size: 0.875rem !important;
+      padding: 0.5rem 0.6rem !important;
+      min-height: 5em !important;
+      line-height: 1.5 !important;
+    }
+
+    #waline .wl-header label {
+      font-size: 0.75rem !important;
+      padding: 0.45em 0.3em !important;
+    }
+
+    /* 移动端昵称、邮箱、网址各占单行（清晰分为 3 行，单项间以虚线分割） */
+    #waline .wl-header {
+      display: block !important;
+    }
+
+    #waline .wl-header-item {
+      display: flex !important;
+      width: 100% !important;
+    }
+
+    #waline .wl-header-item:not(:last-child) {
+      border-bottom: 1px dashed var(--waline-border-color, rgba(0, 0, 0, 0.08)) !important;
+    }
+
+    /* 4. 表情弹窗与颜文字面板转为内联文档流展开（Inline Fluid Accordion）
           不再脱离文档流悬浮在外面，展开时自然撑开 .wl-panel 与卡片高度，
           下方 Profile 卡片自然被平滑下推，100% 消除元素遮挡和边缘裁剪 */
     #waline .wl-emoji-popup,
@@ -2231,6 +2270,14 @@ const config = {
     #waline .wl-kaomoji-content {
       max-height: 180px !important;
       overscroll-behavior: contain !important;
+    }
+  }
+
+  @media (max-width: 480px) {
+    #waline .wl-quote .wl-panel,
+    #waline .wl-card .wl-panel {
+      margin-inline-start: -2rem !important;
+      width: calc(100% + 2rem) !important;
     }
   }
 </style>
