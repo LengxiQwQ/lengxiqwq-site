@@ -79,7 +79,7 @@ const config = {
                   }
 
                   // 清理 alt 中的下划线与前缀，避免触发后端的下划线斜体正则
-                  alt = alt.replace(/^miku_|^bmoji_/i, "").replace(/_/g, "-");
+                  alt = alt.replace(/^miku_|^bmoji_|^qq_/i, "").replace(/_/g, "-");
 
                   // 将图片链接中的下划线编码为 %5F，杜绝 Worker 后端 Markdown 贪婪正则误将其匹配为 <em> 斜体导致 HTML 破损
                   src = src.replace(/_/g, "%5F");
@@ -818,15 +818,19 @@ const config = {
           });
         }
 
-        // 4. 监听原生表情按钮点击时，自动关闭外置颜文字面板
+        // 4. 监听原生表情按钮点击时，全域广播收起所有颜文字面板并重置高亮态
         const nativeEmojiBtn = actions.querySelector(
           'button[title*="Emoji"], button[title*="表情"]'
         );
         if (nativeEmojiBtn && !nativeEmojiBtn.__kaomojiWatcherInstalled) {
           nativeEmojiBtn.__kaomojiWatcherInstalled = true;
           nativeEmojiBtn.addEventListener("click", () => {
-            popup.classList.remove("display");
-            kaomojiBtn.classList.remove("active");
+            document
+              .querySelectorAll(".wl-kaomoji-popup.display")
+              .forEach((p) => p.classList.remove("display"));
+            document
+              .querySelectorAll(".wl-action-kaomoji.active")
+              .forEach((b) => b.classList.remove("active"));
             setTimeout(updateEmojiPopupStickerState, 30);
           });
         }
@@ -1660,9 +1664,14 @@ const config = {
     order: 4 !important;
   }
 
-  /* 5. 颜文字 (OωO) */
-  #waline .wl-actions .wl-action.wl-action-kaomoji {
+  /* 5. GIF 搜索（若存在） */
+  #waline .wl-actions button[title*="GIF" i] {
     order: 5 !important;
+  }
+
+  /* 6. 颜文字 (OωO) */
+  #waline .wl-actions .wl-action.wl-action-kaomoji {
+    order: 6 !important;
   }
 
   /* 修复 Markdown 图标居中 */
@@ -1719,20 +1728,20 @@ const config = {
     transform: scale(0.94);
   }
 
-  /* 独立颜文字外置弹窗面板 */
+  /* 独立颜文字外置弹窗面板：顶级实体浮窗 */
   #waline .wl-kaomoji-popup {
     position: absolute;
     inset-inline-start: 1.25em;
     top: 100%;
-    z-index: 15;
+    z-index: 100 !important;
     display: none;
     width: calc(100% - 2.5em);
     max-width: 526px;
-    border: var(--waline-border, 1px solid var(--waline-border-color, #ddd));
-    border-radius: 8px;
-    background: var(--waline-bg-color, #ffffff);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
-    margin-top: 4px;
+    border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
+    border-radius: 12px !important;
+    background: var(--card-bg, #ffffff) !important;
+    box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.05) !important;
+    margin-top: 6px;
     box-sizing: border-box;
     overflow: hidden;
   }
@@ -1838,9 +1847,11 @@ const config = {
     background: transparent !important;
   }
 
-  /* 普通 emoji 表情（Bmoji 等）在评论正文与实时预览中以标准行内表情尺寸展示 */
+  /* 普通 emoji 表情（Bmoji、QQ表情等）在评论正文与实时预览中以标准行内表情尺寸展示 */
   #waline .wl-content img[src*="/assets/stickers/bmoji/"],
   #waline .wl-preview img[src*="/assets/stickers/bmoji/"],
+  #waline .wl-content img[src*="/assets/stickers/qq/"],
+  #waline .wl-preview img[src*="/assets/stickers/qq/"],
   #waline .wl-content img[src*="@waline/emojis"],
   #waline .wl-preview img[src*="@waline/emojis"],
   #waline .wl-content img.wl-emoji:not([src*="/assets/stickers/miku/"]),
@@ -1860,9 +1871,27 @@ const config = {
   }
 
   /* ==========================================================================
-     表情面板顶部 Tab 栏与固定高度布局（置顶防跳动 + 统一稳定高度）
+     顶级实体浮窗标准（Top-Level Elevated Floating Popover）
+     确保电脑端表情面板与颜文字面板具备绝对实体遮挡力、高阶层叠优先级、立体悬浮投影与防透层
      ========================================================================== */
+  #waline .wl-panel {
+    position: relative;
+    z-index: 20;
+    overflow: visible !important;
+  }
+
   #waline .wl-emoji-popup {
+    z-index: 100 !important;
+    width: calc(100% - 2.5em) !important;
+    max-width: 526px !important;
+    box-sizing: border-box !important;
+    background-color: var(--card-bg, #ffffff) !important;
+    border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.05) !important;
+    backdrop-filter: blur(24px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+    overflow: visible !important;
     flex-direction: column !important;
   }
 
@@ -1870,6 +1899,56 @@ const config = {
     display: flex !important;
     flex-direction: column !important;
   }
+
+  /* 无论浅色还是深色模式，内部内容滚动区必须填充纯实体底色，杜绝任何文字穿透泄露 */
+  #waline .wl-emoji-popup .wl-tab-wrapper,
+  #waline .wl-kaomoji-content {
+    background-color: var(--card-bg, #ffffff) !important;
+  }
+
+  /* 暗色模式下适配深度实体背景与环境光辉阴影 */
+  :root.dark #waline .wl-emoji-popup,
+  :root.dark #waline .wl-kaomoji-popup {
+    background-color: var(--card-bg, #1a1a1c) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 0 20px 48px -6px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+  }
+
+  :root.dark #waline .wl-emoji-popup .wl-tab-wrapper,
+  :root.dark #waline .wl-kaomoji-content {
+    background-color: var(--card-bg, #1a1a1c) !important;
+  }
+
+  :root.dark #waline .wl-emoji-popup .wl-tabs {
+    background: color-mix(in srgb, var(--card-bg, #1a1a1c) 80%, black 20%) !important;
+    border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  :root.dark #waline .wl-emoji-popup .wl-tab.active {
+    background: var(--card-bg, #1a1a1c) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+  }
+
+  /* 全站开启壁纸透明（wallpaper-transparent）时，浮窗必须保持 100% 实体遮挡，绝不半透明 */
+  .wallpaper-transparent #waline .wl-emoji-popup,
+  .wallpaper-transparent #waline .wl-kaomoji-popup,
+  .wallpaper-transparent #waline .wl-emoji-popup .wl-tab-wrapper,
+  .wallpaper-transparent #waline .wl-kaomoji-content {
+    background-color: var(--card-bg, #ffffff) !important;
+    opacity: 1 !important;
+  }
+
+  :root.dark.wallpaper-transparent #waline .wl-emoji-popup,
+  :root.dark.wallpaper-transparent #waline .wl-kaomoji-popup,
+  :root.dark.wallpaper-transparent #waline .wl-emoji-popup .wl-tab-wrapper,
+  :root.dark.wallpaper-transparent #waline .wl-kaomoji-content {
+    background-color: var(--card-bg, #1a1a1c) !important;
+    opacity: 1 !important;
+  }
+
+  /* ==========================================================================
+     表情面板顶部 Tab 栏与固定高度布局（置顶防跳动 + 统一稳定高度）
+     ========================================================================== */
 
   /* Tab 标签栏置顶：通过 order: -1 视觉排到最上方 */
   #waline .wl-emoji-popup .wl-tabs {
@@ -1880,8 +1959,8 @@ const config = {
     gap: 6px !important;
     background: var(--waline-bg-color-light, #f8f8f8) !important;
     border-bottom: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.08)) !important;
-    border-top-left-radius: 6px !important;
-    border-top-right-radius: 6px !important;
+    border-top-left-radius: 11px !important;
+    border-top-right-radius: 11px !important;
     overflow-x: auto !important;
     scrollbar-width: none !important;
     white-space: nowrap !important;
@@ -1938,9 +2017,11 @@ const config = {
     padding: 8px !important;
     box-sizing: border-box !important;
     scrollbar-gutter: stable !important;
+    border-bottom-left-radius: 11px !important;
+    border-bottom-right-radius: 11px !important;
   }
 
-  /* 当是贴纸标签页时，平铺网格采用 7 列等分网格，间距更紧凑（5px），左右彻底占满消除右侧空白 */
+  /* 1. 初音未来等贴纸标签页：采用 7 列等分紧凑网格（5px 间距），彻底消弭右侧留白 */
   #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper,
   #waline .wl-emoji-popup .wl-tab-wrapper:has(img[src*="/assets/stickers/miku/"]) {
     display: grid !important;
@@ -1958,7 +2039,7 @@ const config = {
     }
   }
 
-  /* 贴纸单元按钮：自适应撑满所在网格，每格大小相比之前增加约 2~3 像素，形成等宽正方形 */
+  /* 贴纸单元按钮：自适应撑满所在网格，形成等宽正方形 */
   #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper button,
   #waline .wl-emoji-popup .wl-tab-wrapper button:has(img[src*="/assets/stickers/miku/"]) {
     display: flex !important;
@@ -1987,7 +2068,7 @@ const config = {
     transform: scale(0.96) !important;
   }
 
-  /* 贴纸图片自身增加 2 像素（从 3.2em 增至 3.35em），画面更饱满充实 */
+  /* 贴纸图片自身饱满充实 */
   #waline .wl-emoji-popup.wl-tab-is-sticker .wl-tab-wrapper .wl-emoji,
   #waline .wl-emoji-popup .wl-tab-wrapper img.wl-emoji[src*="/assets/stickers/miku/"],
   #waline .wl-emoji-popup .wl-tab-wrapper button img[src*="/assets/stickers/miku/"] {
@@ -1998,29 +2079,158 @@ const config = {
     object-fit: contain !important;
   }
 
-  /* 普通 emoji 悬停预览：彻底禁用隐藏，不显示任何预览弹窗 */
+  /* 2. QQ 经典表情等小图标标签页：自适应等宽自充网格排版（消除原生 inline-block 折行参差不齐） */
+  #waline .wl-emoji-popup:not(.wl-tab-is-sticker) .wl-tab-wrapper,
+  #waline .wl-emoji-popup .wl-tab-wrapper:not(:has(img[src*="/assets/stickers/miku/"])) {
+    display: grid !important;
+    grid-template-columns: repeat(auto-fill, minmax(36px, 1fr)) !important;
+    gap: 4px !important;
+    align-content: flex-start !important;
+    padding: 8px !important;
+  }
+
+  #waline .wl-emoji-popup:not(.wl-tab-is-sticker) .wl-tab-wrapper button,
+  #waline .wl-emoji-popup .wl-tab-wrapper:not(:has(img[src*="/assets/stickers/miku/"])) button {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    height: auto !important;
+    aspect-ratio: 1 / 1 !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 3px !important;
+    border-radius: 6px !important;
+    box-sizing: border-box !important;
+    transition: background 0.15s ease, transform 0.12s ease !important;
+  }
+
+  #waline .wl-emoji-popup:not(.wl-tab-is-sticker) .wl-tab-wrapper button:hover,
+  #waline .wl-emoji-popup .wl-tab-wrapper:not(:has(img[src*="/assets/stickers/miku/"])) button:hover {
+    background: color-mix(in srgb, var(--primary, #27ae60) 15%, transparent) !important;
+    transform: scale(1.14) !important;
+    z-index: 2 !important;
+  }
+
+  #waline .wl-emoji-popup:not(.wl-tab-is-sticker) .wl-tab-wrapper button:active,
+  #waline .wl-emoji-popup .wl-tab-wrapper:not(:has(img[src*="/assets/stickers/miku/"])) button:active {
+    transform: scale(0.94) !important;
+  }
+
+  /* 默认隐藏未指定的普通悬停预览 */
   #waline .wl-emoji-popup .wl-emoji-preview {
     display: none !important;
   }
 
-  /* 仅当悬停的是初音未来贴纸（/assets/stickers/miku/）时，才显示悬停放大预览窗（放大至 5.8em / 约 92px） */
-  #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/miku/"] {
-    display: block !important;
-    z-index: 50 !important;
-    width: auto !important;
-    height: auto !important;
-    max-width: 5.8em !important;
-    max-height: 5.8em !important;
-    min-width: 4.2em !important;
-    min-height: 4.2em !important;
-    object-fit: contain !important;
-    padding: 6px !important;
-    margin-top: -10px !important;
-    border-radius: 8px !important;
-    border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
-    background: var(--waline-bg-color, #ffffff) !important;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18) !important;
-    pointer-events: none !important;
-    animation: none !important;
+  /* 移动端或无鼠标悬停特性的触屏设备：彻底禁用悬停预览浮窗，直接点击选取，避免误触与视口遮挡 */
+  @media (max-width: 768px), (hover: none) {
+    #waline .wl-emoji-popup .wl-emoji-preview {
+      display: none !important;
+    }
+  }
+
+  /* 电脑端悬停预览浮窗 1：初音未来大贴纸（/assets/stickers/miku/）大幅高清悬停预览（5.8em / 约 92px） */
+  @media (min-width: 769px) and (hover: hover) {
+    #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/miku/"] {
+      display: block !important;
+      z-index: 9999 !important;
+      width: auto !important;
+      height: auto !important;
+      max-width: 5.8em !important;
+      max-height: 5.8em !important;
+      min-width: 4.2em !important;
+      min-height: 4.2em !important;
+      object-fit: contain !important;
+      padding: 6px !important;
+      margin-top: -12px !important;
+      border-radius: 10px !important;
+      border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
+      background: var(--card-bg, #ffffff) !important;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.06) !important;
+      pointer-events: none !important;
+      animation: none !important;
+    }
+
+    :root.dark #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/miku/"] {
+      background: var(--card-bg, #1a1a1c) !important;
+      border-color: rgba(255, 255, 255, 0.15) !important;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+    }
+
+    /* 电脑端悬停预览浮窗 2：QQ 动态表情（/assets/stickers/qq/）小巧精致动态缩略浮窗（3.2em / 约 50px） */
+    #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/qq/"] {
+      display: block !important;
+      z-index: 9999 !important;
+      width: auto !important;
+      height: auto !important;
+      max-width: 3.2em !important;
+      max-height: 3.2em !important;
+      min-width: 2.5em !important;
+      min-height: 2.5em !important;
+      object-fit: contain !important;
+      padding: 4px !important;
+      margin-top: -8px !important;
+      border-radius: 8px !important;
+      border: 1px solid var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
+      background: var(--card-bg, #ffffff) !important;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18), 0 0 0 1px rgba(0, 0, 0, 0.05) !important;
+      pointer-events: none !important;
+      animation: none !important;
+    }
+
+    :root.dark #waline .wl-emoji-popup .wl-emoji-preview[src*="/assets/stickers/qq/"] {
+      background: var(--card-bg, #1a1a1c) !important;
+      border-color: rgba(255, 255, 255, 0.15) !important;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+    }
+  }
+
+  /* ==========================================================================
+     移动端响应式与内联抽屉流适配（彻底解决表情面板被外层裁剪、下方元素遮挡问题）
+     ========================================================================== */
+  @media (max-width: 768px) {
+    /* 1. 评论区输入框放开 overflow，并杜绝 iOS 自动缩放（Input 计算字号必须 >= 16px） */
+    #waline .wl-panel {
+      overflow: visible !important;
+    }
+
+    #waline .wl-header input,
+    #waline .wl-editor {
+      font-size: 16px !important;
+    }
+
+    /* 2. 表情弹窗与颜文字面板转为内联文档流展开（Inline Fluid Accordion）
+          不再脱离文档流悬浮在外面，展开时自然撑开 .wl-panel 与卡片高度，
+          下方 Profile 卡片自然被平滑下推，100% 消除元素遮挡和边缘裁剪 */
+    #waline .wl-emoji-popup,
+    #waline .wl-kaomoji-popup {
+      position: static !important;
+      inset-inline-start: 0 !important;
+      top: auto !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      margin-top: 0.5rem !important;
+      margin-inline-start: 0 !important;
+      border-radius: 0 0 10px 10px !important;
+      border-left: none !important;
+      border-right: none !important;
+      border-bottom: none !important;
+      border-top: 1px dashed var(--waline-border-color, rgba(0, 0, 0, 0.12)) !important;
+      box-shadow: none !important;
+      transform: none !important;
+    }
+
+    /* 移动端弹窗高度自适应，适应移动端软键盘弹起场景，并锁定内部滚动防止穿透 */
+    #waline .wl-emoji-popup .wl-tab-wrapper {
+      height: 200px !important;
+      min-height: 160px !important;
+      max-height: 220px !important;
+      overscroll-behavior: contain !important;
+    }
+
+    #waline .wl-kaomoji-content {
+      max-height: 180px !important;
+      overscroll-behavior: contain !important;
+    }
   }
 </style>
