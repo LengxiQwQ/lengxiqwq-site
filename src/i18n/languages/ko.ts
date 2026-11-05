@@ -188,6 +188,11 @@ export const ko: Translation = {
 	[Key.noData]: "데이터 없음",
 
 	[Key.themeColor]: "테마 색상",
+	[Key.themeColorCustom]: "사용자 지정",
+	[Key.themeColorAuto]: "자동 계산",
+	[Key.themeColorPreset]: "프리셋",
+	[Key.themeColorCurrentWallpaper]: "현재",
+	[Key.themeColorResetPreset]: "초기화",
 
 	[Key.lightMode]: "라이트",
 	[Key.darkMode]: "다크",

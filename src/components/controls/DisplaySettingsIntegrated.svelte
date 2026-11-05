@@ -22,6 +22,7 @@ import {
 	getDefaultWavesEnabled,
 	getFollowWallpaperHue,
 	getHue,
+	getPresetHueForWallpaper,
 	getStoredBannerCarouselEnabled,
 	getStoredBannerTitleEnabled,
 	getStoredCardBorderEnabled,
@@ -34,6 +35,10 @@ import {
 	getStoredSakuraEnabled,
 	getStoredWallpaperMode,
 	getStoredWavesEnabled,
+	getThemeHueMode,
+	getWallpaperHuePresets,
+	normalizeWallpaperKey,
+	saveWallpaperPresetHue,
 	setBannerCarouselEnabled,
 	setBannerTitleEnabled,
 	setCardBorderEnabled,
@@ -46,8 +51,10 @@ import {
 	setOverlayCardOpacity,
 	setOverlayOpacity,
 	setSakuraEnabled,
+	setThemeHueMode,
 	setWallpaperMode,
 	setWavesEnabled,
+	type ThemeHueMode,
 } from "@utils/setting-utils";
 import { onMount } from "svelte";
 import Icon from "@/components/common/Icon.svelte";
@@ -57,6 +64,10 @@ import {
 	siteConfig,
 } from "@/config";
 import type { FullscreenWallpaperLayout, WALLPAPER_MODE } from "@/types/config";
+import {
+	extractDominantHue,
+	getActiveWallpaperImg,
+} from "@/utils/color-extract-utils";
 
 type OverlaySliderItem = {
 	key: "opacity" | "blur" | "cardOpacity";
@@ -73,19 +84,328 @@ type OverlaySliderItem = {
 
 type TabKey = "appearance" | "wallpaper" | "effects";
 
+type WallpaperOption = {
+	id: string;
+	src: string;
+	name: string;
+	device: "desktop" | "mobile";
+	index: number;
+};
+
 let hue = $state(getHue());
 const defaultHue = getDefaultHue();
 let followWallpaperHue = $state(getFollowWallpaperHue());
+let themeHueMode = $state<ThemeHueMode>(getThemeHueMode());
+let wallpaperPresets = $state<Record<string, number>>(getWallpaperHuePresets());
+let wallpaperOptions = $state(parseWallpaperOptions());
+let activeWallpaperSrc = $state<string>("");
+let selectedWallpaperSrc = $state<string>("");
+let userPinnedSelection = $state<boolean>(false);
+let isSavingConfig = $state<boolean>(false);
+let saveStatusMessage = $state<string>("");
+let isMobileViewport = $state(
+	typeof window !== "undefined" ? window.innerWidth < 1024 : false,
+);
 
-function toggleFollowWallpaperHue() {
-	followWallpaperHue = !followWallpaperHue;
-	setFollowWallpaperHue(followWallpaperHue);
+function parseWallpaperOptions(): {
+	desktop: WallpaperOption[];
+	mobile: WallpaperOption[];
+} {
+	const cleanName = (src: string) => {
+		const file = src.split("/").pop() || src;
+		return file.replace(/\.[^.]+$/, "");
+	};
+
+	const desktop: WallpaperOption[] = [];
+	const mobile: WallpaperOption[] = [];
+
+	const bgSrc = backgroundWallpaper.src;
+	if (typeof bgSrc === "object" && bgSrc !== null && !Array.isArray(bgSrc)) {
+		const dt = Array.isArray(bgSrc.desktop)
+			? bgSrc.desktop
+			: typeof bgSrc.desktop === "string"
+				? [bgSrc.desktop]
+				: [];
+		dt.forEach((src, index) => {
+			desktop.push({
+				id: `dt-${index}`,
+				src,
+				name: cleanName(src),
+				device: "desktop",
+				index,
+			});
+		});
+
+		const mb = Array.isArray(bgSrc.mobile)
+			? bgSrc.mobile
+			: typeof bgSrc.mobile === "string"
+				? [bgSrc.mobile]
+				: [];
+		mb.forEach((src, index) => {
+			mobile.push({
+				id: `mb-${index}`,
+				src,
+				name: cleanName(src),
+				device: "mobile",
+				index,
+			});
+		});
+	} else if (Array.isArray(bgSrc)) {
+		bgSrc.forEach((src, index) => {
+			desktop.push({
+				id: `bg-${index}`,
+				src,
+				name: cleanName(src),
+				device: "desktop",
+				index,
+			});
+		});
+	} else if (typeof bgSrc === "string") {
+		desktop.push({
+			id: "bg-0",
+			src: bgSrc,
+			name: cleanName(bgSrc),
+			device: "desktop",
+			index: 0,
+		});
+	}
+
+	return { desktop, mobile };
+}
+
+let currentWallpaperList = $derived.by(() => {
+	if (isMobileViewport) {
+		return wallpaperOptions.mobile.length > 0
+			? wallpaperOptions.mobile
+			: wallpaperOptions.desktop;
+	}
+	return wallpaperOptions.desktop.length > 0
+		? wallpaperOptions.desktop
+		: wallpaperOptions.mobile;
+});
+
+let selectedWallpaperName = $derived.by(() => {
+	const found = currentWallpaperList.find(
+		(w) => w.src === selectedWallpaperSrc,
+	);
+	if (found) return found.name;
+	const clean = selectedWallpaperSrc.split("/").pop() || "";
+	return clean.replace(/\.[^.]+$/, "") || "当前壁纸";
+});
+
+function getWallpaperHue(src: string): number {
+	const preset = getPresetHueForWallpaper(src);
+	if (typeof preset === "number") return preset;
+	// 若暂无预设，先沿用当前已生效的主题色相，绝不强行跳回默认色产生闪烁
+	return typeof hue === "number" ? hue : defaultHue;
+}
+
+function selectWallpaper(wp: WallpaperOption) {
+	if (isSavingConfig) return;
+	selectedWallpaperSrc = wp.src;
+	userPinnedSelection = true;
+	const preset = getPresetHueForWallpaper(wp.src);
+	if (typeof preset === "number") {
+		// 若已有该壁纸专属预设，直接无缝切入预设色
+		hue = preset;
+		setHue(preset);
+	}
+	// 若该壁纸暂无预设，先保持当前色相不闪烁，等待壁纸节点就绪提取或由用户手动调色
+
+	window.dispatchEvent(
+		new CustomEvent("switchWallpaper", {
+			detail: { index: wp.index, src: wp.src },
+		}),
+	);
+	requestAnimationFrame(refreshAllRangeProgress);
+}
+
+function switchThemeHueMode(mode: ThemeHueMode) {
+	themeHueMode = mode;
+	setThemeHueMode(mode);
+	followWallpaperHue = mode !== "custom";
+
+	if (mode === "custom") {
+		const storedCustom =
+			typeof window !== "undefined" && window.localStorage
+				? localStorage.getItem("customHue")
+				: null;
+		const targetHue = storedCustom
+			? Number.parseInt(storedCustom, 10)
+			: defaultHue;
+		hue = targetHue;
+		setHue(targetHue);
+		requestAnimationFrame(refreshAllRangeProgress);
+	} else if (mode === "auto") {
+		const img = getActiveWallpaperImg();
+		if (img) {
+			extractDominantHue(img).then((extractedHue) => {
+				hue = extractedHue;
+				setHue(extractedHue);
+				requestAnimationFrame(refreshAllRangeProgress);
+			});
+		}
+	} else if (mode === "preset") {
+		const targetSrc = selectedWallpaperSrc || activeWallpaperSrc;
+		if (targetSrc) {
+			const preset = getPresetHueForWallpaper(targetSrc);
+			if (typeof preset === "number") {
+				hue = preset;
+				setHue(preset);
+			} else {
+				const img = getActiveWallpaperImg();
+				if (img) {
+					extractDominantHue(img).then((extractedHue) => {
+						hue = extractedHue;
+						setHue(extractedHue);
+					});
+				}
+			}
+		}
+		requestAnimationFrame(refreshAllRangeProgress);
+	}
 }
 
 function handleHueInput() {
-	if (followWallpaperHue) {
-		followWallpaperHue = false;
-		setFollowWallpaperHue(false);
+	if (themeHueMode === "auto") {
+		switchThemeHueMode("custom");
+	}
+}
+
+const isDev = import.meta.env.DEV;
+
+function getCurrentWallpaperIndex(): number {
+	if (!currentWallpaperList.length) return 0;
+	if (!selectedWallpaperSrc) return 0;
+	const idx = currentWallpaperList.findIndex(
+		(w) =>
+			w.src === selectedWallpaperSrc ||
+			(selectedWallpaperSrc && w.src.endsWith(selectedWallpaperSrc)) ||
+			(selectedWallpaperSrc && selectedWallpaperSrc.endsWith(w.src)),
+	);
+	return idx >= 0 ? idx : 0;
+}
+
+function prevWallpaper() {
+	if (isSavingConfig) return;
+	if (currentWallpaperList.length <= 1) return;
+	const currentIdx = getCurrentWallpaperIndex();
+	const prevIdx =
+		(currentIdx - 1 + currentWallpaperList.length) %
+		currentWallpaperList.length;
+	selectWallpaper(currentWallpaperList[prevIdx]);
+}
+
+function nextWallpaper() {
+	if (isSavingConfig) return;
+	if (currentWallpaperList.length <= 1) return;
+	const currentIdx = getCurrentWallpaperIndex();
+	const nextIdx = (currentIdx + 1) % currentWallpaperList.length;
+	selectWallpaper(currentWallpaperList[nextIdx]);
+}
+
+async function savePresetsToProject() {
+	if (isSavingConfig) return;
+	isSavingConfig = true;
+	saveStatusMessage = "保存中...";
+
+	try {
+		const targetHue = hue; // 严格锁定当前所调的色相，保存期间绝不接受任何外部事件篡改！
+		// 汇总所有壁纸预设（合并项目配置既有预设、用户本地预设以及当前编辑选中的色相）
+		const allPresets: Record<string, number> = {
+			...(backgroundWallpaper.wallpaperHuePresets || {}),
+			...wallpaperPresets,
+		};
+		const targetSrc =
+			selectedWallpaperSrc ||
+			activeWallpaperSrc ||
+			currentWallpaperList[0]?.src ||
+			"";
+		if (targetSrc && typeof targetHue === "number") {
+			const clean = normalizeWallpaperKey(targetSrc);
+			const filename = clean.split("/").pop() || "";
+			const nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+			allPresets[nameWithoutExt] = targetHue;
+			allPresets[filename] = targetHue;
+			allPresets[clean] = targetHue;
+			saveWallpaperPresetHue(targetSrc, targetHue);
+			wallpaperPresets = getWallpaperHuePresets();
+			hue = targetHue;
+			setHue(targetHue);
+		}
+
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+		try {
+			const res = await fetch("/api/wallpaper-hue-presets/", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ presets: allPresets }),
+				signal: controller.signal,
+			});
+			clearTimeout(timeoutId);
+			if (res.ok) {
+				const data = await res.json();
+				if (data.success) {
+					saveStatusMessage = "✅ 保存成功！已写入项目文件";
+					return;
+				}
+			}
+			saveStatusMessage = "✅ 已保存至本地缓存";
+		} catch {
+			clearTimeout(timeoutId);
+			// 本地已在上面通过 saveWallpaperPresetHue 保存生效
+			saveStatusMessage = "✅ 已保存至本地缓存（可点右侧复制）";
+		}
+	} catch (e) {
+		console.error("Save presets error:", e);
+		saveStatusMessage = "⚠️ 保存遇到问题，请重试";
+	} finally {
+		isSavingConfig = false;
+		setTimeout(() => {
+			saveStatusMessage = "";
+		}, 3000);
+	}
+}
+
+async function copyPresetsCode() {
+	try {
+		const allPresets: Record<string, number> = {
+			...(backgroundWallpaper.wallpaperHuePresets || {}),
+			...wallpaperPresets,
+		};
+		const targetHue = hue;
+		const targetSrc =
+			selectedWallpaperSrc ||
+			activeWallpaperSrc ||
+			currentWallpaperList[0]?.src ||
+			"";
+		if (targetSrc && typeof targetHue === "number") {
+			const clean = normalizeWallpaperKey(targetSrc);
+			const filename = clean.split("/").pop() || "";
+			const nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+			allPresets[nameWithoutExt] = targetHue;
+			allPresets[filename] = targetHue;
+			allPresets[clean] = targetHue;
+			saveWallpaperPresetHue(targetSrc, targetHue);
+			wallpaperPresets = getWallpaperHuePresets();
+		}
+
+		const lines = Object.entries(allPresets).map(
+			([k, v]) => `\t\t"${k}": ${v},`,
+		);
+		const code = `\twallpaperHuePresets: {\n${lines.join("\n")}\n\t},`;
+
+		await navigator.clipboard.writeText(code);
+		saveStatusMessage = "📋 配置代码已复制到剪贴板";
+	} catch (e) {
+		console.error("Copy presets code error:", e);
+		saveStatusMessage = "⚠️ 复制失败";
+	} finally {
+		setTimeout(() => {
+			saveStatusMessage = "";
+		}, 3000);
 	}
 }
 let wallpaperMode: WALLPAPER_MODE = $state(backgroundWallpaper.mode);
@@ -104,9 +424,6 @@ let isSmallScreen = $state(
 );
 let isMobileWidth = $state(
 	typeof window !== "undefined" ? window.innerWidth < 780 : false,
-);
-let isMobileViewport = $state(
-	typeof window !== "undefined" ? window.innerWidth < 1024 : false,
 );
 let isSwitching = $state(false);
 let wavesEnabled = $state(true);
@@ -334,10 +651,30 @@ let hasVisibleOverlaySlider = $derived(
 	overlaySliderItems.some((item) => item.enabled),
 );
 
+let isHueDefault = $derived.by(() => {
+	// 预设模式（preset）与跟随壁纸模式（auto）下，颜色由壁纸及其默认预设管理，不应触发或显示顶部的恢复默认值按钮
+	if (themeHueMode !== "custom") return true;
+
+	// 自定义模式下：只有当用户手动设置的自定义色相不等于系统兜底默认值 355 时，才激活并展示恢复默认按钮
+	if (typeof window !== "undefined" && window.localStorage) {
+		const storedCustom = localStorage.getItem("customHue");
+		if (storedCustom && Number.parseInt(storedCustom, 10) !== defaultHue) {
+			return false;
+		}
+	}
+	return hue === defaultHue;
+});
+
 function resetHue() {
-	followWallpaperHue = false;
-	setFollowWallpaperHue(false);
-	hue = getDefaultHue();
+	if (typeof window !== "undefined" && window.localStorage) {
+		// 自定义色相重置为兜底默认值 355
+		localStorage.setItem("customHue", String(defaultHue));
+		localStorage.setItem("hue", String(defaultHue));
+	}
+	hue = defaultHue;
+	setHue(defaultHue);
+	// 重置后切回“壁纸预设”模式，按壁纸专属预设颜色显示
+	switchThemeHueMode("preset");
 	requestAnimationFrame(refreshAllRangeProgress);
 }
 
@@ -644,6 +981,7 @@ onMount(() => {
 
 onMount(() => {
 	const handleHueChange = (event: Event) => {
+		if (isSavingConfig) return; // 正在保存配置时，完全拦截并丢弃外部任何 hueChange 篡改！
 		const customEvent = event as CustomEvent<{ hue: number }>;
 		if (typeof customEvent.detail?.hue === "number") {
 			hue = customEvent.detail.hue;
@@ -656,19 +994,105 @@ onMount(() => {
 			followWallpaperHue = customEvent.detail.enable;
 		}
 	};
+	const handleModeChange = (event: Event) => {
+		const customEvent = event as CustomEvent<{ mode: ThemeHueMode }>;
+		if (customEvent.detail?.mode) {
+			themeHueMode = customEvent.detail.mode;
+		}
+	};
+	const handlePresetsChange = () => {
+		wallpaperPresets = getWallpaperHuePresets();
+	};
+	const handleWpChange = (event: Event) => {
+		if (isSavingConfig) return; // 正在保存配置时，严禁外部壁纸切换事件打乱保存状态！
+		const customEvent = event as CustomEvent<{
+			img: HTMLImageElement;
+			src?: string;
+		}>;
+		const src =
+			customEvent.detail?.src ||
+			customEvent.detail?.img?.getAttribute("data-wallpaper-src") ||
+			customEvent.detail?.img?.currentSrc ||
+			"";
+		if (src) {
+			activeWallpaperSrc = src;
+			if (!userPinnedSelection) {
+				selectedWallpaperSrc = src;
+				if (themeHueMode === "preset") {
+					hue = getWallpaperHue(src);
+					requestAnimationFrame(refreshAllRangeProgress);
+				}
+			}
+		}
+	};
 
 	window.addEventListener("hueChange", handleHueChange);
 	window.addEventListener("followWallpaperHueChange", handleFollowChange);
+	window.addEventListener("themeHueModeChange", handleModeChange);
+	window.addEventListener("wallpaperHuePresetsChange", handlePresetsChange);
+	window.addEventListener("wallpaperChange", handleWpChange);
+
+	// 获取页面当前真实挂载的活跃壁纸
+	const currentWp =
+		(typeof window !== "undefined"
+			? (window as unknown as { __currentWallpaperSrc?: string })
+					.__currentWallpaperSrc
+			: "") || "";
+	if (currentWp) {
+		activeWallpaperSrc = currentWp;
+		if (!selectedWallpaperSrc) {
+			selectedWallpaperSrc = currentWp;
+		}
+	} else if (!selectedWallpaperSrc && currentWallpaperList.length > 0) {
+		selectedWallpaperSrc = currentWallpaperList[0].src;
+		activeWallpaperSrc = currentWallpaperList[0].src;
+	}
+
+	// 扫描 DOM 补充可能存在的壁纸节点
+	const domSlides = document.querySelectorAll<HTMLElement>(
+		"#banner-images-container .slide-item, #banner-images-container .banner-image-slot",
+	);
+	domSlides.forEach((el) => {
+		const src = el.getAttribute("data-wallpaper-src");
+		if (!src) return;
+		const isMobile = el.classList.contains("lg:hidden");
+		const targetList = isMobile
+			? wallpaperOptions.mobile
+			: wallpaperOptions.desktop;
+		if (!targetList.some((item) => item.src === src)) {
+			const clean = src.split("/").pop() || src;
+			targetList.push({
+				id: `${isMobile ? "mb" : "dt"}-${targetList.length}`,
+				src,
+				name: clean.replace(/\.[^.]+$/, ""),
+				device: isMobile ? "mobile" : "desktop",
+				index: targetList.length,
+			});
+		}
+	});
 
 	return () => {
 		window.removeEventListener("hueChange", handleHueChange);
 		window.removeEventListener("followWallpaperHueChange", handleFollowChange);
+		window.removeEventListener("themeHueModeChange", handleModeChange);
+		window.removeEventListener(
+			"wallpaperHuePresetsChange",
+			handlePresetsChange,
+		);
+		window.removeEventListener("wallpaperChange", handleWpChange);
 	};
 });
 
 $effect(() => {
 	if (hue || hue === 0) {
 		setHue(hue);
+		if (
+			themeHueMode === "custom" &&
+			typeof window !== "undefined" &&
+			window.localStorage
+		) {
+			localStorage.setItem("customHue", String(hue));
+		}
 	}
 });
 
@@ -730,21 +1154,14 @@ $effect(() => {
 			<div class="section-title">
 				{i18n(I18nKey.themeColor)}
 				<button
-					type="button"
-					aria-label={followWallpaperHue ? "正在跟随壁纸色调 (点击切换为手动)" : "开启跟随壁纸色调"}
-					title={followWallpaperHue ? "正在跟随壁纸色调 (点击切换为手动)" : "开启跟随壁纸色调"}
-					class="btn-regular rounded-md active:scale-90 transition-all flex items-center justify-center"
-					class:bg-(--primary)={followWallpaperHue}
-					class:text-white={followWallpaperHue}
-					onclick={toggleFollowWallpaperHue}
+					aria-label="Reset to Default"
+					class="btn-regular rounded-md active:scale-90"
+					class:opacity-0={isHueDefault}
+					class:pointer-events-none={isHueDefault}
+					disabled={isHueDefault}
+					aria-hidden={isHueDefault ? "true" : undefined}
+					onclick={resetHue}
 				>
-					<div class={followWallpaperHue ? "text-white" : "text-(--btn-content)"}>
-						<Icon icon="fa7-solid:wand-magic-sparkles" class="text-[0.75rem]"></Icon>
-					</div>
-				</button>
-				<button aria-label="Reset to Default" class="btn-regular rounded-md active:scale-90"
-						class:opacity-0={hue === defaultHue && !followWallpaperHue} class:pointer-events-none={hue === defaultHue && !followWallpaperHue}
-						disabled={hue === defaultHue && !followWallpaperHue} aria-hidden={hue === defaultHue && !followWallpaperHue ? "true" : undefined} onclick={resetHue}>
 					<div class="text-(--btn-content)">
 						<Icon icon="fa7-solid:arrow-rotate-left" class="text-[0.75rem]"></Icon>
 					</div>
@@ -754,11 +1171,184 @@ $effect(() => {
 					{hue}
 				</div>
 			</div>
-			<div class="hue-slider-shell w-full h-6 px-1 bg-[oklch(0.80_0.10_0)] dark:bg-[oklch(0.70_0.10_0)] rounded-md select-none">
-				<input aria-label={i18n(I18nKey.themeColor)} type="range" min="0" max="360" bind:value={hue}
-					   oninput={handleHueInput}
-					   class="slider" id="colorSlider" step="5" style="width: 100%">
+
+			<!-- 3-Mode Selector (壁纸预设 -> 跟随壁纸 -> 自定义) -->
+			<div class="grid grid-cols-3 gap-1.5 mb-2">
+				<button
+					type="button"
+					aria-label={i18n(I18nKey.themeColorPreset)}
+					class="btn-regular rounded-md py-2 px-1 flex flex-col items-center justify-center gap-1.5 active:scale-95 transition-all text-xs font-medium cursor-pointer"
+					class:opacity-60={themeHueMode !== "preset"}
+					class:bg-(--btn-regular-bg-hover)={themeHueMode === "preset"}
+					class:text-(--primary)={themeHueMode === "preset"}
+					class:font-semibold={themeHueMode === "preset"}
+					onclick={() => switchThemeHueMode("preset")}
+				>
+					<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+						<path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 19.4c-.39.39-.39 1.02 0 1.41.39.39 1.02.39 1.41 0l2.06-2.06C9.28 19.49 10.59 20 12 20c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
+					</svg>
+					<span class="truncate">{i18n(I18nKey.themeColorPreset)}</span>
+				</button>
+				<button
+					type="button"
+					aria-label={i18n(I18nKey.themeColorAuto)}
+					class="btn-regular rounded-md py-2 px-1 flex flex-col items-center justify-center gap-1.5 active:scale-95 transition-all text-xs font-medium cursor-pointer"
+					class:opacity-60={themeHueMode !== "auto"}
+					class:bg-(--btn-regular-bg-hover)={themeHueMode === "auto"}
+					class:text-(--primary)={themeHueMode === "auto"}
+					class:font-semibold={themeHueMode === "auto"}
+					onclick={() => switchThemeHueMode("auto")}
+				>
+					<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+						<path d="m19 9 1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25z"/>
+					</svg>
+					<span class="truncate">{i18n(I18nKey.themeColorAuto)}</span>
+				</button>
+				<button
+					type="button"
+					aria-label={i18n(I18nKey.themeColorCustom)}
+					class="btn-regular rounded-md py-2 px-1 flex flex-col items-center justify-center gap-1.5 active:scale-95 transition-all text-xs font-medium cursor-pointer"
+					class:opacity-60={themeHueMode !== "custom"}
+					class:bg-(--btn-regular-bg-hover)={themeHueMode === "custom"}
+					class:text-(--primary)={themeHueMode === "custom"}
+					class:font-semibold={themeHueMode === "custom"}
+					onclick={() => switchThemeHueMode("custom")}
+				>
+					<svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+						<path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
+					</svg>
+					<span class="truncate">{i18n(I18nKey.themeColorCustom)}</span>
+				</button>
 			</div>
+
+			<!-- 1. 预设模式（preset） -->
+			{#if themeHueMode === "preset"}
+				{#if isDev}
+				<!-- 本地开发模式：壁纸预设完整配置面板（滑块内置在盒子内部，和谐一体） -->
+				<div class="p-2.5 rounded-xl bg-black/[0.03] dark:bg-white/[0.04] border border-black/5 dark:border-white/10 flex flex-col gap-2 mb-2 transition-colors">
+					<!-- 顶栏：自适应显示当前视口端类型与壁纸总数 -->
+					<div class="flex items-center justify-between px-0.5">
+						<span class="text-[11px] font-medium text-(--btn-content) opacity-70">
+							{isMobileViewport ? "移动端壁纸" : "桌面端壁纸"}
+						</span>
+						<span class="text-[10px] text-(--primary) font-mono font-medium">
+							共 {currentWallpaperList.length} 张
+						</span>
+					</div>
+
+					<!-- 紧凑轮播控制条：淡色主题色背景 -->
+					<div class="flex items-center gap-1.5 p-1 rounded-lg bg-(--btn-regular-bg) text-(--btn-content) border border-black/5 dark:border-white/5 shadow-2xs">
+						<button
+							type="button"
+							class="w-7 h-7 rounded-md flex items-center justify-center text-(--btn-content) hover:bg-(--btn-regular-bg-hover) active:scale-90 transition-all cursor-pointer disabled:opacity-30 shrink-0"
+							onclick={prevWallpaper}
+							disabled={currentWallpaperList.length <= 1}
+							title="上一张壁纸"
+						>
+							<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="15 18 9 12 15 6"></polyline>
+							</svg>
+						</button>
+
+						<div class="flex-1 min-w-0 text-center px-1">
+							<div class="text-xs font-semibold text-(--primary) truncate leading-tight" title={selectedWallpaperName}>
+								{selectedWallpaperName}
+							</div>
+							<div class="text-[10px] opacity-70 font-mono leading-none mt-0.5">
+								{getCurrentWallpaperIndex() + 1} / {currentWallpaperList.length}
+							</div>
+						</div>
+
+						<button
+							type="button"
+							class="w-7 h-7 rounded-md flex items-center justify-center text-(--btn-content) hover:bg-(--btn-regular-bg-hover) active:scale-90 transition-all cursor-pointer disabled:opacity-30 shrink-0"
+							onclick={nextWallpaper}
+							disabled={currentWallpaperList.length <= 1}
+							title="下一张壁纸"
+						>
+							<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="9 18 15 12 9 6"></polyline>
+							</svg>
+						</button>
+					</div>
+
+					<!-- 调色彩虹滑块（内置在卡片盒子中，专门为当前壁纸挑选色相） -->
+					<div class="hue-slider-shell w-full h-6 px-1 bg-[oklch(0.80_0.10_0)] dark:bg-[oklch(0.70_0.10_0)] rounded-md select-none">
+						<input aria-label={i18n(I18nKey.themeColor)} type="range" min="0" max="360" bind:value={hue}
+							   oninput={handleHueInput}
+							   class="slider" id="colorSlider" step="5" style="width: 100%">
+					</div>
+
+					<!-- 保存 / 复制 按钮（等宽对称，规范统一标准配色） -->
+					<div class="flex gap-2 pt-0.5">
+						<button
+							type="button"
+							class="flex-1 btn-regular rounded-lg py-1.5 px-3 flex items-center justify-center gap-1.5 active:scale-95 transition-all text-xs font-medium cursor-pointer"
+							class:bg-(--btn-regular-bg-hover)={isSavingConfig}
+							class:text-(--primary)={isSavingConfig}
+							disabled={isSavingConfig}
+							onclick={savePresetsToProject}
+						>
+							<svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+								<polyline points="17 21 17 13 7 13 7 21"></polyline>
+								<polyline points="7 3 7 8 15 8"></polyline>
+							</svg>
+							<span>{isSavingConfig ? "保存中..." : "保存"}</span>
+						</button>
+						<button
+							type="button"
+							class="flex-1 btn-regular rounded-lg py-1.5 px-3 flex items-center justify-center gap-1.5 active:scale-95 transition-all text-xs font-medium cursor-pointer"
+							onclick={copyPresetsCode}
+							title="复制配置代码"
+						>
+							<svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+								<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+							</svg>
+							<span>复制</span>
+						</button>
+					</div>
+
+					<!-- 状态提示 -->
+					{#if saveStatusMessage}
+					<div class="text-[11px] px-2 py-1 rounded-md text-center transition-all bg-(--btn-plain-bg-hover) text-(--primary) font-medium">
+						{saveStatusMessage}
+					</div>
+					{/if}
+				</div>
+				{:else}
+				<!-- 正常访客/生产环境模式：纯净显示提示，不显示任何滑块与编辑控件 -->
+				<div class="text-[11px] text-(--btn-content) opacity-70 mb-2 flex items-center gap-1.5 px-0.5">
+					<svg class="w-3.5 h-3.5 text-(--primary) shrink-0" viewBox="0 0 24 24" fill="currentColor">
+						<path d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 19.4c-.39.39-.39 1.02 0 1.41.39.39 1.02.39 1.41 0l2.06-2.06C9.28 19.49 10.59 20 12 20c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/>
+					</svg>
+					<span>已启用壁纸专属预设色，切换壁纸时自动匹配</span>
+				</div>
+				{/if}
+			<!-- 2. 跟随壁纸模式（auto）：纯自动计算，不提供也不显示调色滑块 -->
+			{:else if themeHueMode === "auto"}
+				<div class="text-[11px] text-(--btn-content) opacity-70 mb-2 flex items-center gap-1.5 px-0.5">
+					<svg class="w-3.5 h-3.5 text-(--primary) shrink-0" viewBox="0 0 24 24" fill="currentColor">
+						<path d="m19 9 1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25z"/>
+					</svg>
+					<span>跟随当前壁纸自动计算提取色调</span>
+				</div>
+			<!-- 3. 自定义模式（custom）：用户自由设定色相，展示彩虹滑块 -->
+			{:else if themeHueMode === "custom"}
+				<div class="text-[11px] text-(--btn-content) opacity-70 mb-2 flex items-center gap-1.5 px-0.5">
+					<svg class="w-3.5 h-3.5 text-(--primary) shrink-0" viewBox="0 0 24 24" fill="currentColor">
+						<path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
+					</svg>
+					<span>拖动滑块自由设定全站主题色</span>
+				</div>
+
+				<div class="hue-slider-shell w-full h-6 px-1 bg-[oklch(0.80_0.10_0)] dark:bg-[oklch(0.70_0.10_0)] rounded-md select-none mb-2">
+					<input aria-label={i18n(I18nKey.themeColor)} type="range" min="0" max="360" bind:value={hue}
+						   oninput={handleHueInput}
+						   class="slider" id="colorSlider" step="5" style="width: 100%">
+				</div>
+			{/if}
 		</div>
 		{/if}
 

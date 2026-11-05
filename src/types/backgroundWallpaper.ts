@@ -11,6 +11,15 @@ export type BackgroundWallpaperConfig = {
 				mobile?: string | string[];
 				playerUrl?: string | string[]; // 背景视频播放地址，支持单个视频路径或数组（多视频列表循环）
 		  }; // 支持单个图片、图片数组或分别设置桌面端和移动端图片
+	/**
+	 * 壁纸独立预设色相配置（壁纸路径/文件名/简写 -> 0-360 色相值）
+	 * 例如：
+	 * wallpaperHuePresets: {
+	 *   "/wallpapers/desktop/inugami-korone.webp": 35,
+	 *   "dragon-maid.webp": 210,
+	 * }
+	 */
+	wallpaperHuePresets?: Record<string, number>;
 	// 横幅壁纸和全屏壁纸共享配置
 	common?: {
 		dimOpacity?: number; // 横幅文字遮罩暗度，0-1之间，值越大越暗，默认0.15

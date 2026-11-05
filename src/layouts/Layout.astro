@@ -1,5 +1,4 @@
 ---
-import BrowserChrome from "@/components/layout/BrowserChrome.astro";
 import GoogleAnalytics from "@components/analytics/GoogleAnalytics.astro";
 import La51Analytics from "@components/analytics/La51Analytics.astro";
 import MicrosoftClarity from "@components/analytics/MicrosoftClarity.astro";
@@ -15,6 +14,7 @@ import SakuraEffect from "@components/features/SakuraEffect.astro";
 import WavesEffect from "@components/features/WavesEffect.astro";
 import ConfigCarrier from "@components/layout/ConfigCarrier.astro";
 import DevWallpaperPreview from "@/components/dev/DevWallpaperPreview.astro";
+import BrowserChrome from "@/components/layout/BrowserChrome.astro";
 
 import {
 	analyticsConfig,
@@ -370,6 +370,8 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
         baseUrl: import.meta.env.BASE_URL,
         cardTransparentOpacity: backgroundWallpaper.overlay?.cardOpacity ?? 0.8,
         fullscreenLayout,
+        wallpaperHuePresets: backgroundWallpaper.wallpaperHuePresets || {},
+        wallpaperSrcList: backgroundWallpaper.src,
       }}
     >
       // 主题初始化 - 与setting-utils.ts保持一致
@@ -416,7 +418,69 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
       );
 
       // Load the hue from local storage
-      const hue = localStorage.getItem("hue") || configHue;
+      let hueMode = null;
+      let storedCustom = null;
+      let storedHue = null;
+      try {
+        hueMode = localStorage.getItem("themeHueMode");
+        storedCustom = localStorage.getItem("customHue");
+        storedHue = localStorage.getItem("hue");
+      } catch (_) {}
+
+      let hue =
+        hueMode === "custom"
+          ? (storedCustom || ((storedHue && storedHue !== "165") ? storedHue : configHue))
+          : configHue;
+
+      // 若处于非自定义模式（即预设模式或跟随壁纸模式），在首屏解析时直接选定随机壁纸并秒开对应的预设色相
+      if (hueMode !== "custom" && wallpaperSrcList) {
+        try {
+          const isMobile = window.innerWidth < 1024;
+          let dtList = [];
+          let mbList = [];
+          if (typeof wallpaperSrcList === "object" && wallpaperSrcList !== null) {
+            if (Array.isArray(wallpaperSrcList)) {
+              dtList = wallpaperSrcList;
+            } else {
+              dtList = Array.isArray(wallpaperSrcList.desktop)
+                ? wallpaperSrcList.desktop
+                : (typeof wallpaperSrcList.desktop === "string" ? [wallpaperSrcList.desktop] : []);
+              mbList = Array.isArray(wallpaperSrcList.mobile)
+                ? wallpaperSrcList.mobile
+                : (typeof wallpaperSrcList.mobile === "string" ? [wallpaperSrcList.mobile] : []);
+            }
+          } else if (typeof wallpaperSrcList === "string") {
+            dtList = [wallpaperSrcList];
+            mbList = [wallpaperSrcList];
+          }
+          const activeList = isMobile
+            ? (mbList.length > 0 ? mbList : dtList)
+            : (dtList.length > 0 ? dtList : mbList);
+
+          if (activeList.length > 0) {
+            const chosenSrc = activeList[Math.floor(Math.random() * activeList.length)];
+            window.__initialWallpaperSrc = chosenSrc;
+
+            const clean = chosenSrc.split("?")[0].split("#")[0];
+            const file = clean.split("/").pop() || "";
+            const name = file.replace(/\.[^.]+$/, "");
+
+            if (hueMode === "auto") {
+              const extractedHues = JSON.parse(localStorage.getItem("extractedWallpaperHues") || "{}");
+              const cached = extractedHues[clean] ?? extractedHues[file] ?? extractedHues[name];
+              if (typeof cached === "number") hue = String(cached);
+            } else {
+              // 默认预设模式：直接读取已配好的壁纸预设色相（支持用户本地预设与项目级预设）
+              const userPresets = JSON.parse(localStorage.getItem("wallpaperHuePresets") || "{}");
+              const preset =
+                userPresets[clean] ?? userPresets[file] ?? userPresets[name] ??
+                wallpaperHuePresets[clean] ?? wallpaperHuePresets[file] ?? wallpaperHuePresets[name];
+              if (typeof preset === "number") hue = String(preset);
+            }
+          }
+        } catch (_) {}
+      }
+
       document.documentElement.style.setProperty("--hue", hue);
       // 首帧先匹配深浅背景，BrowserChrome 随后同步实际计算后的主题底色。
       const browserThemeMeta = document.querySelector('meta[name="theme-color"]');
@@ -499,6 +563,7 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
     </script>
     <style
       define:vars={{
+        hue: configHue,
         configHue,
         "page-width": `${siteConfig.pageWidth ?? PAGE_WIDTH}rem`,
         "navbar-panel-blur": `${navbarPanelBlur}px`,

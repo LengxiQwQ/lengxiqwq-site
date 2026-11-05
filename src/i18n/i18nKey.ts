@@ -103,6 +103,11 @@ enum I18nKey {
 	musicAudioPlayer = "musicAudioPlayer",
 
 	themeColor = "themeColor",
+	themeColorCustom = "themeColorCustom",
+	themeColorAuto = "themeColorAuto",
+	themeColorPreset = "themeColorPreset",
+	themeColorCurrentWallpaper = "themeColorCurrentWallpaper",
+	themeColorResetPreset = "themeColorResetPreset",
 
 	lightMode = "lightMode",
 	darkMode = "darkMode",

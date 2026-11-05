@@ -590,6 +590,184 @@ function friendsAuditDevApiPlugin() {
 	};
 }
 
+// Vite 插件：本地开发环境下处理壁纸预设色相保存请求，直接写入项目配置文件
+function wallpaperHuePresetsDevApiPlugin() {
+	return {
+		name: "vite-plugin-wallpaper-hue-presets-api",
+		configureServer(server) {
+			server.middlewares.use((req, res, next) => {
+				const url = req.url?.split("?")[0];
+				if (
+					url !== "/api/wallpaper-hue-presets" &&
+					url !== "/api/wallpaper-hue-presets/"
+				) {
+					return next();
+				}
+				if (req.method !== "POST" && req.method !== "GET") {
+					return next();
+				}
+
+				const origin = req.headers.origin || req.headers.referer;
+				if (origin) {
+					try {
+						const originUrl = new URL(origin);
+						const isLocal =
+							originUrl.hostname === "localhost" ||
+							originUrl.hostname === "127.0.0.1" ||
+							originUrl.hostname === "::1";
+						if (!isLocal) {
+							res.statusCode = 403;
+							return res.end(
+								JSON.stringify({
+									error: "Forbidden: Cross-origin requests not allowed",
+								}),
+							);
+						}
+					} catch {
+						res.statusCode = 403;
+						return res.end(
+							JSON.stringify({ error: "Forbidden: Invalid origin" }),
+						);
+					}
+				}
+
+				if (req.method === "GET") {
+					const targetPath = fs.existsSync(
+						path.resolve(
+							"../lengxiqwq-site-content/config/backgroundWallpaper.ts",
+						),
+					)
+						? path.resolve(
+								"../lengxiqwq-site-content/config/backgroundWallpaper.ts",
+							)
+						: path.resolve("src/config/backgroundWallpaper.ts");
+					try {
+						const content = fs.readFileSync(targetPath, "utf-8");
+						const match = content.match(
+							/wallpaperHuePresets:\s*\{([\s\S]*?)\},?/,
+						);
+						const presets = {};
+						if (match && match[1]) {
+							const lines = match[1].split("\n");
+							for (const line of lines) {
+								const lineMatch = line.match(/["']([^"']+)["']\s*:\s*(\d+)/);
+								if (lineMatch) {
+									presets[lineMatch[1]] = Number(lineMatch[2]);
+								}
+							}
+						}
+						res.setHeader("Content-Type", "application/json");
+						return res.end(JSON.stringify({ success: true, presets }));
+					} catch (e) {
+						res.statusCode = 500;
+						return res.end(JSON.stringify({ error: String(e) }));
+					}
+				}
+
+				let bodyStr = "";
+				req.on("data", (chunk) => {
+					bodyStr += chunk;
+				});
+				req.on("end", async () => {
+					res.setHeader("Content-Type", "application/json");
+					try {
+						const body = JSON.parse(bodyStr || "{}");
+						const { presets } = body;
+						if (!presets || typeof presets !== "object") {
+							res.statusCode = 400;
+							return res.end(
+								JSON.stringify({ error: "Invalid presets data" }),
+							);
+						}
+
+						const contentRepoPath = path.resolve(
+							"../lengxiqwq-site-content/config/backgroundWallpaper.ts",
+						);
+						const mainRepoPath = path.resolve("src/config/backgroundWallpaper.ts");
+						// 若存在私有内容仓，遵循 Rule 0 仅写入内容仓，依靠 contentRepoWatcher 自动热同步；仅在单代码仓时写入自身
+						const targetPaths = fs.existsSync(contentRepoPath)
+							? [contentRepoPath]
+							: [mainRepoPath];
+
+						// 先从现有配置文件中提取已有预设，与传入的数据智能合并，保证已有壁纸预设不丢失
+						let existingPresets = {};
+						const refPath = fs.existsSync(targetPaths[0])
+							? targetPaths[0]
+							: targetPaths[1];
+						if (fs.existsSync(refPath)) {
+							try {
+								const existingContent = fs.readFileSync(refPath, "utf-8");
+								const match = existingContent.match(
+									/wallpaperHuePresets:\s*\{([\s\S]*?)\},?/,
+								);
+								if (match && match[1]) {
+									for (const line of match[1].split("\n")) {
+										const lineMatch = line.match(/["']([^"']+)["']\s*:\s*(\d+)/);
+										if (lineMatch) {
+											existingPresets[lineMatch[1]] = Number(lineMatch[2]);
+										}
+									}
+								}
+							} catch {}
+						}
+
+						const mergedPresets = { ...existingPresets, ...presets };
+						const formattedPresets = Object.entries(mergedPresets)
+							.map(([k, v]) => `\t\t"${k}": ${v},`)
+							.join("\n");
+						const presetBlock = `\twallpaperHuePresets: {\n${formattedPresets}\n\t},`;
+
+						let updatedCount = 0;
+						for (const targetPath of targetPaths) {
+							if (fs.existsSync(targetPath)) {
+								let content = fs.readFileSync(targetPath, "utf-8");
+								if (content.includes("wallpaperHuePresets:")) {
+									content = content.replace(
+										/wallpaperHuePresets:\s*\{[\s\S]*?\},?/,
+										presetBlock,
+									);
+								} else if (content.includes("src: {")) {
+									const srcMatch = content.match(/src:\s*\{[\s\S]*?\n\t\},/);
+									if (srcMatch) {
+										content = content.replace(
+											srcMatch[0],
+											`${srcMatch[0]}\n${presetBlock}`,
+										);
+									} else {
+										content = content.replace(
+											/export const backgroundWallpaper[^{]*\{/,
+											`$&\n${presetBlock}`,
+										);
+									}
+								} else {
+									content = content.replace(
+										/export const backgroundWallpaper[^{]*\{/,
+										`$&\n${presetBlock}`,
+									);
+								}
+								fs.writeFileSync(targetPath, content, "utf-8");
+								updatedCount++;
+							}
+						}
+
+						res.statusCode = 200;
+						return res.end(
+							JSON.stringify({
+								success: true,
+								count: Object.keys(presets).length,
+								updatedFiles: updatedCount,
+							}),
+						);
+					} catch (e) {
+						res.statusCode = 500;
+						return res.end(JSON.stringify({ error: String(e) }));
+					}
+				});
+			});
+		},
+	};
+}
+
 // Vite 插件：记录开发服务器运行锁，在服务退出时自动清理，防止多实例冲突
 function devServerLockPlugin() {
 	return {
@@ -1107,6 +1285,7 @@ export default defineConfig({
 			contentRepoWatcher(),
 			devServerLockPlugin(),
 			friendsAuditDevApiPlugin(),
+			wallpaperHuePresetsDevApiPlugin(),
 		],
 		server: {
 			watch: {

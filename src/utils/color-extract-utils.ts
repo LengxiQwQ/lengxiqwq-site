@@ -1,4 +1,12 @@
-import { getFollowWallpaperHue, getHue, setHue } from "./setting-utils";
+import {
+	getFollowWallpaperHue,
+	getHue,
+	getPresetHueForWallpaper,
+	getThemeHueMode,
+	normalizeWallpaperKey,
+	setHue,
+	type ThemeHueMode,
+} from "./setting-utils";
 
 /**
  * 将 RGB 转换为 HSL
@@ -281,14 +289,45 @@ export function animateHue(targetHue: number, duration = 700): void {
 let currentExtractionToken = 0;
 
 /**
- * 处理壁纸切换时的色彩自适应（直接硬切至目标主色调，不进行多色相旋转过渡）
+ * 处理壁纸切换时的色彩自适应或预设切换
  */
 export async function handleWallpaperChange(
 	img: HTMLImageElement | null,
 	_smooth = false,
+	explicitSrc?: string,
 ): Promise<void> {
+	const mode = getThemeHueMode();
+	if (mode === "custom") return;
+	if (!img && !explicitSrc) return;
+
+	// 记录并获取当前壁纸路径
+	const wallpaperSrc =
+		explicitSrc ||
+		(img ? img.getAttribute("data-wallpaper-src") : null) ||
+		(typeof window !== "undefined"
+			? (window as unknown as { __currentWallpaperSrc?: string })
+					.__currentWallpaperSrc
+			: null) ||
+		(img ? img.currentSrc || img.src : "");
+
+	// 1. 若为壁纸预设模式：优先查找预设色相
+	if (mode === "preset" && wallpaperSrc) {
+		const presetHue = getPresetHueForWallpaper(wallpaperSrc);
+		if (typeof presetHue === "number") {
+			if (activeHueAnimationId !== null) {
+				cancelAnimationFrame(activeHueAnimationId);
+				activeHueAnimationId = null;
+			}
+			setHue(presetHue);
+			window.dispatchEvent(
+				new CustomEvent("hueChange", { detail: { hue: presetHue } }),
+			);
+			return;
+		}
+	}
+
+	// 2. 若未找到预设或处于 auto 自动计算模式：走智能色彩提取
 	if (!img) return;
-	if (!getFollowWallpaperHue()) return;
 
 	if (activeHueAnimationId !== null) {
 		cancelAnimationFrame(activeHueAnimationId);
@@ -298,6 +337,20 @@ export async function handleWallpaperChange(
 	const token = ++currentExtractionToken;
 	const targetHue = await extractDominantHue(img);
 	if (token !== currentExtractionToken) return;
+
+	// 缓存动态提取到的色相，供后续刷新时首屏首帧秒开命中，杜绝闪烁
+	if (wallpaperSrc && typeof window !== "undefined") {
+		try {
+			const clean = normalizeWallpaperKey(wallpaperSrc);
+			const filename = clean.split("/").pop() || "";
+			const extracted = JSON.parse(
+				localStorage.getItem("extractedWallpaperHues") || "{}",
+			);
+			extracted[clean] = targetHue;
+			extracted[filename] = targetHue;
+			localStorage.setItem("extractedWallpaperHues", JSON.stringify(extracted));
+		} catch {}
+	}
 
 	setHue(targetHue);
 	window.dispatchEvent(
@@ -348,8 +401,18 @@ export function getActiveWallpaperImg(): HTMLImageElement | null {
 export async function applyCurrentWallpaperHue(smooth = false): Promise<void> {
 	if (!getFollowWallpaperHue()) return;
 	const img = getActiveWallpaperImg();
-	if (img) {
-		await handleWallpaperChange(img, smooth);
+	const currentSrc =
+		(img
+			? img.getAttribute("data-wallpaper-src") || img.currentSrc || img.src
+			: null) ||
+		(typeof window !== "undefined"
+			? (window as unknown as { __currentWallpaperSrc?: string })
+					.__currentWallpaperSrc
+			: null) ||
+		"";
+
+	if (img || currentSrc) {
+		await handleWallpaperChange(img, smooth, currentSrc);
 	}
 }
 
@@ -361,14 +424,23 @@ export function initWallpaperHueFollower(): void {
 
 	// 1. 监听壁纸切换自定义事件
 	window.addEventListener("wallpaperChange", ((
-		e: CustomEvent<{ img: HTMLImageElement; smooth?: boolean }>,
+		e: CustomEvent<{ img: HTMLImageElement; smooth?: boolean; src?: string }>,
 	) => {
-		if (e.detail?.img) {
-			handleWallpaperChange(e.detail.img, false);
+		if (e.detail?.img || e.detail?.src) {
+			handleWallpaperChange(e.detail.img, false, e.detail.src);
 		}
 	}) as EventListener);
 
-	// 2. 监听跟随模式启用事件（当用户在设置面板重新开启时，立即提取当前壁纸颜色）
+	// 2. 监听跟随模式/主题色相模式改变事件
+	window.addEventListener("themeHueModeChange", ((
+		e: CustomEvent<{ mode: ThemeHueMode }>,
+	) => {
+		if (e.detail?.mode === "auto" || e.detail?.mode === "preset") {
+			applyCurrentWallpaperHue(false);
+		}
+	}) as EventListener);
+
+	// 3. 监听历史跟随模式启用事件
 	window.addEventListener("followWallpaperHueChange", ((
 		e: CustomEvent<{ enable: boolean }>,
 	) => {

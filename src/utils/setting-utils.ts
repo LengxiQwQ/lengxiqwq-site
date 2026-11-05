@@ -31,7 +31,7 @@ declare global {
 }
 
 export function getDefaultHue(): number {
-	const fallback = String(siteConfig.themeColor.hue ?? 280);
+	const fallback = String(siteConfig.themeColor.hue ?? 355);
 	// 检查是否在浏览器环境中
 	if (typeof document === "undefined") {
 		return Number.parseInt(fallback, 10);
@@ -70,7 +70,10 @@ export function getHue(): number {
 		return getDefaultHue();
 	}
 	const stored = localStorage.getItem("hue");
-	return stored ? Number.parseInt(stored, 10) : getDefaultHue();
+	if (!stored || stored === "165") {
+		return getDefaultHue();
+	}
+	return Number.parseInt(stored, 10);
 }
 
 export function setHue(hue: number): void {
@@ -90,22 +93,144 @@ export function setHue(hue: number): void {
 	r.style.setProperty("--hue", String(hue));
 }
 
-export function getFollowWallpaperHue(): boolean {
+export type ThemeHueMode = "custom" | "auto" | "preset";
+
+export function getThemeHueMode(): ThemeHueMode {
 	if (typeof window === "undefined" || !window.localStorage) {
-		return true;
+		return "preset";
 	}
-	const stored = localStorage.getItem("followWallpaperHue");
-	return stored === null ? true : stored === "true";
+	const stored = localStorage.getItem("themeHueMode");
+	if (stored === "custom" || stored === "auto" || stored === "preset") {
+		return stored;
+	}
+	// 向后兼容：检查历史设置项 followWallpaperHue
+	const follow = localStorage.getItem("followWallpaperHue");
+	if (follow === "false") {
+		return "custom";
+	}
+	return "preset";
 }
 
-export function setFollowWallpaperHue(enable: boolean): void {
+export function setThemeHueMode(mode: ThemeHueMode): void {
 	if (typeof window === "undefined" || !window.localStorage) {
 		return;
 	}
-	localStorage.setItem("followWallpaperHue", String(enable));
+	localStorage.setItem("themeHueMode", mode);
+	// 保持原字段同步以便向后兼容
+	const follow = mode !== "custom";
+	localStorage.setItem("followWallpaperHue", String(follow));
+
 	window.dispatchEvent(
-		new CustomEvent("followWallpaperHueChange", { detail: { enable } }),
+		new CustomEvent("themeHueModeChange", { detail: { mode } }),
 	);
+	window.dispatchEvent(
+		new CustomEvent("followWallpaperHueChange", { detail: { enable: follow } }),
+	);
+}
+
+export function getFollowWallpaperHue(): boolean {
+	return getThemeHueMode() !== "custom";
+}
+
+export function setFollowWallpaperHue(enable: boolean): void {
+	setThemeHueMode(enable ? "preset" : "custom");
+}
+
+export function getWallpaperHuePresets(): Record<string, number> {
+	if (typeof window === "undefined" || !window.localStorage) {
+		return {};
+	}
+	try {
+		const stored = localStorage.getItem("wallpaperHuePresets");
+		return stored ? JSON.parse(stored) : {};
+	} catch {
+		return {};
+	}
+}
+
+export function setWallpaperHuePresets(presets: Record<string, number>): void {
+	if (typeof window === "undefined" || !window.localStorage) {
+		return;
+	}
+	try {
+		localStorage.setItem("wallpaperHuePresets", JSON.stringify(presets));
+		window.dispatchEvent(
+			new CustomEvent("wallpaperHuePresetsChange", { detail: { presets } }),
+		);
+	} catch (e) {
+		console.warn("Failed to save wallpaper hue presets:", e);
+	}
+}
+
+/**
+ * 规范化壁纸路径键名（去除查询参数和哈希）
+ */
+export function normalizeWallpaperKey(src: string): string {
+	if (!src) return "";
+	return src.split("?")[0].split("#")[0];
+}
+
+/**
+ * 查询指定壁纸的预设色相
+ * 优先级：用户在本地保存的预设 -> backgroundWallpaper.wallpaperHuePresets 配置项
+ * 支持完整路径、文件名、无后缀名匹配
+ */
+export function getPresetHueForWallpaper(src: string): number | undefined {
+	if (!src) return undefined;
+	const cleanSrc = normalizeWallpaperKey(src);
+	const filename = cleanSrc.split("/").pop() || "";
+	const nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+
+	// 1. 用户自定义预设 (localStorage)
+	const userPresets = getWallpaperHuePresets();
+	if (typeof userPresets[cleanSrc] === "number") return userPresets[cleanSrc];
+	if (typeof userPresets[filename] === "number") return userPresets[filename];
+	if (typeof userPresets[nameWithoutExt] === "number")
+		return userPresets[nameWithoutExt];
+
+	// 2. 配置文件中的预设 (backgroundWallpaper.wallpaperHuePresets)
+	const configPresets = backgroundWallpaper.wallpaperHuePresets;
+	if (configPresets) {
+		if (typeof configPresets[cleanSrc] === "number")
+			return configPresets[cleanSrc];
+		if (typeof configPresets[filename] === "number")
+			return configPresets[filename];
+		if (typeof configPresets[nameWithoutExt] === "number")
+			return configPresets[nameWithoutExt];
+	}
+
+	return undefined;
+}
+
+/**
+ * 保存单个壁纸的预设色相
+ */
+export function saveWallpaperPresetHue(src: string, hue: number): void {
+	if (!src) return;
+	const cleanSrc = normalizeWallpaperKey(src);
+	const filename = cleanSrc.split("/").pop() || "";
+	const nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+	const presets = getWallpaperHuePresets();
+	presets[cleanSrc] = hue;
+	presets[filename] = hue;
+	presets[nameWithoutExt] = hue;
+	setWallpaperHuePresets(presets);
+}
+
+/**
+ * 移除单个壁纸的用户预设色相（恢复为默认提取或默认预设）
+ */
+export function removeWallpaperPresetHue(src: string): void {
+	if (!src) return;
+	const cleanSrc = normalizeWallpaperKey(src);
+	const filename = cleanSrc.split("/").pop() || "";
+	const nameWithoutExt = filename.replace(/\.[^.]+$/, "");
+
+	const presets = getWallpaperHuePresets();
+	delete presets[cleanSrc];
+	delete presets[filename];
+	delete presets[nameWithoutExt];
+	setWallpaperHuePresets(presets);
 }
 
 export function applyThemeToDocument(theme: LIGHT_DARK_MODE): void {

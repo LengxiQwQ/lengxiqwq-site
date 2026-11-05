@@ -39,7 +39,7 @@ const wallpaperPosition = state.isFullscreenMode
          data-carousel-effect={state.bannerCarouselEffect}>
         {/* 图片放在 <template> 里，浏览器不会发起请求；由轮播脚本挑中随机那张后克隆进 DOM */}
         {backgroundImages.mobile.map((src, index) => (
-            <div class:list={["slide-item block lg:hidden", index === 0 && "active"]} data-index={index}>
+            <div class:list={["slide-item block lg:hidden", index === 0 && "active"]} data-index={index} data-wallpaper-src={src}>
                 <template>
                     <ImageWrapper
                         alt="Mobile background image of the blog"
@@ -57,7 +57,7 @@ const wallpaperPosition = state.isFullscreenMode
             </div>
         ))}
         {backgroundImages.desktop.map((src, index) => (
-            <div class:list={["slide-item hidden lg:block", index === 0 && "active"]} data-index={index}>
+            <div class:list={["slide-item hidden lg:block", index === 0 && "active"]} data-index={index} data-wallpaper-src={src}>
                 <template>
                     <ImageWrapper
                         alt="Desktop background image of the blog"
@@ -119,7 +119,7 @@ const wallpaperPosition = state.isFullscreenMode
         {/* 两侧都放在 <template> 里，由下面的脚本按 matchMedia 只实例化匹配的那一侧，
             避免桌面端白下一张手机图（display:none 挡不住 loading="eager"） */}
         {backgroundImages.mobile.length > 0 && (
-            <div class="banner-image-slot absolute inset-0 block lg:hidden">
+            <div class="banner-image-slot absolute inset-0 block lg:hidden" data-wallpaper-src={backgroundImages.mobile[0]}>
                 <template>
                     <ImageWrapper
                         alt="Mobile background image of the blog"
@@ -137,7 +137,7 @@ const wallpaperPosition = state.isFullscreenMode
             </div>
         )}
         {backgroundImages.desktop.length > 0 && (
-            <div class="banner-image-slot absolute inset-0 hidden lg:block">
+            <div class="banner-image-slot absolute inset-0 hidden lg:block" data-wallpaper-src={backgroundImages.desktop[0]}>
                 <template>
                     <ImageWrapper
                         alt="Desktop background image of the blog"
@@ -354,9 +354,11 @@ const wallpaperPosition = state.isFullscreenMode
                 if (!slideEl) return;
                 var img = slideEl.querySelector('img');
                 if (!img) return;
+                var wallpaperSrc = slideEl.getAttribute('data-wallpaper-src') || img.getAttribute('data-wallpaper-src') || img.currentSrc || img.src;
                 window.__currentWallpaperImg = img;
+                window.__currentWallpaperSrc = wallpaperSrc;
                 window.dispatchEvent(new CustomEvent('wallpaperChange', {
-                    detail: { img: img, smooth: false }
+                    detail: { img: img, smooth: false, src: wallpaperSrc }
                 }));
             }
 
@@ -431,10 +433,49 @@ const wallpaperPosition = state.isFullscreenMode
                     stopAutoPlay();
                 }
             });
+            window.addEventListener('switchWallpaper', function(e) {
+                if (!e.detail) return;
+                var slides = getVisibleSlides();
+                if (!slides.length) return;
+                if (e.detail.action === 'prev') {
+                    changeToSlide(getCurrentIndex(slides) - 1);
+                    return;
+                }
+                if (e.detail.action === 'next') {
+                    changeToSlide(getCurrentIndex(slides) + 1);
+                    return;
+                }
+                if (e.detail.src) {
+                    var targetSrc = e.detail.src;
+                    for (var i = 0; i < slides.length; i++) {
+                        var s = slides[i].getAttribute('data-wallpaper-src');
+                        if (s === targetSrc || (s && targetSrc.indexOf(s) !== -1) || (s && s.indexOf(targetSrc) !== -1)) {
+                            changeToSlide(i);
+                            return;
+                        }
+                    }
+                }
+                if (typeof e.detail.index === 'number') {
+                    changeToSlide(e.detail.index);
+                }
+            });
 
             // 随机首张：只有被抽中的这一张会真的下载，其余仍留在 <template> 里
+            // 优先与 <head> 中秒开预选的壁纸同步，确保首帧主题色与壁纸零闪烁秒对齐
             var slides = getVisibleSlides();
-            var startIdx = slides.length > 1 ? Math.floor(Math.random() * slides.length) : 0;
+            var startIdx = -1;
+            if (window.__initialWallpaperSrc) {
+                for (var sIdx = 0; sIdx < slides.length; sIdx++) {
+                    var swp = slides[sIdx].getAttribute('data-wallpaper-src');
+                    if (swp === window.__initialWallpaperSrc || (swp && window.__initialWallpaperSrc.indexOf(swp) !== -1) || (swp && swp.indexOf(window.__initialWallpaperSrc) !== -1)) {
+                        startIdx = sIdx;
+                        break;
+                    }
+                }
+            }
+            if (startIdx < 0) {
+                startIdx = slides.length > 1 ? Math.floor(Math.random() * slides.length) : 0;
+            }
             var firstSlide = slides[startIdx];
             // .slide-item 自带 1000ms 的 opacity 过渡，首张不该吃它（它是 LCP 元素）。
             // 必须在下面加 active 之前就关掉，否则过渡已经启动了。
@@ -509,9 +550,11 @@ const wallpaperPosition = state.isFullscreenMode
                 if (!slot) return;
                 var img = slot.querySelector('img');
                 if (!img) return;
+                var wallpaperSrc = slot.getAttribute('data-wallpaper-src') || img.getAttribute('data-wallpaper-src') || img.currentSrc || img.src;
                 window.__currentWallpaperImg = img;
+                window.__currentWallpaperSrc = wallpaperSrc;
                 window.dispatchEvent(new CustomEvent('wallpaperChange', {
-                    detail: { img: img, smooth: false }
+                    detail: { img: img, smooth: false, src: wallpaperSrc }
                 }));
             }
 

@@ -1,0 +1,472 @@
+---
+import { Icon } from "astro-icon/components";
+import { backgroundWallpaper } from "@/config/backgroundWallpaper";
+import MainGridLayout from "@/layouts/MainGridLayout.astro";
+import "@/styles/pages/common.css";
+
+// 生产构建拦截（仅允许本地开发访问）
+if (import.meta.env.PROD) {
+	return Astro.redirect("/404/");
+}
+
+// 整理壁纸列表
+function normalizeList(
+	input: string | string[] | undefined,
+	device: "desktop" | "mobile",
+) {
+	if (!input) return [];
+	const arr = Array.isArray(input) ? input : [input];
+	return arr.map((src, index) => {
+		const filename = src.split("/").pop() || src;
+		const name = filename.replace(/\.[^/.]+$/, "");
+		const existingPreset =
+			backgroundWallpaper.wallpaperHuePresets?.[src] ??
+			backgroundWallpaper.wallpaperHuePresets?.[filename] ??
+			250;
+		return {
+			id: `${device}-${index}`,
+			src,
+			filename,
+			name,
+			device,
+			initialHue: existingPreset,
+		};
+	});
+}
+
+const desktopWallpapers = normalizeList(
+	backgroundWallpaper.src?.desktop,
+	"desktop",
+);
+const mobileWallpapers = normalizeList(
+	backgroundWallpaper.src?.mobile,
+	"mobile",
+);
+const allWallpapers = [...desktopWallpapers, ...mobileWallpapers];
+const initialPresets = backgroundWallpaper.wallpaperHuePresets || {};
+---
+
+<MainGridLayout title="壁纸配色与主题色相管理后台 (站长专区)">
+  <div class="w-full max-w-6xl mx-auto space-y-6 select-text pb-12">
+    {/* 页面顶栏 */}
+    <div class="card-base p-6 rounded-2xl border border-black/5 dark:border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <Icon name="material-symbols:palette-outline" class="text-2xl text-[var(--primary)]" />
+          <h1 class="text-2xl font-bold text-neutral-900 dark:text-neutral-100">壁纸专属主题色调校台</h1>
+          <span class="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold">开发专属</span>
+        </div>
+        <p class="text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
+          为每一张壁纸指定独立的专属主题色相 (0-360°)。当全站主题色相设为<strong>“壁纸预设”</strong>时，切换到该壁纸将自动呈现此设定色。<br />
+          调校完毕后点击<strong>“保存全部到项目配置”</strong>，将自动写入 <code>backgroundWallpaper.ts</code>，所有访客均全局生效。
+        </p>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3 shrink-0">
+        <button
+          type="button"
+          id="btn-extract-all"
+          class="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-300 dark:hover:bg-neutral-700 active:scale-95 transition-all cursor-pointer"
+          title="使用 Canvas 依次加载所有壁纸图片并智能提取主色调"
+        >
+          <Icon name="fa7-solid:wand-magic-sparkles" class="text-sm text-[var(--primary)]" />
+          <span>一键提取全部壁纸色</span>
+        </button>
+
+        <button
+          type="button"
+          id="btn-copy-code"
+          class="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-neutral-200 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-300 dark:hover:bg-neutral-700 active:scale-95 transition-all cursor-pointer"
+          title="复制当前所有壁纸的配色配置代码片段"
+        >
+          <Icon name="material-symbols:content-copy-outline" class="text-sm" />
+          <span>复制代码</span>
+        </button>
+
+        <button
+          type="button"
+          id="btn-save-all"
+          class="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-[var(--primary)] text-white hover:opacity-90 active:scale-95 transition-all shadow-sm cursor-pointer"
+          title="将当前调好的所有壁纸配色保存写入项目配置文件"
+        >
+          <Icon name="material-symbols:save-outline" class="text-base" />
+          <span id="save-btn-text">保存全部到项目配置</span>
+        </button>
+      </div>
+    </div>
+
+    {/* 状态与统计通知栏 */}
+    <div id="status-toast" class="hidden card-base px-4 py-2.5 rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-sm font-medium items-center justify-between transition-all">
+      <span id="status-toast-text">配置保存成功</span>
+      <button type="button" id="status-toast-close" class="text-xs opacity-75 hover:opacity-100 cursor-pointer">✕</button>
+    </div>
+
+    {/* 选项卡筛选 */}
+    <div class="flex items-center justify-between border-b border-black/5 dark:border-white/5 pb-2">
+      <div class="flex gap-2 text-xs font-medium">
+        <button
+          type="button"
+          class="filter-tab px-3 py-1.5 rounded-lg bg-[var(--primary)] text-white cursor-pointer transition-all"
+          data-filter="all"
+        >
+          全部壁纸 ({allWallpapers.length})
+        </button>
+        <button
+          type="button"
+          class="filter-tab px-3 py-1.5 rounded-lg bg-neutral-200/60 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 cursor-pointer transition-all"
+          data-filter="desktop"
+        >
+          桌面端 ({desktopWallpapers.length})
+        </button>
+        <button
+          type="button"
+          class="filter-tab px-3 py-1.5 rounded-lg bg-neutral-200/60 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100 cursor-pointer transition-all"
+          data-filter="mobile"
+        >
+          移动端 ({mobileWallpapers.length})
+        </button>
+      </div>
+
+      <div class="text-xs text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
+        <Icon name="material-symbols:info-outline" class="text-sm" />
+        <span>支持实时拖拽滑块，点击“在全站预览”可直接查看页面效果</span>
+      </div>
+    </div>
+
+    {/* 壁纸卡片大网格 */}
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" id="wallpapers-grid">
+      {allWallpapers.map((wp) => (
+        <div
+          class="wallpaper-card card-base p-4 rounded-2xl border border-black/5 dark:border-white/5 flex flex-col justify-between gap-3.5 transition-all hover:shadow-lg relative overflow-hidden group"
+          data-device={wp.device}
+          data-src={wp.src}
+          data-initial-hue={wp.initialHue}
+        >
+          {/* 顶部图片预览 */}
+          <div class="relative w-full h-44 rounded-xl overflow-hidden bg-neutral-100 dark:bg-neutral-900 border border-black/5 dark:border-white/5">
+            <img
+              src={wp.src}
+              alt={wp.name}
+              class="w-full h-full object-cover transition duration-300 group-hover:scale-105"
+              loading="lazy"
+            />
+            {/* 设备标识 badge */}
+            <span class="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-md text-[10px] font-bold bg-black/60 text-white backdrop-blur-md shadow-xs">
+              {wp.device === "desktop" ? "桌面端" : "移动端"}
+            </span>
+
+            {/* 色相指示徽章 */}
+            <div class="absolute bottom-2.5 right-2.5 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md shadow-xs text-white">
+              <span
+                class="hue-preview-dot w-3 h-3 rounded-full border border-white shadow-xs"
+                style={`background-color: oklch(0.65 0.18 ${wp.initialHue});`}
+              ></span>
+              <span class="hue-val-text text-xs font-mono font-bold">
+                {wp.initialHue}°
+              </span>
+            </div>
+          </div>
+
+          {/* 信息标题 */}
+          <div class="space-y-1">
+            <div class="flex items-center justify-between gap-2">
+              <h3 class="font-semibold text-sm text-neutral-900 dark:text-neutral-100 truncate" title={wp.name}>
+                {wp.name}
+              </h3>
+              <span class="text-[11px] font-mono text-neutral-400 truncate max-w-[140px]" title={wp.src}>
+                {wp.filename}
+              </span>
+            </div>
+
+            {/* 色彩预览条 */}
+            <div
+              class="hue-bar h-3.5 rounded-md transition-all shadow-2xs border border-black/5 dark:border-white/10"
+              style={`background-color: oklch(0.65 0.18 ${wp.initialHue});`}
+            ></div>
+          </div>
+
+          {/* 色相微调滑块 */}
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
+              <span>色相调节 (Hue):</span>
+              <span class="hue-number-text font-bold text-[var(--primary)] font-mono">{wp.initialHue}°</span>
+            </div>
+            <div class="w-full h-6 px-1 bg-[oklch(0.80_0.10_0)] dark:bg-[oklch(0.70_0.10_0)] rounded-md flex items-center select-none">
+              <input
+                type="range"
+                min="0"
+                max="360"
+                step="5"
+                value={wp.initialHue}
+                class="card-hue-slider w-full cursor-pointer accent-[var(--primary)]"
+                aria-label={`调节 ${wp.name} 的色相`}
+              />
+            </div>
+          </div>
+
+          {/* 快速色板预设 */}
+          <div class="space-y-1">
+            <span class="text-[11px] text-neutral-400">推荐色调:</span>
+            <div class="grid grid-cols-4 gap-1">
+              <button type="button" class="swatch-btn h-5 rounded text-[10px] font-medium text-white transition hover:scale-105 active:scale-95 cursor-pointer" data-hue="15" style="background-color: oklch(0.68 0.20 15);">珊瑚橘</button>
+              <button type="button" class="swatch-btn h-5 rounded text-[10px] font-medium text-white transition hover:scale-105 active:scale-95 cursor-pointer" data-hue="40" style="background-color: oklch(0.68 0.20 40);">琥珀金</button>
+              <button type="button" class="swatch-btn h-5 rounded text-[10px] font-medium text-white transition hover:scale-105 active:scale-95 cursor-pointer" data-hue="145" style="background-color: oklch(0.68 0.20 145);">青翠绿</button>
+              <button type="button" class="swatch-btn h-5 rounded text-[10px] font-medium text-white transition hover:scale-105 active:scale-95 cursor-pointer" data-hue="175" style="background-color: oklch(0.68 0.20 175);">初音青</button>
+              <button type="button" class="swatch-btn h-5 rounded text-[10px] font-medium text-white transition hover:scale-105 active:scale-95 cursor-pointer" data-hue="210" style="background-color: oklch(0.68 0.20 210);">天青蓝</button>
+              <button type="button" class="swatch-btn h-5 rounded text-[10px] font-medium text-white transition hover:scale-105 active:scale-95 cursor-pointer" data-hue="240" style="background-color: oklch(0.68 0.20 240);">深海蓝</button>
+              <button type="button" class="swatch-btn h-5 rounded text-[10px] font-medium text-white transition hover:scale-105 active:scale-95 cursor-pointer" data-hue="280" style="background-color: oklch(0.68 0.20 280);">优雅紫</button>
+              <button type="button" class="swatch-btn h-5 rounded text-[10px] font-medium text-white transition hover:scale-105 active:scale-95 cursor-pointer" data-hue="345" style="background-color: oklch(0.68 0.20 345);">樱花粉</button>
+            </div>
+          </div>
+
+          {/* 底部独立操作栏 */}
+          <div class="flex items-center gap-1.5 pt-2 border-t border-black/5 dark:border-white/5">
+            <button
+              type="button"
+              class="btn-extract-single flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-medium bg-neutral-200/70 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 hover:text-[var(--primary)] hover:bg-neutral-300/80 dark:hover:bg-neutral-700 active:scale-95 transition cursor-pointer"
+              title="使用 Canvas 提取该壁纸主色"
+            >
+              <Icon name="fa7-solid:wand-magic-sparkles" class="text-[0.7rem]" />
+              <span>提取主色</span>
+            </button>
+
+            <button
+              type="button"
+              class="btn-preview-single flex-1 flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)]/20 active:scale-95 transition cursor-pointer"
+              title="切换当前页面壁纸与主题色相进行即时效果预览"
+            >
+              <Icon name="material-symbols:visibility-outline" class="text-sm" />
+              <span>在博客预览</span>
+            </button>
+
+            <button
+              type="button"
+              class="btn-reset-single p-1.5 rounded-lg text-xs text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 active:scale-90 transition cursor-pointer"
+              title="恢复初始配置值"
+            >
+              <Icon name="fa7-solid:arrow-rotate-left" class="text-xs" />
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</MainGridLayout>
+
+<script>
+  import { extractDominantHue } from "@/utils/color-extract-utils";
+  import { setHue, setThemeHueMode, saveWallpaperPresetHue } from "@/utils/setting-utils";
+
+  const cards = document.querySelectorAll<HTMLElement>(".wallpaper-card");
+  const btnSaveAll = document.getElementById("btn-save-all") as HTMLButtonElement | null;
+  const btnCopyCode = document.getElementById("btn-copy-code") as HTMLButtonElement | null;
+  const btnExtractAll = document.getElementById("btn-extract-all") as HTMLButtonElement | null;
+  const saveBtnText = document.getElementById("save-btn-text");
+  const statusToast = document.getElementById("status-toast");
+  const statusToastText = document.getElementById("status-toast-text");
+  const statusToastClose = document.getElementById("status-toast-close");
+  const filterTabs = document.querySelectorAll<HTMLButtonElement>(".filter-tab");
+
+  function showToast(msg: string, isError = false) {
+    if (!statusToast || !statusToastText) return;
+    statusToastText.textContent = msg;
+    statusToast.classList.remove("hidden", "border-emerald-500/20", "bg-emerald-500/10", "text-emerald-600", "dark:text-emerald-400", "border-rose-500/20", "bg-rose-500/10", "text-rose-600", "dark:text-rose-400");
+    if (isError) {
+      statusToast.classList.add("border-rose-500/20", "bg-rose-500/10", "text-rose-600", "dark:text-rose-400", "flex");
+    } else {
+      statusToast.classList.add("border-emerald-500/20", "bg-emerald-500/10", "text-emerald-600", "dark:text-emerald-400", "flex");
+    }
+  }
+
+  statusToastClose?.addEventListener("click", () => {
+    statusToast?.classList.add("hidden");
+    statusToast?.classList.remove("flex");
+  });
+
+  // 更新单一卡片的显示状态与色值
+  function updateCardHue(card: HTMLElement, newHue: number) {
+    card.setAttribute("data-current-hue", String(newHue));
+    const slider = card.querySelector<HTMLInputElement>(".card-hue-slider");
+    if (slider) slider.value = String(newHue);
+
+    const hueValText = card.querySelector<HTMLElement>(".hue-val-text");
+    if (hueValText) hueValText.textContent = `${newHue}°`;
+
+    const hueNumText = card.querySelector<HTMLElement>(".hue-number-text");
+    if (hueNumText) hueNumText.textContent = `${newHue}°`;
+
+    const previewDot = card.querySelector<HTMLElement>(".hue-preview-dot");
+    if (previewDot) previewDot.style.backgroundColor = `oklch(0.65 0.18 ${newHue})`;
+
+    const hueBar = card.querySelector<HTMLElement>(".hue-bar");
+    if (hueBar) hueBar.style.backgroundColor = `oklch(0.65 0.18 ${newHue})`;
+
+    // 同时将当前壁纸色相同步到本地预设中
+    const src = card.getAttribute("data-src");
+    if (src) {
+      saveWallpaperPresetHue(src, newHue);
+    }
+  }
+
+  // 绑定每张卡片的交互
+  cards.forEach((card) => {
+    const src = card.getAttribute("data-src") || "";
+    const initialHue = Number(card.getAttribute("data-initial-hue") || 250);
+    card.setAttribute("data-current-hue", String(initialHue));
+
+    const slider = card.querySelector<HTMLInputElement>(".card-hue-slider");
+    slider?.addEventListener("input", (e) => {
+      const val = Number((e.target as HTMLInputElement).value);
+      updateCardHue(card, val);
+    });
+
+    // 推荐色板按钮
+    card.querySelectorAll<HTMLButtonElement>(".swatch-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const h = Number(btn.getAttribute("data-hue") || 250);
+        updateCardHue(card, h);
+      });
+    });
+
+    // 单张提取主色
+    const btnExtract = card.querySelector<HTMLButtonElement>(".btn-extract-single");
+    btnExtract?.addEventListener("click", async () => {
+      const img = card.querySelector<HTMLImageElement>("img");
+      if (!img) return;
+      btnExtract.disabled = true;
+      btnExtract.classList.add("opacity-50");
+      try {
+        const extracted = await extractDominantHue(img);
+        updateCardHue(card, extracted);
+        showToast(`已提取壁纸主色：${extracted}°`);
+      } catch (e) {
+        showToast("主色提取失败，请重试", true);
+      } finally {
+        btnExtract.disabled = false;
+        btnExtract.classList.remove("opacity-50");
+      }
+    });
+
+    // 单张实时预览
+    const btnPreview = card.querySelector<HTMLButtonElement>(".btn-preview-single");
+    btnPreview?.addEventListener("click", () => {
+      const currentHue = Number(card.getAttribute("data-current-hue") || initialHue);
+      setThemeHueMode("preset");
+      setHue(currentHue);
+      window.dispatchEvent(
+        new CustomEvent("switchWallpaper", {
+          detail: { src },
+        })
+      );
+      showToast(`正在全站实时预览壁纸与主题色 (${currentHue}°)`);
+    });
+
+    // 恢复默认
+    const btnReset = card.querySelector<HTMLButtonElement>(".btn-reset-single");
+    btnReset?.addEventListener("click", () => {
+      updateCardHue(card, initialHue);
+      showToast(`已重置为初始色相：${initialHue}°`);
+    });
+  });
+
+  // 选项卡筛选切换
+  filterTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      filterTabs.forEach((t) => {
+        t.classList.remove("bg-[var(--primary)]", "text-white");
+        t.classList.add("bg-neutral-200/60", "dark:bg-neutral-800", "text-neutral-600", "dark:text-neutral-400");
+      });
+      tab.classList.add("bg-[var(--primary)]", "text-white");
+      tab.classList.remove("bg-neutral-200/60", "dark:bg-neutral-800", "text-neutral-600", "dark:text-neutral-400");
+
+      const filter = tab.getAttribute("data-filter");
+      cards.forEach((card) => {
+        const device = card.getAttribute("data-device");
+        if (filter === "all" || filter === device) {
+          card.classList.remove("hidden");
+        } else {
+          card.classList.add("hidden");
+        }
+      });
+    });
+  });
+
+  // 收集所有卡片的当前配置
+  function getAllPresets(): Record<string, number> {
+    const presets: Record<string, number> = {};
+    cards.forEach((card) => {
+      const src = card.getAttribute("data-src");
+      const hue = Number(card.getAttribute("data-current-hue") || 250);
+      if (src) {
+        presets[src] = hue;
+      }
+    });
+    return presets;
+  }
+
+  // 一键为所有壁纸提取主色
+  btnExtractAll?.addEventListener("click", async () => {
+    btnExtractAll.disabled = true;
+    btnExtractAll.classList.add("opacity-50");
+    showToast("正在通过 Canvas 智能分析提取所有壁纸主色...");
+
+    let count = 0;
+    for (const card of Array.from(cards)) {
+      const img = card.querySelector<HTMLImageElement>("img");
+      if (img) {
+        try {
+          const extracted = await extractDominantHue(img);
+          updateCardHue(card, extracted);
+          count++;
+        } catch {}
+      }
+    }
+
+    btnExtractAll.disabled = false;
+    btnExtractAll.classList.remove("opacity-50");
+    showToast(`✅ 全部 ${count} 张壁纸主色提取完成！请点击“保存全部”持久化`);
+  });
+
+  // 保存全部到项目配置文件
+  btnSaveAll?.addEventListener("click", async () => {
+    if (btnSaveAll.disabled) return;
+    btnSaveAll.disabled = true;
+    if (saveBtnText) saveBtnText.textContent = "保存中...";
+
+    const presets = getAllPresets();
+
+    try {
+      const res = await fetch("/api/wallpaper-hue-presets/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ presets }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast("✅ 全局配色已成功写入 backgroundWallpaper.ts！所有访问者均生效。");
+      } else {
+        showToast(`⚠️ 保存失败: ${data.error || "未知错误"}`, true);
+      }
+    } catch (e) {
+      showToast("⚠️ 保存失败，静态环境无法直接写盘，请使用【复制代码】", true);
+    } finally {
+      btnSaveAll.disabled = false;
+      if (saveBtnText) saveBtnText.textContent = "保存全部到项目配置";
+    }
+  });
+
+  // 复制代码片段
+  btnCopyCode?.addEventListener("click", async () => {
+    const presets = getAllPresets();
+    const lines = Object.entries(presets).map(([k, v]) => `\t\t"${k}": ${v},`);
+    const code = `\twallpaperHuePresets: {\n${lines.join("\n")}\n\t},`;
+
+    try {
+      await navigator.clipboard.writeText(code);
+      showToast("📋 已成功将 wallpaperHuePresets 配置代码复制到剪贴板！");
+    } catch {
+      showToast("⚠️ 剪贴板复制失败，请在控制台查看", true);
+      console.log(code);
+    }
+  });
+</script>

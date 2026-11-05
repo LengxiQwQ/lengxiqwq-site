@@ -186,6 +186,11 @@ export const zh_CN: Translation = {
 	[Key.noData]: "暂无数据",
 
 	[Key.themeColor]: "主题色相",
+	[Key.themeColorCustom]: "自定义",
+	[Key.themeColorAuto]: "跟随壁纸",
+	[Key.themeColorPreset]: "壁纸预设",
+	[Key.themeColorCurrentWallpaper]: "当前",
+	[Key.themeColorResetPreset]: "恢复默认",
 
 	[Key.lightMode]: "亮色",
 	[Key.darkMode]: "暗色",

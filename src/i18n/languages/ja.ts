@@ -188,6 +188,11 @@ export const ja: Translation = {
 	[Key.noData]: "データなし",
 
 	[Key.themeColor]: "テーマカラー",
+	[Key.themeColorCustom]: "カスタム",
+	[Key.themeColorAuto]: "自動計算",
+	[Key.themeColorPreset]: "プリセット",
+	[Key.themeColorCurrentWallpaper]: "現在",
+	[Key.themeColorResetPreset]: "リセット",
 
 	[Key.lightMode]: "ライト",
 	[Key.darkMode]: "ダーク",

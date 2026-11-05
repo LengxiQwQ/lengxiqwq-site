@@ -190,6 +190,11 @@ export const ru: Translation = {
 	[Key.noData]: "Нет данных",
 
 	[Key.themeColor]: "Цвет темы",
+	[Key.themeColorCustom]: "Свой",
+	[Key.themeColorAuto]: "Авто",
+	[Key.themeColorPreset]: "Пресет",
+	[Key.themeColorCurrentWallpaper]: "Текущие",
+	[Key.themeColorResetPreset]: "Сброс",
 
 	[Key.lightMode]: "Светлая",
 	[Key.darkMode]: "Тёмная",

@@ -186,6 +186,11 @@ export const zh_TW: Translation = {
 	[Key.noData]: "暫無資料",
 
 	[Key.themeColor]: "主題色相",
+	[Key.themeColorCustom]: "自定義",
+	[Key.themeColorAuto]: "跟隨桌布",
+	[Key.themeColorPreset]: "桌布預設",
+	[Key.themeColorCurrentWallpaper]: "當前",
+	[Key.themeColorResetPreset]: "恢復預設",
 
 	[Key.lightMode]: "亮色",
 	[Key.darkMode]: "暗色",

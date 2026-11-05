@@ -189,6 +189,11 @@ export const en: Translation = {
 	[Key.noData]: "No data yet",
 
 	[Key.themeColor]: "Theme Color",
+	[Key.themeColorCustom]: "Custom",
+	[Key.themeColorAuto]: "Auto",
+	[Key.themeColorPreset]: "Preset",
+	[Key.themeColorCurrentWallpaper]: "Active",
+	[Key.themeColorResetPreset]: "Reset",
 
 	[Key.lightMode]: "Light",
 	[Key.darkMode]: "Dark",
