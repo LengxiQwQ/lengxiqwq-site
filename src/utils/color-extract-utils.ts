@@ -318,10 +318,19 @@ export async function handleWallpaperChange(
 				cancelAnimationFrame(activeHueAnimationId);
 				activeHueAnimationId = null;
 			}
-			setHue(presetHue);
-			window.dispatchEvent(
-				new CustomEvent("hueChange", { detail: { hue: presetHue } }),
-			);
+			const currentDocHue =
+				typeof document !== "undefined"
+					? Number.parseInt(
+							document.documentElement.style.getPropertyValue("--hue") || "",
+							10,
+						)
+					: null;
+			if (currentDocHue !== presetHue) {
+				setHue(presetHue);
+				window.dispatchEvent(
+					new CustomEvent("hueChange", { detail: { hue: presetHue } }),
+				);
+			}
 			return;
 		}
 	}
@@ -352,10 +361,19 @@ export async function handleWallpaperChange(
 		} catch {}
 	}
 
-	setHue(targetHue);
-	window.dispatchEvent(
-		new CustomEvent("hueChange", { detail: { hue: targetHue } }),
-	);
+	const currentDocHue =
+		typeof document !== "undefined"
+			? Number.parseInt(
+					document.documentElement.style.getPropertyValue("--hue") || "",
+					10,
+				)
+			: null;
+	if (currentDocHue !== targetHue) {
+		setHue(targetHue);
+		window.dispatchEvent(
+			new CustomEvent("hueChange", { detail: { hue: targetHue } }),
+		);
+	}
 }
 
 /**
@@ -403,7 +421,12 @@ export async function applyCurrentWallpaperHue(smooth = false): Promise<void> {
 	const img = getActiveWallpaperImg();
 	const currentSrc =
 		(img
-			? img.getAttribute("data-wallpaper-src") || img.currentSrc || img.src
+			? img.getAttribute("data-wallpaper-src") ||
+				img
+					.closest("[data-wallpaper-src]")
+					?.getAttribute("data-wallpaper-src") ||
+				img.currentSrc ||
+				img.src
 			: null) ||
 		(typeof window !== "undefined"
 			? (window as unknown as { __currentWallpaperSrc?: string })

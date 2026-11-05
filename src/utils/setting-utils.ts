@@ -65,6 +65,14 @@ export function resolveTheme(theme: LIGHT_DARK_MODE): LIGHT_DARK_MODE {
 }
 
 export function getHue(): number {
+	// 优先读取当前 DOM 树上已生效的 CSS 变量，确保首屏首帧秒开对齐
+	if (typeof window !== "undefined" && typeof document !== "undefined") {
+		const docHue = document.documentElement?.style?.getPropertyValue("--hue");
+		if (docHue && docHue.trim()) {
+			const parsed = Number.parseInt(docHue.trim(), 10);
+			if (!Number.isNaN(parsed)) return parsed;
+		}
+	}
 	// 先检查全局对象
 	if (typeof window === "undefined" || !window.localStorage) {
 		return getDefaultHue();
@@ -167,7 +175,16 @@ export function setWallpaperHuePresets(presets: Record<string, number>): void {
  */
 export function normalizeWallpaperKey(src: string): string {
 	if (!src) return "";
-	return src.split("?")[0].split("#")[0];
+	let clean = src.split("?")[0].split("#")[0];
+	try {
+		if (clean.startsWith("http://") || clean.startsWith("https://")) {
+			clean = new URL(clean).pathname;
+		}
+	} catch {}
+	try {
+		clean = decodeURIComponent(clean);
+	} catch {}
+	return clean;
 }
 
 /**

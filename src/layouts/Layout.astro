@@ -461,7 +461,15 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
             const chosenSrc = activeList[Math.floor(Math.random() * activeList.length)];
             window.__initialWallpaperSrc = chosenSrc;
 
-            const clean = chosenSrc.split("?")[0].split("#")[0];
+            let clean = chosenSrc.split("?")[0].split("#")[0];
+            try {
+              if (clean.startsWith("http://") || clean.startsWith("https://")) {
+                clean = new URL(clean).pathname;
+              }
+            } catch (_) {}
+            try {
+              clean = decodeURIComponent(clean);
+            } catch (_) {}
             const file = clean.split("/").pop() || "";
             const name = file.replace(/\.[^.]+$/, "");
 
@@ -482,6 +490,9 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
       }
 
       document.documentElement.style.setProperty("--hue", hue);
+      try {
+        localStorage.setItem("hue", String(hue));
+      } catch (_) {}
       // 首帧先匹配深浅背景，BrowserChrome 随后同步实际计算后的主题底色。
       const browserThemeMeta = document.querySelector('meta[name="theme-color"]');
       if (browserThemeMeta) browserThemeMeta.setAttribute("content", `hsl(${hue} 12% ${document.documentElement.classList.contains("dark") ? "10%" : "96%"})`);

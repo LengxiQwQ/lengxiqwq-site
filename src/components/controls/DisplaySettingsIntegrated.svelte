@@ -1083,15 +1083,22 @@ onMount(() => {
 	};
 });
 
+let isInitialHueEffect = true;
 $effect(() => {
-	if (hue || hue === 0) {
-		setHue(hue);
+	const currentHue = hue;
+	const currentMode = themeHueMode;
+	if (isInitialHueEffect) {
+		isInitialHueEffect = false;
+		return;
+	}
+	if (currentHue || currentHue === 0) {
+		setHue(currentHue);
 		if (
-			themeHueMode === "custom" &&
+			currentMode === "custom" &&
 			typeof window !== "undefined" &&
 			window.localStorage
 		) {
-			localStorage.setItem("customHue", String(hue));
+			localStorage.setItem("customHue", String(currentHue));
 		}
 	}
 });
