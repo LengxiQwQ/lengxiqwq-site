@@ -34,16 +34,19 @@ function normalizeList(
 	});
 }
 
-const desktopWallpapers = normalizeList(
-	backgroundWallpaper.src?.desktop,
-	"desktop",
-);
-const mobileWallpapers = normalizeList(
-	backgroundWallpaper.src?.mobile,
-	"mobile",
-);
+const bgSrc = backgroundWallpaper.src;
+const dtSrc =
+	typeof bgSrc === "object" && bgSrc !== null && !Array.isArray(bgSrc)
+		? bgSrc.desktop
+		: bgSrc;
+const mbSrc =
+	typeof bgSrc === "object" && bgSrc !== null && !Array.isArray(bgSrc)
+		? bgSrc.mobile
+		: [];
+
+const desktopWallpapers = normalizeList(dtSrc, "desktop");
+const mobileWallpapers = normalizeList(mbSrc, "mobile");
 const allWallpapers = [...desktopWallpapers, ...mobileWallpapers];
-const initialPresets = backgroundWallpaper.wallpaperHuePresets || {};
 ---
 
 <MainGridLayout title="壁纸配色与主题色相管理后台 (站长专区)">
