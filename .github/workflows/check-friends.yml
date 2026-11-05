@@ -1,0 +1,105 @@
+name: 友链双向性巡检
+
+on:
+  workflow_dispatch: # 支持手动点击一键触发独立巡检（日常巡检已合并入每日 12:00 deploy.yml 自动部署流）
+
+concurrency:
+  group: check-friends-audit
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  audit-friends:
+    name: 巡检友链双向性与健康度
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出主仓库代码
+        uses: actions/checkout@v4
+
+      - name: 设置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+          run_install: false
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: 安装项目依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 检出私有内容仓
+        uses: actions/checkout@v4
+        with:
+          repository: LengxiQwQ/lengxiqwq-site-content
+          path: .content-src
+          token: ${{ secrets.CONTENT_REPO_TOKEN }}
+
+      - name: 同步内容配置
+        env:
+          CONTENT_DIR: .content-src
+        run: pnpm content:sync
+
+      - name: 运行友链综合巡检脚本
+        run: npx tsx scripts/check-friends-reciprocal.ts
+
+      - name: 生成 GitHub Actions 巡检摘要报告
+        if: always()
+        run: |
+          if [ -f "src/constants/friends-audit.json" ]; then
+            node -e '
+              const fs = require("fs");
+              const data = JSON.parse(fs.readFileSync("src/constants/friends-audit.json", "utf-8"));
+              const total = Object.keys(data).length;
+              const pending = Object.entries(data).filter(([, r]) => r.decision === "pending");
+              const single = Object.entries(data).filter(([, r]) => r.decision === "single");
+              const quarantined = Object.entries(data).filter(([, r]) => r.decision === "quarantined");
+              const whitelisted = Object.entries(data).filter(([, r]) => r.decision === "whitelisted");
+              const normal = total - pending.length - single.length - quarantined.length - whitelisted.length;
+
+              let md = "## 🔍 友链双向性与健康度巡检报告\n\n";
+              md += "| 状态分类 | 数量 |\n| :--- | :--- |\n";
+              md += `| 📊 总巡检友链 | **${total}** |\n`;
+              md += `| ✅ 双向正常 | **${normal}** |\n`;
+              md += `| 🚨 待站长裁决 (连续 3 次异常) | **${pending.length}** |\n`;
+              md += `| 🏷️ 已判单向友链 | **${single.length}** |\n`;
+              md += `| 🚫 已判失联隔离 | **${quarantined.length}** |\n`;
+              md += `| 🛡️ 免检白名单 | **${whitelisted.length}** |\n\n`;
+
+              if (pending.length > 0) {
+                md += "### ⚠️ 触发 3 次异常阈值（等待站长核实）\n\n";
+                md += "| 站点 URL | 检测目标 URL | 异常原因 | 连续次数 |\n| :--- | :--- | :--- | :--- |\n";
+                for (const [url, r] of pending) {
+                  const count = r.failCount >= 3 ? `${r.failCount} 次 404` : `${r.missingCount} 次未检出`;
+                  md += `| ${url} | ${r.targetUrl || url} | ${r.lastMessage || "未搜到关键词"} | ${count} |\n`;
+                }
+                md += "\n> 💡 请在本地启动 `pnpm dev` 后访问 `/admin/friends-audit` 审查台进行一键裁决。\n";
+              } else {
+                md += "> 🎉 所有友链运转正常，无新增待审项目！\n";
+              }
+
+              fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+            '
+          fi
+
+      - name: 提交并推送审计状态变更
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          if [ -n "$(git status --porcelain src/constants/friends-audit.json)" ]; then
+            git add src/constants/friends-audit.json
+            git commit -m "chore: 自动同步友链巡检与审查状态 [skip ci]"
+            git pull --rebase origin main || true
+            git push origin main
+          else
+            echo "审计数据未发生变动，无需提交。"
+          fi

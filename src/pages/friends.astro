@@ -8,6 +8,7 @@ import {
 	friendsPageConfig,
 	getHealthyFriends,
 	getQuarantinedFriends,
+	getSingleFriends,
 	siteConfig,
 } from "@/config";
 import { friendsConfig } from "@/config/friendsConfig";
@@ -38,6 +39,7 @@ const isCommentEnabled =
 
 // 使用健康检测后的友链数据，按权重排序
 const items = getHealthyFriends();
+const singleItems = getSingleFriends();
 const quarantinedItems = getQuarantinedFriends();
 const allTags = [...new Set(items.flatMap((item) => item.tags || []))].sort();
 
@@ -86,6 +88,19 @@ for (const item of items) {
 		sectionsMap.set(primaryTag, []);
 	}
 	sectionsMap.get(primaryTag)?.push(item);
+}
+
+// 服务端/构建阶段即对“博客”分区非置顶卡片执行 Fisher-Yates 随机打乱
+// 确保初次渲染下发的 HTML 原生即为随机排序，消除任何客户端异步执行导致的肉眼可见延迟
+const blogItems = sectionsMap.get("博客");
+if (blogItems && blogItems.length > 0) {
+	const pinned = blogItems.filter((item) => item.pinned || item.weight >= 99);
+	const normal = blogItems.filter((item) => !item.pinned && item.weight < 99);
+	for (let i = normal.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[normal[i], normal[j]] = [normal[j], normal[i]];
+	}
+	sectionsMap.set("博客", [...pinned, ...normal]);
 }
 
 // 过滤出有卡片的分区并保持预设顺序
@@ -216,7 +231,11 @@ const sections = Array.from(sectionsMap.entries())
                 </div>
 
                 {/* 对应分区的卡片网格 */}
-                <div class="friends-grid my-3">
+                <div
+                  id={section.name === "博客" ? "blog-friends-grid" : undefined}
+                  class="friends-grid my-3"
+                  data-sorted={section.name === "博客" ? "random" : undefined}
+                >
                   {section.items.map((item, index) => (
                     <a
                       href={item.siteurl}
@@ -283,6 +302,35 @@ const sections = Array.from(sectionsMap.entries())
                     </a>
                   ))}
                 </div>
+
+                {/* 同步行内脚本：在浏览器首屏绘制（Paint）前即刻同步乱序，彻底消除渲染延迟跳动 */}
+                {section.name === "博客" && (
+                  <script is:inline>
+                    (function () {
+                      const grid = document.getElementById("blog-friends-grid");
+                      if (!grid) return;
+                      const cards = Array.from(grid.children);
+                      const pinned = [];
+                      const normal = [];
+                      for (let i = 0; i < cards.length; i++) {
+                        if (cards[i].dataset.pinned === "true") pinned.push(cards[i]);
+                        else normal.push(cards[i]);
+                      }
+                      if (normal.length <= 1) return;
+                      for (let i = normal.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        const temp = normal[i];
+                        normal[i] = normal[j];
+                        normal[j] = temp;
+                      }
+                      const frag = document.createDocumentFragment();
+                      for (let i = 0; i < pinned.length; i++) frag.appendChild(pinned[i]);
+                      for (let i = 0; i < normal.length; i++) frag.appendChild(normal[i]);
+                      grid.appendChild(frag);
+                      grid.dataset.sorted = "random";
+                    })();
+                  </script>
+                )}
               </div>
             ))}
           </div>
@@ -294,56 +342,69 @@ const sections = Array.from(sectionsMap.entries())
         <Icon name="material-symbols:search-off-rounded" class="text-4xl mb-3" />
         <div class="text-sm">{i18n(I18nKey.searchNoResults)}</div>
       </div>
+
+      {/* 融合在主面板底部的「悄悄关注」与「暂时失联」轻量标签区 */}
+      {(singleItems.length > 0 || quarantinedItems.length > 0) && (
+        <div class="mt-8 pt-6 border-t border-(--line-divider) space-y-4">
+          {/* 1. 单向友链部分 */}
+          {singleItems.length > 0 && (
+            <div>
+              <div class="flex items-center gap-2 text-neutral-800 dark:text-neutral-200 text-sm font-bold mb-2.5">
+                <Icon name="material-symbols:visibility-outline" class="text-base text-(--primary)" />
+                <span>悄悄关注 ({singleItems.length})</span>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                {singleItems.map((item) => (
+                  <a
+                    href={item.siteurl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="group inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border border-(--line-divider) hover:border-(--primary)/50 bg-black/[0.02] dark:bg-white/[0.03] hover:bg-(--primary)/5 text-neutral-700 dark:text-neutral-300 hover:text-(--primary) transition-all duration-200"
+                    title={item.desc ? `${item.title}: ${item.desc}` : item.title}
+                  >
+                    <span>{item.title}</span>
+                    <Icon
+                      name="material-symbols:arrow-outward-rounded"
+                      class="text-[10px] opacity-40 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform"
+                    />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 2. 失联/无法访问友链部分（直接展开平铺，无折叠；若无则不渲染） */}
+          {quarantinedItems.length > 0 && (
+            <div class={singleItems.length > 0 ? "pt-3.5 border-t border-(--line-divider)" : ""}>
+              <div class="flex items-center gap-2 text-neutral-800 dark:text-neutral-200 text-sm font-bold mb-2.5">
+                <Icon name="material-symbols:link-off" class="text-base text-rose-500/80" />
+                <span>暂时失联 ({quarantinedItems.length})</span>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-2">
+                {quarantinedItems.map((item) => (
+                  <a
+                    href={item.siteurl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="group inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border border-rose-500/20 hover:border-rose-500/40 bg-rose-500/[0.04] hover:bg-rose-500/10 text-neutral-500 dark:text-neutral-400 hover:text-rose-600 dark:hover:text-rose-400 line-through decoration-rose-500/40 transition-all duration-200"
+                    title={`连续 ${item.failCount} 次无法访问${item.lastError ? ` (${item.lastError})` : ""}`}
+                  >
+                    <span>{item.title}</span>
+                    <Icon
+                      name="material-symbols:arrow-outward-rounded"
+                      class="text-[10px] opacity-40 group-hover:opacity-100 transition-opacity"
+                    />
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   </div>
-
-  {/* 异常链接隔离区 */}
-  {quarantinedItems.length > 0 && (
-    <div class="mt-4 card-base z-10 px-9 py-6 relative w-full">
-      <details>
-        <summary class="cursor-pointer select-none flex items-center gap-2 text-neutral-500 dark:text-neutral-400 text-sm font-medium">
-          <Icon name="material-symbols:link-off" class="text-lg" />
-          <span>以下 {quarantinedItems.length} 个友链暂时无法访问</span>
-        </summary>
-        <div class="friends-grid my-4 opacity-50 grayscale">
-          {quarantinedItems.map((item) => (
-            <a
-              href={item.siteurl}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="friend-card group flex items-center gap-3 p-2.5 rounded-xl border border-(--line-divider) transition-all duration-300 relative overflow-hidden"
-              title={`连续 ${item.failCount} 次构建无法访问${item.lastError ? `（${item.lastError}）` : ""}`}
-            >
-              {/* 头像 */}
-              <div class="relative w-16 h-16 shrink-0 rounded-xl overflow-hidden bg-zinc-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5">
-                <img
-                  src={item.imgurl}
-                  alt={item.title}
-                  width="64"
-                  height="64"
-                  loading="lazy"
-                  decoding="async"
-                  class="w-full h-full object-cover"
-                />
-              </div>
-              {/* 内容 */}
-              <div class="grow min-w-0 flex flex-col justify-center gap-0.5">
-                <div class="font-bold text-base text-neutral-900 dark:text-neutral-100 truncate pr-4">
-                  {item.title}
-                </div>
-                <div class="text-sm text-neutral-500 dark:text-neutral-400 line-clamp-1" title={item.desc}>
-                  {item.desc}
-                </div>
-                <div class="text-xs text-red-400 dark:text-red-500 mt-0.5">
-                  连续 {item.failCount} 次无法访问
-                </div>
-              </div>
-            </a>
-          ))}
-        </div>
-      </details>
-    </div>
-  )}
 
   {friendsPageConfig.showCustomContent !== false && (
     <div class="mt-4 card-base z-10 px-9 py-6 relative w-full">
@@ -480,15 +541,17 @@ const sections = Array.from(sectionsMap.entries())
           }
         }
 
-        // 站长卡片始终固定在最前，其余卡片排在其后
+        // 站长卡片始终固定在最前，其余卡片排在其后（使用 DocumentFragment 保证单次批量重排）
+        const frag = document.createDocumentFragment();
         [...pinned, ...normal].forEach((card) => {
-          grid.appendChild(card);
+          frag.appendChild(card);
           if (withAnimation) {
             card.classList.remove("friend-card-reorder");
             void card.offsetWidth;
             card.classList.add("friend-card-reorder");
           }
         });
+        grid.appendChild(frag);
 
         // 同步按钮状态与图标显示
         if (sortBtn) {
@@ -527,8 +590,12 @@ const sections = Array.from(sectionsMap.entries())
         });
       }
 
-      // 默认执行一次随机排序（保证刷新/重新进入即为随机模式）
-      applySort("random", false);
+      // 仅当首屏尚未完成任何随机处理时才进行保底乱序（首屏默认已在服务端与同步行内脚本中打乱完毕）
+      // 切勿在此处无条件重复执行 applySort("random")，否则会导致首屏绘制后发生二次闪烁与跳变！
+      if (!grid.dataset.sorted) {
+        applySort("random", false);
+        grid.dataset.sorted = "random";
+      }
     }
 
     // 页面初次加载、Astro 页面切换、Swup 路由切换时均可靠初始化
@@ -541,8 +608,11 @@ const sections = Array.from(sectionsMap.entries())
     }
 
     setupBlogSorting();
-    document.addEventListener("astro:page-load", initBlogSorting);
-    document.addEventListener("swup:content:replace", initBlogSorting);
+    if (!window.__blogSortListenersAttached) {
+      window.__blogSortListenersAttached = true;
+      document.addEventListener("astro:page-load", initBlogSorting);
+      document.addEventListener("swup:content:replace", initBlogSorting);
+    }
   </script>
 
 </MainGridLayout>

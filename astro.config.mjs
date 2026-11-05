@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { exec } from "node:child_process";
 import { setMaxListeners } from "node:events";
 import cloudflare from "@astrojs/cloudflare";
 import { unified } from "@astrojs/markdown-remark";
@@ -67,6 +68,502 @@ const adapter = process.env.CF_WORKERS
 			prerenderEnvironment: "node",
 		})
 	: undefined;
+
+// Vite 插件：本地开发环境下处理友链审查裁决与自检巡检请求，避免纯静态模式限制
+function friendsAuditDevApiPlugin() {
+	return {
+		name: "vite-plugin-friends-audit-api",
+		configureServer(server) {
+			server.middlewares.use((req, res, next) => {
+				const url = req.url?.split("?")[0];
+				if (url !== "/api/friends-audit" && url !== "/api/friends-audit/") {
+					return next();
+				}
+				if (req.method !== "POST") {
+					return next();
+				}
+
+				// 严格限制仅允许本地来源调用，杜绝第三方恶意网页跨域 CSRF 触发命令
+				const origin = req.headers.origin || req.headers.referer;
+				if (origin) {
+					try {
+						const originUrl = new URL(origin);
+						const isLocal =
+							originUrl.hostname === "localhost" ||
+							originUrl.hostname === "127.0.0.1" ||
+							originUrl.hostname === "::1";
+						if (!isLocal) {
+							res.statusCode = 403;
+							return res.end(
+								JSON.stringify({
+									error: "Forbidden: Cross-origin requests not allowed",
+								}),
+							);
+						}
+					} catch {
+						res.statusCode = 403;
+						return res.end(
+							JSON.stringify({ error: "Forbidden: Invalid origin" }),
+						);
+					}
+				}
+
+				let bodyStr = "";
+				req.on("data", (chunk) => {
+					bodyStr += chunk;
+				});
+				req.on("end", async () => {
+					res.setHeader("Content-Type", "application/json");
+					try {
+						const body = JSON.parse(bodyStr || "{}");
+						const { action, siteurl, decision } = body;
+						const auditFile = path.resolve("src/constants/friends-audit.json");
+
+						// 1. 全站自检巡检动作：通过子进程安全调用巡检脚本
+						if (action === "run-full-check") {
+							exec("npx tsx scripts/check-friends-reciprocal.ts", (err) => {
+								let auditData = {};
+								if (fs.existsSync(auditFile)) {
+									try {
+										auditData = JSON.parse(fs.readFileSync(auditFile, "utf-8"));
+									} catch {}
+								}
+								const total = Object.keys(auditData).length;
+								const pending = Object.values(auditData).filter(
+									(r) => r.decision === "pending",
+								).length;
+								const normal = Object.values(auditData).filter(
+									(r) => r.decision === "normal",
+								).length;
+								res.statusCode = 200;
+								return res.end(
+									JSON.stringify({
+										success: true,
+										summary: { total, pending, normal },
+									}),
+								);
+							});
+							return;
+						}
+
+						// 2. 单站现场重测动作：原生智能多路径现场探测
+						if (action === "probe-single") {
+							if (!siteurl) {
+								res.statusCode = 400;
+								return res.end(JSON.stringify({ error: "Missing siteurl" }));
+							}
+							let auditData = {};
+							if (fs.existsSync(auditFile)) {
+								try {
+									auditData = JSON.parse(fs.readFileSync(auditFile, "utf-8"));
+								} catch {}
+							}
+							const prev = auditData[siteurl] || {
+								missingCount: 0,
+								failCount: 0,
+								protectedCount: 0,
+								lastChecked: "",
+								lastStatus: "found",
+								decision: "normal",
+							};
+
+							const keywords = [
+								"lengxiqwq.com",
+								"冷汐的杂货铺",
+								"冷曦的小窝",
+								"lengxiqwq",
+								"lengxi",
+								"冷汐",
+								"冷曦",
+							];
+							const headers = {
+								"User-Agent":
+									"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+								"Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+								Accept:
+									"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+								"sec-ch-ua":
+									'"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
+								"sec-ch-ua-mobile": "?0",
+								"sec-ch-ua-platform": '"Windows"',
+								"Sec-Fetch-Dest": "document",
+								"Sec-Fetch-Mode": "navigate",
+								"Sec-Fetch-Site": "none",
+								"Sec-Fetch-User": "?1",
+								"Upgrade-Insecure-Requests": "1",
+								Priority: "u=0, i",
+								"Cache-Control": "max-age=0",
+							};
+
+							// 严格按定死的友链地址探测：优先请求体指定或先前记录的，否则取 siteurl，绝不自动爬取无关页面
+							const targetUrl =
+								body.targetUrl?.trim() || prev.targetUrl || siteurl;
+
+							let missingCount = prev.missingCount || 0;
+							let failCount = prev.failCount || 0;
+							let protectedCount = prev.protectedCount || 0;
+							let decision = prev.decision || "normal";
+							let lastStatus = "found";
+							let lastMessage = "";
+
+							const matchInText = (text) => {
+								const lower = text.toLowerCase();
+								let decoded = lower;
+								try {
+									decoded = decodeURIComponent(lower);
+								} catch {}
+								return keywords.find(
+									(k) =>
+										lower.includes(k.toLowerCase()) ||
+										decoded.includes(k.toLowerCase()),
+								);
+							};
+
+							try {
+								const resp = await fetch(targetUrl, {
+									signal: AbortSignal.timeout(7000),
+									headers,
+									redirect: "follow",
+								});
+
+								if ([403, 429, 503].includes(resp.status)) {
+									lastStatus = "protected";
+									protectedCount += 1;
+									lastMessage = `HTTP ${resp.status} 防御性拦截/限流 (反爬阻断)`;
+									if (protectedCount >= 3 && decision === "normal")
+										decision = "pending";
+								} else {
+									const html = await resp.text();
+									const lower = html.toLowerCase();
+									const isSpaFallback =
+										resp.status === 404 &&
+										(lower.includes('<div id="app">') ||
+											lower.includes('<div id="root">') ||
+											lower.includes('id="__next"') ||
+											lower.includes('<div id="__nuxt">') ||
+											lower.includes('type="module"'));
+
+									if (resp.status === 404 && !isSpaFallback) {
+										lastStatus = "404";
+										failCount += 1;
+										lastMessage = `HTTP 404 Not Found (${targetUrl})`;
+										if (failCount >= 3 && decision === "normal")
+											decision = "pending";
+									} else if (!resp.ok && resp.status !== 404) {
+										lastStatus = "error";
+										lastMessage = `HTTP ${resp.status} ${resp.statusText}`;
+									} else {
+										const isWaf =
+											html.length < 35000 &&
+											(lower.includes("<title>just a moment...</title>") ||
+												lower.includes(
+													"<title>attention required! | cloudflare</title>",
+												) ||
+												lower.includes("<title>security check</title>") ||
+												lower.includes("cf-browser-verification") ||
+												lower.includes('id="challenge-running"') ||
+												lower.includes('id="challenge-form"') ||
+												lower.includes('class="cf-error-overview"'));
+										if (isWaf) {
+											lastStatus = "protected";
+											protectedCount += 1;
+											lastMessage = "命中防爬/WAF验证特征 (反爬阻断)";
+											if (protectedCount >= 3 && decision === "normal")
+												decision = "pending";
+										} else {
+											const matched = matchInText(html);
+											if (matched) {
+												lastStatus = "found";
+												missingCount = 0;
+												failCount = 0;
+												protectedCount = 0;
+												lastMessage = `成功匹配关键词: "${matched}" (${targetUrl})`;
+												if (
+													decision === "pending" ||
+													decision === "single" ||
+													decision === "quarantined"
+												)
+													decision = "normal";
+											} else {
+												// 针对 SPA 动态渲染与分页二次深度探测
+												let foundInExtra = false;
+												try {
+													const parsed = new URL(targetUrl);
+													const origin = parsed.origin;
+													const dynamicApis = new Set();
+													const dataApiMatch = html.match(
+														/data-[a-z-]*api=["']([^"']+)["']/i,
+													);
+													if (dataApiMatch) {
+														const apiBase = dataApiMatch[1].trim();
+														dynamicApis.add(`${apiBase}/api/friends`);
+														dynamicApis.add(`${apiBase}/api/links`);
+														dynamicApis.add(`${apiBase}/friends`);
+														dynamicApis.add(`${apiBase}/links`);
+													}
+													const apiMatches = html.match(
+														/(?:\/api\/[^"'`\s>]+|(?:\/[^"'`\s>]+)?(?:links?|friends?)[^"'`\s>]*\.json)/gi,
+													);
+													if (apiMatches) {
+														for (const m of apiMatches) {
+															try {
+																dynamicApis.add(new URL(m, targetUrl).href);
+															} catch {}
+														}
+													}
+													dynamicApis.add(`${origin}/api/x/get_friends/?cat=0`);
+													dynamicApis.add(`${origin}/api/x/get_friends/`);
+													dynamicApis.add(`${origin}/api-common/friend-link`);
+													dynamicApis.add(`${origin}/api/friend-link`);
+													dynamicApis.add(`${origin}/api/friend-links`);
+													dynamicApis.add(`${origin}/api/friends`);
+													dynamicApis.add(`${origin}/api/links`);
+													dynamicApis.add(`${origin}/friends.json`);
+													dynamicApis.add(`${origin}/links.json`);
+
+													for (const apiUrl of dynamicApis) {
+														if (apiUrl === targetUrl) continue;
+														try {
+															const apiRes = await fetch(apiUrl, {
+																signal: AbortSignal.timeout(3500),
+																headers,
+															});
+															if (apiRes.ok) {
+																const apiText = await apiRes.text();
+																const apiMatched = matchInText(apiText);
+																if (apiMatched) {
+																	lastStatus = "found";
+																	missingCount = 0;
+																	failCount = 0;
+																	protectedCount = 0;
+																	lastMessage = `在动态数据接口 (${apiUrl}) 成功匹配关键词: "${apiMatched}"`;
+																	if (
+																		decision === "pending" ||
+																		decision === "single" ||
+																		decision === "quarantined"
+																	)
+																		decision = "normal";
+																	foundInExtra = true;
+																	break;
+																}
+															}
+														} catch {}
+													}
+
+													if (!foundInExtra) {
+														const paginationUrls = new Set();
+														const linkRegex =
+															/<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
+														let pMatch;
+														while ((pMatch = linkRegex.exec(html)) !== null) {
+															const href = pMatch[1];
+															const linkText = pMatch[2].trim();
+															if (
+																/(?:page|p)[=/]\d+|\/page\/\d+/i.test(href) ||
+																/^[2-4]$|下一页|Next/i.test(linkText)
+															) {
+																try {
+																	const resolved = new URL(href, targetUrl)
+																		.href;
+																	if (
+																		resolved.startsWith(origin) &&
+																		resolved !== targetUrl
+																	)
+																		paginationUrls.add(resolved);
+																} catch {}
+															}
+														}
+
+														let checkedPages = 0;
+														for (const pageUrl of paginationUrls) {
+															if (checkedPages >= 2) break;
+															checkedPages++;
+															try {
+																const pageRes = await fetch(pageUrl, {
+																	signal: AbortSignal.timeout(4000),
+																	headers,
+																});
+																if (pageRes.ok) {
+																	const pageHtml = await pageRes.text();
+																	const pageMatched = matchInText(pageHtml);
+																	if (pageMatched) {
+																		lastStatus = "found";
+																		missingCount = 0;
+																		failCount = 0;
+																		protectedCount = 0;
+																		lastMessage = `在分页友链 (${pageUrl}) 成功匹配关键词: "${pageMatched}"`;
+																		if (
+																			decision === "pending" ||
+																			decision === "single" ||
+																			decision === "quarantined"
+																		)
+																			decision = "normal";
+																		foundInExtra = true;
+																		break;
+																	}
+																}
+															} catch {}
+														}
+													}
+												} catch {}
+
+												if (!foundInExtra) {
+													lastStatus = "missing";
+													failCount = 0;
+													missingCount += 1;
+													if (resp.status === 404) {
+														lastMessage = `SPA单页应用(Nginx返回404但带有前端外壳)，已穿透后端API探测，未检索到本站链接 (${targetUrl})`;
+													} else {
+														lastMessage = `页面正常，经正文、动态接口及分页检索均未搜到本站关键词 (${targetUrl})`;
+													}
+													if (missingCount >= 3 && decision === "normal")
+														decision = "pending";
+												}
+											}
+										}
+									}
+								}
+							} catch (err) {
+								if (err.name === "AbortError" || err.name === "TimeoutError") {
+									lastStatus = "error";
+									failCount += 1;
+									lastMessage = "请求超时 (>7s, 网络延迟高或服务器无响应)";
+									if (failCount >= 3 && decision === "normal")
+										decision = "pending";
+								} else {
+									lastStatus = "error";
+									failCount += 1;
+									lastMessage = err.message || "请求失败";
+									if (failCount >= 3 && decision === "normal")
+										decision = "pending";
+								}
+							}
+
+							auditData[siteurl] = {
+								missingCount,
+								failCount,
+								protectedCount,
+								lastChecked: new Date().toISOString(),
+								lastStatus,
+								lastMessage,
+								targetUrl,
+								decision,
+								decisionTime: prev.decisionTime,
+							};
+							fs.writeFileSync(
+								auditFile,
+								JSON.stringify(auditData, null, "\t"),
+								"utf-8",
+							);
+							res.statusCode = 200;
+							return res.end(
+								JSON.stringify({
+									success: true,
+									siteurl,
+									record: auditData[siteurl],
+								}),
+							);
+						}
+
+						// 3. 修改自定义友链地址
+						if (action === "save-target-url") {
+							if (!siteurl || !body.targetUrl) {
+								res.statusCode = 400;
+								return res.end(
+									JSON.stringify({ error: "Missing siteurl or targetUrl" }),
+								);
+							}
+							let auditData = {};
+							if (fs.existsSync(auditFile)) {
+								try {
+									auditData = JSON.parse(fs.readFileSync(auditFile, "utf-8"));
+								} catch {}
+							}
+							const prev = auditData[siteurl] || {
+								missingCount: 0,
+								failCount: 0,
+								lastChecked: "",
+								lastStatus: "found",
+								decision: "normal",
+							};
+							auditData[siteurl] = {
+								...prev,
+								targetUrl: body.targetUrl.trim(),
+							};
+							fs.writeFileSync(
+								auditFile,
+								JSON.stringify(auditData, null, "\t"),
+								"utf-8",
+							);
+							res.statusCode = 200;
+							return res.end(
+								JSON.stringify({
+									success: true,
+									siteurl,
+									targetUrl: body.targetUrl.trim(),
+								}),
+							);
+						}
+
+						// 3. 人工裁决状态写入
+						if (!siteurl || !decision) {
+							res.statusCode = 400;
+							return res.end(JSON.stringify({ error: "Missing parameters" }));
+						}
+
+						let auditData = {};
+						if (fs.existsSync(auditFile)) {
+							try {
+								auditData = JSON.parse(fs.readFileSync(auditFile, "utf-8"));
+							} catch {
+								auditData = {};
+							}
+						}
+
+						const prev = auditData[siteurl] || {
+							missingCount: 0,
+							failCount: 0,
+							lastChecked: new Date().toISOString(),
+							lastStatus: "found",
+							decision: "normal",
+						};
+
+						auditData[siteurl] = {
+							...prev,
+							decision,
+							decisionTime: new Date().toISOString(),
+						};
+
+						if (decision === "whitelisted") {
+							auditData[siteurl].missingCount = 0;
+							auditData[siteurl].failCount = 0;
+							auditData[siteurl].protectedCount = 0;
+						}
+
+						fs.writeFileSync(
+							auditFile,
+							JSON.stringify(auditData, null, "\t"),
+							"utf-8",
+						);
+
+						res.statusCode = 200;
+						res.end(
+							JSON.stringify({
+								success: true,
+								siteurl,
+								decision,
+								record: auditData[siteurl],
+							}),
+						);
+					} catch (e) {
+						res.statusCode = 500;
+						res.end(JSON.stringify({ error: e.message, stack: e.stack }));
+					}
+				});
+			});
+		},
+	};
+}
 
 // Vite 插件：记录开发服务器运行锁，在服务退出时自动清理，防止多实例冲突
 function devServerLockPlugin() {
@@ -580,7 +1077,12 @@ export default defineConfig({
 		}),
 	},
 	vite: {
-		plugins: [tailwindcss(), contentRepoWatcher(), devServerLockPlugin()],
+		plugins: [
+			tailwindcss(),
+			contentRepoWatcher(),
+			devServerLockPlugin(),
+			friendsAuditDevApiPlugin(),
+		],
 		server: {
 			watch: {
 				ignored: ["**/package/**", "**/Firefly-docs/**"],

@@ -1,5 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+	DEFAULT_KEYWORDS,
+	isPrivateOrLocalHost,
+	probeWithRetry,
+} from "./check-friends-reciprocal.ts";
 
 interface FriendLinkEntry {
 	title: string;
@@ -34,6 +39,7 @@ const inputImgUrl = process.env.INPUT_IMGURL || "";
 const inputDesc = process.env.INPUT_DESC || "";
 const inputFeedUrl = process.env.INPUT_FEEDURL || "";
 const inputScreenshot = process.env.INPUT_SCREENSHOT || "";
+const inputCheckUrl = process.env.INPUT_CHECKURL || "";
 const inputEmail = process.env.INPUT_EMAIL || "";
 
 // 动态解析站点配置，提取主站域名与链接
@@ -235,11 +241,13 @@ function normalizeUrl(urlStr: string): string {
 	}
 }
 
-// 校验 URL 有效性
+// 校验 URL 有效性并防范 SSRF 私有内网探测
 function isValidHttpUrl(string: string) {
 	try {
 		const url = new URL(string);
-		return url.protocol === "http:" || url.protocol === "https:";
+		if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+		if (isPrivateOrLocalHost(url.hostname)) return false;
+		return true;
 	} catch (_) {
 		return false;
 	}
@@ -258,13 +266,13 @@ function isValidEmail(emailStr: string): boolean {
 	return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
 }
 
-// 伪装浏览器请求头
+// 深度模拟桌面现代 Chrome 133 浏览器完整请求头（包含 Client Hints 与 Fetch Metadata）
 const BROWSER_HEADERS = {
 	"User-Agent":
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
 	"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
 	"sec-ch-ua":
-		'"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+		'"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
 	"sec-ch-ua-mobile": "?0",
 	"sec-ch-ua-platform": '"Windows"',
 	"Sec-Fetch-Dest": "document",
@@ -358,54 +366,54 @@ async function verifyAvatarReachable(
 	}
 }
 
-// 反向链接网页抓取与检测
-async function verifyBacklink(
-	checkUrl: string,
-): Promise<{ success: boolean; reason?: string }> {
-	try {
-		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), 15000);
+// 智能反向链接深度穿透检测（支持防反爬伪装、SPA API穿透、动态接口嗅探与分页扫描）
+async function verifyBacklink(checkUrl: string): Promise<{
+	success: boolean;
+	reason?: string;
+	isWaf?: boolean;
+	matchMessage?: string;
+}> {
+	const keywords = Array.from(
+		new Set([
+			...DEFAULT_KEYWORDS,
+			siteInfo.targetDomain,
+			siteInfo.siteUrl,
+			siteInfo.siteTitle,
+		]),
+	);
 
-		const response = await fetch(checkUrl, {
-			signal: controller.signal,
-			headers: {
-				...BROWSER_HEADERS,
-				Accept:
-					"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-			},
-			redirect: "follow",
-		});
+	const res = await probeWithRetry(checkUrl, keywords);
 
-		clearTimeout(timeoutId);
+	if (res.status === "found") {
+		return { success: true, matchMessage: res.message };
+	}
 
-		if (!response.ok) {
-			return {
-				success: false,
-				reason: `访问页面时返回 HTTP 状态码: ${response.status} ${response.statusText}`,
-			};
-		}
-
-		const html = await response.text();
-		const hasTarget = html.toLowerCase().includes(TARGET_DOMAIN);
-
-		if (!hasTarget) {
-			return {
-				success: false,
-				reason: `在页面内容中未找到本站域名（\`${TARGET_DOMAIN}\`）`,
-			};
-		}
-
-		return { success: true };
-	} catch (err: unknown) {
-		const error = err as Error;
-		if (error.name === "AbortError") {
-			return { success: false, reason: "访问该页面超时（超过 15 秒）" };
-		}
+	if (res.status === "protected") {
 		return {
 			success: false,
-			reason: `请求失败: ${error.message || String(error)}`,
+			isWaf: true,
+			reason: `检测到该友链页面启用了防爬验证盾或防火墙安全拦截（${res.message}）`,
 		};
 	}
+
+	if (res.status === "404") {
+		return {
+			success: false,
+			reason: `友链页面返回 404 Not Found 错误（${checkUrl}）`,
+		};
+	}
+
+	if (res.status === "missing") {
+		return {
+			success: false,
+			reason: `经页面静态正文、动态接口（如 /api/friends）及分页多层穿透扫描，均未找到本站域名（\`${TARGET_DOMAIN}\`）或名称（\`${siteInfo.siteTitle}\`）`,
+		};
+	}
+
+	return {
+		success: false,
+		reason: res.message || "未能成功访问该页面",
+	};
 }
 
 async function run() {
@@ -430,7 +438,7 @@ async function run() {
 				feedurl: inputFeedUrl,
 				screenshot: inputScreenshot,
 				email: inputEmail,
-				checkurl: inputSiteUrl,
+				checkurl: inputCheckUrl || inputSiteUrl,
 			}
 		: parseIssueBody(issueBody);
 
@@ -441,6 +449,11 @@ async function run() {
 	if (parsed.feedurl) parsed.feedurl = ensureProtocol(parsed.feedurl);
 	if (parsed.screenshot) parsed.screenshot = ensureProtocol(parsed.screenshot);
 	if (parsed.email) parsed.email = cleanEmail(parsed.email);
+
+	// 尽早脱敏 Issue 正文中的联系邮箱，防止因校验失败导致明文隐私泄露
+	if (!isManualDispatch && parsed.email) {
+		await redactEmailInIssue(issueBody);
+	}
 
 	// 必填项检查
 	if (
@@ -539,6 +552,20 @@ async function run() {
 		return;
 	}
 
+	if (feedurl && !isValidHttpUrl(feedurl)) {
+		const msg = `⚠️ **RSS 订阅链接格式不正确**\n\n您填写的 RSS 订阅链接 \`${feedurl}\` 不是合法的公网 http/https 网址，请检查后重新编辑。`;
+		await postComment(msg);
+		await addLabels(["invalid-format"]);
+		console.log(msg);
+		if (isManualDispatch) {
+			console.error(
+				`::error title=RSS 订阅链接格式不正确::您填写的 RSS 订阅链接 "${feedurl}" 不是合法的 http/https 网址`,
+			);
+			process.exit(1);
+		}
+		return;
+	}
+
 	if (email && !isValidEmail(email)) {
 		const msg = `⚠️ **联系邮箱格式不正确**\n\n您填写的联系邮箱 \`${email}\` 不是合法的电子邮箱格式，请检查后重新编辑。`;
 		await postComment(msg);
@@ -583,6 +610,7 @@ async function run() {
 	}
 
 	// 连通性与反向链接审核
+	let backlinkResult: { success: boolean; matchMessage?: string } | null = null;
 	if (forceBypass || isManualDispatch) {
 		console.log(
 			"[friend-apply] 检测到博主手动添加或 bypass-check，跳过反向链接验证",
@@ -615,9 +643,15 @@ async function run() {
 		// 3. 反向链接爬虫审核
 		console.log(`[friend-apply] 开始对反向链接进行爬虫验证: ${checkurl}`);
 		const checkResult = await verifyBacklink(checkurl);
+		backlinkResult = checkResult;
 
 		if (!checkResult.success) {
-			const msg = `⚠️ **友链检测未通过**\n\n${checkResult.reason}。\n\n**建议排查步骤**：\n1. 确认已将本站添加至您的网站（本站域名：\`${TARGET_DOMAIN}\`）；\n2. 若友链存放在子页面（如 \`/friends\`），请确保在申请表单中准确填写「友链所在页面」；\n3. 若站点为 SPA 动态渲染架构或启用了高防防爬验证，可联系博主添加 \`bypass-check\` 标签以人工跳过检测。\n\n修改或添加完毕后，可直接**重新编辑 Issue 或在下方回复任意内容**，系统将自动重新触发检测。`;
+			let msg = "";
+			if (checkResult.isWaf) {
+				msg = `🛡️ **检测到防爬保护或安全拦截**\n\n机器人尝试访问您的友链页面（\`${checkurl}\`）时，检测到该页面启用了安全防御或防爬验证盾（${checkResult.reason}），自动化程序无法穿透。\n\n**处理建议**：\n请联系博主在当前 Issue 中添加 \`bypass-check\` 标签进行人工核验放行！\n\n添加标签后系统将自动批准录入您的友链。`;
+			} else {
+				msg = `⚠️ **友链检测未通过**\n\n${checkResult.reason}。\n\n**建议排查步骤**：\n1. 确认已将本站添加至您的网站（本站域名：\`${TARGET_DOMAIN}\`，站名：\`${siteInfo.siteTitle}\`）；\n2. 若友链存放在子页面（如 \`/friends\`），请确保在申请表单中准确填写「友链所在页面」；\n3. 若站点为 SPA 纯动态渲染架构或启用了高防防爬验证，可联系博主添加 \`bypass-check\` 标签人工放行。\n\n修改或挂链完毕后，可直接**重新编辑 Issue 或在下方回复任意内容**，系统将自动重新触发检测。`;
+			}
 			await postComment(msg);
 			await addLabels(["check-failed"]);
 			console.log(`[friend-apply] 验证失败: ${checkResult.reason}`);
@@ -626,29 +660,65 @@ async function run() {
 		console.log("[friend-apply] 反向链接验证成功！");
 	}
 
-	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\tfeedUrl: ${JSON.stringify(feedurl || "")},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\tscreenshot: ${JSON.stringify(screenshot)},\n\t\temail: ${JSON.stringify(email)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
+	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\tfriendPageUrl: ${JSON.stringify(checkurl)},\n\t\tfeedUrl: ${JSON.stringify(feedurl || "")},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\tscreenshot: ${JSON.stringify(screenshot)},\n\t\temail: ${JSON.stringify(email)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
 
 	let updatedContent = "";
-	const targetPattern =
-		/export const friendsConfig: FriendLink\[\] = \[([\s\S]*?)\];/;
-
-	if (targetPattern.test(configContent)) {
-		updatedContent = configContent.replace(targetPattern, (_match, inner) => {
-			const trimmedInner = inner.trim();
-			if (!trimmedInner) {
-				return `export const friendsConfig: FriendLink[] = [\n${newEntry}\n];`;
-			}
-			return `export const friendsConfig: FriendLink[] = [\n\t${trimmedInner}\n${newEntry}\n];`;
-		});
-	} else {
+	const targetHeader = "export const friendsConfig";
+	const headerIndex = configContent.indexOf(targetHeader);
+	if (headerIndex === -1) {
 		console.error(
 			"未能匹配到 friendsConfig 数组定义，请检查 friendsConfig.ts 格式",
 		);
 		process.exit(1);
 	}
 
+	// 从 friendsConfig 声明开始向后寻找数组的闭合符 "\n];"
+	const match = configContent.slice(headerIndex).match(/\r?\n\];/);
+	if (!match || match.index === undefined) {
+		console.error(
+			"未能匹配到 friendsConfig 数组定义闭合符 '];'，请检查 friendsConfig.ts 格式",
+		);
+		process.exit(1);
+	}
+
+	const closingBracketIndex = headerIndex + match.index;
+	const before = configContent.slice(0, closingBracketIndex).trimEnd();
+	const after = configContent.slice(closingBracketIndex);
+	updatedContent = `${before}\n${newEntry}${after}`;
+
 	fs.writeFileSync(configFile, updatedContent, "utf-8");
 	console.log(`[friend-apply] 成功将友链写入: ${configFile}`);
+
+	// 如果存在友链审计记录文件，将新友链初始化为正常状态
+	const auditFilePath = path.resolve("src/constants/friends-audit.json");
+	if (fs.existsSync(auditFilePath)) {
+		try {
+			const auditData = JSON.parse(fs.readFileSync(auditFilePath, "utf-8"));
+			auditData[siteurl] = {
+				missingCount: 0,
+				failCount: 0,
+				protectedCount: 0,
+				lastChecked: new Date().toISOString(),
+				lastStatus: "found",
+				lastMessage:
+					forceBypass || isManualDispatch
+						? "博主手动添加或 bypass-check 免检"
+						: backlinkResult?.matchMessage || "友链申请自动化初审通过",
+				targetUrl: checkurl,
+				decision: "normal",
+			};
+			fs.writeFileSync(
+				auditFilePath,
+				`${JSON.stringify(auditData, null, "\t")}\n`,
+				"utf-8",
+			);
+			console.log(
+				`[friend-apply] 成功将友链审计状态初始化至: ${auditFilePath}`,
+			);
+		} catch (err) {
+			console.warn("[friend-apply] 更新 friends-audit.json 失败:", err);
+		}
+	}
 
 	// 成功互动反馈
 	const successMsg = `🎉 **友链审核通过啦！**
@@ -656,7 +726,12 @@ async function run() {
 已成功自动录入本站友链配置：
 - **站点名称**：${title}
 - **站点描述**：${desc}
-- **站点链接**：${siteurl}
+- **站点链接**：${siteurl}${
+		checkurl && checkurl !== siteurl
+			? `
+- **友链页面**：${checkurl}`
+			: ""
+	}
 - **头像链接**：${imgurl}${
 		feedurl
 			? `

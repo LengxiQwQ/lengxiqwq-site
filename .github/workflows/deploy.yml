@@ -9,7 +9,7 @@ on:
   repository_dispatch:
     types: [content-updated]
   schedule:
-    - cron: '47 0 * * *' # 每天北京时间 08:47 (UTC 00:47) 定时抓取友链朋友圈并自动重新构建部署
+    - cron: '0 4 * * *' # 每天北京时间中午 12:00 (UTC 04:00) 自动巡检友链、抓取朋友圈并重新构建部署
   workflow_dispatch:
     inputs:
       content_ref:
@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -98,6 +98,22 @@ jobs:
 
       - name: Materialize content
         run: pnpm content:sync
+
+      - name: Run Friends Audit
+        run: npx tsx scripts/check-friends-reciprocal.ts
+
+      - name: Commit and push friends audit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          if [ -n "$(git status --porcelain src/constants/friends-audit.json)" ]; then
+            git add src/constants/friends-audit.json
+            git commit -m "chore: 每日自动巡检更新友链健康与审查状态 [skip ci]"
+            git pull --rebase origin main || true
+            git push origin main
+          else
+            echo "友链审计数据无变动，无需提交。"
+          fi
 
       - name: Run Astro check
         run: pnpm check
