@@ -240,8 +240,31 @@ export async function probeUrl(
 				dynamicApis.add(`${apiBase}/links`);
 			}
 
+			// 从页面 script 脚本中提取 fetch(...) 请求的动态数据源（如 cuizi.top 的 youlian.json）
+			const scriptFetchMatches = html.match(
+				/fetch\(\s*['"`]([^'"`]+)['"`]/gi,
+			);
+			if (scriptFetchMatches) {
+				for (const m of scriptFetchMatches) {
+					const urlPart = m
+						.replace(/^fetch\(\s*['"`]/, "")
+						.replace(/['"`]$/, "");
+					if (
+						urlPart.endsWith(".json") ||
+						urlPart.includes("api") ||
+						urlPart.includes("youlian") ||
+						urlPart.includes("friend") ||
+						urlPart.includes("link")
+					) {
+						try {
+							dynamicApis.add(new URL(urlPart, url).href);
+						} catch {}
+					}
+				}
+			}
+
 			const apiMatches = html.match(
-				/(?:\/api\/[^"'`\s>]+|(?:\/[^"'`\s>]+)?(?:links?|friends?)[^"'`\s>]*\.json)/gi,
+				/(?:\/api\/[^"'`\s>]+|(?:\/[^"'`\s>]+)?(?:links?|friends?|youlian|yl)[^"'`\s>]*\.json)/gi,
 			);
 			if (apiMatches) {
 				for (const m of apiMatches) {
@@ -259,8 +282,10 @@ export async function probeUrl(
 			dynamicApis.add(`${origin}/api/friend-links`);
 			dynamicApis.add(`${origin}/api/friends`);
 			dynamicApis.add(`${origin}/api/links`);
+			dynamicApis.add(`${origin}/api/youlian`);
 			dynamicApis.add(`${origin}/friends.json`);
 			dynamicApis.add(`${origin}/links.json`);
+			dynamicApis.add(`${origin}/youlian.json`);
 
 			for (const apiUrl of dynamicApis) {
 				if (apiUrl === url) continue;
