@@ -185,8 +185,7 @@ export const getQuarantinedFriends = (): (FriendLink & {
 				(audit?.failCount && audit.failCount >= 3)
 					? audit.failCount || 3
 					: healthData[f.siteurl]?.failCount || 3;
-			const lastError =
-				audit?.lastMessage || healthData[f.siteurl]?.lastError;
+			const lastError = audit?.lastMessage || healthData[f.siteurl]?.lastError;
 
 			return {
 				...f,

@@ -241,9 +241,7 @@ export async function probeUrl(
 			}
 
 			// 从页面 script 脚本中提取 fetch(...) 请求的动态数据源（如 cuizi.top 的 youlian.json）
-			const scriptFetchMatches = html.match(
-				/fetch\(\s*['"`]([^'"`]+)['"`]/gi,
-			);
+			const scriptFetchMatches = html.match(/fetch\(\s*['"`]([^'"`]+)['"`]/gi);
 			if (scriptFetchMatches) {
 				for (const m of scriptFetchMatches) {
 					const urlPart = m
