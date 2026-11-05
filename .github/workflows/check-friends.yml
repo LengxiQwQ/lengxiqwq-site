@@ -1,7 +1,9 @@
 name: 友链双向性巡检
 
 on:
-  workflow_dispatch: # 支持手动点击一键触发独立巡检（日常巡检已合并入每日 12:00 deploy.yml 自动部署流）
+  schedule:
+    - cron: '12 4 * * *' # 每天北京时间 12:12 (UTC 04:12) 避开整点高峰，自动巡检友链
+  workflow_dispatch: # 支持手动点击一键触发独立巡检
 
 concurrency:
   group: check-friends-audit
@@ -92,11 +94,11 @@ jobs:
 
       - name: 提交并推送审计状态变更
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          if [ -n "$(git status --porcelain src/constants/friends-audit.json)" ]; then
-            git add src/constants/friends-audit.json
+          if [ -n "$(git status --porcelain src/constants/friends-audit.json src/constants/friends-health.json)" ]; then
+            git add src/constants/friends-audit.json src/constants/friends-health.json
             git commit -m "chore: 自动同步友链巡检与审查状态 [skip ci]"
             git pull --rebase origin main || true
             git push origin main

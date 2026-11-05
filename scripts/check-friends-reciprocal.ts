@@ -535,6 +535,32 @@ export async function probeSingleSite(
 
 	auditData[siteUrl] = updatedRecord;
 	fs.writeFileSync(AUDIT_FILE, JSON.stringify(auditData, null, "\t"), "utf-8");
+
+	// 同步更新 friends-health.json 保持向后兼容
+	const healthFilePath = path.resolve("src/constants/friends-health.json");
+	try {
+		let healthData: Record<
+			string,
+			{ failCount: number; lastChecked: string; lastError?: string }
+		> = {};
+		if (fs.existsSync(healthFilePath)) {
+			healthData = JSON.parse(fs.readFileSync(healthFilePath, "utf-8"));
+		}
+		for (const [url, rec] of Object.entries(auditData)) {
+			healthData[url] = {
+				failCount: rec.failCount || 0,
+				lastChecked: rec.lastChecked,
+				lastError: rec.failCount > 0 ? rec.lastMessage : undefined,
+			};
+		}
+		fs.writeFileSync(
+			healthFilePath,
+			JSON.stringify(healthData, null, "\t"),
+			"utf-8",
+		);
+	} catch (e) {
+		console.warn("[friends-audit] 同步写入 friends-health.json 失败:", e);
+	}
 	return updatedRecord;
 }
 
@@ -693,6 +719,32 @@ export async function runFullAudit(
 		fs.mkdirSync(dir, { recursive: true });
 	}
 	fs.writeFileSync(AUDIT_FILE, JSON.stringify(auditData, null, "\t"), "utf-8");
+
+	// 同步更新 friends-health.json 保持向后兼容
+	const healthFilePath = path.resolve("src/constants/friends-health.json");
+	try {
+		let healthData: Record<
+			string,
+			{ failCount: number; lastChecked: string; lastError?: string }
+		> = {};
+		if (fs.existsSync(healthFilePath)) {
+			healthData = JSON.parse(fs.readFileSync(healthFilePath, "utf-8"));
+		}
+		for (const [url, rec] of Object.entries(auditData)) {
+			healthData[url] = {
+				failCount: rec.failCount || 0,
+				lastChecked: rec.lastChecked,
+				lastError: rec.failCount > 0 ? rec.lastMessage : undefined,
+			};
+		}
+		fs.writeFileSync(
+			healthFilePath,
+			JSON.stringify(healthData, null, "\t"),
+			"utf-8",
+		);
+	} catch (e) {
+		console.warn("[friends-audit] 同步写入 friends-health.json 失败:", e);
+	}
 
 	// 6. 生成汇总统计
 	const pendingList = Object.entries(auditData).filter(
