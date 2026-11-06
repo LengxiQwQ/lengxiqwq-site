@@ -4,6 +4,8 @@ import {
 	DEFAULT_KEYWORDS,
 	isPrivateOrLocalHost,
 	probeWithRetry,
+	verifyAvatarReachable,
+	verifySiteReachable,
 } from "./check-friends-reciprocal.ts";
 
 interface FriendLinkEntry {
@@ -264,106 +266,6 @@ function cleanEmail(emailStr: string): string {
 // 校验邮箱格式有效性
 function isValidEmail(emailStr: string): boolean {
 	return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
-}
-
-// 深度模拟桌面现代 Chrome 133 浏览器完整请求头（包含 Client Hints 与 Fetch Metadata）
-const BROWSER_HEADERS = {
-	"User-Agent":
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-	"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
-	"sec-ch-ua":
-		'"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
-	"sec-ch-ua-mobile": "?0",
-	"sec-ch-ua-platform": '"Windows"',
-	"Sec-Fetch-Dest": "document",
-	"Sec-Fetch-Mode": "navigate",
-	"Sec-Fetch-Site": "none",
-	"Sec-Fetch-User": "?1",
-	"Upgrade-Insecure-Requests": "1",
-	"Cache-Control": "max-age=0",
-};
-
-// 站点主页可访问性检测
-async function verifySiteReachable(
-	siteUrl: string,
-): Promise<{ success: boolean; reason?: string }> {
-	try {
-		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), 12000);
-
-		const response = await fetch(siteUrl, {
-			signal: controller.signal,
-			headers: {
-				...BROWSER_HEADERS,
-				Accept:
-					"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-			},
-			redirect: "follow",
-		});
-
-		clearTimeout(timeoutId);
-
-		if (!response.ok) {
-			return {
-				success: false,
-				reason: `站点返回 HTTP 状态码: ${response.status} ${response.statusText}`,
-			};
-		}
-
-		return { success: true };
-	} catch (err: unknown) {
-		const error = err as Error;
-		if (error.name === "AbortError") {
-			return { success: false, reason: "访问站点超时（超过 12 秒）" };
-		}
-		return {
-			success: false,
-			reason: `站点连接失败: ${error.message || String(error)}`,
-		};
-	}
-}
-
-// 头像图片链接可访问性检测
-async function verifyAvatarReachable(
-	imgUrl: string,
-): Promise<{ success: boolean; reason?: string }> {
-	try {
-		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), 10000);
-
-		const response = await fetch(imgUrl, {
-			method: "GET",
-			signal: controller.signal,
-			headers: {
-				...BROWSER_HEADERS,
-				"Sec-Fetch-Dest": "image",
-				"Sec-Fetch-Mode": "no-cors",
-				Accept:
-					"image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-			},
-			redirect: "follow",
-		});
-
-		clearTimeout(timeoutId);
-
-		if (!response.ok) {
-			return {
-				success: false,
-				reason: `头像链接返回 HTTP 状态码: ${response.status} ${response.statusText}`,
-			};
-		}
-
-		return { success: true };
-	} catch (err: unknown) {
-		const error = err as Error;
-		if (error.name === "AbortError") {
-			return { success: false, reason: "加载头像图片超时（超过 10 秒）" };
-		}
-		return {
-			success: false,
-			reason: `头像图片加载失败: ${error.message || String(error)}`,
-		};
-	}
 }
 
 // 智能反向链接深度穿透检测（支持防反爬伪装、SPA API穿透、动态接口嗅探与分页扫描）
@@ -630,7 +532,7 @@ async function run() {
 
 		// 2. 头像图片链接连通性检测
 		console.log(`[friend-apply] 开始探测头像图片连通性: ${imgurl}`);
-		const avatarCheck = await verifyAvatarReachable(imgurl);
+		const avatarCheck = await verifyAvatarReachable(imgurl, siteurl);
 		if (!avatarCheck.success) {
 			const msg = `⚠️ **站点头像无法正常加载**\n\n机器人尝试加载您的头像图片（\`${imgurl}\`）失败：${avatarCheck.reason}。\n\n请检查头像链接是否填写正确、是否支持公网外链访问。修改后可**重新编辑 Issue 或在下方回复任意内容**重新检测。`;
 			await postComment(msg);

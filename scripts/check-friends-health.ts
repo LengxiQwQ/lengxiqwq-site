@@ -51,6 +51,20 @@ async function checkUrl(url: string): Promise<{ ok: boolean; error?: string }> {
 		});
 		clearTimeout(timeoutId);
 		if (!res.ok) {
+			if ([403, 429, 503].includes(res.status)) {
+				try {
+					const jinaRes = await fetch(`https://r.jina.ai/${url}`, {
+						signal: AbortSignal.timeout(8000),
+						headers: {
+							"User-Agent": BROWSER_HEADERS["User-Agent"],
+							Accept: "text/plain",
+						},
+					});
+					if (jinaRes.ok) {
+						return { ok: true };
+					}
+				} catch {}
+			}
 			return { ok: false, error: `HTTP ${res.status} ${res.statusText}` };
 		}
 		return { ok: true };

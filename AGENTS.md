@@ -87,3 +87,9 @@
   - `style: ...`：纯样式、排版或数值调整（不影响业务逻辑）
   - `chore: ...`：工作流、规则、配置文件或构建依赖维护
   - `docs: ...`：文档修改
+
+## 6. 友情链接与智能爬虫系统维护规则（Friend Links Management SOP）
+- **单一事实源原则**：全站所有友链双向探测、连通性检查与 WAF 穿透逻辑统一收敛于 [`scripts/check-friends-reciprocal.ts`](scripts/check-friends-reciprocal.ts)（支持全量批量巡检与 `--site <url>` 单站现场重测）。
+- **严禁重复编写抓取代码**：`scripts/process-friend-apply.ts`（GitHub Issues 申请自动化机器人）与 `astro.config.mjs`（本地审查面板重测 API）均直接调度复用该核心引擎，**改动 1 处自动确保 3 处同时生效**。
+- **详细架构与排查手册**：遇到反爬阻断、SPA 动态 API 嗅探或维护需求时，请务必首先查阅项目专用指南文档 [`docs/friends-management.md`](docs/friends-management.md)。
+

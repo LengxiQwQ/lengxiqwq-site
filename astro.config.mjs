@@ -1,7 +1,7 @@
-import fs from "node:fs";
-import path from "node:path";
 import { exec } from "node:child_process";
 import { setMaxListeners } from "node:events";
+import fs from "node:fs";
+import path from "node:path";
 import cloudflare from "@astrojs/cloudflare";
 import { unified } from "@astrojs/markdown-remark";
 import mdx from "@astrojs/mdx";
@@ -30,8 +30,6 @@ import remarkDirective from "remark-directive"; /* Handle directives */
 import remarkMath from "remark-math";
 import remarkSectionize from "remark-sectionize";
 import {
-	commentConfig,
-	dynamicConfig,
 	expressiveCodeConfig,
 	fontConfig,
 	fontsList,
@@ -121,7 +119,7 @@ function friendsAuditDevApiPlugin() {
 
 						// 1. 全站自检巡检动作：通过子进程安全调用巡检脚本
 						if (action === "run-full-check") {
-							exec("npx tsx scripts/check-friends-reciprocal.ts", (err) => {
+							exec("npx tsx scripts/check-friends-reciprocal.ts", (_err) => {
 								let auditData = {};
 								if (fs.existsSync(auditFile)) {
 									try {
@@ -146,348 +144,38 @@ function friendsAuditDevApiPlugin() {
 							return;
 						}
 
-						// 2. 单站现场重测动作：原生智能多路径现场探测
+						// 2. 单站现场重测动作：直接复用统一巡检脚本的单站探测引擎
 						if (action === "probe-single") {
 							if (!siteurl) {
 								res.statusCode = 400;
 								return res.end(JSON.stringify({ error: "Missing siteurl" }));
 							}
-							let auditData = {};
-							if (fs.existsSync(auditFile)) {
-								try {
-									auditData = JSON.parse(fs.readFileSync(auditFile, "utf-8"));
-								} catch {}
-							}
-							const prev = auditData[siteurl] || {
-								missingCount: 0,
-								failCount: 0,
-								protectedCount: 0,
-								lastChecked: "",
-								lastStatus: "found",
-								decision: "normal",
-							};
-
-							const keywords = [
-								"lengxiqwq.com",
-								"冷汐的杂货铺",
-								"冷曦的小窝",
-								"lengxiqwq",
-								"lengxi",
-								"冷汐",
-								"冷曦",
-							];
-							const headers = {
-								"User-Agent":
-									"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-								"Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-								Accept:
-									"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-								"sec-ch-ua":
-									'"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
-								"sec-ch-ua-mobile": "?0",
-								"sec-ch-ua-platform": '"Windows"',
-								"Sec-Fetch-Dest": "document",
-								"Sec-Fetch-Mode": "navigate",
-								"Sec-Fetch-Site": "none",
-								"Sec-Fetch-User": "?1",
-								"Upgrade-Insecure-Requests": "1",
-								Priority: "u=0, i",
-								"Cache-Control": "max-age=0",
-							};
-
-							// 严格按定死的友链地址探测：优先请求体指定或先前记录的，否则取 siteurl，绝不自动爬取无关页面
-							const targetUrl =
-								body.targetUrl?.trim() || prev.targetUrl || siteurl;
-
-							let missingCount = prev.missingCount || 0;
-							let failCount = prev.failCount || 0;
-							let protectedCount = prev.protectedCount || 0;
-							let decision = prev.decision || "normal";
-							let lastStatus = "found";
-							let lastMessage = "";
-
-							const matchInText = (text) => {
-								const lower = text.toLowerCase();
-								let decoded = lower;
-								try {
-									decoded = decodeURIComponent(lower);
-								} catch {}
-								return keywords.find(
-									(k) =>
-										lower.includes(k.toLowerCase()) ||
-										decoded.includes(k.toLowerCase()),
-								);
-							};
-
-							try {
-								const resp = await fetch(targetUrl, {
-									signal: AbortSignal.timeout(7000),
-									headers,
-									redirect: "follow",
-								});
-
-								if ([403, 429, 503].includes(resp.status)) {
-									lastStatus = "protected";
-									protectedCount += 1;
-									lastMessage = `HTTP ${resp.status} 防御性拦截/限流 (反爬阻断)`;
-									if (protectedCount >= 3 && decision === "normal")
-										decision = "pending";
-								} else {
-									const html = await resp.text();
-									const lower = html.toLowerCase();
-									const isSpaFallback =
-										resp.status === 404 &&
-										(lower.includes('<div id="app">') ||
-											lower.includes('<div id="root">') ||
-											lower.includes('id="__next"') ||
-											lower.includes('<div id="__nuxt">') ||
-											lower.includes('type="module"'));
-
-									if (resp.status === 404 && !isSpaFallback) {
-										lastStatus = "404";
-										failCount += 1;
-										lastMessage = `HTTP 404 Not Found (${targetUrl})`;
-										if (failCount >= 3 && decision === "normal")
-											decision = "pending";
-									} else if (!resp.ok && resp.status !== 404) {
-										lastStatus = "error";
-										lastMessage = `HTTP ${resp.status} ${resp.statusText}`;
-									} else {
-										const isWaf =
-											html.length < 35000 &&
-											(lower.includes("<title>just a moment...</title>") ||
-												lower.includes(
-													"<title>attention required! | cloudflare</title>",
-												) ||
-												lower.includes("<title>security check</title>") ||
-												lower.includes("cf-browser-verification") ||
-												lower.includes('id="challenge-running"') ||
-												lower.includes('id="challenge-form"') ||
-												lower.includes('class="cf-error-overview"'));
-										if (isWaf) {
-											lastStatus = "protected";
-											protectedCount += 1;
-											lastMessage = "命中防爬/WAF验证特征 (反爬阻断)";
-											if (protectedCount >= 3 && decision === "normal")
-												decision = "pending";
-										} else {
-											const matched = matchInText(html);
-											if (matched) {
-												lastStatus = "found";
-												missingCount = 0;
-												failCount = 0;
-												protectedCount = 0;
-												lastMessage = `成功匹配关键词: "${matched}" (${targetUrl})`;
-												if (
-													decision === "pending" ||
-													decision === "single" ||
-													decision === "quarantined"
-												)
-													decision = "normal";
-											} else {
-												// 针对 SPA 动态渲染与分页二次深度探测
-												let foundInExtra = false;
-												try {
-													const parsed = new URL(targetUrl);
-													const origin = parsed.origin;
-													const dynamicApis = new Set();
-													const dataApiMatch = html.match(
-														/data-[a-z-]*api=["']([^"']+)["']/i,
-													);
-													if (dataApiMatch) {
-														const apiBase = dataApiMatch[1].trim();
-														dynamicApis.add(`${apiBase}/api/friends`);
-														dynamicApis.add(`${apiBase}/api/links`);
-														dynamicApis.add(`${apiBase}/friends`);
-														dynamicApis.add(`${apiBase}/links`);
-													}
-													const scriptFetchMatches = html.match(
-														/fetch\(\s*['"`]([^'"`]+)['"`]/gi,
-													);
-													if (scriptFetchMatches) {
-														for (const m of scriptFetchMatches) {
-															const urlPart = m
-																.replace(/^fetch\(\s*['"`]/, "")
-																.replace(/['"`]$/, "");
-															if (
-																urlPart.endsWith(".json") ||
-																urlPart.includes("api") ||
-																urlPart.includes("youlian") ||
-																urlPart.includes("friend") ||
-																urlPart.includes("link")
-															) {
-																try {
-																	dynamicApis.add(
-																		new URL(urlPart, targetUrl).href,
-																	);
-																} catch {}
-															}
-														}
-													}
-													const apiMatches = html.match(
-														/(?:\/api\/[^"'`\s>]+|(?:\/[^"'`\s>]+)?(?:links?|friends?|youlian|yl)[^"'`\s>]*\.json)/gi,
-													);
-													if (apiMatches) {
-														for (const m of apiMatches) {
-															try {
-																dynamicApis.add(new URL(m, targetUrl).href);
-															} catch {}
-														}
-													}
-													dynamicApis.add(`${origin}/api/x/get_friends/?cat=0`);
-													dynamicApis.add(`${origin}/api/x/get_friends/`);
-													dynamicApis.add(`${origin}/api-common/friend-link`);
-													dynamicApis.add(`${origin}/api/friend-link`);
-													dynamicApis.add(`${origin}/api/friend-links`);
-													dynamicApis.add(`${origin}/api/friends`);
-													dynamicApis.add(`${origin}/api/links`);
-													dynamicApis.add(`${origin}/api/youlian`);
-													dynamicApis.add(`${origin}/friends.json`);
-													dynamicApis.add(`${origin}/links.json`);
-													dynamicApis.add(`${origin}/youlian.json`);
-
-													for (const apiUrl of dynamicApis) {
-														if (apiUrl === targetUrl) continue;
-														try {
-															const apiRes = await fetch(apiUrl, {
-																signal: AbortSignal.timeout(3500),
-																headers,
-															});
-															if (apiRes.ok) {
-																const apiText = await apiRes.text();
-																const apiMatched = matchInText(apiText);
-																if (apiMatched) {
-																	lastStatus = "found";
-																	missingCount = 0;
-																	failCount = 0;
-																	protectedCount = 0;
-																	lastMessage = `在动态数据接口 (${apiUrl}) 成功匹配关键词: "${apiMatched}"`;
-																	if (
-																		decision === "pending" ||
-																		decision === "single" ||
-																		decision === "quarantined"
-																	)
-																		decision = "normal";
-																	foundInExtra = true;
-																	break;
-																}
-															}
-														} catch {}
-													}
-
-													if (!foundInExtra) {
-														const paginationUrls = new Set();
-														const linkRegex =
-															/<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
-														let pMatch;
-														while ((pMatch = linkRegex.exec(html)) !== null) {
-															const href = pMatch[1];
-															const linkText = pMatch[2].trim();
-															if (
-																/(?:page|p)[=/]\d+|\/page\/\d+/i.test(href) ||
-																/^[2-4]$|下一页|Next/i.test(linkText)
-															) {
-																try {
-																	const resolved = new URL(href, targetUrl)
-																		.href;
-																	if (
-																		resolved.startsWith(origin) &&
-																		resolved !== targetUrl
-																	)
-																		paginationUrls.add(resolved);
-																} catch {}
-															}
-														}
-
-														let checkedPages = 0;
-														for (const pageUrl of paginationUrls) {
-															if (checkedPages >= 2) break;
-															checkedPages++;
-															try {
-																const pageRes = await fetch(pageUrl, {
-																	signal: AbortSignal.timeout(4000),
-																	headers,
-																});
-																if (pageRes.ok) {
-																	const pageHtml = await pageRes.text();
-																	const pageMatched = matchInText(pageHtml);
-																	if (pageMatched) {
-																		lastStatus = "found";
-																		missingCount = 0;
-																		failCount = 0;
-																		protectedCount = 0;
-																		lastMessage = `在分页友链 (${pageUrl}) 成功匹配关键词: "${pageMatched}"`;
-																		if (
-																			decision === "pending" ||
-																			decision === "single" ||
-																			decision === "quarantined"
-																		)
-																			decision = "normal";
-																		foundInExtra = true;
-																		break;
-																	}
-																}
-															} catch {}
-														}
-													}
-												} catch {}
-
-												if (!foundInExtra) {
-													lastStatus = "missing";
-													failCount = 0;
-													missingCount += 1;
-													if (resp.status === 404) {
-														lastMessage = `SPA单页应用(Nginx返回404但带有前端外壳)，已穿透后端API探测，未检索到本站链接 (${targetUrl})`;
-													} else {
-														lastMessage = `页面正常，经正文、动态接口及分页检索均未搜到本站关键词 (${targetUrl})`;
-													}
-													if (missingCount >= 3 && decision === "normal")
-														decision = "pending";
-												}
-											}
-										}
+							const targetParam = body.targetUrl?.trim()
+								? ` --target "${body.targetUrl.trim()}"`
+								: "";
+							exec(
+								`npx tsx scripts/check-friends-reciprocal.ts --site "${siteurl}"${targetParam}`,
+								(err) => {
+									let auditData = {};
+									if (fs.existsSync(auditFile)) {
+										try {
+											auditData = JSON.parse(
+												fs.readFileSync(auditFile, "utf-8"),
+											);
+										} catch {}
 									}
-								}
-							} catch (err) {
-								if (err.name === "AbortError" || err.name === "TimeoutError") {
-									lastStatus = "error";
-									failCount += 1;
-									lastMessage = "请求超时 (>7s, 网络延迟高或服务器无响应)";
-									if (failCount >= 3 && decision === "normal")
-										decision = "pending";
-								} else {
-									lastStatus = "error";
-									failCount += 1;
-									lastMessage = err.message || "请求失败";
-									if (failCount >= 3 && decision === "normal")
-										decision = "pending";
-								}
-							}
-
-							auditData[siteurl] = {
-								missingCount,
-								failCount,
-								protectedCount,
-								lastChecked: new Date().toISOString(),
-								lastStatus,
-								lastMessage,
-								targetUrl,
-								decision,
-								decisionTime: prev.decisionTime,
-							};
-							fs.writeFileSync(
-								auditFile,
-								JSON.stringify(auditData, null, "\t"),
-								"utf-8",
+									res.statusCode = err ? 500 : 200;
+									return res.end(
+										JSON.stringify({
+											success: !err,
+											siteurl,
+											record: auditData[siteurl] || null,
+											error: err ? String(err) : undefined,
+										}),
+									);
+								},
 							);
-							res.statusCode = 200;
-							return res.end(
-								JSON.stringify({
-									success: true,
-									siteurl,
-									record: auditData[siteurl],
-								}),
-							);
+							return;
 						}
 
 						// 3. 修改自定义友链地址
@@ -647,7 +335,7 @@ function wallpaperHuePresetsDevApiPlugin() {
 							/wallpaperHuePresets:\s*\{([\s\S]*?)\},?/,
 						);
 						const presets = {};
-						if (match && match[1]) {
+						if (match?.[1]) {
 							const lines = match[1].split("\n");
 							for (const line of lines) {
 								const lineMatch = line.match(/["']([^"']+)["']\s*:\s*(\d+)/);
@@ -675,22 +363,22 @@ function wallpaperHuePresetsDevApiPlugin() {
 						const { presets } = body;
 						if (!presets || typeof presets !== "object") {
 							res.statusCode = 400;
-							return res.end(
-								JSON.stringify({ error: "Invalid presets data" }),
-							);
+							return res.end(JSON.stringify({ error: "Invalid presets data" }));
 						}
 
 						const contentRepoPath = path.resolve(
 							"../lengxiqwq-site-content/config/backgroundWallpaper.ts",
 						);
-						const mainRepoPath = path.resolve("src/config/backgroundWallpaper.ts");
+						const mainRepoPath = path.resolve(
+							"src/config/backgroundWallpaper.ts",
+						);
 						// 若存在私有内容仓，遵循 Rule 0 仅写入内容仓，依靠 contentRepoWatcher 自动热同步；仅在单代码仓时写入自身
 						const targetPaths = fs.existsSync(contentRepoPath)
 							? [contentRepoPath]
 							: [mainRepoPath];
 
 						// 先从现有配置文件中提取已有预设，与传入的数据智能合并，保证已有壁纸预设不丢失
-						let existingPresets = {};
+						const existingPresets = {};
 						const refPath = fs.existsSync(targetPaths[0])
 							? targetPaths[0]
 							: targetPaths[1];
@@ -700,9 +388,11 @@ function wallpaperHuePresetsDevApiPlugin() {
 								const match = existingContent.match(
 									/wallpaperHuePresets:\s*\{([\s\S]*?)\},?/,
 								);
-								if (match && match[1]) {
+								if (match?.[1]) {
 									for (const line of match[1].split("\n")) {
-										const lineMatch = line.match(/["']([^"']+)["']\s*:\s*(\d+)/);
+										const lineMatch = line.match(
+											/["']([^"']+)["']\s*:\s*(\d+)/,
+										);
 										if (lineMatch) {
 											existingPresets[lineMatch[1]] = Number(lineMatch[2]);
 										}

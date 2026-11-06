@@ -93,6 +93,141 @@ function checkIsWafChallenge(html: string): boolean {
 	);
 }
 
+// ---------- 站点存活与头像检测函数（供全站爬虫与 Issue 申请共享） ----------
+export async function verifySiteReachable(
+	siteUrl: string,
+): Promise<{ success: boolean; reason?: string }> {
+	try {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+		const response = await fetch(siteUrl, {
+			signal: controller.signal,
+			headers: {
+				...BROWSER_HEADERS,
+				Accept:
+					"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+			},
+			redirect: "follow",
+		});
+
+		clearTimeout(timeoutId);
+
+		if (!response.ok) {
+			// 若遭遇 403 / 429 / 503 等机房/WAF 拦截，尝试通过只读代理验证站点是否真实可访问
+			if ([403, 429, 503].includes(response.status)) {
+				try {
+					const jinaRes = await fetch(`https://r.jina.ai/${siteUrl}`, {
+						signal: AbortSignal.timeout(8000),
+						headers: {
+							"User-Agent": BROWSER_HEADERS["User-Agent"],
+							Accept: "text/plain",
+						},
+					});
+					if (jinaRes.ok) {
+						return { success: true };
+					}
+				} catch {}
+			}
+
+			return {
+				success: false,
+				reason: `站点返回 HTTP 状态码: ${response.status} ${response.statusText}`,
+			};
+		}
+
+		return { success: true };
+	} catch (err: unknown) {
+		const error = err as Error;
+		if (error.name === "AbortError") {
+			return { success: false, reason: "访问站点超时（超过 12 秒）" };
+		}
+		return {
+			success: false,
+			reason: `站点连接失败: ${error.message || String(error)}`,
+		};
+	}
+}
+
+export async function verifyAvatarReachable(
+	imgUrl: string,
+	siteUrl?: string,
+): Promise<{ success: boolean; reason?: string }> {
+	try {
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+		const response = await fetch(imgUrl, {
+			method: "GET",
+			signal: controller.signal,
+			headers: {
+				...BROWSER_HEADERS,
+				"Sec-Fetch-Dest": "image",
+				"Sec-Fetch-Mode": "no-cors",
+				Accept:
+					"image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+			},
+			redirect: "follow",
+		});
+
+		clearTimeout(timeoutId);
+
+		if (!response.ok) {
+			// 1. 防盗链重试：附带站点主页作为 Referer
+			if (siteUrl && response.status === 403) {
+				try {
+					const retryRes = await fetch(imgUrl, {
+						method: "GET",
+						signal: AbortSignal.timeout(6000),
+						headers: {
+							...BROWSER_HEADERS,
+							Referer: siteUrl,
+							"Sec-Fetch-Dest": "image",
+							"Sec-Fetch-Mode": "no-cors",
+							Accept:
+								"image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+						},
+						redirect: "follow",
+					});
+					if (retryRes.ok) {
+						return { success: true };
+					}
+				} catch {}
+			}
+
+			// 2. 若头像同域且主站受 Cloudflare/WAF 403 保护，避免因 CI 机房 IP 误杀阻断
+			try {
+				const imgHost = new URL(imgUrl).hostname;
+				const siteHost = siteUrl ? new URL(siteUrl).hostname : "";
+				if (
+					siteHost &&
+					(imgHost === siteHost || imgHost.endsWith(`.${siteHost}`))
+				) {
+					if ([403, 429, 503].includes(response.status)) {
+						return { success: true };
+					}
+				}
+			} catch {}
+
+			return {
+				success: false,
+				reason: `头像链接返回 HTTP 状态码: ${response.status} ${response.statusText}`,
+			};
+		}
+
+		return { success: true };
+	} catch (err: unknown) {
+		const error = err as Error;
+		if (error.name === "AbortError") {
+			return { success: false, reason: "加载头像图片超时（超过 10 秒）" };
+		}
+		return {
+			success: false,
+			reason: `头像图片加载失败: ${error.message || String(error)}`,
+		};
+	}
+}
+
 // ---------- 单 URL 探测结果接口 ----------
 export interface FetchResult {
 	status: FriendAuditCheckStatus;
@@ -140,8 +275,30 @@ export async function probeUrl(
 
 		const statusCode = res.status;
 
-		// 2. 处理常见防御拦截状态码（403, 429, 503 等）
+		// 2. 处理常见防御拦截状态码（403, 429, 503 等）：优先使用只读渲染代理（r.jina.ai）穿透 WAF / 数据中心 IP 阻断
 		if ([403, 429, 503].includes(statusCode)) {
+			try {
+				const jinaRes = await fetch(`https://r.jina.ai/${url}`, {
+					signal: AbortSignal.timeout(TIMEOUT_MS),
+					headers: {
+						"User-Agent": BROWSER_HEADERS["User-Agent"],
+						Accept: "text/plain",
+					},
+				});
+				if (jinaRes.ok) {
+					const jinaText = await jinaRes.text();
+					const jinaMatched = matchKeywordsInContent(jinaText, keywords);
+					if (jinaMatched) {
+						return {
+							status: "found",
+							statusCode: 200,
+							html: jinaText,
+							message: `成功通过只读代理穿透 WAF 匹配关键词: "${jinaMatched}" (${url})`,
+						};
+					}
+				}
+			} catch {}
+
 			return {
 				status: "protected",
 				statusCode,
@@ -204,6 +361,28 @@ export async function probeUrl(
 		const isWafPage = checkIsWafChallenge(html);
 
 		if (isWafPage) {
+			try {
+				const jinaRes = await fetch(`https://r.jina.ai/${url}`, {
+					signal: AbortSignal.timeout(TIMEOUT_MS),
+					headers: {
+						"User-Agent": BROWSER_HEADERS["User-Agent"],
+						Accept: "text/plain",
+					},
+				});
+				if (jinaRes.ok) {
+					const jinaText = await jinaRes.text();
+					const jinaMatched = matchKeywordsInContent(jinaText, keywords);
+					if (jinaMatched) {
+						return {
+							status: "found",
+							statusCode: 200,
+							html: jinaText,
+							message: `成功通过只读代理穿透 WAF 匹配关键词: "${jinaMatched}" (${url})`,
+						};
+					}
+				}
+			} catch {}
+
 			return {
 				status: "protected",
 				statusCode,
@@ -272,8 +451,35 @@ export async function probeUrl(
 				}
 			}
 
+			// 从 HTML 中抓取绝对 API 域名路径 (如 Mix Space 的 https://mix-space.hoshiroko.com/api/v2)
+			const fullApiMatches = html.match(
+				/https?:\/\/[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?::\d+)?(?:\/api(?:(?:\/v\d+)?|\/[^"'`\s\\>]+)?)/gi,
+			);
+			if (fullApiMatches) {
+				for (const m of fullApiMatches) {
+					try {
+						const clean = m.replace(/\\+$/, "").trim();
+						dynamicApis.add(`${clean}/links`);
+						dynamicApis.add(`${clean}/friends`);
+					} catch {}
+				}
+			}
+
+			// Mix Space / 常见第三方独立博客后端子域名推测 (如 api.xxx.com, mix-space.xxx.com)
+			const domainParts = parsed.hostname.split(".");
+			if (domainParts.length >= 2) {
+				const rootDomain = domainParts.slice(-2).join(".");
+				dynamicApis.add(`https://mix-space.${rootDomain}/api/v2/links`);
+				dynamicApis.add(`https://mix-space.${rootDomain}/api/v2/friends`);
+				dynamicApis.add(`https://api.${rootDomain}/api/v2/links`);
+				dynamicApis.add(`https://api.${rootDomain}/v2/links`);
+				dynamicApis.add(`https://api.${rootDomain}/links`);
+			}
+
 			// 补充常见的博客系统动态友链接口
 			dynamicApis.add(`${origin}/api/x/get_friends/?cat=0`);
+			dynamicApis.add(`${origin}/api/x/get_friends/?cat=1`);
+			dynamicApis.add(`${origin}/api/x/get_friends/?cat=2`);
 			dynamicApis.add(`${origin}/api/x/get_friends/`);
 			dynamicApis.add(`${origin}/api-common/friend-link`);
 			dynamicApis.add(`${origin}/api/friend-link`);
@@ -309,9 +515,10 @@ export async function probeUrl(
 
 			// B. 探测分页友链（针对一页只放几个、需要翻到第 2、3 页的友链）
 			const paginationUrls = new Set<string>();
-			const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
-			let match: RegExpExecArray | null;
-			while ((match = linkRegex.exec(html)) !== null) {
+			const linkMatches = html.matchAll(
+				/<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi,
+			);
+			for (const match of linkMatches) {
 				const href = match[1];
 				const linkText = match[2].trim();
 				if (
@@ -796,17 +1003,34 @@ export async function runFullAudit(
 	return summary;
 }
 
-// CLI 直接执行入口
+// CLI 直接执行入口（支持全站巡检或单站现场重测）
 const isDirectRun =
 	process.argv[1] &&
 	(process.argv[1].endsWith("check-friends-reciprocal.ts") ||
 		process.argv[1].endsWith("check-friends-reciprocal.js"));
 
 if (isDirectRun) {
-	runFullAudit()
-		.then(() => process.exit(0))
-		.catch((err) => {
-			console.error("[friends-audit] 巡检过程遭遇未捕获异常:", err);
-			process.exit(0);
-		});
+	const siteIdx = process.argv.indexOf("--site");
+	if (siteIdx !== -1 && process.argv[siteIdx + 1]) {
+		const siteUrl = process.argv[siteIdx + 1];
+		const targetIdx = process.argv.indexOf("--target");
+		const targetUrl =
+			targetIdx !== -1 ? process.argv[targetIdx + 1] : undefined;
+		probeSingleSite(siteUrl, targetUrl)
+			.then((rec) => {
+				console.log(JSON.stringify(rec));
+				process.exit(0);
+			})
+			.catch((err) => {
+				console.error("[friends-audit] 单站探测异常:", err);
+				process.exit(1);
+			});
+	} else {
+		runFullAudit()
+			.then(() => process.exit(0))
+			.catch((err) => {
+				console.error("[friends-audit] 巡检过程遭遇未捕获异常:", err);
+				process.exit(0);
+			});
+	}
 }

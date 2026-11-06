@@ -8,6 +8,7 @@ import type {
 	FriendAuditRecord,
 	FriendsAuditData,
 } from "@/types/friendsConfig";
+import { url } from "@/utils/url-utils";
 import "@/styles/pages/common.css";
 
 // 生产构建时为了安全性，若不是本地开发环境则重定向或限制访问
@@ -69,71 +70,113 @@ const singleCount = allItems.filter(
 ).length;
 const normalCount =
 	totalCount - singleCount - quarantinedCount - whitelistedCount;
+
+// 提取全站最近一次检测时间（避免每个卡片重复渲染）
+const latestCheckedTimestamp = allItems.reduce((max, item) => {
+	const t = item.audit.lastChecked
+		? new Date(item.audit.lastChecked).getTime()
+		: 0;
+	return t > max ? t : max;
+}, 0);
+const latestCheckedText =
+	latestCheckedTimestamp > 0
+		? new Date(latestCheckedTimestamp).toLocaleString("zh-CN", {
+				hour12: false,
+				year: "numeric",
+				month: "2-digit",
+				day: "2-digit",
+				hour: "2-digit",
+				minute: "2-digit",
+			})
+		: "";
+
+// 清理诊断信息中多余重复的页面 URL
+function cleanLastMessage(msg?: string): string {
+	if (!msg) return "";
+	const clean = msg
+		.replace(/\s*\((?:https?:\/\/[^\s)]+|\/[^\s)]*)\)\s*$/, "")
+		.trim();
+	if (clean.includes("成功匹配关键词")) {
+		return "已匹配反向链接";
+	}
+	return clean;
+}
 ---
 
-<MainGridLayout title="友链巡检与审查工作台 (站长专区)">
-  <div class="w-full max-w-6xl mx-auto space-y-6">
+<MainGridLayout title="友链审查">
+  <div class="w-full max-w-6xl mx-auto space-y-4">
     {/* 页面顶栏 */}
-    <div class="card-base p-6 rounded-2xl border border-black/5 dark:border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-      <div>
-        <div class="flex items-center gap-2">
-          <Icon name="material-symbols:shield-person-outline" class="text-2xl text-[var(--primary)]" />
-          <h1 class="text-2xl font-bold text-neutral-900 dark:text-neutral-100">友链双向性与健康度审查台</h1>
-          <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium">全自动模式</span>
+    <div class="card-base px-6 py-5 rounded-2xl border border-black/5 dark:border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-5">
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2.5">
+          <Icon name="material-symbols:shield-person-outline" class="text-2xl text-[var(--primary)] shrink-0" />
+          <h1 class="text-xl sm:text-2xl font-bold text-neutral-900 dark:text-neutral-100">友链审查</h1>
         </div>
-        <p class="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
-          系统已开启<strong>全自动巡检与自愈模式</strong>（每日 12:00 自动巡检、连续 ≥3 次异常自动隔离、恢复后自动加回）。在此查看大盘健康度并管理白名单例外。
+        <p class="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
+          连续异常 ≥3 次将自动隔离，可在此查看状态或设为白名单。
+          {latestCheckedText && (
+            <span class="text-neutral-400 dark:text-neutral-500 ml-1">（最近检查：{latestCheckedText}）</span>
+          )}
         </p>
+
+        {/* 5 个状态指标小框框 */}
+        <div class="flex flex-wrap items-center gap-2 sm:gap-2.5 mt-3.5">
+          <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 text-xs">
+            <span class="text-neutral-500 dark:text-neutral-400 font-medium">全部站点</span>
+            <span class="font-bold text-neutral-800 dark:text-neutral-200">{totalCount}</span>
+          </div>
+
+          <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+            <span class="text-emerald-700 dark:text-emerald-300 font-medium">双向正常</span>
+            <span class="font-bold text-emerald-600 dark:text-emerald-400">{normalCount}</span>
+          </div>
+
+          <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-orange-500/10 border border-orange-500/20 text-xs">
+            <span class="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
+            <span class="text-orange-700 dark:text-orange-300 font-medium">隔离·单向</span>
+            <span class="font-bold text-orange-600 dark:text-orange-400">{singleCount}</span>
+          </div>
+
+          <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-xs">
+            <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+            <span class="text-rose-700 dark:text-rose-300 font-medium">隔离·失联</span>
+            <span class="font-bold text-rose-600 dark:text-rose-400">{quarantinedCount}</span>
+          </div>
+
+          <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs">
+            <span class="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+            <span class="text-blue-700 dark:text-blue-300 font-medium">免检白名单</span>
+            <span class="font-bold text-blue-600 dark:text-blue-400">{whitelistedCount}</span>
+          </div>
+        </div>
       </div>
 
-      <div class="flex items-center gap-3">
+      {/* 右侧操作按钮组：上下居中对齐 */}
+      <div class="shrink-0 flex flex-col gap-2 self-stretch sm:self-auto justify-center">
         <button
           type="button"
           id="run-full-audit-btn"
-          class="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold bg-[var(--primary)] text-white hover:opacity-90 active:scale-95 transition-all shadow-sm cursor-pointer"
-          title="立即向所有博客友链发起一次综合自检与双向匹配"
+          class="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-[var(--primary)] text-white hover:opacity-90 active:scale-95 transition-all shadow-xs cursor-pointer whitespace-nowrap"
+          title="发起一次友链检查与双向匹配"
         >
-          <Icon name="material-symbols:bolt" class="text-lg" />
-          <span class="btn-text">立即全站自检</span>
+          <Icon name="material-symbols:bolt" class="text-base shrink-0" />
+          <span class="btn-text whitespace-nowrap">检查友链</span>
         </button>
 
         <a
-          href="/friends/"
-          target="_blank"
-          class="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 transition-colors"
+          href={url("/friends/")}
+          class="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs sm:text-sm font-medium bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 border border-black/5 dark:border-white/5 active:scale-95 transition-all whitespace-nowrap"
+          title="返回前台友情链接页面"
         >
-          <Icon name="material-symbols:open-in-new" class="text-base" />
-          <span>查看前台友链</span>
+          <Icon name="material-symbols:arrow-back-rounded" class="text-base shrink-0" />
+          <span class="whitespace-nowrap">返回友链</span>
         </a>
       </div>
     </div>
 
-    {/* 统计大盘面板 */}
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-      <div class="card-base p-4 rounded-xl border border-black/5 dark:border-white/5 text-center">
-        <div class="text-xs text-neutral-500 dark:text-neutral-400">全部站点</div>
-        <div class="text-xl font-bold text-neutral-800 dark:text-neutral-200 mt-1">{totalCount}</div>
-      </div>
-      <div class="card-base p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 text-center">
-        <div class="text-xs text-emerald-600 dark:text-emerald-400 font-bold">双向正常</div>
-        <div class="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">{normalCount}</div>
-      </div>
-      <div class="card-base p-4 rounded-xl border border-orange-500/20 bg-orange-500/5 text-center">
-        <div class="text-xs text-orange-600 dark:text-orange-400 font-bold">自动隔离·单向</div>
-        <div class="text-xl font-bold text-orange-600 dark:text-orange-400 mt-1">{singleCount}</div>
-      </div>
-      <div class="card-base p-4 rounded-xl border border-rose-500/20 bg-rose-500/5 text-center">
-        <div class="text-xs text-rose-600 dark:text-rose-400 font-bold">自动隔离·失联</div>
-        <div class="text-xl font-bold text-rose-600 dark:text-rose-400 mt-1">{quarantinedCount}</div>
-      </div>
-      <div class="card-base p-4 rounded-xl border border-blue-500/20 bg-blue-500/5 text-center">
-        <div class="text-xs text-blue-600 dark:text-blue-400 font-bold">免检白名单</div>
-        <div class="text-xl font-bold text-blue-600 dark:text-blue-400 mt-1">{whitelistedCount}</div>
-      </div>
-    </div>
-
     {/* 审查操作区 */}
-    <div id="audit-app" class="card-base p-6 rounded-2xl border border-black/5 dark:border-white/5 space-y-4">
+    <div id="audit-app" class="card-base px-6 py-5 rounded-2xl border border-black/5 dark:border-white/5 space-y-4">
       {/* 过滤 Tab 与搜索 */}
       <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-black/5 dark:border-white/5">
         <div class="flex flex-wrap items-center gap-1.5" id="tab-group">
@@ -185,7 +228,7 @@ const normalCount =
         <div class="p-3.5 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-between gap-3 text-orange-700 dark:text-orange-400 text-xs">
           <div class="flex items-center gap-2">
             <Icon name="material-symbols:info-outline" class="text-lg shrink-0" />
-            <span>系统已自动隔离 <strong>{singleCount}</strong> 个单向友链与 <strong>{quarantinedCount}</strong> 个失联友链至前台底部。若某位好友需要豁免，直接点击【设为白名单】即可。</span>
+            <span>当前有 <strong>{singleCount}</strong> 个单向友链与 <strong>{quarantinedCount}</strong> 个失联友链处于隔离区，可设为白名单豁免。</span>
           </div>
         </div>
       )}
@@ -304,72 +347,78 @@ const normalCount =
                   </div>
 
                   {/* 详细诊断信息 */}
-                  <div class="text-[11px] text-neutral-400 dark:text-neutral-500">
+                  <div class="text-[11px] text-neutral-400 dark:text-neutral-500 flex flex-wrap items-center">
                     {item.audit.lastMessage ? (
-                      <span>最近记录: {item.audit.lastMessage}</span>
+                      <span>最近记录: {cleanLastMessage(item.audit.lastMessage)}</span>
                     ) : (
                       <span>尚未执行巡检记录</span>
                     )}
                     {item.audit.missingCount > 0 && (
-                      <span class="ml-2 text-orange-500">· 连续未搜到: {item.audit.missingCount}/3 次</span>
+                      <span class="ml-2 text-orange-500 font-medium">· 连续未搜到: {item.audit.missingCount}/3 次</span>
                     )}
                     {item.audit.failCount > 0 && (
-                      <span class="ml-2 text-rose-500">· 连续 404: {item.audit.failCount}/3 次</span>
+                      <span class="ml-2 text-rose-500 font-medium">· 连续 404: {item.audit.failCount}/3 次</span>
                     )}
                     {(item.audit.protectedCount || 0) > 0 && (
-                      <span class="ml-2 text-blue-500">· 连续反爬阻断: {item.audit.protectedCount}/3 次</span>
-                    )}
-                    {item.audit.lastChecked && (
-                      <span class="ml-2">· 检测于: {new Date(item.audit.lastChecked).toLocaleString()}</span>
+                      <span class="ml-2 text-blue-500 font-medium">· 连续反爬阻断: {item.audit.protectedCount}/3 次</span>
                     )}
                   </div>
 
-                  {/* 防爬拦截待人工核实引导提示 */}
+                  {/* 防爬拦截待人工核实简短提示 */}
                   {!isWhitelisted && (item.audit.lastStatus === "protected" || (item.audit.protectedCount || 0) >= 3) && (
-                    <div class="text-[11px] text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2.5 py-1.5 rounded-lg mt-1 flex items-center gap-1.5">
-                      <Icon name="material-symbols:shield" class="text-sm shrink-0" />
-                      <span>该站点启用了防爬验证或请求超时，机器人无法穿透。请点击右侧<strong>【核实】</strong>在浏览器中人工确认。若友链仍在，请点击<strong>【免检加白】</strong>免除告警；若对方已删链可点击<strong>【设为单向】</strong>。</span>
+                    <div class="text-[11px] text-blue-600 dark:text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-md mt-1 inline-flex items-center gap-1">
+                      <Icon name="material-symbols:shield" class="text-xs shrink-0" />
+                      <span>存在防爬验证，可点击【核实】人工确认</span>
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* 右侧裁决操作按钮组 */}
-              <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
+              {/* 右侧裁决操作按钮组：3x2 紧凑双排布局（上排灰色通用操作，下排彩色状态操作） */}
+              <div class="shrink-0 grid grid-cols-3 gap-1.5 self-start md:self-center">
                 <a
                   href={item.targetUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="px-2.5 py-1 text-xs rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 transition-colors flex items-center gap-1"
+                  class="px-2.5 py-1 text-xs rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 transition-colors inline-flex items-center justify-center gap-1 whitespace-nowrap"
                   title="新标签页打开对方页面人工核实"
                 >
-                  <Icon name="material-symbols:open-in-new" />
+                  <Icon name="material-symbols:open-in-new" class="text-xs shrink-0" />
                   <span>核实</span>
                 </a>
 
                 <button
                   type="button"
-                  class="recheck-btn px-2.5 py-1 text-xs rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 transition-colors flex items-center gap-1 cursor-pointer"
+                  class="recheck-btn px-2.5 py-1 text-xs rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 transition-colors inline-flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
                   title="单独重新探测该站点的连通性与反向链接"
                 >
-                  <Icon name="material-symbols:refresh" />
+                  <Icon name="material-symbols:refresh" class="text-xs shrink-0" />
                   <span>重测</span>
                 </button>
 
-                {/* 裁决按钮组 */}
+                <button
+                  type="button"
+                  class="action-btn px-2.5 py-1 text-xs rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 transition-colors cursor-pointer text-center whitespace-nowrap"
+                  data-action="normal"
+                  title="清空强制锁定，重置为跟随巡检"
+                >
+                  自动模式
+                </button>
+
+                {/* 裁决按钮组（下排：白名单、单向、失联） */}
                 {isWhitelisted ? (
                   <button
                     type="button"
-                    class="action-btn px-2.5 py-1 text-xs rounded-lg transition-colors font-medium bg-blue-500 text-white hover:bg-blue-600 cursor-pointer"
+                    class="action-btn px-2 py-1 text-xs rounded-lg transition-colors font-medium bg-blue-500 text-white hover:bg-blue-600 cursor-pointer text-center whitespace-nowrap"
                     data-action="normal"
-                    title="移出免检白名单，恢复每日自动巡检"
+                    title="移出免检白名单，恢复跟随检测"
                   >
                     移出白名单
                   </button>
                 ) : (
                   <button
                     type="button"
-                    class="action-btn px-2.5 py-1 text-xs rounded-lg transition-colors font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 cursor-pointer"
+                    class="action-btn px-2 py-1 text-xs rounded-lg transition-colors font-medium bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 cursor-pointer text-center whitespace-nowrap"
                     data-action="whitelisted"
                     title="设为免检白名单（豁免检测，永不隔离）"
                   >
@@ -379,7 +428,7 @@ const normalCount =
 
                 <button
                   type="button"
-                  class={`action-btn px-2.5 py-1 text-xs rounded-lg transition-colors font-medium cursor-pointer ${
+                  class={`action-btn px-2 py-1 text-xs rounded-lg transition-colors font-medium cursor-pointer text-center whitespace-nowrap ${
                     isSingle && decision === "single"
                       ? "bg-orange-500 text-white"
                       : "bg-orange-500/10 text-orange-600 dark:text-orange-400 hover:bg-orange-500/20"
@@ -392,7 +441,7 @@ const normalCount =
 
                 <button
                   type="button"
-                  class={`action-btn px-2.5 py-1 text-xs rounded-lg transition-colors font-medium cursor-pointer ${
+                  class={`action-btn px-2 py-1 text-xs rounded-lg transition-colors font-medium cursor-pointer text-center whitespace-nowrap ${
                     isQuarantined && decision === "quarantined"
                       ? "bg-rose-500 text-white"
                       : "bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20"
@@ -401,15 +450,6 @@ const normalCount =
                   title="手动强制锁定为失联隔离"
                 >
                   强制失联
-                </button>
-
-                <button
-                  type="button"
-                  class="action-btn px-2.5 py-1 text-xs rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-500 dark:text-neutral-400 transition-colors cursor-pointer"
-                  data-action="normal"
-                  title="清空强制锁定，重置为跟随自动巡检"
-                >
-                  自动模式
                 </button>
               </div>
             </div>

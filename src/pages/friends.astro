@@ -15,6 +15,7 @@ import { friendsConfig } from "@/config/friendsConfig";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
+import { url } from "@/utils/url-utils";
 import "@/styles/pages/common.css";
 import "@/styles/pages/friends.css";
 
@@ -123,7 +124,7 @@ const sections = Array.from(sectionsMap.entries())
   >
     <div class="card-base z-10 px-9 py-6 relative w-full">
       <!-- 页面标题和描述 -->
-      <div class="mb-4">
+      <div class="mb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div class="page-heading">
           <div class="page-icon" aria-hidden="true">
             <Icon name="material-symbols:group" />
@@ -133,6 +134,19 @@ const sections = Array.from(sectionsMap.entries())
             {description && <p>{description}</p>}
           </div>
         </div>
+
+        {
+          import.meta.env.DEV && (
+            <a
+              href={url("/admin/friends-audit/")}
+              class="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-[var(--primary)] text-white hover:opacity-90 active:scale-95 transition-all shadow-xs shrink-0 self-start sm:self-auto whitespace-nowrap"
+              title="进入友链审查页面"
+            >
+              <Icon name="material-symbols:shield-person-outline" class="text-base shrink-0" />
+              <span class="whitespace-nowrap">友链审查</span>
+            </a>
+          )
+        }
       </div>
 
       <!-- 搜索框 -->
