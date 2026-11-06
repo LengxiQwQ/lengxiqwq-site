@@ -532,19 +532,23 @@ export async function probeUrl(
 					try {
 						const clean = m.replace(/\\+$/, "").trim();
 						// 只请求正式已发布的友链列表，严禁探测内部未经审核的申请数据表
+						dynamicApis.add(`${clean}/links`);
 						dynamicApis.add(`${clean}/links/all`);
 						dynamicApis.add(`${clean}/links?state=0`);
+						dynamicApis.add(`${clean}/friends`);
 						dynamicApis.add(`${clean}/friends/all`);
 					} catch {}
 				}
 			}
 
-			// Mix Space / 常见第三方独立博客公开前端数据接口 (只探测 /links/all 等已过审正式接口)
+			// Mix Space / 常见第三方独立博客公开前端数据接口 (只探测 /links、/links/all 等已过审正式接口)
 			const domainParts = parsed.hostname.split(".");
 			if (domainParts.length >= 2) {
 				const rootDomain = domainParts.slice(-2).join(".");
+				dynamicApis.add(`https://mix-space.${rootDomain}/api/v2/links`);
 				dynamicApis.add(`https://mix-space.${rootDomain}/api/v2/links/all`);
 				dynamicApis.add(`https://mix-space.${rootDomain}/api/v2/links?state=0`);
+				dynamicApis.add(`https://api.${rootDomain}/api/v2/links`);
 				dynamicApis.add(`https://api.${rootDomain}/api/v2/links/all`);
 				dynamicApis.add(`https://api.${rootDomain}/api/v2/links?state=0`);
 			}

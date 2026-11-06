@@ -131,14 +131,14 @@
 		"decision": "pending"
 	},
 	"https://www.hoshiroko.com": {
-		"missingCount": 2,
+		"missingCount": 4,
 		"failCount": 0,
 		"protectedCount": 0,
-		"lastChecked": "2026-11-06T10:28:08.537Z",
+		"lastChecked": "2026-11-06T11:15:13.083Z",
 		"lastStatus": "missing",
 		"lastMessage": "页面响应正常，经静态正文、动态接口及分页检索均未找到本站关键词 (https://hoshiroko.com/friends)",
 		"targetUrl": "https://hoshiroko.com/friends",
-		"decision": "normal"
+		"decision": "pending"
 	},
 	"https://lanerc.me": {
 		"missingCount": 0,
