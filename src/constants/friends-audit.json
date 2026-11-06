@@ -121,10 +121,10 @@
 		"decision": "normal"
 	},
 	"https://blog.cosine.ren/": {
-		"missingCount": 8,
+		"missingCount": 10,
 		"failCount": 0,
 		"protectedCount": 0,
-		"lastChecked": "2026-11-06T09:42:09.690Z",
+		"lastChecked": "2026-11-06T11:06:52.455Z",
 		"lastStatus": "missing",
 		"lastMessage": "页面响应正常，经静态正文、动态接口及分页检索均未找到本站关键词 (https://blog.cosine.ren/friends)",
 		"targetUrl": "https://blog.cosine.ren/friends",
@@ -181,10 +181,10 @@
 		"decision": "normal"
 	},
 	"https://iamyukino.cn/": {
-		"missingCount": 8,
+		"missingCount": 10,
 		"failCount": 0,
 		"protectedCount": 0,
-		"lastChecked": "2026-11-06T09:42:22.565Z",
+		"lastChecked": "2026-11-06T11:07:01.006Z",
 		"lastStatus": "missing",
 		"lastMessage": "页面响应正常，经静态正文、动态接口及分页检索均未找到本站关键词 (https://iamyukino.cn/ask/friends)",
 		"targetUrl": "https://iamyukino.cn/ask/friends",
@@ -251,10 +251,10 @@
 		"decision": "normal"
 	},
 	"https://blog.tsh520.cn": {
-		"missingCount": 8,
+		"missingCount": 9,
 		"failCount": 0,
 		"protectedCount": 0,
-		"lastChecked": "2026-11-06T09:42:25.435Z",
+		"lastChecked": "2026-11-06T11:07:17.543Z",
 		"lastStatus": "missing",
 		"lastMessage": "页面响应正常，经静态正文、动态接口及分页检索均未找到本站关键词 (https://blog.tsh520.cn/friends/)",
 		"targetUrl": "https://blog.tsh520.cn/friends/",
@@ -291,30 +291,30 @@
 		"decision": "normal"
 	},
 	"https://blog.dreamfall.cn/": {
-		"missingCount": 8,
+		"missingCount": 9,
 		"failCount": 0,
 		"protectedCount": 0,
-		"lastChecked": "2026-11-06T09:42:28.951Z",
+		"lastChecked": "2026-11-06T11:07:31.237Z",
 		"lastStatus": "missing",
 		"lastMessage": "页面响应正常，经静态正文、动态接口及分页检索均未找到本站关键词 (https://blog.dreamfall.cn/link/)",
 		"targetUrl": "https://blog.dreamfall.cn/link/",
 		"decision": "pending"
 	},
 	"https://snowtafir.top": {
-		"missingCount": 8,
+		"missingCount": 9,
 		"failCount": 0,
 		"protectedCount": 0,
-		"lastChecked": "2026-11-06T09:42:20.235Z",
+		"lastChecked": "2026-11-06T11:07:41.650Z",
 		"lastStatus": "missing",
 		"lastMessage": "页面响应正常，经静态正文、动态接口及分页检索均未找到本站关键词 (https://snowtafir.top/link/)",
 		"targetUrl": "https://snowtafir.top/link/",
 		"decision": "pending"
 	},
 	"https://yujingblog.top": {
-		"missingCount": 8,
+		"missingCount": 9,
 		"failCount": 0,
 		"protectedCount": 0,
-		"lastChecked": "2026-11-06T09:42:15.530Z",
+		"lastChecked": "2026-11-06T11:07:43.546Z",
 		"lastStatus": "missing",
 		"lastMessage": "页面响应正常，经静态正文、动态接口及分页检索均未找到本站关键词 (https://yujingblog.top/friends/)",
 		"targetUrl": "https://yujingblog.top/friends/",
@@ -322,10 +322,10 @@
 		"decisionTime": "2026-11-05T08:00:52.664Z"
 	},
 	"https://blog.kanako.top": {
-		"missingCount": 8,
+		"missingCount": 9,
 		"failCount": 0,
 		"protectedCount": 0,
-		"lastChecked": "2026-11-06T09:42:22.054Z",
+		"lastChecked": "2026-11-06T11:08:01.559Z",
 		"lastStatus": "missing",
 		"lastMessage": "SPA单页应用(Nginx返回404但带有前端外壳)，已穿透后端API探测，未检索到本站链接 (https://blog.kanako.top/friend-links)",
 		"targetUrl": "https://blog.kanako.top/friend-links",

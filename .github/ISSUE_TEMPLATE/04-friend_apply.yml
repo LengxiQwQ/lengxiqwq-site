@@ -6,8 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        ### 欢迎交换友链 OωO！
-        在提交申请前，请确保您已将本站添加至您的友链页中：
+        提交申请前，请先将本站添加至您的友链中：
         - **站点名称**：冷汐的杂货铺
         - **站点描述**：你好谢谢小笼包再见
         - **站点链接**：https://lengxiqwq.com
@@ -15,7 +14,7 @@ body:
         - **RSS 订阅（可选）**：https://lengxiqwq.com/rss.xml
         - **网页截图（可选）**：https://lengxiqwq.com/screenshot.jpg
 
-        提交后系统将通过 GitHub Actions 自动爬取校验反向链接。审核通过后将自动加入配置并触发部署上线！
+        提交后系统将自动检测反向链接，审核通过后将自动录入并上线。
   - type: input
     id: title
     attributes:
@@ -52,7 +51,7 @@ body:
     id: feedurl
     attributes:
       label: RSS 订阅链接（可选）
-      description: 您的站点 RSS/Atom 订阅地址，用于在“朋友圈”中展示您的最新文章。如果不填将尝试自动探测。
+      description: RSS/Atom 订阅地址（选填，用于展示最新文章，留空将尝试自动探测）
       placeholder: https://example.com/rss.xml
     validations:
       required: false
@@ -68,7 +67,7 @@ body:
     id: checkurl
     attributes:
       label: 友链所在页面
-      description: 包含本站友链的页面完整地址（必填，机器人将访问此页面自动校验是否已添加本站）
+      description: 包含本站友链的页面完整地址（必填，用于自动检测是否已添加本站）
       placeholder: https://example.com/friends
     validations:
       required: true
@@ -76,7 +75,7 @@ body:
     id: email
     attributes:
       label: 联系邮箱
-      description: 您的常用联系邮箱（必填，仅用于友链信息变更或站点失联时联系，审核通过后将归档至私有仓库并自动从 Issue 正文中抹除）
+      description: 常用联系邮箱（必填，仅用于失联通知，提交后会自动在公开 Issue 中脱敏隐藏）
       placeholder: example@example.com
     validations:
       required: true

@@ -294,7 +294,7 @@ async function verifyBacklink(checkUrl: string): Promise<{
 		return {
 			success: false,
 			isWaf: true,
-			reason: `检测到该友链页面启用了防爬验证盾或防火墙安全拦截（${res.message}）`,
+			reason: `检测到该友链页面启用了防爬验证盾或安全拦截（${res.message}）`,
 		};
 	}
 
@@ -308,7 +308,7 @@ async function verifyBacklink(checkUrl: string): Promise<{
 	if (res.status === "missing") {
 		return {
 			success: false,
-			reason: `经页面静态正文、动态接口（如 /api/friends）及分页多层穿透扫描，均未找到本站域名（\`${TARGET_DOMAIN}\`）或名称（\`${siteInfo.siteTitle}\`）`,
+			reason: `在目标页面中未检测到本站域名（\`${TARGET_DOMAIN}\`）或站点名称（\`${siteInfo.siteTitle}\`）`,
 		};
 	}
 
@@ -375,7 +375,7 @@ async function run() {
 			missingFields.push("友链所在页面");
 		if (!isManualDispatch && !parsed.email) missingFields.push("联系邮箱");
 
-		const msg = `⚠️ **申请信息不完整**\n\n缺少以下必填字段：${missingFields.map((f) => `\`${f}\``).join("、")}。\n请补充完整后重试。`;
+		const msg = `### ⚠️ 申请信息不完整\n\n缺少以下必填字段：${missingFields.map((f) => `\`${f}\``).join("、")}。\n请补充完整后重新编辑 Issue，或在下方回复。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
@@ -399,7 +399,7 @@ async function run() {
 
 	// URL 格式校验
 	if (!isValidHttpUrl(siteurl)) {
-		const msg = `⚠️ **站点链接格式不正确**\n\n您填写的站点链接 \`${siteurl}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
+		const msg = `### ⚠️ 站点链接格式不正确\n\n您填写的站点链接 \`${siteurl}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
@@ -413,7 +413,7 @@ async function run() {
 	}
 
 	if (!isValidHttpUrl(imgurl)) {
-		const msg = `⚠️ **头像链接格式不正确**\n\n您填写的头像链接 \`${imgurl}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
+		const msg = `### ⚠️ 头像链接格式不正确\n\n您填写的头像链接 \`${imgurl}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
@@ -427,7 +427,7 @@ async function run() {
 	}
 
 	if (!isValidHttpUrl(checkurl)) {
-		const msg = `⚠️ **友链所在页面格式不正确**\n\n您填写的检测页面链接 \`${checkurl}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
+		const msg = `### ⚠️ 友链所在页面格式不正确\n\n您填写的检测页面链接 \`${checkurl}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
@@ -441,7 +441,7 @@ async function run() {
 	}
 
 	if (screenshot && !isValidHttpUrl(screenshot)) {
-		const msg = `⚠️ **站点截图链接格式不正确**\n\n您填写的站点截图链接 \`${screenshot}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
+		const msg = `### ⚠️ 站点截图链接格式不正确\n\n您填写的站点截图链接 \`${screenshot}\` 不是合法的 http/https 网址，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
@@ -455,7 +455,7 @@ async function run() {
 	}
 
 	if (feedurl && !isValidHttpUrl(feedurl)) {
-		const msg = `⚠️ **RSS 订阅链接格式不正确**\n\n您填写的 RSS 订阅链接 \`${feedurl}\` 不是合法的公网 http/https 网址，请检查后重新编辑。`;
+		const msg = `### ⚠️ RSS 订阅链接格式不正确\n\n您填写的 RSS 订阅链接 \`${feedurl}\` 不是合法的公网 http/https 网址，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
@@ -469,7 +469,7 @@ async function run() {
 	}
 
 	if (email && !isValidEmail(email)) {
-		const msg = `⚠️ **联系邮箱格式不正确**\n\n您填写的联系邮箱 \`${email}\` 不是合法的电子邮箱格式，请检查后重新编辑。`;
+		const msg = `### ⚠️ 联系邮箱格式不正确\n\n您填写的联系邮箱 \`${email}\` 不是合法的电子邮箱格式，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
 		console.log(msg);
@@ -497,7 +497,7 @@ async function run() {
 		configContent.includes(siteurl) ||
 		configContent.includes(normalizedNewSiteUrl)
 	) {
-		const msg = `ℹ️ **站点已在友链中**\n\n检测到您的站点（\`${siteurl}\`）已经存在于本站友链列表中。如有信息更新需要，请在 Issue 中说明并由博主人工维护。`;
+		const msg = `### ℹ️ 站点已在友链中\n\n检测到您的站点（\`${siteurl}\`）已存在于本站友链列表中。如需修改信息，请在 Issue 中留言说明，博主看到后会人工处理。`;
 		await postComment(msg);
 		await addLabels(["duplicate"]);
 		await closeIssue();
@@ -522,7 +522,7 @@ async function run() {
 		console.log(`[friend-apply] 开始探测站点主页连通性: ${siteurl}`);
 		const siteCheck = await verifySiteReachable(siteurl);
 		if (!siteCheck.success) {
-			const msg = `⚠️ **站点主页无法正常访问**\n\n机器人尝试访问您的网站主页（\`${siteurl}\`）失败：${siteCheck.reason}。\n\n请确保站点已正常上线、网络可以公开访问后再提交申请。如果您使用了特殊防爬保护或地区限制，请联系博主添加 \`bypass-check\` 标签进行人工放行。\n\n排查解决后，可**重新编辑 Issue 或在下方回复任意内容**，系统将自动重新检测。`;
+			const msg = `### ⚠️ 站点主页无法访问\n\n访问网站主页（\`${siteurl}\`）失败：${siteCheck.reason}。\n\n请确保站点已正常上线且公网可访问。若因地区限制或安全策略导致误判，可等待博主人工核验（着急可联系博主）。\n\n排查解决后，**重新编辑 Issue 或在下方回复任意内容**，系统将自动重新检测。`;
 			await postComment(msg);
 			await addLabels(["check-failed"]);
 			console.log(`[friend-apply] 站点存活检测失败: ${siteCheck.reason}`);
@@ -534,7 +534,7 @@ async function run() {
 		console.log(`[friend-apply] 开始探测头像图片连通性: ${imgurl}`);
 		const avatarCheck = await verifyAvatarReachable(imgurl, siteurl);
 		if (!avatarCheck.success) {
-			const msg = `⚠️ **站点头像无法正常加载**\n\n机器人尝试加载您的头像图片（\`${imgurl}\`）失败：${avatarCheck.reason}。\n\n请检查头像链接是否填写正确、是否支持公网外链访问。修改后可**重新编辑 Issue 或在下方回复任意内容**重新检测。`;
+			const msg = `### ⚠️ 头像无法加载\n\n访问头像链接（\`${imgurl}\`）失败：${avatarCheck.reason}。\n\n请确认图片链接填写无误且公网可访问。修改后**重新编辑 Issue 或在下方回复任意内容**，系统将自动重新检测。`;
 			await postComment(msg);
 			await addLabels(["check-failed"]);
 			console.log(`[friend-apply] 头像存活检测失败: ${avatarCheck.reason}`);
@@ -550,9 +550,9 @@ async function run() {
 		if (!checkResult.success) {
 			let msg = "";
 			if (checkResult.isWaf) {
-				msg = `🛡️ **检测到防爬保护或安全拦截**\n\n机器人尝试访问您的友链页面（\`${checkurl}\`）时，检测到该页面启用了安全防御或防爬验证盾（${checkResult.reason}），自动化程序无法穿透。\n\n**处理建议**：\n请联系博主在当前 Issue 中添加 \`bypass-check\` 标签进行人工核验放行！\n\n添加标签后系统将自动批准录入您的友链。`;
+				msg = `### 🛡️ 检测到防爬拦截\n\n访问友链页面（\`${checkurl}\`）时触发了安全验证或防爬拦截（${checkResult.reason}），自动化程序无法直接读取。\n\n您可以**等待博主巡查处理**；若情况较急，也可以直接联系博主协助放行。`;
 			} else {
-				msg = `⚠️ **友链检测未通过**\n\n${checkResult.reason}。\n\n**建议排查步骤**：\n1. 确认已将本站添加至您的网站（本站域名：\`${TARGET_DOMAIN}\`，站名：\`${siteInfo.siteTitle}\`）；\n2. 若友链存放在子页面（如 \`/friends\`），请确保在申请表单中准确填写「友链所在页面」；\n3. 若站点为 SPA 纯动态渲染架构或启用了高防防爬验证，可联系博主添加 \`bypass-check\` 标签人工放行。\n\n修改或挂链完毕后，可直接**重新编辑 Issue 或在下方回复任意内容**，系统将自动重新触发检测。`;
+				msg = `### ⚠️ 未检测到本站友链\n\n${checkResult.reason}。\n\n**排查建议**：\n- 请确认已将本站（\`${TARGET_DOMAIN}\` / \`${siteInfo.siteTitle}\`）添加至友链页；\n- 若友链存放在独立子页面，请确认「友链所在页面」填写准确；\n- 若站点为纯动态渲染或开启了防爬，可等待博主人工处理（着急可联系博主）。\n\n确认添加完成后，**重新编辑 Issue 或在下方回复任意内容**，系统将自动重新检测。`;
 			}
 			await postComment(msg);
 			await addLabels(["check-failed"]);
@@ -623,35 +623,10 @@ async function run() {
 	}
 
 	// 成功互动反馈
-	const successMsg = `🎉 **友链审核通过啦！**
+	const successMsg = `### 🎉 友链添加成功
 
-已成功自动录入本站友链配置：
-- **站点名称**：${title}
-- **站点描述**：${desc}
-- **站点链接**：${siteurl}${
-		checkurl && checkurl !== siteurl
-			? `
-- **友链页面**：${checkurl}`
-			: ""
-	}
-- **头像链接**：${imgurl}${
-		feedurl
-			? `
-- **RSS 订阅（可选）**：${feedurl}`
-			: ""
-	}${
-		screenshot
-			? `
-- **站点截图（可选）**：${screenshot}`
-			: ""
-	}${
-		email
-			? `
-- **联系邮箱**：🔒 已归档至私有仓库`
-			: ""
-	}
-
-更改已自动推送至内容仓，构建部署已触发。稍后即可在 [${siteInfo.siteTitle} - 友情链接](${siteInfo.siteUrl.replace(/\/$/, "")}/friends/) 查看到您的站点！欢迎常来互访交流~✨`;
+站点 **[${title}](${siteurl})** 已通过审核并录入友链列表。
+部署完成后即可在 [友情链接](${siteInfo.siteUrl.replace(/\/$/, "")}/friends/) 查看您的站点，欢迎常来互访！`;
 
 	await redactEmailInIssue(issueBody);
 	await postComment(successMsg);
@@ -668,7 +643,7 @@ run().catch(async (err) => {
 	if (issueNumber) {
 		try {
 			await postComment(
-				`❌ **自动处理出错**\n\n在自动处理友链时出现异常：\`${(err as Error).message || String(err)}\`，请等待博主人工处理。`,
+				`### ❌ 处理异常\n\n自动处理时遇到错误：\`${(err as Error).message || String(err)}\`，请等待博主排查处理。`,
 			);
 		} catch {
 			// 忽略回复失败
