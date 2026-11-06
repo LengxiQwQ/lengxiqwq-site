@@ -93,6 +93,77 @@ function checkIsWafChallenge(html: string): boolean {
 	);
 }
 
+// 剥离 HTML 中常见干扰区域（如评论区、留言板、申请表单），防止评论留言或表单草稿误判为正向友链
+function pruneHtmlNoise(html: string): string {
+	return html
+		.replace(
+			/<(?:div|section|aside)[^>]+(?:id|class)=["'][^"']*(?:waline|twikoo|vcomments?|comments?|comment-list|artalk|disqus_thread|giscus|gitalk|liuyan)[^"']*["'][^>]*>[\s\S]*?<\/(?:div|section|aside)>/gi,
+			"",
+		)
+		.replace(/<form[^>]*>[\s\S]*?<\/form>/gi, "")
+		.replace(/<textarea[^>]*>[\s\S]*?<\/textarea>/gi, "");
+}
+
+// 通用友链实体审核与生命周期校验器（通用型判定：过滤待审核申请、被拒绝、已封禁、草稿或隐藏的数据）
+function isApprovedFriendItem(
+	item: Record<string, unknown> | null | undefined,
+): boolean {
+	if (!item || typeof item !== "object") return true;
+
+	// 1. 显式隐藏与可见性布尔标记（涵盖主流 CMS 命名习惯）
+	if (
+		item.hide === true ||
+		item.hidden === true ||
+		item.visible === false ||
+		item.is_visible === false ||
+		item.enabled === false ||
+		item.is_enabled === false ||
+		item.active === false ||
+		item.is_active === false ||
+		item.published === false ||
+		item.is_published === false ||
+		item.approved === false ||
+		item.is_approved === false ||
+		item.deleted === true ||
+		item.is_deleted === true ||
+		item.trash === true
+	) {
+		return false;
+	}
+
+	// 2. 状态枚举（包含 Mix Space、Halo、WordPress、Typecho、Ghost 等系统的 state / status）
+	const stateVal =
+		item.state ??
+		item.status ??
+		item.audit ??
+		item.audit_status ??
+		item.auditStatus;
+
+	if (typeof stateVal === "number") {
+		// Mix Space 规范: 0 = Pass(通过), 1 = Audit(待审核申请), 2 = Outdate, 3 = Banned, 4 = Reject
+		// 当对象包含 Mix Space 特征 (如包含 type 属性且为数字)
+		if ("type" in item && typeof item.type === "number") {
+			if (stateVal !== 0) return false;
+		}
+		// 通用负数状态码通常表示禁用或草稿
+		if (stateVal < 0) return false;
+	}
+
+	if (typeof stateVal === "string") {
+		const lower = stateVal.toLowerCase().trim();
+		// 通用未生效/待审核/已拒绝/封禁/草稿关键字正则（任何博客系统通用适用）
+		if (
+			/^(pending|audit|review|unapproved|wait|waiting|applied|applying|rejected?|refused|banned|draft|trash|inactive|deleted|disabled|hidden|hide)$/i.test(
+				lower,
+			)
+		) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 // ---------- 站点存活与头像检测函数（供全站爬虫与 Issue 申请共享） ----------
 export async function verifySiteReachable(
 	siteUrl: string,
@@ -390,8 +461,9 @@ export async function probeUrl(
 			};
 		}
 
-		// 5. 第一轮直接匹配：当前页面 HTML
-		const directMatch = matchKeywordsInContent(html, keywords);
+		// 5. 第一轮直接匹配：当前页面 HTML（剥离评论留言区与申请表单，确保只检测正文正式友链）
+		const cleanHtml = pruneHtmlNoise(html);
+		const directMatch = matchKeywordsInContent(cleanHtml, keywords);
 		if (directMatch) {
 			return {
 				status: "found",
@@ -459,21 +531,22 @@ export async function probeUrl(
 				for (const m of fullApiMatches) {
 					try {
 						const clean = m.replace(/\\+$/, "").trim();
-						dynamicApis.add(`${clean}/links`);
-						dynamicApis.add(`${clean}/friends`);
+						// 只请求正式已发布的友链列表，严禁探测内部未经审核的申请数据表
+						dynamicApis.add(`${clean}/links/all`);
+						dynamicApis.add(`${clean}/links?state=0`);
+						dynamicApis.add(`${clean}/friends/all`);
 					} catch {}
 				}
 			}
 
-			// Mix Space / 常见第三方独立博客后端子域名推测 (如 api.xxx.com, mix-space.xxx.com)
+			// Mix Space / 常见第三方独立博客公开前端数据接口 (只探测 /links/all 等已过审正式接口)
 			const domainParts = parsed.hostname.split(".");
 			if (domainParts.length >= 2) {
 				const rootDomain = domainParts.slice(-2).join(".");
-				dynamicApis.add(`https://mix-space.${rootDomain}/api/v2/links`);
-				dynamicApis.add(`https://mix-space.${rootDomain}/api/v2/friends`);
-				dynamicApis.add(`https://api.${rootDomain}/api/v2/links`);
-				dynamicApis.add(`https://api.${rootDomain}/v2/links`);
-				dynamicApis.add(`https://api.${rootDomain}/links`);
+				dynamicApis.add(`https://mix-space.${rootDomain}/api/v2/links/all`);
+				dynamicApis.add(`https://mix-space.${rootDomain}/api/v2/links?state=0`);
+				dynamicApis.add(`https://api.${rootDomain}/api/v2/links/all`);
+				dynamicApis.add(`https://api.${rootDomain}/api/v2/links?state=0`);
 			}
 
 			// 补充常见的博客系统动态友链接口
@@ -500,7 +573,41 @@ export async function probeUrl(
 					});
 					if (apiRes.ok) {
 						const apiText = await apiRes.text();
-						const apiMatched = matchKeywordsInContent(apiText, keywords);
+						let apiMatched: string | undefined;
+
+						try {
+							const json = JSON.parse(apiText);
+							const items = Array.isArray(json)
+								? json
+								: Array.isArray(json?.data)
+									? json.data
+									: Array.isArray(json?.links)
+										? json.links
+										: Array.isArray(json?.friends)
+											? json.friends
+											: null;
+
+							if (items) {
+								// 列表型 JSON：仅在正式已发布（过滤待审核申请、被拒绝、已封禁等草稿数据）的项目中匹配
+								for (const item of items) {
+									if (!isApprovedFriendItem(item)) continue;
+									const m = matchKeywordsInContent(
+										JSON.stringify(item),
+										keywords,
+									);
+									if (m) {
+										apiMatched = m;
+										break;
+									}
+								}
+							} else {
+								apiMatched = matchKeywordsInContent(apiText, keywords);
+							}
+						} catch {
+							// 非 JSON 文本回退到普通内容匹配
+							apiMatched = matchKeywordsInContent(apiText, keywords);
+						}
+
 						if (apiMatched) {
 							return {
 								status: "found",
@@ -660,13 +767,6 @@ export async function probeSingleSite(
 	siteUrl: string,
 	customTargetUrl?: string,
 ): Promise<FriendAuditRecord> {
-	const friendsConfigModule = await import("../src/config/friendsConfig.ts");
-	const allFriends = friendsConfigModule.friendsConfig || [];
-	const friend = allFriends.find((f: FriendLink) => f.siteurl === siteUrl);
-	if (!friend) {
-		throw new Error(`未在配置中找到友链: ${siteUrl}`);
-	}
-
 	let auditData: FriendsAuditData = {};
 	if (fs.existsSync(AUDIT_FILE)) {
 		try {
@@ -674,6 +774,28 @@ export async function probeSingleSite(
 		} catch {
 			auditData = {};
 		}
+	}
+
+	let friend: FriendLink | undefined;
+	try {
+		const friendsConfigModule = await import("../src/config/friendsConfig.ts");
+		const allFriends = friendsConfigModule.friendsConfig || [];
+		friend = allFriends.find(
+			(f: FriendLink) =>
+				f.siteurl === siteUrl ||
+				f.siteurl.replace(/\/+$/, "").toLowerCase() ===
+					siteUrl.replace(/\/+$/, "").toLowerCase(),
+		);
+	} catch {}
+
+	if (!friend) {
+		const existingRecord = auditData[siteUrl];
+		friend = {
+			title: siteUrl,
+			siteurl: siteUrl,
+			friendPageUrl: customTargetUrl || existingRecord?.targetUrl,
+			enabled: true,
+		} as FriendLink;
 	}
 
 	const prevRecord: FriendAuditRecord = auditData[siteUrl] || {

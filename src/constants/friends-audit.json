@@ -131,12 +131,12 @@
 		"decision": "pending"
 	},
 	"https://www.hoshiroko.com": {
-		"missingCount": 0,
+		"missingCount": 2,
 		"failCount": 0,
 		"protectedCount": 0,
-		"lastChecked": "2026-11-06T09:42:12.360Z",
-		"lastStatus": "found",
-		"lastMessage": "在动态数据接口 (https://mix-space.hoshiroko.com/api/v2/links) 成功匹配关键词: \"lengxiqwq.com\"",
+		"lastChecked": "2026-11-06T10:28:08.537Z",
+		"lastStatus": "missing",
+		"lastMessage": "页面响应正常，经静态正文、动态接口及分页检索均未找到本站关键词 (https://hoshiroko.com/friends)",
 		"targetUrl": "https://hoshiroko.com/friends",
 		"decision": "normal"
 	},
