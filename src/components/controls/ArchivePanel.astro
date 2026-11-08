@@ -58,7 +58,7 @@ function formatDate(date: Date) {
 }
 
 function formatTag(tagList: string[]) {
-	return tagList.map((t) => `#${t}`).join(" ");
+	return tagList.join(" ");
 }
 
 // 传给客户端脚本的 i18n 文案与配置
@@ -348,7 +348,7 @@ const foldOnFilter = collapseAllButFirst;
       } else if (uncategorized) {
         newTitle = i18nStrings.uncategorized;
       } else if (tags.length > 0) {
-        newTitle = tags.map((t) => `#${t}`).join(" / ");
+        newTitle = tags.join(" / ");
       }
       // 直接设置（自定义元素在解析阶段升级、首帧前执行），避免默认标题闪烁
       if (newTitle && bannerTitle.textContent !== newTitle) {
