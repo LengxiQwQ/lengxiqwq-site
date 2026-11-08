@@ -268,6 +268,15 @@ function isValidEmail(emailStr: string): boolean {
 	return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailStr);
 }
 
+// 校验是否为已被脱敏隐藏的邮箱占位符
+function isRedactedPlaceholder(val: string): boolean {
+	return (
+		val.includes("已归档至私有仓库") ||
+		val.includes("已隐藏") ||
+		val.includes("🔒")
+	);
+}
+
 // 智能反向链接深度穿透检测（支持防反爬伪装、SPA API穿透、动态接口嗅探与分页扫描）
 async function verifyBacklink(checkUrl: string): Promise<{
 	success: boolean;
@@ -351,11 +360,6 @@ async function run() {
 	if (parsed.feedurl) parsed.feedurl = ensureProtocol(parsed.feedurl);
 	if (parsed.screenshot) parsed.screenshot = ensureProtocol(parsed.screenshot);
 	if (parsed.email) parsed.email = cleanEmail(parsed.email);
-
-	// 尽早脱敏 Issue 正文中的联系邮箱，防止因校验失败导致明文隐私泄露
-	if (!isManualDispatch && parsed.email) {
-		await redactEmailInIssue(issueBody);
-	}
 
 	// 必填项检查
 	if (
@@ -468,7 +472,7 @@ async function run() {
 		return;
 	}
 
-	if (email && !isValidEmail(email)) {
+	if (email && !isRedactedPlaceholder(email) && !isValidEmail(email)) {
 		const msg = `### ⚠️ 联系邮箱格式不正确\n\n您填写的联系邮箱 \`${email}\` 不是合法的电子邮箱格式，请检查后重新编辑。`;
 		await postComment(msg);
 		await addLabels(["invalid-format"]);
@@ -481,6 +485,9 @@ async function run() {
 		}
 		return;
 	}
+
+	// 基础格式校验全部通过，清理可能存在的 invalid-format 标签
+	await removeLabel("invalid-format");
 
 	// 检查内容仓中的 friendsConfig.ts 是否存在
 	const configFile = path.resolve(contentRepoDir, "config/friendsConfig.ts");
@@ -562,7 +569,8 @@ async function run() {
 		console.log("[friend-apply] 反向链接验证成功！");
 	}
 
-	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\tfriendPageUrl: ${JSON.stringify(checkurl)},\n\t\tfeedUrl: ${JSON.stringify(feedurl || "")},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\tscreenshot: ${JSON.stringify(screenshot)},\n\t\temail: ${JSON.stringify(email)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
+	const safeEmail = isRedactedPlaceholder(email) ? "" : email;
+	const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(title)},\n\t\tdesc: ${JSON.stringify(desc)},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\tfriendPageUrl: ${JSON.stringify(checkurl)},\n\t\tfeedUrl: ${JSON.stringify(feedurl || "")},\n\t\timgurl: ${JSON.stringify(imgurl)},\n\t\tscreenshot: ${JSON.stringify(screenshot)},\n\t\temail: ${JSON.stringify(safeEmail)},\n\t\ttags: ["博客"],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
 
 	let updatedContent = "";
 	const targetHeader = "export const friendsConfig";
