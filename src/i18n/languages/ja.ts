@@ -531,6 +531,7 @@ export const ja: Translation = {
 	[Key.siteInfo]: "サイト情報",
 	[Key.siteInfoBuildTime]: "ビルド日時",
 	[Key.siteInfoBuildPlatform]: "ビルドプラットフォーム",
+	[Key.siteInfoHostingPlatform]: "ホスティングプラットフォーム",
 	[Key.siteInfoBlogVersion]: "ブログバージョン",
 	[Key.siteInfoAstroVersion]: "Astro バージョン",
 	[Key.siteInfoNodeVersion]: "Node バージョン",

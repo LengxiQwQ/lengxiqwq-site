@@ -1,9 +1,11 @@
 <script lang="ts">
 import { onMount, tick } from "svelte";
 import ClientPagination from "@/components/common/ClientPagination.svelte";
+import { getWorkerApiUrl } from "@/utils/api-config";
 import { formatTimezoneOffset } from "@/utils/date-utils";
 import { fetchMemos } from "@/utils/memos-adapter";
 import { url } from "@/utils/url-utils";
+import { fetchWorkerDynamics } from "@/utils/worker-dynamic-adapter";
 import { registerDynamicGallery } from "./dynamic-gallery";
 import { registerDynamicInlineComments } from "./dynamic-inline-comments";
 
@@ -32,6 +34,7 @@ interface MemosConfig {
 
 interface Props {
 	source: string;
+	workerApiUrl?: string;
 	itemsPerPage: number;
 	showComments: boolean;
 	emptyText: string;
@@ -44,6 +47,7 @@ interface Props {
 
 const {
 	source,
+	workerApiUrl,
 	itemsPerPage,
 	showComments,
 	emptyText,
@@ -59,6 +63,7 @@ let filtered = $state<DynamicData[]>([]);
 let currentPage = $state(1);
 let loading = $state(true);
 let failed = $state(false);
+let isWorkerSource = $state(false);
 let templateReady = $state(false);
 let list: HTMLElement;
 let template: HTMLTemplateElement | null = null;
@@ -130,7 +135,9 @@ function createItem(entry: DynamicData) {
 	const root = fragment.querySelector<HTMLElement>("[data-dynamic-entry]");
 	if (!root) return null;
 	const anchorId = `dynamic-${entry.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-	const isRemoteMemo = Boolean(memos?.enable || source.startsWith("http"));
+	const isRemoteMemo = Boolean(
+		memos?.enable || source.startsWith("http") || isWorkerSource,
+	);
 	const detailUrl = isRemoteMemo
 		? `#${anchorId}`
 		: url(`/dynamic/${entry.id}/`);
@@ -167,8 +174,8 @@ function createItem(entry: DynamicData) {
 	if (time) {
 		const date = new Date(entry.published);
 		time.dateTime = date.toISOString();
-		// 第三方 API 和 Memos 使用浏览器本地时区，不做额外时区转换
-		if (source.startsWith("http") || memos?.enable) {
+		// 第三方 API、Worker 和 Memos 使用浏览器本地时区，不做额外时区转换
+		if (source.startsWith("http") || memos?.enable || isWorkerSource) {
 			time.textContent = date.toLocaleDateString("zh-CN", {
 				year: "numeric",
 				month: "2-digit",
@@ -321,14 +328,30 @@ onMount(() => {
 	searchInput?.addEventListener("input", filter);
 	yearSelect?.addEventListener("change", filter);
 
+	let handleHashAnchor: (() => void) | null = null;
+
 	const load = async () => {
 		try {
 			if (memos?.enable) {
 				entries = await fetchMemos(memos.apiUrl, { parent: memos.parent });
 			} else {
-				const response = await fetch(source);
-				if (!response.ok) throw new Error(`HTTP ${response.status}`);
-				entries = (await response.json()) as DynamicData[];
+				const targetWorkerApi = workerApiUrl || getWorkerApiUrl();
+				let workerEntries: DynamicData[] = [];
+				try {
+					workerEntries = await fetchWorkerDynamics(targetWorkerApi);
+				} catch (err) {
+					console.warn("[DynamicFeed] Worker dynamics fetch error:", err);
+				}
+
+				if (workerEntries.length > 0) {
+					entries = workerEntries;
+					isWorkerSource = true;
+				} else {
+					// 优雅回退到本地静态 JSON 数据源
+					const response = await fetch(source);
+					if (!response.ok) throw new Error(`HTTP ${response.status}`);
+					entries = (await response.json()) as DynamicData[];
+				}
 			}
 			// 更新页面计数
 			const countEl = document.querySelector("[data-dynamic-page-count]");
@@ -336,7 +359,7 @@ onMount(() => {
 			populateYears();
 			currentPage = pageFromUrl();
 			applyFilters(false);
-			const handleHashAnchor = () => {
+			handleHashAnchor = () => {
 				let anchorId = decodeURIComponent(window.location.hash.slice(1));
 				if (!anchorId) {
 					try {
@@ -372,7 +395,9 @@ onMount(() => {
 	return () => {
 		searchInput?.removeEventListener("input", filter);
 		yearSelect?.removeEventListener("change", filter);
-		window.removeEventListener("hashchange", handleHashAnchor);
+		if (handleHashAnchor) {
+			window.removeEventListener("hashchange", handleHashAnchor);
+		}
 	};
 });
 </script>

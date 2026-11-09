@@ -10,6 +10,7 @@ import "@/styles/pages/common.css";
 import "@/styles/pages/dynamic.css";
 import "@fancyapps/ui/dist/fancybox/fancybox.css";
 import "@/styles/fancybox-custom.css";
+import { getWorkerApiUrl } from "@/utils/api-config";
 import { url } from "@/utils/url-utils";
 
 if (!siteConfig.pages.dynamic) {
@@ -29,6 +30,7 @@ const dataUrl = dynamicConfig.apiUrl?.startsWith("http")
 	? dynamicConfig.apiUrl
 	: url(dynamicConfig.apiUrl || "/api/dynamic.json");
 const memos = dynamicConfig.memos;
+const workerApiUrl = getWorkerApiUrl();
 ---
 
 <MainGridLayout title={title} description={description}>
@@ -74,6 +76,7 @@ const memos = dynamicConfig.memos;
 			<DynamicFeed
 				client:load
 				source={dataUrl}
+				{workerApiUrl}
 				{itemsPerPage}
 				showComments={showInlineComments}
 				emptyText={i18n(I18nKey.dynamicEmpty)}

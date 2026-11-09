@@ -1,0 +1,19 @@
+---
+import StatsDashboard from "@/components/pages/stats/StatsDashboard.svelte";
+import MainGridLayout from "@/layouts/MainGridLayout.astro";
+import { getWorkerApiUrl } from "@/utils/api-config";
+import "@/styles/pages/common.css";
+
+const title = "全站实时访问统计";
+const description =
+	"基于边缘计算与实时访客洞察的全站 PV/UV 访问趋势与多维度画像数据大屏";
+const workerApiUrl = getWorkerApiUrl();
+---
+
+<MainGridLayout title={title} description={description}>
+	<div class="flex w-full rounded-(--radius-large) overflow-hidden relative min-h-32">
+		<div class="card-base z-10 px-5 sm:px-8 py-6 relative w-full">
+			<StatsDashboard client:load {workerApiUrl} />
+		</div>
+	</div>
+</MainGridLayout>

@@ -65,6 +65,12 @@ const buildPlatform = detectBuildPlatform({
 	unknownBuildPlatform,
 });
 
+// 托管平台（支持环境变量 FIREFLY_HOSTING_PLATFORM 或 widgetConfig 自定义，默认 Cloudflare Pages）
+const hostingPlatform =
+	process.env.FIREFLY_HOSTING_PLATFORM ||
+	widgetConfig?.specificConfig?.siteInfo?.hostingPlatform ||
+	"Cloudflare Pages";
+
 // 系统信息（平台 + 架构）
 const platformMap: Record<string, string> = {
 	win32: "Windows",
@@ -94,9 +100,14 @@ const licenseName = licenseConfig.enable ? licenseConfig.name : "None";
 // 始终显示的项目（列表）
 const mainItems = [
 	{
-		icon: "material-symbols:cloud-outline",
+		icon: "material-symbols:build-outline",
 		label: i18n(I18nKey.siteInfoBuildPlatform),
 		value: buildPlatform,
+	},
+	{
+		icon: "material-symbols:cloud-outline",
+		label: i18n(I18nKey.siteInfoHostingPlatform),
+		value: hostingPlatform,
 	},
 	{
 		icon: "mdi:clover",
@@ -146,7 +157,7 @@ const detailItems: {
 		value: pnpmVersion,
 	},
 	{
-		icon: "material-symbols:build-outline",
+		icon: "material-symbols:schedule-outline",
 		label: i18n(I18nKey.siteInfoBuildTime),
 		value: buildTime,
 		fullWidth: true,

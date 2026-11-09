@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0"
 
 :: 通过重定向 <nul，使 cmd.exe 在接收到 Ctrl+C 时自动获取 EOF 并干净退出，
@@ -10,9 +11,8 @@ set "EXIT_CODE=%errorlevel%"
 if %EXIT_CODE% neq 0 (
     if %EXIT_CODE% neq 130 (
         echo.
-        echo [dev.bat] 进程异常退出 (退出码: %EXIT_CODE%)
+        echo [dev.bat] 进程异常退出 (退出码: %EXIT_CODE%^)
         pause
     )
 )
 exit /b %EXIT_CODE%
-

@@ -1,0 +1,37 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lengxiqwq-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "CORS_ORIGIN": "https://lengxiqwq.com,http://localhost:4321,https://feat-workers-and-console.lengxiqwq-site.pages.dev",
+    "R2_PUBLIC_DOMAIN": "https://img.lengxiqwq.com"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lengxiqwq-db",
+      "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "lengxiqwq-assets"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "0 */2 * * *"
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "lengxiqwq-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "test": "node test-suite.mjs",
+    "deploy": "wrangler deploy",
+    "type-check": "tsc --noEmit",
+    "db:init": "wrangler d1 execute DB --local --file=./schema.sql",
+    "db:init:remote": "wrangler d1 execute DB --remote --file=./schema.sql",
+    "db:seed": "wrangler d1 execute DB --local --file=./seed-moments.sql",
+    "db:seed:remote": "wrangler d1 execute DB --remote --file=./seed-moments.sql"
+  },
+  "dependencies": {
+    "hono": "^4.7.2"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250224.0",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.127.1"
+  }
+}

@@ -523,6 +523,7 @@ export const zh_CN: Translation = {
 	[Key.siteInfo]: "站点信息",
 	[Key.siteInfoBuildTime]: "构建时间",
 	[Key.siteInfoBuildPlatform]: "构建平台",
+	[Key.siteInfoHostingPlatform]: "托管平台",
 	[Key.siteInfoBlogVersion]: "博客版本",
 	[Key.siteInfoAstroVersion]: "Astro",
 	[Key.siteInfoNodeVersion]: "Node",

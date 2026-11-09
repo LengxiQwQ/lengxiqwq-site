@@ -1,12 +1,13 @@
 ---
 // GitHub 卡片与 Star 徽章客户端管理器
 //
-// 构建期只在 github-card-data.json 里缓存「静态兜底信息」（description / language /
-// avatarUrl / license / stars / forks），forks / stars 由浏览器运行时向 api.github.com 请求一次，
-// 写入 localStorage 缓存（24h 过期后重新请求）；请求失败则回退到构建期的静态信息。
+// 优先通过 Cloudflare Worker API 代理接口 (/api/github/repo?name=...) 实时请求，
+// 享有服务端 KV 缓存与浏览器 localStorage 24h 缓存双重加速；
+// 若 Worker 离线或异常，无缝降级保留构建期静态兜底信息（github-card-data.json）。
 // 复用 markdown-extend.styl 里已存在的 .fetch-waiting / .fetch-error / pulsate 状态样式。
 ---
 <script>
+  import { getWorkerApiUrl } from "@/utils/api-config";
   import { formatCount } from "@/utils/github-card-utils";
 
   const CACHE_KEY_PREFIX = "github-card:";
@@ -60,16 +61,33 @@
   }
 
   async function fetchRepo(repo: string): Promise<GithubApiRepo> {
-    const [owner, name] = repo.split("/");
-    const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`;
+    const workerApiUrl = getWorkerApiUrl();
+    const url = `${workerApiUrl}/api/github/repo?name=${encodeURIComponent(repo)}`;
     const response = await fetch(url, {
       referrerPolicy: "no-referrer",
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) {
-      throw new Error(`GitHub API returned ${response.status}`);
+      throw new Error(`GitHub proxy returned ${response.status}`);
     }
-    return (await response.json()) as GithubApiRepo;
+    const resJson = await response.json();
+    const data = resJson.data || resJson;
+
+    return {
+      description: data.description ?? null,
+      language: data.language ?? null,
+      forks: data.forks ?? data.forks_count ?? 0,
+      stargazers_count: data.stars ?? data.stargazers_count ?? 0,
+      owner: {
+        avatar_url: data.avatarUrl || data.owner?.avatar_url || "",
+      },
+      license:
+        typeof data.license === "object"
+          ? data.license
+          : data.license
+            ? { spdx_id: data.license }
+            : null,
+    };
   }
 
   function applyDataToCard(card: Element, data: GithubApiRepo): void {

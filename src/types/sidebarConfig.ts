@@ -55,6 +55,7 @@ export type DynamicWidgetConfig = {
 // 站点信息组件专用配置
 export type SiteInfoConfig = {
 	unknownBuildPlatform?: string; // 未识别的构建平台显示文本，默认 "Unknown CI"
+	hostingPlatform?: string; // 托管平台显示文本，默认 "Cloudflare Pages"
 };
 
 // 日历组件专用配置

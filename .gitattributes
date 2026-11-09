@@ -1,2 +1,6 @@
 *.js linguist-language=astro
 * text=auto eol=lf
+
+# Windows 批处理脚本必须强制使用 CRLF 换行
+*.bat text eol=crlf
+*.cmd text eol=crlf
