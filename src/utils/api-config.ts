@@ -9,11 +9,7 @@ export function getWorkerApiUrl(): string {
 		return envUrl.trim().replace(/\/+$/, "");
 	}
 
-	// 本地开发环境自动对接本地本地 Wrangler 开发端口
-	if (import.meta.env.DEV) {
-		return "http://127.0.0.1:8787";
-	}
-
-	// 生产环境默认使用独立 API 域名
-	return "https://api.lengxiqwq.com";
+	// 生产与开发环境默认直连已部署上线的 Cloudflare Worker 独立服务
+	// 享有全球 CDN 加速与云端 D1 / KV / R2 实时同步，电脑关机后线上与本地均稳定可用
+	return "https://lengxiqwq-api.date200325.workers.dev";
 }

@@ -10,17 +10,24 @@
     "CORS_ORIGIN": "https://lengxiqwq.com,http://localhost:4321,https://feat-workers-and-console.lengxiqwq-site.pages.dev",
     "R2_PUBLIC_DOMAIN": "https://img.lengxiqwq.com"
   },
+  "workers_dev": true,
+  "routes": [
+    {
+      "pattern": "api.lengxiqwq.com",
+      "custom_domain": true
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "lengxiqwq-db",
-      "database_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+      "database_id": "3314618f-f89a-44ab-87c2-b60a313510eb"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "KV",
-      "id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      "id": "f296459ddac4410a8712bd9e6b1eaa51"
     }
   ],
   "r2_buckets": [
