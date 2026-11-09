@@ -178,12 +178,14 @@ const hasSiteSwitcher =
             <!-- 绔欑偣 Logo銆佹爣棰樹笌绔欑偣鍒囨崲涓嬫媺鑿滃崟 -->
             <div class="relative site-switcher-container" id="site-switcher-container">
                 {hasSiteSwitcher ? (
-                <div class="flex items-center">
-                    <a
-                        href={url('/console/')}
-                        aria-label="管理控制台"
-                        class="btn-plain scale-animation rounded-l-lg h-13 pl-3 md:pl-5 pr-1 font-bold active:scale-95 flex items-center gap-1 cursor-pointer select-none"
-                    >
+                <button
+                    type="button"
+                    id="site-switcher-trigger"
+                    aria-expanded="false"
+                    aria-haspopup="true"
+                    aria-label="鍒囨崲绔欑偣"
+                    class="btn-plain scale-animation rounded-lg h-13 px-3 md:px-5 font-bold active:scale-95 flex items-center gap-1 cursor-pointer select-none"
+                >
                     <div class:list={[
                         "flex flex-row items-center text-md text-[16px]",
                         siteConfig.navbar.followTheme ? "text-(--primary)" : "dark:text-white text-black"
@@ -211,18 +213,8 @@ const hasSiteSwitcher =
                         )}
                         <span class="tracking-tight">{navbarTitle}</span>
                     </div>
-                    </a>
-                    <button
-                        type="button"
-                        id="site-switcher-trigger"
-                        aria-expanded="false"
-                        aria-haspopup="true"
-                        aria-label="切换站点"
-                        class="btn-plain scale-animation rounded-r-lg h-13 px-2 font-bold active:scale-95 flex items-center cursor-pointer select-none"
-                    >
-                        <Icon is:inline name="material-symbols:keyboard-arrow-down-rounded" class="site-switcher-arrow text-[1.25rem] transition-transform duration-200 text-50" />
-                    </button>
-                </div>
+                    <Icon is:inline name="material-symbols:keyboard-arrow-down-rounded" class="site-switcher-arrow text-[1.25rem] transition-transform duration-200 text-50 ml-1" />
+                </button>
 
                 <!-- 涓嬫媺鑿滃崟锛氬叏鏂逛綅瀵规爣 header 鍏朵粬涓嬫媺鑿滃崟瑙勬牸 -->
                 <div class="dropdown-menu" id="site-switcher-menu" data-dropdown-menu>
@@ -248,8 +240,8 @@ const hasSiteSwitcher =
                 </div>
                 ) : (
                 <a
-                    href={url('/console/')}
-                    aria-label="管理控制台"
+                    href={url('/')}
+                    aria-label={i18n(I18nKey.home)}
                     class="btn-plain scale-animation rounded-lg h-13 px-3 md:px-5 font-bold active:scale-95 flex items-center gap-1 cursor-pointer select-none"
                 >
                     <div class:list={[
