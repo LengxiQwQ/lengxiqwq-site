@@ -28,8 +28,9 @@ interface Props {
 
 let { icon, class: className = "", style = "" }: Props = $props();
 
-// 检测图标是否存在
-const iconExists = $derived(() => {
+// 检测图标是否存在 (Svelte 5 标准 derived 响应式求值)
+const iconExists = $derived.by(() => {
+	if (!icon) return false;
 	const [prefix, name] = icon.split(":");
 	if (!prefix || !name) return false;
 	const collection = (iconsData as Record<string, unknown>)[prefix] as
@@ -39,7 +40,7 @@ const iconExists = $derived(() => {
 });
 </script>
 
-{#if iconExists()}
+{#if iconExists}
 	<Iconify
 		{icon}
 		class="inline-icon inline-flex items-center justify-center {className}"
