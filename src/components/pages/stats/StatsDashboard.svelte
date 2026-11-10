@@ -66,6 +66,7 @@ let isRefreshing = $state<boolean>(false);
 let loading = $state<boolean>(true);
 let summary = $state<SummaryData | null>(null);
 let insights = $state<InsightsData | null>(null);
+let chartAnimKey = $state<number>(0);
 
 // 访问脉冲图例控制 (固定近 30 天走势)
 let showPv = $state<boolean>(true);
@@ -168,10 +169,13 @@ function getY(val: number): number {
 }
 
 // 构造 SVG 折线路径与填充多边形
-const pvPolyline = $derived.by(() => {
+const pvLinePath = $derived.by(() => {
 	if (!currentChartData || currentChartData.length === 0) return "";
 	return currentChartData
-		.map((p, idx) => `${getX(idx, currentChartData.length)},${getY(p.pv)}`)
+		.map(
+			(p, idx) =>
+				`${idx === 0 ? "M" : "L"} ${getX(idx, currentChartData.length)},${getY(p.pv)}`,
+		)
 		.join(" ");
 });
 
@@ -186,10 +190,13 @@ const pvAreaPath = $derived.by(() => {
 	return `M ${firstX},${baseY} L ${pts.join(" L ")} L ${lastX},${baseY} Z`;
 });
 
-const uvPolyline = $derived.by(() => {
+const uvLinePath = $derived.by(() => {
 	if (!currentChartData || currentChartData.length === 0) return "";
 	return currentChartData
-		.map((p, idx) => `${getX(idx, currentChartData.length)},${getY(p.uv)}`)
+		.map(
+			(p, idx) =>
+				`${idx === 0 ? "M" : "L"} ${getX(idx, currentChartData.length)},${getY(p.uv)}`,
+		)
 		.join(" ");
 });
 
@@ -484,7 +491,15 @@ const activityMatrix = $derived.by(() => {
 
 // 加载全量统计看板数据
 async function fetchDashboardData(manual = false) {
-	if (manual) isRefreshing = true;
+	if (manual) {
+		isRefreshing = true;
+		hoverIndex = null;
+		hoveredHeatmapCell = null;
+		hoveredActivityCell = null;
+	}
+	const minDelay = manual
+		? new Promise((res) => setTimeout(res, 350))
+		: Promise.resolve();
 	try {
 		const [summaryRes, insightsRes] = await Promise.allSettled([
 			fetch(`${apiUrl}/api/stats/summary`),
@@ -513,11 +528,11 @@ async function fetchDashboardData(manual = false) {
 		applyFallbackSummary();
 		applyFallbackInsights();
 	} finally {
+		await minDelay;
 		loading = false;
 		if (manual) {
-			setTimeout(() => {
-				isRefreshing = false;
-			}, 400);
+			isRefreshing = false;
+			chartAnimKey++;
 		}
 	}
 }
@@ -688,7 +703,7 @@ onMount(() => {
 				{#if loading}
 					<span class="inline-block w-20 h-8 bg-black/10 dark:bg-white/10 rounded animate-pulse"></span>
 				{:else}
-					{(historicalStats.pv ?? 0).toLocaleString()}
+					<span class="data-fade-in">{(historicalStats.pv ?? 0).toLocaleString()}</span>
 				{/if}
 			</div>
 			<div class="text-[11px] text-(--content-meta) mt-1.5 flex items-center gap-1 font-normal">
@@ -706,7 +721,7 @@ onMount(() => {
 				{#if loading}
 					<span class="inline-block w-20 h-8 bg-black/10 dark:bg-white/10 rounded animate-pulse"></span>
 				{:else}
-					{(historicalStats.uv ?? 0).toLocaleString()}
+					<span class="data-fade-in">{(historicalStats.uv ?? 0).toLocaleString()}</span>
 				{/if}
 			</div>
 			<div class="text-[11px] text-(--content-meta) mt-1.5 flex items-center gap-1 font-normal">
@@ -724,7 +739,7 @@ onMount(() => {
 				{#if loading}
 					<span class="inline-block w-20 h-8 bg-black/10 dark:bg-white/10 rounded animate-pulse"></span>
 				{:else}
-					{(todayStats.pv ?? 0).toLocaleString()}
+					<span class="data-fade-in">{(todayStats.pv ?? 0).toLocaleString()}</span>
 				{/if}
 			</div>
 			<div class="text-[11px] mt-1.5 flex items-center gap-1 font-medium">
@@ -748,7 +763,7 @@ onMount(() => {
 				{#if loading}
 					<span class="inline-block w-20 h-8 bg-black/10 dark:bg-white/10 rounded animate-pulse"></span>
 				{:else}
-					{(todayStats.uv ?? 0).toLocaleString()}
+					<span class="data-fade-in">{(todayStats.uv ?? 0).toLocaleString()}</span>
 				{/if}
 			</div>
 			<div class="text-[11px] mt-1.5 flex items-center gap-1 font-medium">
@@ -816,11 +831,17 @@ onMount(() => {
 		</div>
 
 		<!-- SVG 绘图区 -->
-		<div class="relative w-full overflow-hidden select-none">
+		<div
+			class="relative w-full overflow-hidden select-none transition-opacity duration-200 {isRefreshing
+				? 'opacity-40'
+				: 'opacity-100'}"
+		>
 			<svg
 				bind:this={svgElement}
 				viewBox="0 0 {chartWidth} {chartHeight}"
 				class="w-full h-48 sm:h-64 overflow-visible"
+				role="img"
+				aria-label="访问脉冲走势图"
 				onmousemove={handleSvgMouseMove}
 				onmouseleave={handleSvgMouseLeave}
 			>
@@ -833,6 +854,29 @@ onMount(() => {
 						<stop offset="0%" stop-color="#10b981" stop-opacity="0.25" />
 						<stop offset="100%" stop-color="#10b981" stop-opacity="0.0" />
 					</linearGradient>
+					{#if currentChartData.length > 0}
+						<clipPath id="chartAreaClip">
+							{#key chartAnimKey}
+								<rect
+									x={pad.left}
+									y="0"
+									width={chartWidth - pad.left - pad.right}
+									height={chartHeight}
+								>
+									<animate
+										attributeName="width"
+										from="0"
+										to={chartWidth - pad.left - pad.right}
+										dur="1.6s"
+										fill="freeze"
+										calcMode="spline"
+										keySplines="0.16 1 0.3 1"
+										keyTimes="0; 1"
+									/>
+								</rect>
+							{/key}
+						</clipPath>
+					{/if}
 				</defs>
 
 				<!-- Y 轴参考线与刻度 -->
@@ -876,31 +920,56 @@ onMount(() => {
 					{/each}
 				{/if}
 
-				<!-- PV 曲线与渐变区域 -->
-				{#if showPv && currentChartData.length > 0}
-					<path d={pvAreaPath} fill="url(#pvGradient)" />
-					<polyline
-						points={pvPolyline}
-						fill="none"
-						stroke="var(--primary)"
-						stroke-width="2.2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-					/>
-				{/if}
+				<!-- 脉冲走势折线与渐变区域 (带平滑展开动效) -->
+				{#key chartAnimKey}
+					<g class="pointer-events-none">
+						<!-- 渐变阴影区域 -->
+						<g clip-path="url(#chartAreaClip)">
+							{#if showPv && currentChartData.length > 0}
+								<path
+									d={pvAreaPath}
+									fill="url(#pvGradient)"
+									class="chart-area-pv"
+								/>
+							{/if}
+							{#if showUv && currentChartData.length > 0}
+								<path
+									d={uvAreaPath}
+									fill="url(#uvGradient)"
+									class="chart-area-uv"
+								/>
+							{/if}
+						</g>
 
-				<!-- UV 曲线与渐变区域 -->
-				{#if showUv && currentChartData.length > 0}
-					<path d={uvAreaPath} fill="url(#uvGradient)" />
-					<polyline
-						points={uvPolyline}
-						fill="none"
-						stroke="#10b981"
-						stroke-width="2"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-					/>
-				{/if}
+						<!-- PV 脉冲折线 (描边绘制动画) -->
+						{#if showPv && currentChartData.length > 0}
+							<path
+								d={pvLinePath}
+								fill="none"
+								stroke="var(--primary)"
+								stroke-width="2.2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								pathLength="1000"
+								class="chart-line-pv"
+							/>
+						{/if}
+
+						<!-- UV 访客折线 (双波微延时交叠绘制) -->
+						{#if showUv && currentChartData.length > 0}
+							<path
+								d={uvLinePath}
+								fill="none"
+								stroke="#10b981"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+								pathLength="1000"
+								class="chart-line-uv"
+							/>
+						{/if}
+					</g>
+				{/key}
 
 				<!-- 鼠标悬停竖线与数据高亮圆点 -->
 				{#if hoverIndex !== null && currentChartData[hoverIndex]}
@@ -1007,6 +1076,8 @@ onMount(() => {
 			<svg
 				viewBox="0 0 740 116"
 				class="w-full h-auto block select-none overflow-visible"
+				role="img"
+				aria-label="年度创作热力图"
 				onmouseleave={() => (hoveredHeatmapCell = null)}
 			>
 				<!-- 月份刻度文本 -->
@@ -1107,41 +1178,46 @@ onMount(() => {
 						<div class="h-10 bg-black/5 dark:bg-white/5 rounded-xl animate-pulse"></div>
 					{/each}
 				{:else if insights && insights.topPages.length > 0}
-					{#each insights.topPages as page, idx}
-						{@const pct = (page.views / maxTopPageView) * 100}
-						{@const displayTitle = cleanPageTitle(page.title, page.path)}
-						<div class="p-2.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors relative overflow-hidden group">
-							<!-- 进度条底色 -->
+					{#key chartAnimKey}
+						{#each insights.topPages as page, idx}
+							{@const pct = (page.views / maxTopPageView) * 100}
+							{@const displayTitle = cleanPageTitle(page.title, page.path)}
 							<div
-								class="absolute left-0 top-0 bottom-0 bg-(--primary)/10 rounded-xl transition-all duration-500"
-								style="width: {pct}%"
-							></div>
+								class="ranking-item p-2.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors relative overflow-hidden group"
+								style="animation-delay: {idx * 45}ms;"
+							>
+								<!-- 进度条底色 (平滑动态展开) -->
+								<div
+									class="ranking-bar-fill absolute left-0 top-0 bottom-0 bg-(--primary)/10 rounded-xl"
+									style="width: {pct}%; --target-width: {pct}%; animation-delay: {idx * 45 + 75}ms;"
+								></div>
 
-							<div class="relative z-10 flex items-center justify-between gap-3 text-xs">
-								<div class="flex items-center gap-2.5 min-w-0 flex-1">
-									<!-- 排名徽章 (1, 2, 3 序号徽章，告别表情包) -->
-									<span class="w-5 h-5 rounded-md flex items-center justify-center font-mono font-bold text-[11px] shrink-0 {idx === 0 ? 'bg-amber-400/20 text-amber-600 dark:text-amber-400 border border-amber-400/40' : idx === 1 ? 'bg-slate-300/30 text-slate-700 dark:text-slate-300 border border-slate-400/40' : idx === 2 ? 'bg-amber-700/20 text-amber-700 dark:text-amber-500 border border-amber-700/40' : 'bg-black/5 dark:bg-white/5 text-(--content-meta)'}">
-										{idx + 1}
-									</span>
+								<div class="relative z-10 flex items-center justify-between gap-3 text-xs">
+									<div class="flex items-center gap-2.5 min-w-0 flex-1">
+										<!-- 排名徽章 (1, 2, 3 序号徽章，告别表情包) -->
+										<span class="w-5 h-5 rounded-md flex items-center justify-center font-mono font-bold text-[11px] shrink-0 {idx === 0 ? 'bg-amber-400/20 text-amber-600 dark:text-amber-400 border border-amber-400/40' : idx === 1 ? 'bg-slate-300/30 text-slate-700 dark:text-slate-300 border border-slate-400/40' : idx === 2 ? 'bg-amber-700/20 text-amber-700 dark:text-amber-500 border border-amber-700/40' : 'bg-black/5 dark:bg-white/5 text-(--content-meta)'}">
+											{idx + 1}
+										</span>
 
-									<!-- 文章标题与链接 (净化统一命名，去除英文后缀与造词) -->
-									<a
-										href={page.path}
-										class="font-medium text-neutral-700 dark:text-neutral-200 hover:text-(--primary) truncate transition-colors"
-										title={displayTitle}
-									>
-										{displayTitle}
-									</a>
-								</div>
+										<!-- 文章标题与链接 (净化统一命名，去除英文后缀与造词) -->
+										<a
+											href={page.path}
+											class="font-medium text-neutral-700 dark:text-neutral-200 hover:text-(--primary) truncate transition-colors"
+											title={displayTitle}
+										>
+											{displayTitle}
+										</a>
+									</div>
 
-								<!-- 浏览次数 -->
-								<div class="shrink-0 font-mono font-bold text-neutral-800 dark:text-neutral-100">
-									{page.views.toLocaleString()}
-									<span class="text-[10px] text-(--content-meta) font-normal">次</span>
+									<!-- 浏览次数 -->
+									<div class="shrink-0 font-mono font-bold text-neutral-800 dark:text-neutral-100">
+										{page.views.toLocaleString()}
+										<span class="text-[10px] text-(--content-meta) font-normal">次</span>
+									</div>
 								</div>
 							</div>
-						</div>
-					{/each}
+						{/each}
+					{/key}
 				{/if}
 			</div>
 		</div>
@@ -1164,25 +1240,30 @@ onMount(() => {
 							<div class="h-8 bg-black/5 dark:bg-white/5 rounded-xl animate-pulse"></div>
 						{/each}
 					{:else if insights && insights.countries.length > 0}
-						{#each insights.countries as country}
-							{@const countryPct = Math.min(100, Math.round((country.visits / maxCountryVisits) * 1000) / 10)}
-							<div class="space-y-1">
-								<div class="flex items-center justify-between text-xs">
-									<span class="font-medium text-neutral-700 dark:text-neutral-200">
-										{country.name}
-									</span>
-									<span class="font-mono text-(--content-meta)">
-										{country.visits.toLocaleString()} 次 ({country.percent}%)
-									</span>
+						{#key chartAnimKey}
+							{#each insights.countries as country, cIdx}
+								{@const countryPct = Math.min(100, Math.round((country.visits / maxCountryVisits) * 1000) / 10)}
+								<div
+									class="space-y-1 country-item"
+									style="animation-delay: {cIdx * 65}ms;"
+								>
+									<div class="flex items-center justify-between text-xs">
+										<span class="font-medium text-neutral-700 dark:text-neutral-200">
+											{country.name}
+										</span>
+										<span class="font-mono text-(--content-meta)">
+											{country.visits.toLocaleString()} 次 ({country.percent}%)
+										</span>
+									</div>
+									<div class="w-full h-1.5 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
+										<div
+											class="h-full bg-emerald-500 rounded-full country-bar-fill"
+											style="width: {countryPct}%; --target-width: {countryPct}%; animation-delay: {cIdx * 65 + 75}ms;"
+										></div>
+									</div>
 								</div>
-								<div class="w-full h-1.5 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
-									<div
-										class="h-full bg-emerald-500 rounded-full transition-all duration-500"
-										style="width: {countryPct}%"
-									></div>
-								</div>
-							</div>
-						{/each}
+							{/each}
+						{/key}
 					{/if}
 				</div>
 			</div>
@@ -1204,10 +1285,18 @@ onMount(() => {
 							<span>移动端 (Mobile)</span>
 						</span>
 					</div>
-					<div class="w-full h-2 rounded-full overflow-hidden flex bg-black/5 dark:bg-white/5">
-						<div class="h-full bg-(--primary) transition-all duration-500" style="width: {deviceRatio.desktop}%"></div>
-						<div class="h-full bg-emerald-500 transition-all duration-500" style="width: {deviceRatio.mobile}%"></div>
-					</div>
+					{#key chartAnimKey}
+						<div class="w-full h-2 rounded-full overflow-hidden flex bg-black/5 dark:bg-white/5">
+							<div
+								class="h-full bg-(--primary) device-bar-fill"
+								style="width: {deviceRatio.desktop}%; --target-width: {deviceRatio.desktop}%; animation-delay: 80ms;"
+							></div>
+							<div
+								class="h-full bg-emerald-500 device-bar-fill"
+								style="width: {deviceRatio.mobile}%; --target-width: {deviceRatio.mobile}%; animation-delay: 140ms;"
+							></div>
+						</div>
+					{/key}
 				</div>
 			</div>
 
@@ -1221,17 +1310,25 @@ onMount(() => {
 					</h4>
 					<div class="space-y-2">
 						{#if insights && insights.browsers.length > 0}
-							{#each insights.browsers as b}
-								<div class="space-y-1">
-									<div class="flex items-center justify-between text-[11px]">
-										<span class="text-neutral-700 dark:text-neutral-300 truncate">{b.name}</span>
-										<span class="font-mono text-(--content-meta)">{b.percent}%</span>
+							{#key chartAnimKey}
+								{#each insights.browsers as b, bIdx}
+									<div
+										class="space-y-1 env-item"
+										style="animation-delay: {bIdx * 45}ms;"
+									>
+										<div class="flex items-center justify-between text-[11px]">
+											<span class="text-neutral-700 dark:text-neutral-300 truncate">{b.name}</span>
+											<span class="font-mono text-(--content-meta)">{b.percent}%</span>
+										</div>
+										<div class="w-full h-1 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
+											<div
+												class="h-full bg-(--primary) rounded-full env-bar-fill"
+												style="width: {b.percent}%; --target-width: {b.percent}%; animation-delay: {bIdx * 45 + 50}ms;"
+											></div>
+										</div>
 									</div>
-									<div class="w-full h-1 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
-										<div class="h-full bg-(--primary) rounded-full" style="width: {b.percent}%"></div>
-									</div>
-								</div>
-							{/each}
+								{/each}
+							{/key}
 						{/if}
 					</div>
 				</div>
@@ -1244,17 +1341,25 @@ onMount(() => {
 					</h4>
 					<div class="space-y-2">
 						{#if insights && insights.os.length > 0}
-							{#each insights.os as o}
-								<div class="space-y-1">
-									<div class="flex items-center justify-between text-[11px]">
-										<span class="text-neutral-700 dark:text-neutral-300 truncate">{o.name}</span>
-										<span class="font-mono text-(--content-meta)">{o.percent}%</span>
+							{#key chartAnimKey}
+								{#each insights.os as o, oIdx}
+									<div
+										class="space-y-1 env-item"
+										style="animation-delay: {oIdx * 45}ms;"
+									>
+										<div class="flex items-center justify-between text-[11px]">
+											<span class="text-neutral-700 dark:text-neutral-300 truncate">{o.name}</span>
+											<span class="font-mono text-(--content-meta)">{o.percent}%</span>
+										</div>
+										<div class="w-full h-1 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
+											<div
+												class="h-full bg-indigo-500 rounded-full env-bar-fill"
+												style="width: {o.percent}%; --target-width: {o.percent}%; animation-delay: {oIdx * 45 + 50}ms;"
+											></div>
+										</div>
 									</div>
-									<div class="w-full h-1 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
-										<div class="h-full bg-indigo-500 rounded-full" style="width: {o.percent}%"></div>
-									</div>
-								</div>
-							{/each}
+								{/each}
+							{/key}
 						{/if}
 					</div>
 				</div>
@@ -1287,7 +1392,11 @@ onMount(() => {
 				</div>
 
 				<!-- 7 行星期网格 (移出外层容器统一重置，鼠标在格间快速滑动平滑切换不闪烁) -->
-				<div class="space-y-1" onmouseleave={() => (hoveredActivityCell = null)}>
+				<div
+					class="space-y-1"
+					role="presentation"
+					onmouseleave={() => (hoveredActivityCell = null)}
+				>
 					{#each daysOfWeekNames as dayName, dIdx}
 						<div class="flex items-center gap-2">
 							<span class="w-6 text-[10px] text-(--content-meta) text-right shrink-0 font-medium">{dayName}</span>
@@ -1340,3 +1449,161 @@ onMount(() => {
 		</div>
 	</div>
 </div>
+
+<style>
+	/* 1. 访问脉冲走势折线与渐变动效 (放慢至 1.6s，极致丝滑的自然减速) */
+	.chart-line-pv {
+		stroke-dasharray: 1000;
+		stroke-dashoffset: 1000;
+		animation: drawPvPulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+	}
+
+	.chart-line-uv {
+		stroke-dasharray: 1000;
+		stroke-dashoffset: 1000;
+		animation: drawUvPulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) 0.16s forwards;
+	}
+
+	.chart-area-pv {
+		animation: fadeInPulseArea 1.4s ease-out forwards;
+	}
+
+	.chart-area-uv {
+		animation: fadeInPulseArea 1.4s ease-out 0.16s forwards;
+	}
+
+	@keyframes drawPvPulse {
+		0% {
+			stroke-dashoffset: 1000;
+			opacity: 0;
+		}
+		2% {
+			opacity: 1;
+		}
+		100% {
+			stroke-dashoffset: 0;
+			opacity: 1;
+		}
+	}
+
+	@keyframes drawUvPulse {
+		0% {
+			stroke-dashoffset: 1000;
+			opacity: 0;
+		}
+		2% {
+			opacity: 1;
+		}
+		100% {
+			stroke-dashoffset: 0;
+			opacity: 1;
+		}
+	}
+
+	@keyframes fadeInPulseArea {
+		0% {
+			opacity: 0;
+		}
+		100% {
+			opacity: 1;
+		}
+	}
+
+	/* 2. 核心指标数字与数据元素柔和浮现 (框架不重载，仅数据呈现) */
+	.data-fade-in {
+		animation: dataFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	@keyframes dataFadeIn {
+		0% {
+			opacity: 0;
+			transform: translateY(4px);
+		}
+		100% {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	/* 3. 热门排行榜与各分类条状图平滑展开动画 */
+	.ranking-item {
+		animation: itemSlideFade 0.85s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	.ranking-bar-fill {
+		animation: barExpand 1.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	.country-item {
+		animation: itemFadeUp 0.85s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	.country-bar-fill {
+		animation: barExpand 1.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	.device-bar-fill {
+		animation: barExpand 1.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	.env-item {
+		animation: itemFadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	.env-bar-fill {
+		animation: barExpand 1.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+	}
+
+	@keyframes itemSlideFade {
+		0% {
+			opacity: 0;
+			transform: translateX(-8px);
+		}
+		100% {
+			opacity: 1;
+			transform: translateX(0);
+		}
+	}
+
+	@keyframes itemFadeUp {
+		0% {
+			opacity: 0;
+			transform: translateY(6px);
+		}
+		100% {
+			opacity: 1;
+			transform: translateY(0);
+		}
+	}
+
+	@keyframes barExpand {
+		0% {
+			width: 0%;
+		}
+		100% {
+			width: var(--target-width);
+		}
+	}
+
+	/* 4. 无障碍减弱动态兜底 */
+	@media (prefers-reduced-motion: reduce) {
+		.chart-line-pv,
+		.chart-line-uv,
+		.chart-area-pv,
+		.chart-area-uv,
+		.data-fade-in,
+		.ranking-item,
+		.ranking-bar-fill,
+		.country-item,
+		.country-bar-fill,
+		.device-bar-fill,
+		.env-item,
+		.env-bar-fill {
+			animation: none !important;
+			stroke-dashoffset: 0 !important;
+			opacity: 1 !important;
+			transform: none !important;
+			width: var(--target-width, 100%) !important;
+		}
+	}
+</style>
