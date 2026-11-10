@@ -59,6 +59,12 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 
 			// 留言
 			LinkPresets.Guestbook,
+
+			// 开往
+			LinkPresets.Travellings,
+
+			// 虫洞
+			LinkPresets.ForeverBlog,
 		],
 	});
 
@@ -111,6 +117,12 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 
 			// 关于页面
 			LinkPresets.About,
+
+			// 站点统计
+			LinkPresets.Stats,
+
+			// GitHub 仓库
+			LinkPresets.GitHub,
 		],
 	});
 
@@ -179,6 +191,18 @@ export const LinkPresets: Record<string, NavBarLink> = {
 		url: "/guestbook/",
 		icon: "material-symbols:chat",
 		pageKey: "guestbook",
+	},
+	Travellings: {
+		name: "开往",
+		url: "https://www.travellings.cn/go.html",
+		icon: "material-symbols:train-rounded",
+		external: true,
+	},
+	ForeverBlog: {
+		name: "虫洞",
+		url: "https://www.foreverblog.cn/go.html",
+		icon: "material-symbols:cyclone",
+		external: true,
 	},
 	Dynamic: {
 		name: "动态",
@@ -257,6 +281,18 @@ export const LinkPresets: Record<string, NavBarLink> = {
 		url: "/about/",
 		icon: "material-symbols:person",
 	},
+	Stats: {
+		name: "站点统计",
+		url: "/stats/",
+		icon: "material-symbols:insights",
+		pageKey: "stats",
+	},
+	GitHub: {
+		name: "GitHub 仓库",
+		url: "https://github.com/LengxiQwQ/lengxiqwq-site",
+		icon: "fa7-brands:github",
+		external: true,
+	},
 };
 
 export const navBarConfig: NavBarConfig = {
@@ -280,6 +316,7 @@ export const navBarConfig: NavBarConfig = {
 				url: "https://room.lengxiqwq.com",
 				key: "room",
 				external: true,
+				disabled: true,
 			},
 		],
 	},

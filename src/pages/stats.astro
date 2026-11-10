@@ -12,9 +12,8 @@ if (siteConfig.pages.stats === false) {
 	return Astro.redirect("/404/");
 }
 
-const title = "站点数据统计";
-const description =
-	"基于边缘计算与实时访客洞察的全站 PV/UV 访问趋势与创作节奏公开遥测看板";
+const title = "站点统计";
+const description = "记录本站的访问流量、创作历程与访客分布";
 
 const workerApiUrl = getWorkerApiUrl();
 

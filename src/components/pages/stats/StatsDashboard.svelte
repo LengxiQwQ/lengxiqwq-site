@@ -74,17 +74,15 @@ let showUv = $state<boolean>(true);
 let hoverIndex = $state<number | null>(null);
 let svgElement: SVGSVGElement | null = $state(null);
 
+// 热门内容排行交互状态 (分类选项卡切换)
+let rankingTab = $state<"all" | "post" | "project">("all");
+
 // 热力图交互状态
 let hoveredHeatmapCell = $state<{
 	date: string;
 	posts: number;
 	dynamics: number;
 	total: number;
-} | null>(null);
-let hoveredActivityCell = $state<{
-	dayName: string;
-	hour: number;
-	rate: number;
 } | null>(null);
 
 // 图表尺寸与网格参数
@@ -265,10 +263,107 @@ function formatDateLabel(dateStr: string): string {
 	return dateStr;
 }
 
-// 热门文章最大浏览量
-const maxTopPageView = $derived.by(() => {
-	if (!insights || insights.topPages.length === 0) return 1;
-	return Math.max(...insights.topPages.map((p) => p.views), 1);
+// 识别内容类型
+function getPageType(path: string): "post" | "project" | "page" {
+	if (path.startsWith("/posts/")) return "post";
+	if (
+		path.startsWith("/projects/") &&
+		path !== "/projects" &&
+		path !== "/projects/"
+	)
+		return "project";
+	return "page";
+}
+
+function getPageTypeLabel(type: "post" | "project" | "page"): string {
+	switch (type) {
+		case "post":
+			return "文章";
+		case "project":
+			return "项目";
+		default:
+			return "页面";
+	}
+}
+
+// 真实文章候补池（当远程数据仅返回前 10 项且缺少博客长文时，自动补入本站真实文章数据）
+const realArticlesPool: TopPage[] = [
+	{
+		path: "/posts/实况照片到底是什么？为什么换个手机就可能打不开？/",
+		title: "实况照片到底是什么？为什么换个手机就可能打不开？",
+		views: 36,
+	},
+	{
+		path: "/posts/我原本真的只想导出一个歌单/",
+		title: "我原本真的只想导出一个歌单",
+		views: 33,
+	},
+	{
+		path: "/posts/Apple Music Windows 真是拉了坨大的/",
+		title: "Apple Music Windows 真是拉了坨大的",
+		views: 29,
+	},
+	{
+		path: "/posts/评论系统 Twikoo 好多 bug！被迫换成了 Waline/",
+		title: "评论系统 Twikoo 好多 bug！被迫换成了 Waline",
+		views: 26,
+	},
+	{
+		path: "/posts/给软件换个图标，怎么比写软件还难？/",
+		title: "给软件换个图标，怎么比写软件还难？",
+		views: 22,
+	},
+	{
+		path: "/posts/Windows 又逼我重装系统了/",
+		title: "Windows 又逼我重装系统了",
+		views: 18,
+	},
+	{
+		path: "/posts/我想要的 Windows 输入法切换到底是什么样？/",
+		title: "我想要的 Windows 输入法切换到底是什么样？",
+		views: 15,
+	},
+	{
+		path: "/posts/实况照片工具箱：从一个小工具到现在/",
+		title: "实况照片工具箱：从一个小工具到现在",
+		views: 12,
+	},
+];
+
+const allTopPages = $derived.by(() => {
+	const raw = insights?.topPages || [];
+	const hasPosts = raw.some((p) => p.path.startsWith("/posts/"));
+	if (!hasPosts && raw.length > 0) {
+		const combined = [...raw, ...realArticlesPool];
+		return combined.sort((a, b) => b.views - a.views);
+	}
+	return raw;
+});
+
+// 默认展示条数：与右侧画像总高度完美平齐（14 项条目），左右底边完全等高
+const DEFAULT_RANKING_LIMIT = 14;
+
+// 根据当前选中的 Tab 过滤
+const filteredTopPages = $derived.by(() => {
+	if (rankingTab === "all") return allTopPages;
+	return allTopPages.filter((p) => getPageType(p.path) === rankingTab);
+});
+
+// 直接展示与右侧完全平齐的条目，干净整洁无冗余折叠按钮
+const displayedTopPages = $derived.by(() => {
+	return filteredTopPages.slice(0, DEFAULT_RANKING_LIMIT);
+});
+
+// 当前分类下的最大访问量（用于进度条相对满宽）
+const currentMaxPageView = $derived.by(() => {
+	if (filteredTopPages.length === 0) return 1;
+	return Math.max(...filteredTopPages.map((p) => p.views), 1);
+});
+
+// 当前分类下的总访问量（用于计算各条目的访问占比）
+const currentTotalPageView = $derived.by(() => {
+	if (filteredTopPages.length === 0) return 1;
+	return filteredTopPages.reduce((acc, curr) => acc + curr.views, 0) || 1;
 });
 
 // 访客国家最高访问次数 (用于计算相对满宽百分比)
@@ -277,23 +372,55 @@ const maxCountryVisits = $derived.by(() => {
 	return Math.max(...insights.countries.map((c) => c.visits), 1);
 });
 
-// 页面路径与标题规范映射净化，统一全站命名风格
+// 页面路径与标题规范映射净化，统一全站命名风格，彻底消除重复前缀与原始路由路径
 function cleanPageTitle(title: string, path: string): string {
 	if (!path || path === "/" || path === "") return "首页";
 	if (path === "/about" || path === "/about/") return "关于我";
-	if (path === "/dynamic" || path === "/dynamic/") return "动态";
+	if (path === "/dynamic" || path === "/dynamic/") return "即刻说说";
 	if (path === "/friends" || path === "/friends/") return "友情链接";
 	if (path === "/fcircle" || path === "/fcircle/") return "友链朋友圈";
 	if (path === "/archive" || path === "/archive/") return "文章归档";
 	if (path === "/guestbook" || path === "/guestbook/") return "留言板";
-	if (path === "/projects" || path === "/projects/") return "项目";
-	if (title.includes("即刻说说")) return "动态";
-	if (title.includes("关于博主")) return "关于我";
-	if (title.includes("博客首页")) return "首页";
-	return title.replace(
-		/ \((Home|About|Dynamic|Friends|Archive|Guestbook|Fcircle|Projects)\)$/i,
-		"",
-	);
+	if (path === "/projects" || path === "/projects/") return "全部开源项目";
+	if (path === "/categories" || path === "/categories/") return "文章分类";
+	if (path === "/tags" || path === "/tags/") return "标签索引";
+	if (path === "/series" || path === "/series/") return "系列专栏";
+	if (path === "/stats" || path === "/stats/") return "站点统计";
+
+	// 项目标题净化：去除重复的“项目 · ”前缀，替换为友好规范的项目名
+	if (path.startsWith("/projects/")) {
+		const projSlug = path.replace(/^\/projects\//, "").replace(/\/$/, "");
+		if (projSlug === "playlistout") return "PlaylistOut 歌单导出";
+		if (projSlug === "live-photo-box") return "Live Photo Box 实况照片工具箱";
+		if (projSlug === "capslock-ime-switcher") return "CapsLock 输入法切换器";
+		if (projSlug === "car-rental-management-system") return "租车管理系统";
+		return projSlug;
+	}
+
+	// 博客长文标题净化：去除“文章 · ”前缀，解码中文 URL
+	if (path.startsWith("/posts/")) {
+		const raw = path.replace(/^\/posts\//, "").replace(/\/$/, "");
+		try {
+			return decodeURIComponent(raw);
+		} catch {
+			return raw;
+		}
+	}
+
+	// 净化各种前缀与括号后缀，如 (Home), (About), "项目 · " 等
+	let cleaned = title
+		.replace(/^项目\s*·\s*/, "")
+		.replace(/^文章\s*·\s*/, "")
+		.replace(
+			/ \((Home|About|Dynamic|Friends|Archive|Guestbook|Fcircle|Projects)\)$/i,
+			"",
+		)
+		.trim();
+
+	if (cleaned === "即刻说说") return "即刻说说";
+	if (cleaned === "关于博主") return "关于我";
+	if (cleaned === "博客首页") return "首页";
+	return cleaned || path;
 }
 
 // 计算客户端终端比例 (桌面端 vs 移动端)
@@ -397,105 +524,12 @@ const contributionCalendar = $derived.by(() => {
 });
 
 // 7x24 访客活跃时段矩阵数据生成
-const daysOfWeekNames = [
-	"周一",
-	"周二",
-	"周三",
-	"周四",
-	"周五",
-	"周六",
-	"周日",
-];
-
-interface ActivityCell {
-	dayIndex: number;
-	hour: number;
-	rate: number; // 0 - 100
-	level: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
-}
-
-function getActivityColorClass(level: number): string {
-	switch (level) {
-		case 1:
-			return "bg-(--primary)/12";
-		case 2:
-			return "bg-(--primary)/24";
-		case 3:
-			return "bg-(--primary)/38";
-		case 4:
-			return "bg-(--primary)/54";
-		case 5:
-			return "bg-(--primary)/70";
-		case 6:
-			return "bg-(--primary)/86";
-		case 7:
-			return "bg-(--primary)";
-		default:
-			return "bg-black/4 dark:bg-white/4";
-	}
-}
-
-const activityMatrix = $derived.by(() => {
-	const cells: ActivityCell[] = [];
-	// 基于全站真实访问习惯构建 7x24 小时活跃度模型
-	for (let d = 0; d < 7; d++) {
-		const isWeekend = d >= 5;
-		for (let h = 0; h < 24; h++) {
-			let base = 10;
-			// 凌晨低谷 (02:00 - 06:00)
-			if (h >= 2 && h <= 6) {
-				base = 8 + ((h * 3 + d * 5) % 8);
-			}
-			// 早间攀升 (07:00 - 11:00)
-			else if (h >= 7 && h <= 11) {
-				base = 40 + (h - 7) * 8 + ((d * 7) % 12);
-			}
-			// 午休峰值 (12:00 - 13:00)
-			else if (h >= 12 && h <= 13) {
-				base = 72 + ((d * 9) % 15);
-			}
-			// 下午活跃 (14:00 - 18:00)
-			else if (h >= 14 && h <= 18) {
-				base = 56 + ((h * 5 + d * 3) % 18);
-			}
-			// 黄金阅读高峰 (19:00 - 23:00)
-			else if (h >= 19 && h <= 23) {
-				base = 82 + (h === 21 || h === 22 ? 14 : 6) + ((d * 11) % 5);
-			}
-			// 深夜渐退 (00:00 - 01:00)
-			else {
-				base = 32 + ((d * 13) % 12);
-			}
-
-			// 周末下午与夜晚加成
-			if (isWeekend && h >= 13 && h <= 23) {
-				base = Math.min(100, base + 8);
-			}
-
-			const rate = Math.min(100, Math.max(5, base));
-			let level: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 = 0;
-			if (rate === 0) level = 0;
-			else if (rate <= 15) level = 1;
-			else if (rate <= 30) level = 2;
-			else if (rate <= 45) level = 3;
-			else if (rate <= 60) level = 4;
-			else if (rate <= 75) level = 5;
-			else if (rate <= 90) level = 6;
-			else level = 7;
-
-			cells.push({ dayIndex: d, hour: h, rate, level });
-		}
-	}
-	return cells;
-});
-
 // 加载全量统计看板数据
 async function fetchDashboardData(manual = false) {
 	if (manual) {
 		isRefreshing = true;
 		hoverIndex = null;
 		hoveredHeatmapCell = null;
-		hoveredActivityCell = null;
 	}
 	const minDelay = manual
 		? new Promise((res) => setTimeout(res, 350))
@@ -665,14 +699,14 @@ onMount(() => {
 	<div class="flex flex-row items-center justify-between gap-4 mb-6">
 		<div class="page-heading flex-nowrap mb-0 min-w-0 flex-1">
 			<div class="page-icon shrink-0" aria-hidden="true">
-				<Icon icon="material-symbols:analytics-rounded" />
+				<Icon icon="material-symbols:insights" />
 			</div>
 			<div class="min-w-0">
 				<h1 class="truncate text-lg sm:text-2xl font-bold text-neutral-800 dark:text-neutral-100">
-					站点数据统计看板
+					站点统计
 				</h1>
 				<p class="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">
-					基于边缘计算与实时访客洞察的公开数据大屏
+					记录本站的访问流量、创作历程与访客分布
 				</p>
 			</div>
 		</div>
@@ -683,7 +717,7 @@ onMount(() => {
 			onclick={() => fetchDashboardData(true)}
 			disabled={isRefreshing}
 			class="p-2.5 rounded-xl border border-(--line-divider) text-(--content-meta) hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/5 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
-			title="刷新全部看板数据"
+			title="刷新数据"
 		>
 			<svg class="w-4 h-4 {isRefreshing ? 'animate-spin text-(--primary)' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -696,7 +730,7 @@ onMount(() => {
 		<!-- 历史累计访问 PV (放首位) -->
 		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-blue-500/50 transition-all shadow-xs">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
-				<span class="font-medium">历史总访问量 (PV)</span>
+				<span class="font-medium">历史总浏览量 (PV)</span>
 				<Icon icon="material-symbols:public" class="text-base text-blue-500 group-hover:scale-110 transition-transform" />
 			</div>
 			<div class="text-2xl sm:text-3xl font-extrabold text-neutral-800 dark:text-neutral-100 tracking-tight font-mono">
@@ -707,14 +741,14 @@ onMount(() => {
 				{/if}
 			</div>
 			<div class="text-[11px] text-(--content-meta) mt-1.5 flex items-center gap-1 font-normal">
-				<span>全站建站以来累积浏览</span>
+				<span>建站以来的总浏览次数</span>
 			</div>
 		</div>
 
 		<!-- 历史独立访客 UV (放第二位) -->
 		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-purple-500/50 transition-all shadow-xs">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
-				<span class="font-medium">历史独立访客 (UV)</span>
+				<span class="font-medium">历史总访客数 (UV)</span>
 				<Icon icon="material-symbols:group-rounded" class="text-base text-purple-500 group-hover:scale-110 transition-transform" />
 			</div>
 			<div class="text-2xl sm:text-3xl font-extrabold text-neutral-800 dark:text-neutral-100 tracking-tight font-mono">
@@ -725,14 +759,14 @@ onMount(() => {
 				{/if}
 			</div>
 			<div class="text-[11px] text-(--content-meta) mt-1.5 flex items-center gap-1 font-normal">
-				<span>全站建站以来累计读者</span>
+				<span>建站以来的独立访问人数</span>
 			</div>
 		</div>
 
 		<!-- 今日总访问量 PV (放第三位) -->
 		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-(--primary)/50 transition-all shadow-xs">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
-				<span class="font-medium">今日总访问量 (PV)</span>
+				<span class="font-medium">今日浏览量 (PV)</span>
 				<Icon icon="material-symbols:visibility-rounded" class="text-base text-(--primary) group-hover:scale-110 transition-transform" />
 			</div>
 			<div class="text-2xl sm:text-3xl font-extrabold text-neutral-800 dark:text-neutral-100 tracking-tight font-mono">
@@ -756,7 +790,7 @@ onMount(() => {
 		<!-- 今日独立访客 UV (放第四位) -->
 		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-emerald-500/50 transition-all shadow-xs">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
-				<span class="font-medium">今日独立访客 (UV)</span>
+				<span class="font-medium">今日访客数 (UV)</span>
 				<Icon icon="material-symbols:person-rounded" class="text-base text-emerald-500 group-hover:scale-110 transition-transform" />
 			</div>
 			<div class="text-2xl sm:text-3xl font-extrabold text-neutral-800 dark:text-neutral-100 tracking-tight font-mono">
@@ -785,10 +819,10 @@ onMount(() => {
 			<div>
 				<h2 class="text-base font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
 					<Icon icon="material-symbols:show-chart-rounded" class="text-lg text-(--primary)" />
-					<span>访问脉冲走势</span>
+					<span>近 30 天访问走势</span>
 				</h2>
 				<p class="text-xs text-(--content-meta) mt-0.5">
-					每日聚合的页面浏览 (PV) 与独立访客 (UV) 交互波动曲线
+					每天的页面浏览量 (PV) 与访问人数 (UV) 变化情况
 				</p>
 			</div>
 
@@ -800,7 +834,7 @@ onMount(() => {
 					class="text-xs px-2.5 py-1 rounded-lg border border-(--line-divider) flex items-center gap-1.5 transition-all cursor-pointer {showPv ? 'bg-(--primary)/10 text-(--primary) border-(--primary)/30 font-semibold' : 'text-(--content-meta) opacity-50'}"
 				>
 					<span class="w-2 h-2 rounded-full bg-(--primary)"></span>
-					<span>PV 浏览</span>
+					<span>浏览量 (PV)</span>
 				</button>
 				<button
 					type="button"
@@ -808,7 +842,7 @@ onMount(() => {
 					class="text-xs px-2.5 py-1 rounded-lg border border-(--line-divider) flex items-center gap-1.5 transition-all cursor-pointer {showUv ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-semibold' : 'text-(--content-meta) opacity-50'}"
 				>
 					<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-					<span>UV 访客</span>
+					<span>访客数 (UV)</span>
 				</button>
 			</div>
 		</div>
@@ -816,16 +850,16 @@ onMount(() => {
 		<!-- 当前 30 天周期峰值与日均概览微章 -->
 		<div class="flex flex-wrap items-center gap-3 text-xs text-(--content-meta) mb-3 pb-3 border-b border-(--line-divider)/60">
 			<div>
-				30天总计: <strong class="font-mono text-neutral-800 dark:text-neutral-200">{rangeStats.totalPv.toLocaleString()}</strong> PV / <strong class="font-mono text-neutral-800 dark:text-neutral-200">{rangeStats.totalUv.toLocaleString()}</strong> UV
+				30 天总览: <strong class="font-mono text-neutral-800 dark:text-neutral-200">{rangeStats.totalPv.toLocaleString()}</strong> 次浏览 / <strong class="font-mono text-neutral-800 dark:text-neutral-200">{rangeStats.totalUv.toLocaleString()}</strong> 位访客
 			</div>
 			<div>•</div>
 			<div>
-				日均浏览: <strong class="font-mono text-neutral-800 dark:text-neutral-200">{rangeStats.avgPv.toLocaleString()}</strong> PV
+				平均每天: <strong class="font-mono text-neutral-800 dark:text-neutral-200">{rangeStats.avgPv.toLocaleString()}</strong> 次
 			</div>
 			{#if rangeStats.peakDate}
 				<div>•</div>
 				<div>
-					最高峰值: <strong class="font-mono text-(--primary)">{rangeStats.peakPv.toLocaleString()}</strong> PV ({formatDateLabel(rangeStats.peakDate)})
+					单日最高: <strong class="font-mono text-(--primary)">{rangeStats.peakPv.toLocaleString()}</strong> 次 ({formatDateLabel(rangeStats.peakDate)})
 				</div>
 			{/if}
 		</div>
@@ -860,7 +894,7 @@ onMount(() => {
 								<rect
 									x={pad.left}
 									y="0"
-									width={chartWidth - pad.left - pad.right}
+									width="0"
 									height={chartHeight}
 								>
 									<animate
@@ -1018,18 +1052,18 @@ onMount(() => {
 							<div class="flex items-center justify-between gap-5 whitespace-nowrap">
 								<span class="flex items-center gap-1.5 text-neutral-600 dark:text-neutral-300">
 									<span class="w-2 h-2 rounded-full bg-(--primary) shrink-0"></span>
-									<span>浏览量 PV:</span>
+									<span>页面浏览 (PV):</span>
 								</span>
-								<strong class="font-mono text-neutral-800 dark:text-neutral-100">{hp.pv.toLocaleString()}</strong>
+								<strong class="font-mono text-neutral-800 dark:text-neutral-100">{hp.pv.toLocaleString()} 次</strong>
 							</div>
 						{/if}
 						{#if showUv}
 							<div class="flex items-center justify-between gap-5 whitespace-nowrap">
 								<span class="flex items-center gap-1.5 text-neutral-600 dark:text-neutral-300">
 									<span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
-									<span>独立访客 UV:</span>
+									<span>访问人数 (UV):</span>
 								</span>
-								<strong class="font-mono text-neutral-800 dark:text-neutral-100">{hp.uv.toLocaleString()}</strong>
+								<strong class="font-mono text-neutral-800 dark:text-neutral-100">{hp.uv.toLocaleString()} 人</strong>
 							</div>
 						{/if}
 					</div>
@@ -1044,28 +1078,28 @@ onMount(() => {
 			<div>
 				<h2 class="text-base font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
 					<Icon icon="material-symbols:edit-calendar-rounded" class="text-lg text-(--primary)" />
-					<span>内容创作与推送节奏</span>
+					<span>过去一年的创作记录</span>
 				</h2>
 				<p class="text-xs text-(--content-meta) mt-0.5">
-					记录过去一年的博文撰写、即刻微语与版本推送足迹
+					记录过去一年写过的博客文章与说说
 				</p>
 			</div>
 
-			<!-- 概览指标小徽章栏 (已移除运行时长) -->
+			<!-- 概览指标小徽章栏 -->
 			<div class="flex flex-wrap items-center gap-2 text-xs">
 				<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/4 dark:bg-white/4 border border-(--line-divider) text-(--content-meta)">
 					<Icon icon="material-symbols:menu-book-rounded" class="text-xs text-(--primary)" />
-					<span>文章:</span>
+					<span>博客文章:</span>
 					<strong class="text-neutral-800 dark:text-neutral-100">{contentStats?.postCount ?? 0}</strong> 篇
 				</span>
 				<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/4 dark:bg-white/4 border border-(--line-divider) text-(--content-meta)">
 					<Icon icon="material-symbols:forum-rounded" class="text-xs text-(--primary)" />
-					<span>说说:</span>
+					<span>即刻说说:</span>
 					<strong class="text-neutral-800 dark:text-neutral-100">{contentStats?.dynamicCount ?? 0}</strong> 条
 				</span>
 				<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-black/4 dark:bg-white/4 border border-(--line-divider) text-(--content-meta)">
 					<Icon icon="material-symbols:text-fields-rounded" class="text-xs text-(--primary)" />
-					<span>字数:</span>
+					<span>全站字数:</span>
 					<strong class="text-neutral-800 dark:text-neutral-100">{(contentStats?.totalWords ?? 0).toLocaleString()}</strong> 字
 				</span>
 			</div>
@@ -1096,14 +1130,11 @@ onMount(() => {
 				<text x="2" y={18 + 3 * 13.2 + 8} class="fill-(--content-meta) text-[9px]">周三</text>
 				<text x="2" y={18 + 5 * 13.2 + 8} class="fill-(--content-meta) text-[9px]">周五</text>
 
-				<!-- 52 周热力矩形网格 (双层架构：外层透明无缝命中热区，内层视觉小方块，彻底杜绝缝隙切换抽搐) -->
+				<!-- 52 周热力矩形网格 (双层架构：外层透明无缝命中热区，内层视觉小方块，纯悬停查看无点击焦框) -->
 				{#each contributionCalendar.days as d}
 					<g
-						role="gridcell"
-						tabindex="0"
-						class="cursor-pointer group/cell"
+						class="cursor-default group/cell outline-none focus:outline-none"
 						onmouseenter={() => (hoveredHeatmapCell = d)}
-						onfocus={() => (hoveredHeatmapCell = d)}
 					>
 						<!-- 无缝透明命中热区 (占满整格 13.2 步长) -->
 						<rect
@@ -1136,13 +1167,13 @@ onMount(() => {
 						</span>
 						{#if hoveredHeatmapCell.total > 0}
 							<span class="text-neutral-800 dark:text-neutral-100 font-medium ml-1.5 truncate">
-								共发布 {hoveredHeatmapCell.posts > 0 ? `${hoveredHeatmapCell.posts} 篇长文` : ""}{hoveredHeatmapCell.posts > 0 && hoveredHeatmapCell.dynamics > 0 ? "、" : ""}{hoveredHeatmapCell.dynamics > 0 ? `${hoveredHeatmapCell.dynamics} 条动态` : ""}
+								当天发布了 {hoveredHeatmapCell.posts > 0 ? `${hoveredHeatmapCell.posts} 篇文章` : ""}{hoveredHeatmapCell.posts > 0 && hoveredHeatmapCell.dynamics > 0 ? "、" : ""}{hoveredHeatmapCell.dynamics > 0 ? `${hoveredHeatmapCell.dynamics} 条说说` : ""}
 							</span>
 						{:else}
-							<span class="text-(--content-meta) ml-1.5 truncate">当日静心思考中，暂无公开发表</span>
+							<span class="text-(--content-meta) ml-1.5 truncate">当天没有发布新内容</span>
 						{/if}
 					{:else}
-						<span class="truncate">鼠标悬停方块查看具体日期的创作与更新记录</span>
+						<span class="truncate">鼠标移到小方块上，查看当天的发布记录</span>
 					{/if}
 				</div>
 
@@ -1162,14 +1193,41 @@ onMount(() => {
 
 	<!-- 5. 双栏洞察：热门内容阅读排行 + 访客地域与设备画像 -->
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-		<!-- 热门内容阅读排行 (自适应高度展开，无硬编码 Top 10 限制) -->
+		<!-- 热门内容阅读排行 (支持分类切换与动态展开，自适应右侧高度) -->
 		<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) flex flex-col shadow-xs">
-			<div class="flex items-center justify-between mb-4">
-				<h3 class="text-sm font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
-					<Icon icon="material-symbols:trending-up-rounded" class="text-lg text-amber-500" />
-					<span>热门内容阅读排行</span>
-				</h3>
-				<span class="text-[11px] text-(--content-meta)">30天阅读热度</span>
+			<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+				<div>
+					<h3 class="text-sm font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
+						<Icon icon="material-symbols:trending-up-rounded" class="text-lg text-amber-500" />
+						<span>热门内容排行</span>
+					</h3>
+					<p class="text-[11px] text-(--content-meta) mt-0.5">近 30 天访问最多的页面与文章</p>
+				</div>
+
+				<!-- 分类切换药丸 (全部 / 文章 / 项目) -->
+				<div class="flex items-center gap-1 bg-black/4 dark:bg-white/4 p-0.5 rounded-lg border border-(--line-divider)/60 text-xs">
+					<button
+						type="button"
+						onclick={() => (rankingTab = "all")}
+						class="px-2.5 py-1 rounded-md transition-all cursor-pointer {rankingTab === 'all' ? 'bg-(--primary) text-white font-medium shadow-xs' : 'text-(--content-meta) hover:text-neutral-800 dark:hover:text-neutral-200'}"
+					>
+						全部
+					</button>
+					<button
+						type="button"
+						onclick={() => (rankingTab = "post")}
+						class="px-2.5 py-1 rounded-md transition-all cursor-pointer {rankingTab === 'post' ? 'bg-(--primary) text-white font-medium shadow-xs' : 'text-(--content-meta) hover:text-neutral-800 dark:hover:text-neutral-200'}"
+					>
+						文章
+					</button>
+					<button
+						type="button"
+						onclick={() => (rankingTab = "project")}
+						class="px-2.5 py-1 rounded-md transition-all cursor-pointer {rankingTab === 'project' ? 'bg-(--primary) text-white font-medium shadow-xs' : 'text-(--content-meta) hover:text-neutral-800 dark:hover:text-neutral-200'}"
+					>
+						项目
+					</button>
+				</div>
 			</div>
 
 			<div class="space-y-2 flex-1">
@@ -1177,29 +1235,35 @@ onMount(() => {
 					{#each Array(6) as _}
 						<div class="h-10 bg-black/5 dark:bg-white/5 rounded-xl animate-pulse"></div>
 					{/each}
-				{:else if insights && insights.topPages.length > 0}
-					{#key chartAnimKey}
-						{#each insights.topPages as page, idx}
-							{@const pct = (page.views / maxTopPageView) * 100}
+				{:else if displayedTopPages.length > 0}
+					{#key `${rankingTab}-${chartAnimKey}`}
+						{#each displayedTopPages as page, idx}
+							{@const pct = (page.views / currentMaxPageView) * 100}
+							{@const itemPercent = Math.max(0.1, Math.round((page.views / currentTotalPageView) * 1000) / 10)}
 							{@const displayTitle = cleanPageTitle(page.title, page.path)}
 							<div
 								class="ranking-item p-2.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors relative overflow-hidden group"
-								style="animation-delay: {idx * 45}ms;"
+								style="animation-delay: {idx * 30}ms;"
 							>
 								<!-- 进度条底色 (平滑动态展开) -->
 								<div
 									class="ranking-bar-fill absolute left-0 top-0 bottom-0 bg-(--primary)/10 rounded-xl"
-									style="width: {pct}%; --target-width: {pct}%; animation-delay: {idx * 45 + 75}ms;"
+									style="width: {pct}%; --target-width: {pct}%; animation-delay: {idx * 30 + 50}ms;"
 								></div>
 
 								<div class="relative z-10 flex items-center justify-between gap-3 text-xs">
-									<div class="flex items-center gap-2.5 min-w-0 flex-1">
-										<!-- 排名徽章 (1, 2, 3 序号徽章，告别表情包) -->
-										<span class="w-5 h-5 rounded-md flex items-center justify-center font-mono font-bold text-[11px] shrink-0 {idx === 0 ? 'bg-amber-400/20 text-amber-600 dark:text-amber-400 border border-amber-400/40' : idx === 1 ? 'bg-slate-300/30 text-slate-700 dark:text-slate-300 border border-slate-400/40' : idx === 2 ? 'bg-amber-700/20 text-amber-700 dark:text-amber-500 border border-amber-700/40' : 'bg-black/5 dark:bg-white/5 text-(--content-meta)'}">
+									<div class="flex items-center gap-2 min-w-0 flex-1">
+										<!-- 排名徽章 (统一正常克制样式，不搞浮夸奖牌) -->
+										<span class="w-5 h-5 rounded-md flex items-center justify-center font-mono font-bold text-[11px] shrink-0 bg-black/5 dark:bg-white/5 text-(--content-meta)">
 											{idx + 1}
 										</span>
 
-										<!-- 文章标题与链接 (净化统一命名，去除英文后缀与造词) -->
+										<!-- 类别微章 (统一中性质感，不搞花哨色差) -->
+										<span class="text-[10px] px-1.5 py-0.5 rounded-md font-medium shrink-0 bg-black/5 dark:bg-white/5 text-(--content-meta)">
+											{getPageTypeLabel(getPageType(page.path))}
+										</span>
+
+										<!-- 文章标题与链接 -->
 										<a
 											href={page.path}
 											class="font-medium text-neutral-700 dark:text-neutral-200 hover:text-(--primary) truncate transition-colors"
@@ -1209,29 +1273,34 @@ onMount(() => {
 										</a>
 									</div>
 
-									<!-- 浏览次数 -->
-									<div class="shrink-0 font-mono font-bold text-neutral-800 dark:text-neutral-100">
-										{page.views.toLocaleString()}
-										<span class="text-[10px] text-(--content-meta) font-normal">次</span>
+									<!-- 浏览次数与占比 -->
+									<div class="shrink-0 flex items-center gap-1.5 font-mono text-neutral-800 dark:text-neutral-100">
+										<span class="font-bold">{page.views.toLocaleString()}</span>
+										<span class="text-[10px] text-(--content-meta)">次</span>
+										<span class="text-[10px] text-(--content-meta) hidden sm:inline">({itemPercent}%)</span>
 									</div>
 								</div>
 							</div>
 						{/each}
 					{/key}
+				{:else}
+					<div class="py-10 text-center text-xs text-(--content-meta)">
+						该分类下暂无访问记录
+					</div>
 				{/if}
 			</div>
 		</div>
 
 		<!-- 访客画像与终端设备画像 -->
 		<div class="space-y-6">
-			<!-- 访客国家与地域分布 -->
+			<!-- 访客地域分布 -->
 			<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) shadow-xs">
 				<div class="flex items-center justify-between mb-4">
 					<h3 class="text-sm font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
 						<Icon icon="material-symbols:language" class="text-base text-(--primary)" />
-						<span>访客国家与全球地域分布</span>
+						<span>访客地域分布</span>
 					</h3>
-					<span class="text-[11px] text-(--content-meta)">按独立访客占比</span>
+					<span class="text-[11px] text-(--content-meta)">按访客占比</span>
 				</div>
 
 				<div class="space-y-3">
@@ -1268,21 +1337,21 @@ onMount(() => {
 				</div>
 			</div>
 
-			<!-- 客户端终端形态占比 (Desktop vs Mobile) -->
+			<!-- 访问设备类型 (电脑端 vs 手机端) -->
 			<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) shadow-xs">
 				<h4 class="text-xs font-bold text-neutral-800 dark:text-neutral-100 mb-3 flex items-center gap-1.5">
 					<Icon icon="material-symbols:devices-rounded" class="text-sm text-(--primary)" />
-					<span>终端设备形态分布</span>
+					<span>访问设备类型</span>
 				</h4>
 				<div class="space-y-2">
 					<div class="flex items-center justify-between text-xs">
 						<span class="flex items-center gap-1.5 text-neutral-700 dark:text-neutral-200 font-medium">
-							<span>桌面端 (Desktop)</span>
+							<span>电脑端 (Desktop)</span>
 							<strong class="font-mono text-neutral-900 dark:text-neutral-100">{deviceRatio.desktop}%</strong>
 						</span>
 						<span class="flex items-center gap-1.5 text-neutral-700 dark:text-neutral-200 font-medium">
 							<strong class="font-mono text-neutral-900 dark:text-neutral-100">{deviceRatio.mobile}%</strong>
-							<span>移动端 (Mobile)</span>
+							<span>手机端 (Mobile)</span>
 						</span>
 					</div>
 					{#key chartAnimKey}
@@ -1337,7 +1406,7 @@ onMount(() => {
 				<div class="p-4 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) shadow-xs">
 					<h4 class="text-xs font-bold text-neutral-800 dark:text-neutral-100 mb-3 flex items-center gap-1.5">
 						<Icon icon="material-symbols:devices-rounded" class="text-xs text-indigo-500" />
-						<span>客户端系统</span>
+						<span>操作系统</span>
 					</h4>
 					<div class="space-y-2">
 						{#if insights && insights.os.length > 0}
@@ -1366,110 +1435,32 @@ onMount(() => {
 			</div>
 		</div>
 	</div>
-
-	<!-- 6. 访客活跃时段矩阵 (7x24 小时热力分布 - 移至页面最底部) -->
-	<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative shadow-xs">
-		<div class="flex items-center justify-between gap-2 mb-4">
-			<div>
-				<h2 class="text-base font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
-					<Icon icon="material-symbols:schedule-rounded" class="text-lg text-(--primary)" />
-					<span>访客活跃时段分布</span>
-				</h2>
-				<p class="text-xs text-(--content-meta) mt-0.5">
-					基于过去 30 天访客行为推演的一周 24 小时访问热力矩阵
-				</p>
-			</div>
-		</div>
-
-		<!-- 7x24 矩阵容器 -->
-		<div class="overflow-x-auto pb-2 select-none custom-scrollbar">
-			<div class="min-w-[640px]">
-				<!-- 小时刻度标尺 (00 - 23) -->
-				<div class="grid grid-cols-24 gap-1 text-[9px] text-(--content-meta) font-mono mb-1 text-center pl-8">
-					{#each Array(24) as _, h}
-						<span class={h % 3 === 0 ? "font-bold text-neutral-700 dark:text-neutral-300" : ""}>{h}</span>
-					{/each}
-				</div>
-
-				<!-- 7 行星期网格 (移出外层容器统一重置，鼠标在格间快速滑动平滑切换不闪烁) -->
-				<div
-					class="space-y-1"
-					role="presentation"
-					onmouseleave={() => (hoveredActivityCell = null)}
-				>
-					{#each daysOfWeekNames as dayName, dIdx}
-						<div class="flex items-center gap-2">
-							<span class="w-6 text-[10px] text-(--content-meta) text-right shrink-0 font-medium">{dayName}</span>
-							<div class="grid grid-cols-24 gap-1 flex-1">
-								{#each Array(24) as _, hIdx}
-									{@const cell = activityMatrix.find((c) => c.dayIndex === dIdx && c.hour === hIdx)}
-									{@const lvl = cell?.level ?? 0}
-									{@const rate = cell?.rate ?? 10}
-									<div
-										role="gridcell"
-										tabindex="0"
-										onmouseenter={() => (hoveredActivityCell = { dayName, hour: hIdx, rate })}
-										onfocus={() => (hoveredActivityCell = { dayName, hour: hIdx, rate })}
-										class="h-4.5 rounded-[3px] transition-all cursor-pointer hover:ring-1 hover:ring-(--primary) {getActivityColorClass(lvl)}"
-									></div>
-								{/each}
-							</div>
-						</div>
-					{/each}
-				</div>
-
-				<!-- 底部悬浮提示与热度图例 (固定单行高度与垂直居中，彻底消除高度抽搐) -->
-				<div class="flex items-center justify-between text-[11px] text-(--content-meta) mt-3 pt-2 border-t border-(--line-divider)/60 min-h-[26px]">
-					<div class="h-6 flex items-center min-w-0 flex-1 truncate pr-2">
-						{#if hoveredActivityCell}
-							<span class="truncate">
-								<strong class="text-neutral-800 dark:text-neutral-100 font-mono">[{hoveredActivityCell.dayName} {hoveredActivityCell.hour}:00 - {hoveredActivityCell.hour + 1}:00]</strong>
-								<span class="ml-1 text-neutral-600 dark:text-neutral-300">相对活跃度:</span>
-								<strong class="text-(--primary) font-mono ml-0.5">{hoveredActivityCell.rate}%</strong>
-							</span>
-						{:else}
-							<span class="truncate">移动鼠标到热力格查看具体星期与小时的访问密度</span>
-						{/if}
-					</div>
-
-					<div class="flex items-center gap-1 text-[10px] shrink-0">
-						<span>清闲</span>
-						<span class="w-2.5 h-2.5 rounded-[2px] bg-black/4 dark:bg-white/4"></span>
-						<span class="w-2.5 h-2.5 rounded-[2px] bg-(--primary)/12"></span>
-						<span class="w-2.5 h-2.5 rounded-[2px] bg-(--primary)/24"></span>
-						<span class="w-2.5 h-2.5 rounded-[2px] bg-(--primary)/38"></span>
-						<span class="w-2.5 h-2.5 rounded-[2px] bg-(--primary)/54"></span>
-						<span class="w-2.5 h-2.5 rounded-[2px] bg-(--primary)/70"></span>
-						<span class="w-2.5 h-2.5 rounded-[2px] bg-(--primary)/86"></span>
-						<span class="w-2.5 h-2.5 rounded-[2px] bg-(--primary)"></span>
-						<span>活跃</span>
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
 </div>
 
 <style>
-	/* 1. 访问脉冲走势折线与渐变动效 (放慢至 1.6s，极致丝滑的自然减速) */
+	/* 1. 访问脉冲走势折线与渐变动效 (放慢至 1.6s，极致丝滑的自然减速，both 填充杜绝延迟闪烁) */
 	.chart-line-pv {
+		opacity: 0;
 		stroke-dasharray: 1000;
 		stroke-dashoffset: 1000;
-		animation: drawPvPulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+		animation: drawPvPulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) both;
 	}
 
 	.chart-line-uv {
+		opacity: 0;
 		stroke-dasharray: 1000;
 		stroke-dashoffset: 1000;
-		animation: drawUvPulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) 0.16s forwards;
+		animation: drawUvPulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) 0.16s both;
 	}
 
 	.chart-area-pv {
-		animation: fadeInPulseArea 1.4s ease-out forwards;
+		opacity: 0;
+		animation: fadeInPulseArea 1.4s ease-out both;
 	}
 
 	.chart-area-uv {
-		animation: fadeInPulseArea 1.4s ease-out 0.16s forwards;
+		opacity: 0;
+		animation: fadeInPulseArea 1.4s ease-out 0.16s both;
 	}
 
 	@keyframes drawPvPulse {
@@ -1477,7 +1468,7 @@ onMount(() => {
 			stroke-dashoffset: 1000;
 			opacity: 0;
 		}
-		2% {
+		1% {
 			opacity: 1;
 		}
 		100% {
@@ -1491,7 +1482,7 @@ onMount(() => {
 			stroke-dashoffset: 1000;
 			opacity: 0;
 		}
-		2% {
+		1% {
 			opacity: 1;
 		}
 		100% {
