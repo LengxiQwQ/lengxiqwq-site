@@ -102,6 +102,7 @@ export type SiteConfig = {
 		devices?: boolean; // 我的设备页面开关
 		timeline?: boolean; // 时间线页面开关
 		steam?: boolean; // Steam 游戏记录页面开关
+		stats?: boolean; // 站点统计与公开遥测页面开关
 	};
 
 	// 分类导航栏开关

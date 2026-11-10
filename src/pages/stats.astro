@@ -1,19 +1,95 @@
 ---
+import { getCollection } from "astro:content";
 import StatsDashboard from "@/components/pages/stats/StatsDashboard.svelte";
+import { siteConfig } from "@/config";
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
 import { getWorkerApiUrl } from "@/utils/api-config";
+import { getSortedPosts } from "@/utils/content-utils";
 import "@/styles/pages/common.css";
 
-const title = "全站实时访问统计";
+// 页面开关拦截
+if (siteConfig.pages.stats === false) {
+	return Astro.redirect("/404/");
+}
+
+const title = "站点数据统计";
 const description =
-	"基于边缘计算与实时访客洞察的全站 PV/UV 访问趋势与多维度画像数据大屏";
+	"基于边缘计算与实时访客洞察的全站 PV/UV 访问趋势与创作节奏公开遥测看板";
+
 const workerApiUrl = getWorkerApiUrl();
+
+// 提取全站文章与说说发表日期分布（用于构建 52 周创作节奏热力图）
+const posts = await getSortedPosts();
+const dynamics = await getCollection("dynamic");
+
+let totalWords = 0;
+for (const post of posts) {
+	if (post.body) {
+		const text = post.body
+			.replace(/```[\s\S]*?```/g, "")
+			.replace(/`[^`]*`/g, "")
+			.replace(/\s+/g, " ")
+			.trim();
+		const chineseChars = text.match(/[\u4e00-\u9fa5]/g) || [];
+		const englishChars = text.match(/[a-zA-Z]/g) || [];
+		totalWords += chineseChars.length + englishChars.length;
+	}
+}
+
+const contributions: Record<string, { posts: number; dynamics: number }> = {};
+
+function formatYYYYMMDD(d: Date | string | number): string {
+	const dt = new Date(d);
+	if (Number.isNaN(dt.getTime())) return "";
+	const y = dt.getFullYear();
+	const m = String(dt.getMonth() + 1).padStart(2, "0");
+	const day = String(dt.getDate()).padStart(2, "0");
+	return `${y}-${m}-${day}`;
+}
+
+for (const post of posts) {
+	const key = formatYYYYMMDD(post.data.published);
+	if (key && !key.startsWith("1970")) {
+		if (!contributions[key]) contributions[key] = { posts: 0, dynamics: 0 };
+		contributions[key].posts += 1;
+	}
+}
+
+for (const dyn of dynamics) {
+	if (dyn.data?.published) {
+		const key = formatYYYYMMDD(dyn.data.published);
+		if (key && !key.startsWith("1970")) {
+			if (!contributions[key]) contributions[key] = { posts: 0, dynamics: 0 };
+			contributions[key].dynamics += 1;
+		}
+	}
+}
+
+const siteStartDate = siteConfig.siteStartDate || "2025-01-01";
+const runningDays = Math.max(
+	1,
+	Math.floor(
+		(Date.now() - new Date(siteStartDate).getTime()) / (1000 * 60 * 60 * 24),
+	),
+);
+
+const contentStats = {
+	postCount: posts.length,
+	dynamicCount: dynamics.length,
+	totalWords,
+	runningDays,
+	contributions,
+};
 ---
 
 <MainGridLayout title={title} description={description}>
 	<div class="flex w-full rounded-(--radius-large) overflow-hidden relative min-h-32">
-		<div class="card-base z-10 px-5 sm:px-8 py-6 relative w-full">
-			<StatsDashboard client:load {workerApiUrl} />
+		<div class="card-base z-10 px-4 sm:px-8 py-6 relative w-full">
+			<StatsDashboard
+				client:load
+				{workerApiUrl}
+				{contentStats}
+			/>
 		</div>
 	</div>
 </MainGridLayout>

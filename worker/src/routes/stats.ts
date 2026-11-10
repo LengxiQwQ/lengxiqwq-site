@@ -270,7 +270,7 @@ stats.get("/summary", async (c) => {
 			const endAt = Date.now();
 			const startAt = endAt - 30 * 24 * 60 * 60 * 1000;
 
-			const [statsRes, pageviewsRes] = await Promise.all([
+			const [statsRes, pageviewsRes, allTimeStatsRes] = await Promise.all([
 				fetch(`${umamiCtx.apiBase}/stats?startAt=${startAt}&endAt=${endAt}`, {
 					headers: umamiCtx.headers,
 					signal: AbortSignal.timeout(5000),
@@ -282,6 +282,10 @@ stats.get("/summary", async (c) => {
 						signal: AbortSignal.timeout(5000),
 					},
 				),
+				fetch(`${umamiCtx.apiBase}/stats?startAt=0&endAt=${endAt}`, {
+					headers: umamiCtx.headers,
+					signal: AbortSignal.timeout(5000),
+				}).catch(() => null),
 			]);
 
 			if (statsRes.ok && pageviewsRes.ok) {
@@ -322,11 +326,28 @@ stats.get("/summary", async (c) => {
 				const avgVisitDuration =
 					totalPv > 0 ? Math.round(totalTime / totalPv) : 145;
 
+				let historicalPv = totalPv;
+				let historicalUv = totalUv;
+				if (allTimeStatsRes?.ok) {
+					try {
+						const allTimeData = (await allTimeStatsRes.json()) as Record<
+							string,
+							unknown
+						>;
+						const allPv = extractVal(allTimeData.pageviews);
+						const allUv = extractVal(allTimeData.visitors);
+						if (allPv > 0) historicalPv = allPv;
+						if (allUv > 0) historicalUv = allUv;
+					} catch {}
+				}
+
 				const summaryResult: StatsSummaryData = {
 					totalPv,
 					totalUv,
 					totalViews: totalPv,
 					uniqueVisitors: totalUv,
+					historicalPv,
+					historicalUv,
 					bounceRate,
 					avgVisitDuration,
 					chart,
@@ -445,7 +466,7 @@ stats.get("/insights", async (c) => {
 
 			const [pagesRes, countriesRes, browsersRes, osRes] = await Promise.all([
 				fetch(
-					`${umamiCtx.apiBase}/metrics?type=path&startAt=${startAt}&endAt=${endAt}&limit=10`,
+					`${umamiCtx.apiBase}/metrics?type=path&startAt=${startAt}&endAt=${endAt}&limit=60`,
 					{ headers: umamiCtx.headers, signal: AbortSignal.timeout(5000) },
 				),
 				fetch(
@@ -536,26 +557,19 @@ stats.get("/insights", async (c) => {
 				};
 
 				const formatPageTitle = (path: string): string => {
-					if (!path || path === "/" || path === "") return "博客首页 (Home)";
-					if (path === "/friends" || path === "/friends/")
-						return "友情链接 (Friends)";
-					if (path === "/dynamic" || path === "/dynamic/")
-						return "即刻说说 (Dynamic)";
-					if (path === "/archive" || path === "/archive/")
-						return "文章归档 (Archive)";
-					if (path === "/guestbook" || path === "/guestbook/")
-						return "留言板 (Guestbook)";
-					if (path === "/about" || path === "/about/")
-						return "关于博主 (About)";
-					if (path === "/fcircle" || path === "/fcircle/")
-						return "友链朋友圈 (Fcircle)";
-					if (path === "/console" || path === "/console/")
-						return "管理中台 (Console)";
+					if (!path || path === "/" || path === "") return "首页";
+					if (path === "/friends" || path === "/friends/") return "友情链接";
+					if (path === "/dynamic" || path === "/dynamic/") return "动态";
+					if (path === "/archive" || path === "/archive/") return "文章归档";
+					if (path === "/guestbook" || path === "/guestbook/") return "留言板";
+					if (path === "/about" || path === "/about/") return "关于我";
+					if (path === "/fcircle" || path === "/fcircle/") return "友链朋友圈";
+					if (path === "/console" || path === "/console/") return "管理中台";
 					if (path.startsWith("/projects/")) {
 						const projSlug = path
 							.replace(/^\/projects\//, "")
 							.replace(/\/$/, "");
-						if (!projSlug) return "项目作品 (Projects)";
+						if (!projSlug) return "项目";
 						return `项目 · ${projSlug}`;
 					}
 					if (path.startsWith("/posts/")) {

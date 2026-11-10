@@ -52,6 +52,7 @@ const safeLink =
 			height="44"
 			loading="lazy"
 			decoding="async"
+			onerror="this.onerror=null;this.src='/favicon/favicon.ico';"
 			class="w-full h-full object-cover"
 		/>
 	</div>
@@ -64,12 +65,12 @@ const safeLink =
 				{item.friendName}
 			</span>
 			{item.sourceType === "subscription" && (
-				<span class="text-[10px] px-1.5 py-0.2 rounded-md bg-(--primary)/10 text-(--primary) font-normal border border-(--primary)/20 shrink-0">
+				<span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/10 text-(--primary) font-normal border border-(--primary)/20 shrink-0">
 					{item.tags?.[0] || i18n(I18nKey.fcircleSubscription)}
 				</span>
 			)}
 			{item.sourceType === "self" && (
-				<span class="text-[10px] px-1.5 py-0.2 rounded-md bg-(--primary)/15 text-(--primary) font-medium border border-(--primary)/30 shrink-0">
+				<span class="text-[10px] px-1.5 py-0.5 rounded-md bg-(--primary)/10 text-(--primary) font-normal border border-(--primary)/20 shrink-0">
 					{i18n(I18nKey.fcircleAuthor)}
 				</span>
 			)}

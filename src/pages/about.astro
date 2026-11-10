@@ -2,6 +2,7 @@
 
 import { getEntry, render } from "astro:content";
 import Markdown from "@components/common/Markdown.astro";
+import { Icon } from "astro-icon/components";
 import { profileConfig } from "@/config/profileConfig";
 import { siteConfig } from "@/config/siteConfig";
 import I18nKey from "@/i18n/i18nKey";
@@ -34,6 +35,33 @@ const jsonLd = buildProfilePage({
             <Markdown class="mt-2">
                 <Content />
             </Markdown>
+
+            <!-- 站点统计大屏快速通道 -->
+            <div class="mt-8 pt-6 border-t border-(--line-divider)">
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) hover:border-(--primary)/40 transition-all">
+                    <div class="flex items-center gap-3.5">
+                        <div class="w-10 h-10 rounded-xl bg-(--primary)/15 text-(--primary) flex items-center justify-center text-xl shrink-0">
+                            <Icon name="material-symbols:analytics-rounded" class="text-xl" />
+                        </div>
+                        <div>
+                            <div class="text-sm font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
+                                站点统计与公开遥测
+                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 font-medium">实时公开</span>
+                            </div>
+                            <p class="text-xs text-(--content-meta) mt-0.5">
+                                探索全站 PV/UV 访问脉冲、52周创作节奏与读者互动大屏
+                            </p>
+                        </div>
+                    </div>
+                    <a
+                        href="/stats/"
+                        class="px-4 py-2 rounded-xl bg-(--primary) text-white text-xs font-semibold hover:opacity-90 active:scale-95 transition-all shrink-0 flex items-center gap-1.5 shadow-sm self-end sm:self-center"
+                    >
+                        <span>查看统计大屏</span>
+                        <span>→</span>
+                    </a>
+                </div>
+            </div>
         </div>
     </div>
 </MainGridLayout>

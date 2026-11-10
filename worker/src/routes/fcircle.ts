@@ -35,10 +35,10 @@ export const DEFAULT_FEED_SOURCES: FeedSource[] = [
 		sourceType: "subscription",
 	},
 	{
-		name: "冷夕",
+		name: "冷汐",
 		siteUrl: "https://lengxiqwq.com",
 		feedUrl: "https://lengxiqwq.com/atom.xml",
-		avatar: "https://img.lengxiqwq.com/avatar.webp",
+		avatar: "https://lengxiqwq.com/avatar.jpg",
 		sourceType: "self",
 	},
 ];
@@ -75,8 +75,8 @@ export function getMockFcirclePosts(): FcirclePost[] {
 		},
 		{
 			id: "fc_mock_3",
-			friendName: "冷夕",
-			friendAvatar: "https://img.lengxiqwq.com/avatar.webp",
+			friendName: "冷汐",
+			friendAvatar: "https://lengxiqwq.com/avatar.jpg",
 			friendUrl: "https://lengxiqwq.com",
 			title: "博客系统云原生架构升级与解耦实录",
 			link: "https://lengxiqwq.com/posts/cloud-native-migration",

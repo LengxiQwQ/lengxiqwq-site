@@ -410,8 +410,11 @@ export async function getFcircleItems(): Promise<FcircleItem[]> {
 
 	// 1. 本地博主文章（0 外部网络依赖，离线可用且构建即最新）
 	try {
-		const authorAvatar = await getAuthorAvatarUrl();
-		const selfAvatar = authorAvatar || "/favicon/favicon.ico";
+		const selfAvatar = profileConfig.avatar
+			? formatUrl(profileConfig.avatar)
+			: (await getAuthorAvatarUrl()) ||
+				profileConfig.avatarUrl ||
+				"/favicon/favicon.ico";
 
 		const localPosts = await getSortedPostsList();
 		for (const post of localPosts) {
