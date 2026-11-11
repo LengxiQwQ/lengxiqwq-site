@@ -1558,9 +1558,8 @@ onMount(() => {
 									style="animation-delay: {cIdx * 65}ms;"
 								>
 									<div class="flex items-center justify-between text-xs">
-										<span class="font-medium text-neutral-700 dark:text-neutral-200 flex items-center gap-1.5 min-w-0">
-											<span class="text-sm shrink-0 leading-none" role="img" aria-label={country.name}>{visual.flag}</span>
-											<span class="truncate">{country.name}</span>
+										<span class="font-medium text-neutral-700 dark:text-neutral-200 truncate min-w-0">
+											{country.name}
 										</span>
 										<span class="font-mono text-(--content-meta) shrink-0 ml-2">
 											{country.visits.toLocaleString()} 次 ({country.percent}%)
