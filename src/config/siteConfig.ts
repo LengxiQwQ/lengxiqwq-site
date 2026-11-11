@@ -25,12 +25,16 @@ const pages = resolvePageToggles({
 	projects: true,
 	// 相册页面开关
 	gallery: true,
+	// 我的设备页面开关
+	devices: true,
+	// 时间线页面开关
+	timeline: true,
 	// Steam 游戏记录页面开关
-	steam: false,
+	steam: true,
 	// 书签导航页面开关
 	booknav: true,
 	// 哔哩哔哩追番页面开关
-	bilibili: false,
+	bilibili: true,
 	// 番组计划页面开关
 	bangumi: false,
 	// VNDB页面开关
@@ -42,37 +46,57 @@ const pages = resolvePageToggles({
 
 	// 打赏页面开关
 	sponsor: true,
+	// 站点统计页面开关
+	stats: true,
+	// 博客日志页面开关
+	changelog: true,
 });
 
 export const siteConfig: SiteConfig = {
 	// 站点标题
-	title: "Firefly",
+	title: "冷汐的杂货铺",
 
-	// 站点副标题
-	subtitle: "Demo site",
+	// 站点别名（用于 Google 知识图谱 Schema.org 结构化数据实体消歧）
+	alternateNames: [
+		"冷汐",
+		"LengxiQwQ",
+		"冷汐的杂货铺",
+		"冷汐的小站",
+		"冷汐博客",
+		"冷汐的个人博客",
+		"Lengxi's Store",
+		"Lengxi's Blog",
+	],
+
+	// 站点副标题（用于浏览器标题栏与搜索引擎实体消歧，不影响导航栏纯标题展示）
+	subtitle: "冷汐 (LengxiQwQ) 的个人独立博客",
 
 	// 站点 URL
-	site_url: "https://firefly.cuteleaf.cn",
+	site_url: "https://lengxiqwq.com",
 
 	// 站点描述
 	description:
-		"Firefly 是一款基于 Astro 框架和 Fuwari 模板开发的清新美观且现代化个人博客主题模板，专为技术爱好者和内容创作者设计。该主题融合了现代 Web 技术栈，提供了丰富的功能模块和高度可定制的界面，让您能够轻松打造出专业且美观的个人博客网站。",
+		"这里是冷汐OωO（LengxiQwQ）的杂货铺，一个大学牲的折腾记录站。平时写点代码、开发桌面和 Web 小工具，代表作有实况照片工具箱（Live Photo Box）和歌单导出工具（PlaylistOut），也会顺手记点有意思的东西。",
 
 	// 站点关键词
 	keywords: [
-		"Firefly",
-		"Fuwari",
-		"Astro",
-		"ACGN",
-		"博客",
-		"技术博客",
-		"静态博客",
+		"冷汐的杂货铺",
+		"冷汐",
+		"LengxiQwQ",
+		"冷汐的小站",
+		"冷汐博客",
+		"冷汐的个人博客",
+		"个人博客",
+		"独立开发",
+		"开源项目",
+		"Live Photo Box",
+		"PlaylistOut",
 	],
 
 	// 主题色
 	themeColor: {
 		// 主题色的默认色相，范围从 0 到 360。例如：红色：0，青色：200，蓝绿色：250，粉色：345
-		hue: 165,
+		hue: 355,
 		// 默认模式："light" 亮色，"dark" 暗色，"system" 跟随系统
 		defaultMode: "system",
 	},
@@ -85,21 +109,31 @@ export const siteConfig: SiteConfig = {
 	// 网站Card样式配置
 	card: {
 		// 是否开启卡片边框和阴影，开启后让网站更有立体感
-		border: false,
+		border: true,
 		// 是否让卡片风格跟随主题色相
-		followTheme: false,
+		followTheme: true,
 	},
 
-	// Favicon 配置
-	// 如果启用了OpenGraph图片功能，数组中需要包含png格式的favicon图标
+	// Favicon 配置（专图专用，分工明确）
 	favicon: [
+		// 1. 桌面浏览器标签栏专用（圆形透明底，轻盈美观）
 		{
-			// 图标文件路径
-			src: "/favicon/firefly-32.png",
-			// 可选，指定主题 'light' | 'dark'
-			// theme: "light",
-			// 可选，图标大小
-			// sizes: "32x32",
+			src: "/favicon/favicon-tab-32.png",
+			sizes: "32x32",
+		},
+		{
+			src: "/favicon/favicon-tab-48.png",
+			sizes: "48x48",
+		},
+		// 2. Google 搜索结果与 Android Chrome 专用（192x192 满幅正方形，符合 Google 48 倍数官方规范）
+		{
+			src: "/favicon/favicon-google-192.png",
+			sizes: "192x192",
+		},
+		// 3. 苹果 iOS 添加主屏幕专用（180x180 满幅正方形无透明底，防止 iPhone 桌面变黑底）
+		{
+			src: "/favicon/apple-touch-icon-180.png",
+			sizes: "180x180",
 		},
 	],
 
@@ -109,19 +143,18 @@ export const siteConfig: SiteConfig = {
 		// 支持三种类型：
 		// 1. Astro图标库: { type: "icon", value: "material-symbols:home-pin-outline" }
 		// 2. 本地图片（public目录，不优化）: { type: "image", value: "/assets/images/logo.webp", alt: "Logo" }
-		// 3. 本地图片（src目录，自动优化但会增加构建时间）: { type: "image", value: "assets/images/logo.webp", alt: "Logo" }
+		// 3. 本地图片（src目录，自动优化但会增加构建时间，推荐）："assets/images/logo.webp", alt: "Logo" }
 		// 4. 网络图片: { type: "url", value: "https://example.com/logo.png", alt: "Logo" }
 		// image 和 url 类型可额外设置 valueDark，用于暗色模式下显示另一张图片，不设置则亮暗色共用 value
 		// 例如: { type: "image", value: "assets/images/logo.png", valueDark: "assets/images/logo-dark.png", alt: "Logo" }
 		// 使用 Astro 图标库时不需要设置 valueDark，图标会自动跟随主题亮暗色切换
 		logo: {
 			type: "image",
-			value: "assets/images/logo/firefly-light.png",
-			valueDark: "assets/images/logo/firefly-dark.png",
-			alt: "🍀",
+			value: "/assets/images/avatar-logo.webp",
+			alt: "LengxiQwQ",
 		},
 		// 导航栏标题
-		title: "Firefly Blog",
+		title: "冷汐的杂货铺",
 		// 全宽导航栏，导航栏是否占满屏幕宽度
 		widthFull: false,
 		// 导航菜单对齐方式，left：左对齐，center：居中
@@ -136,7 +169,7 @@ export const siteConfig: SiteConfig = {
 	},
 
 	// 站点开始日期，用于统计运行天数
-	siteStartDate: "2025-01-01",
+	siteStartDate: "2026-09-19",
 
 	// 站点时区（IANA 时区字符串），用于格式化bangumi、rss里的构建日期时间等等..
 	// 示例："Asia/Shanghai", "UTC", 如果为空，则按照构建服务器的时区进行时区转换
@@ -191,7 +224,7 @@ export const siteConfig: SiteConfig = {
 			// 是否显示标签
 			showTags: true,
 			// 标签数量，设为 0 则不限制
-			tagCount: 3,
+			tagCount: 0,
 			// 是否显示字数
 			showWords: false,
 			// 是否显示阅读时间
@@ -266,13 +299,13 @@ export const siteConfig: SiteConfig = {
 	// ── Bilibili配置 ──────────────────────────────────
 	bilibili: {
 		// 你的 Bilibili 用户 UID
-		uid: "38932988",
+		uid: "477811145",
 	},
 
 	// ── 番组计划bangumi配置 ──────────────────────────────────
 	bangumi: {
 		// Bangumi用户ID
-		userId: "1143164",
+		userId: "",
 		// 数据模式：static=构建时获取，dynamic=客户端实时获取
 		// static 模式在构建时获取数据并静态渲染，部署后数据不更新
 		// dynamic 模式在浏览器中实时请求 API，始终显示最新数据
@@ -296,7 +329,7 @@ export const siteConfig: SiteConfig = {
 	// ── VNDB配置 ──────────────────────────────────
 	vndb: {
 		// VNDB 用户 ID
-		userId: "u358128",
+		userId: "",
 		// 数据模式：static=构建时获取，dynamic=客户端实时获取
 		// static 模式在构建时获取数据并静态渲染，部署后数据不更新
 		// dynamic 模式在浏览器中实时请求 API，始终显示最新数据
@@ -316,9 +349,9 @@ export const siteConfig: SiteConfig = {
 	// ── MyAnimeList配置 ──────────────────────────────────
 	mal: {
 		// MyAnimeList 用户名（列表需为公开状态，私密列表无法读取）
-		username: "cuteleaf",
+		username: "",
 		// MyAnimeList Client ID，在 https://myanimelist.net/apiconfig 注册免费应用后获取
-		clientId: "	0ef34371450f9c6c809deaadec6aa8f3",
+		clientId: "",
 		// MAL API 地址
 		apiUrl: "https://api.myanimelist.net/v2",
 		// 动画条目详情页地址，末尾需要带 /

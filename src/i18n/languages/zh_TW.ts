@@ -170,6 +170,15 @@ export const zh_TW: Translation = {
 	[Key.timelineAll]: "全部",
 	[Key.timelineNoResults]: "暫無該分類下的時間線節點",
 
+	// 部落格日誌
+	[Key.changelog]: "部落格日誌",
+	[Key.changelogDescription]:
+		"記錄部落格從零搭建、架構演進、功能上線與日常維護的代碼提交印記。",
+	[Key.changelogCommits]: "次提交",
+	[Key.changelogDays]: "個記錄日",
+	[Key.changelogLatest]: "最近更新",
+	[Key.changelogNoResults]: "暫無部落格日誌記錄",
+
 	[Key.guestbook]: "留言板",
 	[Key.guestbookDescription]: "歡迎在這裡留下你的足跡，分享你的想法和建議",
 	[Key.untitled]: "無標題",
@@ -187,7 +196,7 @@ export const zh_TW: Translation = {
 
 	[Key.themeColor]: "主題色相",
 	[Key.themeColorCustom]: "自定義",
-	[Key.themeColorAuto]: "跟隨桌布",
+	[Key.themeColorAuto]: "自動識別",
 	[Key.themeColorPreset]: "桌布預設",
 	[Key.themeColorCurrentWallpaper]: "當前",
 	[Key.themeColorResetPreset]: "恢復預設",

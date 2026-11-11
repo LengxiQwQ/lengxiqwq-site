@@ -205,6 +205,14 @@ enum I18nKey {
 	timelineAll = "timelineAll",
 	timelineNoResults = "timelineNoResults",
 
+	// 博客日志 (Changelog)
+	changelog = "changelog",
+	changelogDescription = "changelogDescription",
+	changelogCommits = "changelogCommits",
+	changelogDays = "changelogDays",
+	changelogLatest = "changelogLatest",
+	changelogNoResults = "changelogNoResults",
+
 	// 番组计划筛选和状态文本
 	bangumiTitle = "bangumiTitle",
 	bangumiSubtitle = "bangumiSubtitle",

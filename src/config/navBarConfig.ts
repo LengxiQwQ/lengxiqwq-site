@@ -118,6 +118,9 @@ const getDynamicNavBarConfig = (): NavBarConfig => {
 			// 关于页面
 			LinkPresets.About,
 
+			// 博客日志
+			LinkPresets.Changelog,
+
 			// 站点统计
 			LinkPresets.Stats,
 
@@ -231,7 +234,7 @@ export const LinkPresets: Record<string, NavBarLink> = {
 	Timeline: {
 		name: "时间线",
 		url: "/timeline/",
-		icon: "material-symbols:timeline-rounded",
+		icon: "material-symbols:insights",
 		pageKey: "timeline",
 	},
 	Booknav: {
@@ -281,10 +284,16 @@ export const LinkPresets: Record<string, NavBarLink> = {
 		url: "/about/",
 		icon: "material-symbols:person",
 	},
+	Changelog: {
+		name: "博客日志",
+		url: "/changelog/",
+		icon: "material-symbols:history-edu-rounded",
+		pageKey: "changelog",
+	},
 	Stats: {
 		name: "站点统计",
 		url: "/stats/",
-		icon: "material-symbols:insights",
+		icon: "material-symbols:leaderboard-rounded",
 		pageKey: "stats",
 	},
 	GitHub: {

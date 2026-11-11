@@ -170,6 +170,15 @@ export const zh_CN: Translation = {
 	[Key.timelineAll]: "全部",
 	[Key.timelineNoResults]: "暂无该分类下的时间线节点",
 
+	// 博客日志
+	[Key.changelog]: "博客日志",
+	[Key.changelogDescription]:
+		"记录博客从零搭建、架构演进、功能上线与日常维护的代码提交印记。",
+	[Key.changelogCommits]: "次提交",
+	[Key.changelogDays]: "个记录日",
+	[Key.changelogLatest]: "最近更新",
+	[Key.changelogNoResults]: "暂无博客日志记录",
+
 	[Key.guestbook]: "留言板",
 	[Key.guestbookDescription]: "欢迎在这里留下你的足迹，分享你的想法和建议",
 	[Key.untitled]: "无标题",
@@ -187,7 +196,7 @@ export const zh_CN: Translation = {
 
 	[Key.themeColor]: "主题色相",
 	[Key.themeColorCustom]: "自定义",
-	[Key.themeColorAuto]: "跟随壁纸",
+	[Key.themeColorAuto]: "自动识别",
 	[Key.themeColorPreset]: "壁纸预设",
 	[Key.themeColorCurrentWallpaper]: "当前",
 	[Key.themeColorResetPreset]: "恢复默认",

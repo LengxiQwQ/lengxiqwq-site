@@ -16,6 +16,12 @@ export function resolveNavbarMode(navbar: {
 /** 当前导航栏模式（已按 navbarMode / 旧 stickyNavbar 解析），供各消费方统一读取 */
 export const navbarMode: NavbarMode = resolveNavbarMode(siteConfig.navbar);
 
+export type {
+	ChangelogChangeItem,
+	ChangelogChangeType,
+	ChangelogConfig,
+	ChangelogDailyEntry,
+} from "../types/changelogConfig"; // 博客日志类型定义
 // 类型导出
 export type {
 	AdConfig,
@@ -69,6 +75,7 @@ export { announcementConfig } from "./announcementConfig"; // 公告配置
 // 样式配置
 export { backgroundWallpaper } from "./backgroundWallpaper"; // 背景壁纸配置
 export { booknavConfig, booknavPageConfig } from "./booknavConfig"; // 书签导航配置
+export { changelogConfig } from "./changelogConfig"; // 博客日志配置
 // 功能配置
 export { commentConfig } from "./commentConfig"; // 评论系统配置
 export { coverImageConfig } from "./coverImageConfig"; // 封面图配置

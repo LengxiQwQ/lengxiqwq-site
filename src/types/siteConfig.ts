@@ -103,6 +103,7 @@ export type SiteConfig = {
 		timeline?: boolean; // 时间线页面开关
 		steam?: boolean; // Steam 游戏记录页面开关
 		stats?: boolean; // 站点统计与公开遥测页面开关
+		changelog?: boolean; // 博客日志页面开关
 	};
 
 	// 分类导航栏开关

@@ -171,6 +171,15 @@ export const ja: Translation = {
 	[Key.timelineAll]: "すべて",
 	[Key.timelineNoResults]: "このカテゴリのタイムラインはありません",
 
+	// 更新履歴 (Changelog)
+	[Key.changelog]: "更新履歴",
+	[Key.changelogDescription]:
+		"サイトの構築、アーキテクチャの進化、機能追加とメンテナンスの記録。",
+	[Key.changelogCommits]: "コミット",
+	[Key.changelogDays]: "記録日数",
+	[Key.changelogLatest]: "最新更新",
+	[Key.changelogNoResults]: "更新履歴はまだありません",
+
 	[Key.guestbook]: "ゲストブック",
 	[Key.guestbookDescription]:
 		"ここに足跡を残して、あなたの考えや提案を共有してください",

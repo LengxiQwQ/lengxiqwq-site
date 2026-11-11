@@ -1,0 +1,129 @@
+---
+import { Icon } from "astro-icon/components";
+import ChangelogCard from "@/components/pages/changelog/ChangelogCard.astro";
+import { changelogConfig, siteConfig } from "@/config";
+import I18nKey from "@/i18n/i18nKey";
+import { i18n } from "@/i18n/translation";
+import MainGridLayout from "@/layouts/MainGridLayout.astro";
+import "@/styles/pages/common.css";
+
+// 页面开关拦截：若明确设为 false 或 config 停用则 404
+if (siteConfig.pages.changelog === false || !changelogConfig.enable) {
+	return Astro.redirect("/404/");
+}
+
+const title = changelogConfig.title || i18n(I18nKey.changelog);
+const description =
+	changelogConfig.description || i18n(I18nKey.changelogDescription);
+
+const rawEntries = changelogConfig.entries || [];
+const order = changelogConfig.order || "desc";
+
+// 严格按日期排序
+const entries = [...rawEntries].sort((a, b) => {
+	const cmp = a.date.localeCompare(b.date);
+	return order === "asc" ? cmp : -cmp;
+});
+
+// 统计核心指标
+const totalDays = entries.length;
+const totalCommits = entries.reduce(
+	(acc, cur) => acc + (cur.commitsCount || 0),
+	0,
+);
+const totalChanges = entries.reduce(
+	(acc, cur) => acc + (cur.items ? cur.items.length : 0),
+	0,
+);
+const totalMilestones = entries.filter((e) => e.featured).length;
+const latestDate = entries.length > 0 ? entries[0].date : null;
+---
+
+<MainGridLayout title={title} description={description}>
+	<section class="page-shell">
+		<!-- 头部综合看板面板 -->
+		<header class="card-base p-6 sm:p-7 mb-6">
+			<!-- 标题与大数字计数 -->
+			<div class="flex items-center justify-between gap-4">
+				<div class="page-heading">
+					<div class="page-icon" aria-hidden="true">
+						<Icon name="material-symbols:history-edu-rounded" />
+					</div>
+					<div>
+						<h2>{title}</h2>
+						{description && <p>{description}</p>}
+					</div>
+				</div>
+				<div
+					class="flex items-center justify-center self-center text-(--primary) px-2"
+					aria-label={`共 ${totalDays} 个记录日`}
+				>
+					<span class="text-3xl sm:text-4xl font-bold leading-none">{totalDays}</span>
+				</div>
+			</div>
+
+			<!-- 统计指标平滑拼接：最近更新、代码提交、功能改进、核心里程碑 -->
+			{totalDays > 0 && (
+				<div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6">
+					<div class="flex items-center gap-3">
+						<div class="w-10 h-10 rounded-xl bg-(--primary)/10 text-(--primary) flex items-center justify-center text-xl shrink-0">
+							<Icon name="material-symbols:update-rounded" />
+						</div>
+						<div>
+							<span class="text-xs text-(--content-meta) block">最近更新</span>
+							<span class="text-sm font-bold text-neutral-800 dark:text-neutral-100">{latestDate || "暂无"}</span>
+						</div>
+					</div>
+
+					<div class="flex items-center gap-3">
+						<div class="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xl shrink-0">
+							<Icon name="material-symbols:commit-rounded" />
+						</div>
+						<div>
+							<span class="text-xs text-(--content-meta) block">代码提交</span>
+							<span class="text-sm font-bold text-neutral-800 dark:text-neutral-100">{totalCommits > 0 ? `${totalCommits} 次` : "持续演进"}</span>
+						</div>
+					</div>
+
+					<div class="flex items-center gap-3">
+						<div class="w-10 h-10 rounded-xl bg-sky-500/10 text-sky-600 dark:text-sky-400 flex items-center justify-center text-xl shrink-0">
+							<Icon name="material-symbols:deployed-code-outline-rounded" />
+						</div>
+						<div>
+							<span class="text-xs text-(--content-meta) block">功能改进</span>
+							<span class="text-sm font-bold text-neutral-800 dark:text-neutral-100">{totalChanges} 项</span>
+						</div>
+					</div>
+
+					<div class="flex items-center gap-3">
+						<div class="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center text-xl shrink-0">
+							<Icon name="material-symbols:auto-awesome-rounded" />
+						</div>
+						<div>
+							<span class="text-xs text-(--content-meta) block">核心里程碑</span>
+							<span class="text-sm font-bold text-neutral-800 dark:text-neutral-100">{totalMilestones} 个</span>
+						</div>
+					</div>
+				</div>
+			)}
+		</header>
+
+		<!-- 时间线条目列表 -->
+		{totalDays > 0 ? (
+			<div id="changelog-list" class="flex flex-col pl-3 sm:pl-4">
+				{entries.map((entry, index) => (
+					<ChangelogCard
+						entry={entry}
+						isFirst={index === 0}
+						isLast={index === entries.length - 1}
+					/>
+				))}
+			</div>
+		) : (
+			<div class="card-base flex flex-col items-center justify-center py-16 text-neutral-400 dark:text-neutral-500">
+				<Icon name="material-symbols:event-busy-outline-rounded" class="text-6xl mb-4 opacity-50" />
+				<p class="text-lg">{i18n(I18nKey.changelogNoResults)}</p>
+			</div>
+		)}
+	</section>
+</MainGridLayout>

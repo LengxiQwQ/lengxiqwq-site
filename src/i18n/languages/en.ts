@@ -172,6 +172,15 @@ export const en: Translation = {
 	[Key.timelineAll]: "All",
 	[Key.timelineNoResults]: "No timeline items in this category",
 
+	// Changelog
+	[Key.changelog]: "Changelog",
+	[Key.changelogDescription]:
+		"A chronicle of site architecture, features, and commits along the way.",
+	[Key.changelogCommits]: "commits",
+	[Key.changelogDays]: "recorded days",
+	[Key.changelogLatest]: "Latest update",
+	[Key.changelogNoResults]: "No changelog entries yet",
+
 	[Key.guestbook]: "Guestbook",
 	[Key.guestbookDescription]:
 		"Welcome to leave your mark here, share your thoughts and suggestions",

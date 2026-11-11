@@ -171,6 +171,15 @@ export const ko: Translation = {
 	[Key.timelineAll]: "전체",
 	[Key.timelineNoResults]: "해당 카테고리에 타임라인 항목이 없습니다",
 
+	// 블로그 로그 (Changelog)
+	[Key.changelog]: "블로그 로그",
+	[Key.changelogDescription]:
+		"사이트 구축부터 아키텍처 진화, 기능 추가 및 유지보수 기록.",
+	[Key.changelogCommits]: "커밋",
+	[Key.changelogDays]: "일간 기록",
+	[Key.changelogLatest]: "최근 업데이트",
+	[Key.changelogNoResults]: "아직 블로그 로그가 없습니다",
+
 	[Key.guestbook]: "방명록",
 	[Key.guestbookDescription]:
 		"이곳에 흔적을 남기고 생각과 제안을 공유해 주세요",

@@ -173,6 +173,15 @@ export const ru: Translation = {
 	[Key.timelineAll]: "Все",
 	[Key.timelineNoResults]: "Нет событий в этой категории",
 
+	// Журнал изменений (Changelog)
+	[Key.changelog]: "Журнал изменений",
+	[Key.changelogDescription]:
+		"История создания блога, развития архитектуры, новых функций и обновлений.",
+	[Key.changelogCommits]: "коммитов",
+	[Key.changelogDays]: "дней",
+	[Key.changelogLatest]: "Последнее обновление",
+	[Key.changelogNoResults]: "Журнал пока пуст",
+
 	[Key.guestbook]: "Гостевая книга",
 	[Key.guestbookDescription]:
 		"Добро пожаловать, оставьте свой след здесь, поделитесь своими мыслями и предложениями",

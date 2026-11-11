@@ -36,12 +36,13 @@ const jsonLd = buildProfilePage({
                 <Content />
             </Markdown>
 
-            <!-- 站点统计大屏快速通道 -->
-            <div class="mt-8 pt-6 border-t border-(--line-divider)">
+            <!-- 站点衍生信息快速通道：统计与日志 -->
+            <div class="mt-8 pt-6 border-t border-(--line-divider) space-y-3">
+                <!-- 站点统计大屏快速通道 -->
                 <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) hover:border-(--primary)/40 transition-all">
                     <div class="flex items-center gap-3.5">
                         <div class="w-10 h-10 rounded-xl bg-(--primary)/15 text-(--primary) flex items-center justify-center text-xl shrink-0">
-                            <Icon name="material-symbols:insights" class="text-xl" />
+                            <Icon name="material-symbols:leaderboard-rounded" class="text-xl" />
                         </div>
                         <div>
                             <div class="text-sm font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
@@ -58,6 +59,31 @@ const jsonLd = buildProfilePage({
                         class="px-4 py-2 rounded-xl bg-(--primary) text-white text-xs font-semibold hover:opacity-90 active:scale-95 transition-all shrink-0 flex items-center gap-1.5 shadow-sm self-end sm:self-center"
                     >
                         <span>查看统计大屏</span>
+                        <span>→</span>
+                    </a>
+                </div>
+
+                <!-- 博客日志时间线快速通道 -->
+                <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) hover:border-(--primary)/40 transition-all">
+                    <div class="flex items-center gap-3.5">
+                        <div class="w-10 h-10 rounded-xl bg-(--primary)/15 text-(--primary) flex items-center justify-center text-xl shrink-0">
+                            <Icon name="material-symbols:history-edu-rounded" class="text-xl" />
+                        </div>
+                        <div>
+                            <div class="text-sm font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
+                                博客日志与更新历程
+                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-(--primary)/15 text-(--primary) font-medium">持续演进</span>
+                            </div>
+                            <p class="text-xs text-(--content-meta) mt-0.5">
+                                翻阅博客从零搭建、架构演进、功能上线与日常维护的代码提交印记
+                            </p>
+                        </div>
+                    </div>
+                    <a
+                        href="/changelog/"
+                        class="px-4 py-2 rounded-xl bg-(--primary) text-white text-xs font-semibold hover:opacity-90 active:scale-95 transition-all shrink-0 flex items-center gap-1.5 shadow-sm self-end sm:self-center"
+                    >
+                        <span>查看博客日志</span>
                         <span>→</span>
                     </a>
                 </div>
