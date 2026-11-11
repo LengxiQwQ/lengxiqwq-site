@@ -125,7 +125,7 @@ function handleListUpdated() {
 	showToast("列表已刷新");
 }
 
-function handlePostCommitted(res: Record<string, unknown>) {
+function handlePostCommitted(_res: Record<string, unknown>) {
 	showToast("文章已保存");
 }
 

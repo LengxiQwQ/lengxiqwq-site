@@ -123,7 +123,7 @@ const filteredItems = $derived(
 			!q ||
 			item.title.toLowerCase().includes(q) ||
 			item.siteurl.toLowerCase().includes(q) ||
-			(item.desc && item.desc.toLowerCase().includes(q));
+			(item.desc?.toLowerCase().includes(q) ?? false);
 
 		let matchTab = true;
 		if (currentTab !== "all") {

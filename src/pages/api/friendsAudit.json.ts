@@ -7,7 +7,7 @@ import type {
 	FriendsAuditData,
 } from "@/types/friendsConfig";
 
-export const prerender = false;
+export const prerender = true;
 
 function cleanLastMessage(msg?: string): string {
 	if (!msg) return "";
@@ -62,7 +62,6 @@ export const GET: APIRoute = async () => {
 			!isWhitelisted &&
 			!isQuarantined &&
 			(decision === "single" || (record.missingCount || 0) >= 3);
-		const isNormal = !isWhitelisted && !isQuarantined && !isSingle;
 		const category = isWhitelisted
 			? "whitelisted"
 			: isQuarantined
