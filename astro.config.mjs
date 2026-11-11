@@ -218,6 +218,86 @@ function friendsAuditDevApiPlugin() {
 							);
 						}
 
+						// 4. 本地添加新友链动作
+						if (action === "add-friend") {
+							const {
+								title: fTitle,
+								desc: fDesc,
+								imgurl: fImg,
+								tags: fTags,
+								friendPageUrl: fCheck,
+							} = body;
+							if (!fTitle || !siteurl) {
+								res.statusCode = 400;
+								return res.end(
+									JSON.stringify({ error: "Missing title or siteurl" }),
+								);
+							}
+
+							const contentConfigPath = path.resolve(
+								"../lengxiqwq-site-content/config/friendsConfig.ts",
+							);
+							const localConfigPath = path.resolve(
+								"src/config/friendsConfig.ts",
+							);
+							const targetPaths = [contentConfigPath, localConfigPath].filter(
+								(p) => fs.existsSync(p),
+							);
+
+							const tagsArr =
+								Array.isArray(fTags) && fTags.length > 0 ? fTags : ["博客"];
+							const newEntry = `\t{\n\t\ttitle: ${JSON.stringify(fTitle)},\n\t\tdesc: ${JSON.stringify(fDesc || "")},\n\t\tsiteurl: ${JSON.stringify(siteurl)},\n\t\tfriendPageUrl: ${JSON.stringify(fCheck || "")},\n\t\tfeedUrl: "",\n\t\timgurl: ${JSON.stringify(fImg || "")},\n\t\tscreenshot: "",\n\t\temail: "",\n\t\ttags: [${tagsArr.map((t) => JSON.stringify(t)).join(", ")}],\n\t\tweight: 1,\n\t\tenabled: true,\n\t},`;
+
+							const pattern =
+								/export const friendsConfig: FriendLink\[\] = \[([\s\S]*?)\];/;
+
+							for (const targetPath of targetPaths) {
+								const original = fs.readFileSync(targetPath, "utf-8");
+								if (!original.includes(siteurl) && pattern.test(original)) {
+									const updated = original.replace(pattern, (_m, inner) => {
+										const trimmed = inner.trim();
+										if (!trimmed) {
+											return `export const friendsConfig: FriendLink[] = [\n${newEntry}\n];`;
+										}
+										return `export const friendsConfig: FriendLink[] = [\n\t${trimmed}\n${newEntry}\n];`;
+									});
+									fs.writeFileSync(targetPath, updated, "utf-8");
+								}
+							}
+
+							// 顺带更新 auditFile
+							let auditData = {};
+							if (fs.existsSync(auditFile)) {
+								try {
+									auditData = JSON.parse(fs.readFileSync(auditFile, "utf-8"));
+								} catch {}
+							}
+							auditData[siteurl] = {
+								missingCount: 0,
+								failCount: 0,
+								protectedCount: 0,
+								lastChecked: new Date().toISOString(),
+								lastStatus: "found",
+								lastMessage: "站长在控制台添加",
+								targetUrl: fCheck || siteurl,
+								decision: "normal",
+							};
+							fs.writeFileSync(
+								auditFile,
+								JSON.stringify(auditData, null, "\t"),
+								"utf-8",
+							);
+
+							res.statusCode = 200;
+							return res.end(
+								JSON.stringify({
+									success: true,
+									message: `🎉 友链《${fTitle}》添加成功！`,
+									data: { siteurl, title: fTitle },
+								}),
+							);
+						}
+
 						// 3. 人工裁决状态写入
 						if (!siteurl || !decision) {
 							res.statusCode = 400;

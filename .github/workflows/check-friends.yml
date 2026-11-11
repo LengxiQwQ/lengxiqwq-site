@@ -83,7 +83,7 @@ jobs:
                   const count = r.failCount >= 3 ? `${r.failCount} 次 404` : `${r.missingCount} 次未检出`;
                   md += `| ${url} | ${r.targetUrl || url} | ${r.lastMessage || "未搜到关键词"} | ${count} |\n`;
                 }
-                md += "\n> 💡 请在本地启动 `pnpm dev` 后访问 `/admin/friends-audit` 审查台进行一键裁决。\n";
+                md += "\n> 💡 可随时在手机/网页端访问博客管理中枢 `/console`「友链维护」面板进行一键重测与裁决。\n";
               } else {
                 md += "> 🎉 所有友链运转正常，无新增待审项目！\n";
               }

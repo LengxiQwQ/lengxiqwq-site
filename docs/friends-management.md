@@ -16,7 +16,7 @@ flowchart TD
 
     DailyCI["<b>1. 每日定时巡检工作流</b><br>.github/workflows/check-friends.yml<br>调用: check-friends-reciprocal.ts 全量模式<br>更新: friends-audit.json / friends-health.json"]
     IssueBot["<b>2. GitHub Issues 友链申请审核</b><br>.github/workflows/friend-link.yml<br>调用: scripts/process-friend-apply.ts<br>直接 import 核心引擎函数"]
-    DevAudit["<b>3. 本地审查面板单站重测</b><br>src/pages/admin/friends-audit.astro<br>通过 astro.config.mjs Vite 中间件<br>CLI 调用: check-friends-reciprocal.ts --site"]
+    DevAudit["<b>3. 全端管理中枢友链面板</b><br>src/pages/console.astro (FriendsManager.svelte)<br>支持手机/网页端登录管理<br>本地走 Vite 中间件，线上走 Worker + GitHub API"]
 
     Core --> DailyCI
     Core --> IssueBot
@@ -29,8 +29,8 @@ flowchart TD
 | :--- | :--- | :--- |
 | [`scripts/check-friends-reciprocal.ts`](file:///d:/Projects/lengxiqwq-site/scripts/check-friends-reciprocal.ts) | **全局统一爬虫核心**：反爬伪装、WAF 穿透、动态 API 嗅探、分页遍历、主页/头像存活检测、单站/全量 CLI 入口。 | **核心大脑**：任何关于“怎么抓页面、怎么识别友链、怎么绕过反爬”的修改，**必须且仅在此文件修改**！ |
 | [`scripts/process-friend-apply.ts`](file:///d:/Projects/lengxiqwq-site/scripts/process-friend-apply.ts) | **GitHub Issues 申请自动化处理**：负责解析 Issue Markdown 表单、格式验证、调用核心引擎核验、向 Issue 发送反馈评论、打标签、写入内容仓 `friendsConfig.ts`。 | **纯业务包装**：严禁在此编写网络探测代码，直接从 `check-friends-reciprocal.ts` 导入相关探测函数。 |
-| [`astro.config.mjs`](file:///d:/Projects/lengxiqwq-site/astro.config.mjs) (`friendsAuditDevApiPlugin`) | **本地开发环境审查 API**：支持后台审查页面的单站现场重测（`probe-single`）、全站自检（`run-full-check`）、自定义友链目标地址更新。 | **精简调度层**：单站重测直接以子进程方式调度 `check-friends-reciprocal.ts --site "<siteurl>" --target "<targeturl>"`，杜绝维护重复逻辑。 |
-| [`src/pages/admin/friends-audit.astro`](file:///d:/Projects/lengxiqwq-site/src/pages/admin/friends-audit.astro) | **站长管理审查台（前台页面）**：仅在本地开发环境可用（生产构建重定向 404）。提供友链健康状态指标、分类 Tab（双向正常 / 单向友链 / 失联隔离 / 免检白名单）、单站一键重测、裁决按钮。 | UI 与交互层，通过 `POST /api/friends-audit` 触发上述 Vite 插件。 |
+| [`astro.config.mjs`](file:///d:/Projects/lengxiqwq-site/astro.config.mjs) (`friendsAuditDevApiPlugin`) | **本地开发环境审查 API**：支持管理中枢本地模式下的单站现场重测（`probe-single`）、全站自检（`run-full-check`）、友链添加与自定义友链目标地址更新。 | **精简调度层**：单站重测直接以子进程方式调度 `check-friends-reciprocal.ts --site "<siteurl>" --target "<targeturl>"`，杜绝维护重复逻辑。 |
+| [`src/components/pages/console/FriendsManager.svelte`](file:///d:/Projects/lengxiqwq-site/src/components/pages/console/FriendsManager.svelte) | **站长管理审查中枢（全端可用）**：位于 `/console`。提供友链健康状态指标、分类 Tab（双向正常 / 单向友链 / 失联隔离 / 免检白名单）、单站一键重测、裁决按钮与添加新友链。 | UI 与交互层，本地调用 Vite 中间件，线上登录后调用 Worker 后端并同步 GitHub。 |
 | [`src/constants/friends-audit.json`](file:///d:/Projects/lengxiqwq-site/src/constants/friends-audit.json) | **友链双向性与健康度状态持久化文件**：记录每个站点的 `missingCount`、`failCount`、`protectedCount`、`lastStatus`、`decision`、`targetUrl` 等。 | 由探测引擎自动读写维护，支持自愈（Auto-healing）。 |
 
 ---

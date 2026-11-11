@@ -3,12 +3,12 @@ import ConsoleDashboard from "@/components/pages/console/ConsoleDashboard.svelte
 import MainGridLayout from "@/layouts/MainGridLayout.astro";
 import "@/styles/pages/common.css";
 
-const title = "管理中枢";
-const description = "Firefly & Worker Blog Administration Console";
+const title = "博客管理";
+const description = "动态、文章、友链与评论管理";
 ---
 
 <MainGridLayout title={title} description={description}>
-	<section class="page-shell w-full max-w-4xl mx-auto py-2">
+	<div class="page-shell w-full mx-auto">
 		<ConsoleDashboard client:load />
-	</section>
+	</div>
 </MainGridLayout>

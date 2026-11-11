@@ -41,7 +41,7 @@ function handleImageError() {
 	href={game.store_url}
 	target="_blank"
 	rel="noopener noreferrer"
-	class="card-base group relative flex flex-col overflow-hidden rounded-xl transition-all duration-300 hover:-translate-y-1 hover:shadow-lg border border-(--line-divider) hover:border-(--primary)"
+	class="group relative flex flex-col rounded-xl overflow-hidden bg-(--card-bg) border border-(--line-divider) hover:border-(--primary) transition-all duration-300 hover:-translate-y-1 hover:shadow-lg"
 	title={`${game.name} - ${game.playtime_hours} ${i18n(I18nKey.steamPlaytimeHours)}`}
 >
 	<!-- 封面区域 (16:9 横版纯净展示，不遮挡画面) -->

@@ -455,6 +455,246 @@ const deviceRatio = $derived.by(() => {
 	return { desktop, mobile };
 });
 
+// ================= 色彩与视觉语义映射系统 =================
+// 1. 黄金分割率一致性哈希，为任意未知国家/冷门浏览器/系统动态生成高辨识度专属色彩（拒绝硬编码）
+function getConsistentColor(str: string): string {
+	let hash = 0;
+	for (let i = 0; i < str.length; i++) {
+		hash = (hash << 5) - hash + str.charCodeAt(i);
+		hash |= 0;
+	}
+	const hue = Math.abs((hash * 137.508) % 360);
+	return `hsl(${Math.round(hue)}, 76%, 50%)`;
+}
+
+interface CountryVisual {
+	flag: string;
+	color: string;
+}
+
+// 2. 国家/地区专属纯色与国旗 Emoji（全单色，无渐变，保证高辨识度且不撞色）
+const KNOWN_COUNTRIES: Array<{
+	keys: string[];
+	flag: string;
+	color: string;
+}> = [
+	// 特别行政区与地区（优先匹配长词，防止误判为“中国”）
+	{
+		keys: ["中国香港", "香港", "hong kong", "hk"],
+		flag: "🇭🇰",
+		color: "#8B5CF6", // 紫荆紫（香港城市品牌标准主色）
+	},
+	{
+		keys: ["中国台湾", "台湾", "taiwan", "tw"],
+		flag: "🇹🇼",
+		color: "#0284C7", // 宝岛晴空青蓝
+	},
+	{
+		keys: ["中国澳门", "澳门", "macau", "mo"],
+		flag: "🇲🇴",
+		color: "#059669", // 澳门莲花特区绿
+	},
+	// 中国
+	{
+		keys: ["中国", "china", "cn"],
+		flag: "🇨🇳",
+		color: "#EF4444", // 中国正红
+	},
+	// 马来西亚 (取自国旗左上角大面积的“团结深海蓝”Jalur Gemilang Navy)
+	{
+		keys: ["马来西亚", "malaysia", "my"],
+		flag: "🇲🇾",
+		color: "#1E3A8A", // 沉稳深邃的团结海军蓝
+	},
+	// 美国 (纯正美式星条科技蓝，明亮清爽)
+	{
+		keys: ["美国", "united states", "usa", "us"],
+		flag: "🇺🇸",
+		color: "#3B82F6", // 经典星条科技蔚蓝，与深蓝拉开层次
+	},
+	// 日本 (樱花之国专属樱花粉)
+	{
+		keys: ["日本", "japan", "jp"],
+		flag: "🇯🇵",
+		color: "#EC4899", // 浪漫和风樱花粉 (Sakura Pink)
+	},
+	// 新加坡
+	{
+		keys: ["新加坡", "singapore", "sg"],
+		flag: "🇸🇬",
+		color: "#10B981", // 花园城市标志生机翠绿
+	},
+	// 德国
+	{
+		keys: ["德国", "germany", "de"],
+		flag: "🇩🇪",
+		color: "#D97706", // 德意志琥珀金棕
+	},
+	// 英国
+	{
+		keys: ["英国", "united kingdom", "uk", "gb"],
+		flag: "🇬🇧",
+		color: "#1D4ED8", // 皇家海军蓝
+	},
+	// 法国
+	{
+		keys: ["法国", "france", "fr"],
+		flag: "🇫🇷",
+		color: "#2563EB", // 法兰西自由蓝
+	},
+	// 荷兰
+	{
+		keys: ["荷兰", "netherlands", "nl"],
+		flag: "🇳🇱",
+		color: "#EA580C", // 奥兰治国色橙
+	},
+	// 澳大利亚
+	{
+		keys: ["澳大利亚", "australia", "au"],
+		flag: "🇦🇺",
+		color: "#059669", // 澳大利亚代表绿
+	},
+	// 加拿大
+	{
+		keys: ["加拿大", "canada", "ca"],
+		flag: "🇨🇦",
+		color: "#DC2626", // 枫叶正红
+	},
+	// 韩国
+	{
+		keys: ["韩国", "south korea", "korea", "kr"],
+		flag: "🇰🇷",
+		color: "#3B82F6", // 太极青蓝
+	},
+	// 印度
+	{
+		keys: ["印度", "india", "in"],
+		flag: "🇮🇳",
+		color: "#F97316", // 藏红花暖橙
+	},
+	// 巴西
+	{
+		keys: ["巴西", "brazil", "br"],
+		flag: "🇧🇷",
+		color: "#16A34A", // 桑巴雨林绿
+	},
+	// 俄罗斯
+	{
+		keys: ["俄罗斯", "russia", "ru"],
+		flag: "🇷🇺",
+		color: "#0284C7", // 极地蔚蓝
+	},
+	// 意大利
+	{
+		keys: ["意大利", "italy", "it"],
+		flag: "🇮🇹",
+		color: "#0EA5E9", // 地中海蓝 (Azzurro)
+	},
+	// 西班牙
+	{
+		keys: ["西班牙", "spain", "es"],
+		flag: "🇪🇸",
+		color: "#DC2626", // 斗牛士红
+	},
+	// 瑞士
+	{
+		keys: ["瑞士", "switzerland", "ch"],
+		flag: "🇨🇭",
+		color: "#EF4444", // 瑞士红
+	},
+	// 瑞典
+	{
+		keys: ["瑞典", "sweden", "se"],
+		flag: "🇸🇪",
+		color: "#0284C7", // 瑞典晴蓝
+	},
+	// 泰国
+	{
+		keys: ["泰国", "thailand", "th"],
+		flag: "🇹🇭",
+		color: "#6366F1", // 暹罗紫蓝
+	},
+	// 越南
+	{
+		keys: ["越南", "vietnam", "vn"],
+		flag: "🇻🇳",
+		color: "#DC2626", // 金星红
+	},
+	// 印度尼西亚
+	{
+		keys: ["印度尼西亚", "indonesia", "id"],
+		flag: "🇮🇩",
+		color: "#CE1126", // 赤红
+	},
+	// 菲律宾
+	{
+		keys: ["菲律宾", "philippines", "ph"],
+		flag: "🇵🇭",
+		color: "#2563EB", // 皇家蓝
+	},
+	// 新西兰
+	{
+		keys: ["新西兰", "new zealand", "nz"],
+		flag: "🇳🇿",
+		color: "#0D9488", // 银蕨墨青
+	},
+];
+
+function getCountryVisual(name: string): CountryVisual {
+	const raw = (name || "").toLowerCase().trim();
+	for (const item of KNOWN_COUNTRIES) {
+		if (item.keys.some((k) => raw.includes(k))) {
+			return { flag: item.flag, color: item.color };
+		}
+	}
+	return {
+		flag: "🌐",
+		color: getConsistentColor(name),
+	};
+}
+
+// 3. 访问设备形态专属对比配色
+const DEVICE_COLORS = {
+	desktop: "#3B82F6", // 生产力科技工作站蓝
+	mobile: "#F97316", // 随身轻触活力珊瑚橙
+};
+
+// 4. 主流浏览器官方品牌规范色
+function getBrowserColor(name: string): string {
+	const raw = (name || "").toLowerCase();
+	if (raw.includes("chrome") && !raw.includes("edge")) return "#4285F4";
+	if (raw.includes("edge")) return "#0284C7";
+	if (raw.includes("safari")) return "#007AFF";
+	if (raw.includes("firefox")) return "#FF7139";
+	if (raw.includes("opera")) return "#FF1B2D";
+	if (raw.includes("brave")) return "#FB542B";
+	if (raw.includes("wechat") || raw.includes("micromessenger"))
+		return "#07C160";
+	if (raw.includes("qq")) return "#12B7F5";
+	if (raw.includes("uc")) return "#FF6600";
+	if (raw.includes("360")) return "#19B86D";
+	if (raw.includes("quark")) return "#3252E6";
+	if (raw.includes("ios webview")) return "#6366F1";
+	if (raw.includes("android webview")) return "#10B981";
+	return getConsistentColor(name);
+}
+
+// 5. 主流操作系统官方品牌规范色
+function getOsColor(name: string): string {
+	const raw = (name || "").toLowerCase();
+	if (raw.includes("windows")) return "#0078D7";
+	if (raw.includes("mac") || raw.includes("os x")) return "#475569";
+	if (raw.includes("ios") || raw.includes("ipad")) return "#6366F1";
+	if (raw.includes("android")) return "#10B981";
+	if (raw.includes("ubuntu")) return "#E95420";
+	if (raw.includes("debian")) return "#D70A53";
+	if (raw.includes("arch")) return "#1793D1";
+	if (raw.includes("linux")) return "#F59E0B";
+	if (raw.includes("harmony") || raw.includes("openharmony")) return "#0A59F7";
+	if (raw.includes("chrome os") || raw.includes("chromium")) return "#0EA5E9";
+	return getConsistentColor(name);
+}
+
 // 52 周创作与推送节奏日历数据计算
 interface CalendarDay {
 	date: string;
@@ -699,7 +939,7 @@ onMount(() => {
 	<div class="flex flex-row items-center justify-between gap-4 mb-6">
 		<div class="page-heading flex-nowrap mb-0 min-w-0 flex-1">
 			<div class="page-icon shrink-0" aria-hidden="true">
-				<Icon icon="material-symbols:insights" />
+				<Icon icon="material-symbols:leaderboard-rounded" />
 			</div>
 			<div class="min-w-0">
 				<h1 class="truncate text-lg sm:text-2xl font-bold text-neutral-800 dark:text-neutral-100">
@@ -716,7 +956,7 @@ onMount(() => {
 			type="button"
 			onclick={() => fetchDashboardData(true)}
 			disabled={isRefreshing}
-			class="p-2.5 rounded-xl border border-(--line-divider) text-(--content-meta) hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/5 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+			class="p-2.5 rounded-xl border border-(--line-divider) text-(--content-meta) hover:text-(--primary) hover:bg-black/5 dark:hover:bg-white/5 transition-all cursor-pointer active:scale-95 shrink-0"
 			title="刷新数据"
 		>
 			<svg class="w-4 h-4 {isRefreshing ? 'animate-spin text-(--primary)' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -728,7 +968,7 @@ onMount(() => {
 	<!-- 2. 核心概览指标 KPI 卡片 (4-Grid，先展示历史累计指标，再展示今日实时指标) -->
 	<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
 		<!-- 历史累计访问 PV (放首位) -->
-		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-blue-500/50 transition-all shadow-xs">
+		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-blue-500/50 transition-all">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
 				<span class="font-medium">历史总浏览量 (PV)</span>
 				<Icon icon="material-symbols:public" class="text-base text-blue-500 group-hover:scale-110 transition-transform" />
@@ -746,7 +986,7 @@ onMount(() => {
 		</div>
 
 		<!-- 历史独立访客 UV (放第二位) -->
-		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-purple-500/50 transition-all shadow-xs">
+		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-purple-500/50 transition-all">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
 				<span class="font-medium">历史总访客数 (UV)</span>
 				<Icon icon="material-symbols:group-rounded" class="text-base text-purple-500 group-hover:scale-110 transition-transform" />
@@ -764,7 +1004,7 @@ onMount(() => {
 		</div>
 
 		<!-- 今日总访问量 PV (放第三位) -->
-		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-(--primary)/50 transition-all shadow-xs">
+		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-(--primary)/50 transition-all">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
 				<span class="font-medium">今日浏览量 (PV)</span>
 				<Icon icon="material-symbols:visibility-rounded" class="text-base text-(--primary) group-hover:scale-110 transition-transform" />
@@ -788,7 +1028,7 @@ onMount(() => {
 		</div>
 
 		<!-- 今日独立访客 UV (放第四位) -->
-		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-emerald-500/50 transition-all shadow-xs">
+		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-emerald-500/50 transition-all">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
 				<span class="font-medium">今日访客数 (UV)</span>
 				<Icon icon="material-symbols:person-rounded" class="text-base text-emerald-500 group-hover:scale-110 transition-transform" />
@@ -813,7 +1053,7 @@ onMount(() => {
 	</div>
 
 	<!-- 3. 访问脉冲走势图 (SVG 交互图表 + 周期与图例切换) -->
-	<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative shadow-xs">
+	<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative">
 		<!-- 头部控制栏：范围切换与图例 -->
 		<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
 			<div>
@@ -1073,7 +1313,7 @@ onMount(() => {
 	</div>
 
 	<!-- 4. 内容发布与推送节奏热力图 (52 周创作提交日历 - 响应式自适应 SVG 架构，无拖拽滚动条) -->
-	<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative shadow-xs">
+	<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative">
 		<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
 			<div>
 				<h2 class="text-base font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
@@ -1194,7 +1434,7 @@ onMount(() => {
 	<!-- 5. 双栏洞察：热门内容阅读排行 + 访客地域与设备画像 -->
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
 		<!-- 热门内容阅读排行 (支持分类切换与动态展开，自适应右侧高度) -->
-		<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) flex flex-col shadow-xs">
+		<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) flex flex-col">
 			<div class="flex items-center justify-between mb-4 flex-wrap gap-2">
 				<div>
 					<h3 class="text-sm font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
@@ -1294,7 +1534,7 @@ onMount(() => {
 		<!-- 访客画像与终端设备画像 -->
 		<div class="space-y-6">
 			<!-- 访客地域分布 -->
-			<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) shadow-xs">
+			<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider)">
 				<div class="flex items-center justify-between mb-4">
 					<h3 class="text-sm font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
 						<Icon icon="material-symbols:language" class="text-base text-(--primary)" />
@@ -1312,22 +1552,24 @@ onMount(() => {
 						{#key chartAnimKey}
 							{#each insights.countries as country, cIdx}
 								{@const countryPct = Math.min(100, Math.round((country.visits / maxCountryVisits) * 1000) / 10)}
+								{@const visual = getCountryVisual(country.name)}
 								<div
 									class="space-y-1 country-item"
 									style="animation-delay: {cIdx * 65}ms;"
 								>
 									<div class="flex items-center justify-between text-xs">
-										<span class="font-medium text-neutral-700 dark:text-neutral-200">
-											{country.name}
+										<span class="font-medium text-neutral-700 dark:text-neutral-200 flex items-center gap-1.5 min-w-0">
+											<span class="text-sm shrink-0 leading-none" role="img" aria-label={country.name}>{visual.flag}</span>
+											<span class="truncate">{country.name}</span>
 										</span>
-										<span class="font-mono text-(--content-meta)">
+										<span class="font-mono text-(--content-meta) shrink-0 ml-2">
 											{country.visits.toLocaleString()} 次 ({country.percent}%)
 										</span>
 									</div>
 									<div class="w-full h-1.5 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
 										<div
-											class="h-full bg-emerald-500 rounded-full country-bar-fill"
-											style="width: {countryPct}%; --target-width: {countryPct}%; animation-delay: {cIdx * 65 + 75}ms;"
+											class="h-full rounded-full country-bar-fill"
+											style="width: {countryPct}%; --target-width: {countryPct}%; background-color: {visual.color}; animation-delay: {cIdx * 65 + 75}ms;"
 										></div>
 									</div>
 								</div>
@@ -1338,7 +1580,7 @@ onMount(() => {
 			</div>
 
 			<!-- 访问设备类型 (电脑端 vs 手机端) -->
-			<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) shadow-xs">
+			<div class="p-5 sm:p-6 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider)">
 				<h4 class="text-xs font-bold text-neutral-800 dark:text-neutral-100 mb-3 flex items-center gap-1.5">
 					<Icon icon="material-symbols:devices-rounded" class="text-sm text-(--primary)" />
 					<span>访问设备类型</span>
@@ -1346,23 +1588,25 @@ onMount(() => {
 				<div class="space-y-2">
 					<div class="flex items-center justify-between text-xs">
 						<span class="flex items-center gap-1.5 text-neutral-700 dark:text-neutral-200 font-medium">
+							<span class="w-2 h-2 rounded-full shrink-0" style="background-color: {DEVICE_COLORS.desktop};"></span>
 							<span>电脑端 (Desktop)</span>
 							<strong class="font-mono text-neutral-900 dark:text-neutral-100">{deviceRatio.desktop}%</strong>
 						</span>
 						<span class="flex items-center gap-1.5 text-neutral-700 dark:text-neutral-200 font-medium">
 							<strong class="font-mono text-neutral-900 dark:text-neutral-100">{deviceRatio.mobile}%</strong>
 							<span>手机端 (Mobile)</span>
+							<span class="w-2 h-2 rounded-full shrink-0" style="background-color: {DEVICE_COLORS.mobile};"></span>
 						</span>
 					</div>
 					{#key chartAnimKey}
 						<div class="w-full h-2 rounded-full overflow-hidden flex bg-black/5 dark:bg-white/5">
 							<div
-								class="h-full bg-(--primary) device-bar-fill"
-								style="width: {deviceRatio.desktop}%; --target-width: {deviceRatio.desktop}%; animation-delay: 80ms;"
+								class="h-full device-bar-fill"
+								style="width: {deviceRatio.desktop}%; --target-width: {deviceRatio.desktop}%; background-color: {DEVICE_COLORS.desktop}; animation-delay: 80ms;"
 							></div>
 							<div
-								class="h-full bg-emerald-500 device-bar-fill"
-								style="width: {deviceRatio.mobile}%; --target-width: {deviceRatio.mobile}%; animation-delay: 140ms;"
+								class="h-full device-bar-fill"
+								style="width: {deviceRatio.mobile}%; --target-width: {deviceRatio.mobile}%; background-color: {DEVICE_COLORS.mobile}; animation-delay: 140ms;"
 							></div>
 						</div>
 					{/key}
@@ -1372,7 +1616,7 @@ onMount(() => {
 			<!-- 客户端浏览器与操作系统占比 (并排展示) -->
 			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
 				<!-- 浏览器分布 -->
-				<div class="p-4 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) shadow-xs">
+				<div class="p-4 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider)">
 					<h4 class="text-xs font-bold text-neutral-800 dark:text-neutral-100 mb-3 flex items-center gap-1.5">
 						<Icon icon="material-symbols:public" class="text-xs text-blue-500" />
 						<span>常用浏览器</span>
@@ -1381,18 +1625,22 @@ onMount(() => {
 						{#if insights && insights.browsers.length > 0}
 							{#key chartAnimKey}
 								{#each insights.browsers as b, bIdx}
+									{@const bColor = getBrowserColor(b.name)}
 									<div
 										class="space-y-1 env-item"
 										style="animation-delay: {bIdx * 45}ms;"
 									>
 										<div class="flex items-center justify-between text-[11px]">
-											<span class="text-neutral-700 dark:text-neutral-300 truncate">{b.name}</span>
-											<span class="font-mono text-(--content-meta)">{b.percent}%</span>
+											<span class="text-neutral-700 dark:text-neutral-300 truncate flex items-center gap-1.5 min-w-0">
+												<span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: {bColor};"></span>
+												<span class="truncate">{b.name}</span>
+											</span>
+											<span class="font-mono text-(--content-meta) shrink-0 ml-1.5">{b.percent}%</span>
 										</div>
 										<div class="w-full h-1 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
 											<div
-												class="h-full bg-(--primary) rounded-full env-bar-fill"
-												style="width: {b.percent}%; --target-width: {b.percent}%; animation-delay: {bIdx * 45 + 50}ms;"
+												class="h-full rounded-full env-bar-fill"
+												style="width: {b.percent}%; --target-width: {b.percent}%; background-color: {bColor}; animation-delay: {bIdx * 45 + 50}ms;"
 											></div>
 										</div>
 									</div>
@@ -1403,7 +1651,7 @@ onMount(() => {
 				</div>
 
 				<!-- 操作系统分布 -->
-				<div class="p-4 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) shadow-xs">
+				<div class="p-4 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider)">
 					<h4 class="text-xs font-bold text-neutral-800 dark:text-neutral-100 mb-3 flex items-center gap-1.5">
 						<Icon icon="material-symbols:devices-rounded" class="text-xs text-indigo-500" />
 						<span>操作系统</span>
@@ -1412,18 +1660,22 @@ onMount(() => {
 						{#if insights && insights.os.length > 0}
 							{#key chartAnimKey}
 								{#each insights.os as o, oIdx}
+									{@const oColor = getOsColor(o.name)}
 									<div
 										class="space-y-1 env-item"
 										style="animation-delay: {oIdx * 45}ms;"
 									>
 										<div class="flex items-center justify-between text-[11px]">
-											<span class="text-neutral-700 dark:text-neutral-300 truncate">{o.name}</span>
-											<span class="font-mono text-(--content-meta)">{o.percent}%</span>
+											<span class="text-neutral-700 dark:text-neutral-300 truncate flex items-center gap-1.5 min-w-0">
+												<span class="w-1.5 h-1.5 rounded-full shrink-0" style="background-color: {oColor};"></span>
+												<span class="truncate">{o.name}</span>
+											</span>
+											<span class="font-mono text-(--content-meta) shrink-0 ml-1.5">{o.percent}%</span>
 										</div>
 										<div class="w-full h-1 bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
 											<div
-												class="h-full bg-indigo-500 rounded-full env-bar-fill"
-												style="width: {o.percent}%; --target-width: {o.percent}%; animation-delay: {oIdx * 45 + 50}ms;"
+												class="h-full rounded-full env-bar-fill"
+												style="width: {o.percent}%; --target-width: {o.percent}%; background-color: {oColor}; animation-delay: {oIdx * 45 + 50}ms;"
 											></div>
 										</div>
 									</div>

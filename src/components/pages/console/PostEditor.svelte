@@ -141,9 +141,7 @@ function selectPostToEdit(post: ExistingPostItem) {
 	editingOriginalSlug = post.slug;
 	editingPostTitle = post.title;
 	showPostSelector = false;
-	onToast?.(
-		`📖 已载入文章《${post.title}》，可在此直接修改、增删内容并提交更新！`,
-	);
+	onToast?.(`已载入文章《${post.title}》`);
 }
 
 // 退出修改模式，切换为新建文章
@@ -415,7 +413,7 @@ async function handleCoverFileChange(e: Event) {
 			cover = json.data.url;
 			const ratioText =
 				compressResult.ratio > 0 ? ` (体积优化 -${compressResult.ratio}%)` : "";
-			onToast?.(`🖼️ 封面图已自动转码 WebP 90% 并上传至 R2！${ratioText}`);
+			onToast?.(`封面图已上传${ratioText}`);
 			triggerDraftSave();
 		} else {
 			onToast?.(`封面上传失败: ${json.error || "服务异常"}`);
@@ -429,7 +427,7 @@ async function handleCoverFileChange(e: Event) {
 	}
 }
 
-// 直传插图到 R2 并插入到光标所在 Markdown 位置（自动转 WebP 90% 质量）
+// 直传插图并插入到光标所在 Markdown 位置
 async function handleInlineImageChange(e: Event) {
 	const target = e.target as HTMLInputElement;
 	if (!target.files || target.files.length === 0) return;
@@ -437,7 +435,6 @@ async function handleInlineImageChange(e: Event) {
 
 	isUploadingImage = true;
 	try {
-		// 客户端智能转码为 90% 质量 WebP
 		const compressResult = await compressAndConvertToWebp(file, {
 			quality: 0.9,
 		});
@@ -459,7 +456,7 @@ async function handleInlineImageChange(e: Event) {
 			insertMarkdownSyntax(imgMarkdown, "", "");
 			const ratioText =
 				compressResult.ratio > 0 ? ` (体积优化 -${compressResult.ratio}%)` : "";
-			onToast?.(`🖼️ 插图已转码 WebP 90% 并直传插入正文！${ratioText}`);
+			onToast?.(`插图已上传${ratioText}`);
 		} else {
 			onToast?.(`插图上传失败: ${json.error || "服务异常"}`);
 		}
@@ -521,7 +518,6 @@ function restoreDraft() {
 				pinned = Boolean(data.pinned);
 				content = data.content || "";
 				hasDraftRestored = true;
-				onToast?.("📝 已自动为您恢复上次未提交的本地草稿！");
 			}
 		}
 	} catch (e) {
@@ -549,20 +545,20 @@ function clearDraft() {
 	hasDraftRestored = false;
 	editingOriginalSlug = null;
 	editingPostTitle = null;
-	onToast?.("草稿已彻底清空");
+	onToast?.("草稿已清空");
 }
 
-// 提交文章至 GitHub 内容仓（支持新建与更新）
+// 提交文章（支持新建与更新）
 async function commitPostToGitHub() {
 	if (!title.trim()) {
-		onToast?.("⚠️ 请输入文章标题！");
+		onToast?.("请输入文章标题");
 		return;
 	}
 	if (!slug.trim()) {
 		generateSlugFromTitle();
 	}
 	if (!content.trim()) {
-		onToast?.("⚠️ 正文内容不能为空！");
+		onToast?.("正文内容不能为空");
 		return;
 	}
 
@@ -592,10 +588,8 @@ async function commitPostToGitHub() {
 		const json = await res.json().catch(() => ({}));
 
 		if (res.ok && json.code === 200) {
-			const actionWord = editingOriginalSlug ? "更新" : "创建";
-			onToast?.(
-				`🚀 文章《${title}》已成功${actionWord}并提交至 GitHub 内容仓！`,
-			);
+			const actionWord = editingOriginalSlug ? "更新" : "发布";
+			onToast?.(`文章《${title}》已${actionWord}`);
 			onPostCommitted?.(json.data || { slug, title });
 
 			// 清除已提交的本地草稿
@@ -659,12 +653,14 @@ onDestroy(() => {
 	class="hidden"
 />
 
-<div class="post-editor-container w-full {isFocusMode ? 'fixed inset-0 z-50 bg-(--card-bg) p-4 md:p-6 overflow-hidden flex flex-col shadow-2xl backdrop-blur-xl' : 'card-base p-5 md:p-6 rounded-(--radius-large) shadow-lg border border-(--line-divider) relative'}">
+<div class="post-editor-container w-full {isFocusMode ? 'fixed inset-0 z-50 bg-(--card-bg) p-4 md:p-6 overflow-hidden flex flex-col shadow-2xl backdrop-blur-xl' : 'card-base p-5 md:p-6 relative'}">
 	<!-- 顶部已有文章修改横幅（如果是编辑已有文章模式） -->
 	{#if editingOriginalSlug}
 		<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200 mb-4 animate-in fade-in">
 			<div class="flex items-center gap-2 text-xs sm:text-sm font-medium flex-wrap">
-				<span class="text-base">✏️</span>
+				<svg class="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+				</svg>
 				<span>正在修改已有文章：<strong>《{editingPostTitle || title}》</strong></span>
 				<span class="text-[11px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-900 dark:text-amber-100">
 					Slug: {editingOriginalSlug}
@@ -676,14 +672,14 @@ onDestroy(() => {
 					onclick={() => { showPostSelector = true; void loadExistingPosts(); }}
 					class="text-xs px-2.5 py-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 transition-colors font-medium cursor-pointer"
 				>
-					切换其他文章
+					切换文章
 				</button>
 				<button
 					type="button"
 					onclick={switchToNewPostMode}
 					class="text-xs px-2.5 py-1 rounded-md bg-black/10 dark:bg-white/10 hover:bg-black/20 text-(--content-meta) transition-colors cursor-pointer"
 				>
-					✕ 退出修改，新建文章
+					退出修改，新建文章
 				</button>
 			</div>
 		</div>
@@ -692,20 +688,22 @@ onDestroy(() => {
 	<!-- 顶部标题栏与模式切换 -->
 	<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-(--line-divider) mb-5">
 		<div class="flex items-center gap-3">
-			<div class="w-9 h-9 rounded-xl bg-(--primary)/15 text-(--primary) flex items-center justify-center text-lg font-bold">
-				{editingOriginalSlug ? "✏️" : "📝"}
+			<div class="w-9 h-9 rounded-xl bg-(--primary)/15 text-(--primary) flex items-center justify-center font-bold">
+				<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+				</svg>
 			</div>
 			<div>
 				<h2 class="text-base font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
-					{editingOriginalSlug ? "文章在线编辑与更新" : "Markdown 长文撰写与发布器"}
+					{editingOriginalSlug ? "编辑文章" : "撰写文章"}
 					{#if isFocusMode}
 						<span class="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 font-semibold">
-							✨ 全屏沉浸模式
+							全屏模式
 						</span>
 					{/if}
 				</h2>
 				<p class="text-xs text-(--content-meta)">
-					{editingOriginalSlug ? "直接修改文章元数据与正文，保存后将自动提交更新 Commit 到 GitHub 内容仓" : "编写标准 Markdown，一键自动生成 Frontmatter 并通过 Worker 直推 GitHub 内容仓"}
+					{editingOriginalSlug ? "修改文章信息与正文，保存后直接更新" : "编写 Markdown 文章并发布"}
 				</p>
 			</div>
 		</div>
@@ -720,7 +718,7 @@ onDestroy(() => {
 					class="text-xs px-3 py-1.5 rounded-lg bg-(--primary)/10 text-(--primary) hover:bg-(--primary)/20 font-medium transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
 					title="选择已发布的文章进行二次编辑修改"
 				>
-					<span>📚 选择已有文章修改 ({existingPosts.length ? `${existingPosts.length} 篇` : "载入中"})</span>
+					<span>选择已有文章 ({existingPosts.length ? `${existingPosts.length} 篇` : "载入中"})</span>
 				</button>
 			{/if}
 
@@ -747,7 +745,7 @@ onDestroy(() => {
 				type="button"
 				onclick={() => (isFocusMode = !isFocusMode)}
 				class="text-xs px-3 py-1.5 rounded-lg border border-(--line-divider) flex items-center gap-1.5 transition-colors cursor-pointer {isFocusMode ? 'bg-(--primary) text-white font-semibold shadow-md' : 'text-neutral-700 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/5'}"
-				title={isFocusMode ? "退出全屏 (ESC)" : "展开全屏沉浸模式"}
+				title={isFocusMode ? "退出全屏 (ESC)" : "全屏模式"}
 			>
 				{#if isFocusMode}
 					<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -758,27 +756,25 @@ onDestroy(() => {
 					<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
 					</svg>
-					<span>全屏沉浸模式</span>
+					<span>全屏模式</span>
 				{/if}
 			</button>
 
-			<!-- 提交到 GitHub 按钮 -->
+			<!-- 保存 / 发布按钮 -->
 			<button
 				type="button"
 				onclick={commitPostToGitHub}
 				disabled={isSubmitting}
-				class="text-xs px-4 py-1.5 rounded-lg bg-(--primary) text-white font-bold flex items-center gap-1.5 hover:opacity-90 shadow-md shadow-(--primary)/25 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+				class="text-xs px-4 py-1.5 rounded-lg bg-(--primary) text-white font-medium flex items-center gap-1.5 hover:opacity-90 shadow-md shadow-(--primary)/25 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
 			>
 				{#if isSubmitting}
 					<svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
 						<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 						<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
 					</svg>
-					<span>推送中...</span>
-				{:else if editingOriginalSlug}
-					<span>💾 保存并更新文章 (提交至 GitHub)</span>
+					<span>保存中...</span>
 				{:else}
-					<span>🚀 提交到 GitHub 内容仓</span>
+					<span>{editingOriginalSlug ? "保存文章" : "发布文章"}</span>
 				{/if}
 			</button>
 		</div>
@@ -844,7 +840,7 @@ onDestroy(() => {
 						}}
 						class="text-[11px] text-(--primary) hover:underline cursor-pointer"
 					>
-						{isCustomCategory ? "↩️ 从已有分类选择" : "➕ 自定义新分类"}
+						{isCustomCategory ? "从已有分类选择" : "输入新分类"}
 					</button>
 				</div>
 				<div class="flex gap-1.5">
@@ -872,7 +868,7 @@ onDestroy(() => {
 							{#each availableCategories as cat}
 								<option value={cat}>{cat}</option>
 							{/each}
-							<option value="__new__">➕ 输入全新分类...</option>
+							<option value="__new__">输入新分类...</option>
 						</select>
 					{/if}
 				</div>
@@ -937,7 +933,10 @@ onDestroy(() => {
 						{#if isUploadingCover}
 							<span>上传中...</span>
 						{:else}
-							<span>🖼️ 上传至 R2</span>
+							<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+							</svg>
+							<span>上传封面图</span>
 						{/if}
 					</button>
 				</div>
@@ -949,7 +948,7 @@ onDestroy(() => {
 					class="w-full text-xs px-3 py-2 rounded-xl border border-(--line-divider) bg-black/3 dark:bg-white/3 focus:outline-none focus:border-(--primary) text-neutral-800 dark:text-neutral-100 font-mono transition-colors"
 				/>
 				<p class="text-[10px] text-(--content-meta)">
-					💡 留空将自动使用全站配置的随机封面图（与之前保持完全一致）
+					留空将自动使用默认随机封面图
 				</p>
 			</div>
 
@@ -966,7 +965,7 @@ onDestroy(() => {
 								onchange={triggerDraftSave}
 								class="rounded text-(--primary) focus:ring-(--primary) cursor-pointer"
 							/>
-							<span>📌 置顶此文章</span>
+							<span>置顶文章</span>
 						</label>
 						<label class="flex items-center gap-1 text-[11px] text-(--content-meta) hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer select-none">
 							<input
@@ -975,7 +974,7 @@ onDestroy(() => {
 								onchange={triggerDraftSave}
 								class="rounded text-(--primary) focus:ring-(--primary) cursor-pointer"
 							/>
-							<span>📝 保存为草稿</span>
+							<span>保存为草稿</span>
 						</label>
 					</div>
 				</div>
@@ -1055,23 +1054,26 @@ onDestroy(() => {
 			class="p-1.5 rounded hover:bg-black/10 dark:hover:bg-white/10 text-xs cursor-pointer text-neutral-700 dark:text-neutral-300"
 			title="插入链接"
 		>
-			🔗 链接
+			链接
 		</button>
 		<span class="w-px h-4 bg-(--line-divider) mx-1"></span>
 
-		<!-- 直传插图到 R2 按钮 -->
+		<!-- 直传插图按钮 -->
 		<button
 			type="button"
 			onclick={() => inlineFileInput?.click()}
 			disabled={isUploadingImage}
 			class="px-2 py-1 rounded bg-(--primary)/10 text-(--primary) hover:bg-(--primary)/20 text-xs flex items-center gap-1 cursor-pointer transition-colors"
-			title="直传插图至 Cloudflare R2 并自动插入 Markdown"
+			title="上传插图并自动插入 Markdown"
 		>
 			{#if isUploadingImage}
-				<span class="animate-spin text-xs">⏳</span>
+				<span class="animate-spin text-xs">...</span>
 				<span>上传中...</span>
 			{:else}
-				<span>🖼️ 直传插图到 R2</span>
+				<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+				</svg>
+				<span>插入图片</span>
 			{/if}
 		</button>
 	</div>
@@ -1113,14 +1115,14 @@ onDestroy(() => {
 						{title}
 					</h1>
 					<div class="flex flex-wrap items-center gap-2 text-[11px] text-(--content-meta) mb-4 pb-2 border-b border-(--line-divider)">
-						<span>📂 {category || "未分类"}</span>
+						<span>{category || "未分类"}</span>
 						<span>·</span>
-						<span>🏷️ {tags.join(", ")}</span>
+						<span>{tags.join(", ")}</span>
 						{#if pinned}
-							<span class="px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-600 text-[10px] font-semibold">📌 置顶</span>
+							<span class="px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-600 text-[10px] font-semibold">置顶</span>
 						{/if}
 						{#if draft}
-							<span class="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-600 text-[10px]">📝 草稿模式</span>
+							<span class="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-600 text-[10px]">草稿</span>
 						{/if}
 					</div>
 				{/if}
@@ -1133,7 +1135,7 @@ onDestroy(() => {
 	</div>
 </div>
 
-<!-- 📚 已有文章选择抽屉 / 弹窗 (选择后载入修改) -->
+<!-- 已有文章选择抽屉 / 弹窗 (选择后载入修改) -->
 {#if showPostSelector}
 	<div class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/50 backdrop-blur-sm animate-in fade-in">
 		<div
@@ -1144,13 +1146,17 @@ onDestroy(() => {
 			<!-- 弹窗顶栏 -->
 			<div class="flex items-center justify-between px-5 py-4 border-b border-(--line-divider)">
 				<div class="flex items-center gap-2.5">
-					<span class="text-xl">📚</span>
+					<div class="w-8 h-8 rounded-lg bg-(--primary)/15 text-(--primary) flex items-center justify-center shrink-0">
+						<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+						</svg>
+					</div>
 					<div>
 						<h3 class="font-bold text-sm sm:text-base text-neutral-800 dark:text-neutral-100">
-							选择已有博客文章进行编辑
+							选择已有文章
 						</h3>
 						<p class="text-xs text-(--content-meta)">
-							点击任意文章，即可将完整 Markdown 正文与元数据载入编辑器中修改更新
+							选择文章载入编辑器中进行修改
 						</p>
 					</div>
 				</div>
@@ -1167,7 +1173,9 @@ onDestroy(() => {
 			<!-- 搜索框与分类过滤器 -->
 			<div class="p-4 border-b border-(--line-divider) bg-black/[0.02] dark:bg-white/[0.02] space-y-3">
 				<div class="relative">
-					<span class="absolute left-3 top-2.5 text-(--content-meta) text-xs">🔍</span>
+					<svg class="w-3.5 h-3.5 absolute left-3 top-2.5 text-(--content-meta)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+					</svg>
 					<input
 						type="text"
 						bind:value={postSearchQuery}
@@ -1199,11 +1207,10 @@ onDestroy(() => {
 							<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 							<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 						</svg>
-						<p class="text-xs">正在拉取全站文章列表与正文...</p>
+						<p class="text-xs">正在加载文章列表...</p>
 					</div>
 				{:else if filteredExistingPosts.length === 0}
 					<div class="py-12 text-center text-(--content-meta) text-xs">
-						<span class="text-3xl block mb-2 opacity-50">🔍</span>
 						<p>未找到匹配的文章</p>
 					</div>
 				{:else}
@@ -1227,11 +1234,11 @@ onDestroy(() => {
 								</div>
 
 								<div class="flex items-center gap-2 text-[11px] text-(--content-meta) flex-wrap">
-									<span>📅 {post.publishedDate}</span>
+									<span>{post.publishedDate}</span>
 									<span>·</span>
-									<span class="px-1.5 py-0.2 rounded bg-black/5 dark:bg-white/5">📂 {post.category}</span>
+									<span class="px-1.5 py-0.2 rounded bg-black/5 dark:bg-white/5">{post.category}</span>
 									<span>·</span>
-									<span>📝 {post.wordCount} 字</span>
+									<span>{post.wordCount} 字</span>
 									<span class="font-mono opacity-60">Slug: {post.slug}</span>
 								</div>
 
@@ -1248,7 +1255,7 @@ onDestroy(() => {
 								onclick={() => selectPostToEdit(post)}
 								class="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-(--primary)/10 text-(--primary) hover:bg-(--primary) hover:text-white transition-all cursor-pointer shadow-xs"
 							>
-								✏️ 载入修改
+								编辑
 							</button>
 						</div>
 					{/each}

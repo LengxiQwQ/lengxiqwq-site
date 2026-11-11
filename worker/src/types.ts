@@ -192,3 +192,30 @@ export interface CommitPostPayload {
 	draft?: boolean;
 	pinned?: boolean;
 }
+
+/**
+ * 友链管理接口请求载荷
+ */
+export interface FriendDecisionPayload {
+	siteurl: string;
+	decision: "whitelisted" | "single" | "quarantined" | "normal";
+}
+
+export interface FriendTargetUrlPayload {
+	siteurl: string;
+	targetUrl: string;
+}
+
+export interface FriendProbeSinglePayload {
+	siteurl: string;
+	targetUrl?: string;
+}
+
+export interface AddFriendPayload {
+	title: string;
+	siteurl: string;
+	desc?: string;
+	imgurl?: string;
+	tags?: string[];
+	friendPageUrl?: string;
+}

@@ -309,23 +309,32 @@ onMount(() => {
 });
 </script>
 
-<div class="card-base p-5 md:p-6 rounded-(--radius-large) shadow-lg border border-(--line-divider)">
-	<div class="flex items-center justify-between mb-4 pb-3 border-b border-(--line-divider)">
-		<div class="flex items-center gap-2.5">
-			<span class="text-xl">📋</span>
-			<h3 class="font-bold text-base text-neutral-800 dark:text-neutral-100">
-				已发布说说管理与修改
-			</h3>
-			<span class="text-xs px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5 text-(--content-meta) font-mono">
-				共 {items.length} 条
-			</span>
+<div class="card-base p-5 md:p-6">
+	<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-(--line-divider) mb-4">
+		<div class="flex items-center gap-3">
+			<div class="w-9 h-9 rounded-xl bg-(--primary)/15 text-(--primary) flex items-center justify-center font-bold shrink-0">
+				<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+				</svg>
+			</div>
+			<div>
+				<h2 class="text-base font-bold text-neutral-800 dark:text-neutral-100 flex items-center gap-2">
+					说说列表
+					<span class="text-xs px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5 text-(--content-meta) font-mono font-normal">
+						共 {items.length} 条
+					</span>
+				</h2>
+				<p class="text-xs text-(--content-meta)">
+					管理已发布的历史动态，支持置顶、修改与删除
+				</p>
+			</div>
 		</div>
 
 		<button
 			type="button"
 			onclick={loadItems}
 			disabled={isLoading}
-			class="text-xs px-3 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 hover:bg-(--primary)/10 hover:text-(--primary) text-(--content-meta) transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+			class="text-xs px-3 py-1.5 rounded-xl border border-(--line-divider) text-neutral-700 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/5 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0 self-end sm:self-center"
 			title="刷新说说列表"
 		>
 			<svg class="w-3.5 h-3.5 {isLoading ? 'animate-spin' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -337,7 +346,7 @@ onMount(() => {
 
 	{#if actionError}
 		<div class="p-3 mb-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs flex items-center justify-between">
-			<span>⚠️ {actionError}</span>
+			<span>{actionError}</span>
 			<button type="button" onclick={() => actionError = ""} class="text-xs opacity-70 hover:opacity-100 cursor-pointer">✕</button>
 		</div>
 	{/if}
@@ -348,7 +357,7 @@ onMount(() => {
 				<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 				<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 			</svg>
-			<p class="text-xs">正在从 Worker D1 加载说说列表...</p>
+			<p class="text-xs">正在加载说说列表...</p>
 		</div>
 	{:else if errorMessage}
 		<div class="py-8 text-center text-red-500 text-xs">
@@ -363,20 +372,21 @@ onMount(() => {
 		</div>
 	{:else if items.length === 0}
 		<div class="py-12 text-center text-(--content-meta) text-sm">
-			<span class="text-3xl block mb-2 opacity-50">🍃</span>
-			<p>暂无任何已发布的动态说说</p>
-			<p class="text-xs opacity-70 mt-1">在上方发布器输入文字并点击发布即可记录瞬间</p>
+			<p>暂无已发布的说说</p>
+			<p class="text-xs opacity-70 mt-1">在上方输入文字并点击发布即可记录</p>
 		</div>
 	{:else}
 		<div class="space-y-4">
 			{#each items as item (item.id)}
 				{#if editingId === item.id}
-					<!-- ✏️ 内联就地修改模式卡片 -->
-					<div class="p-5 rounded-2xl border-2 border-(--primary) bg-(--primary)/[0.03] dark:bg-(--primary)/[0.05] shadow-md transition-all relative">
+					<!-- 内联修改模式卡片 -->
+					<div class="p-5 rounded-2xl border-2 border-(--primary) bg-(--primary)/[0.03] dark:bg-(--primary)/[0.05] transition-all relative">
 						<div class="flex items-center justify-between mb-3 pb-2 border-b border-(--primary)/20">
 							<div class="flex items-center gap-2">
-								<span class="text-base">✏️</span>
-								<h4 class="font-bold text-sm text-(--primary)">正在修改此条说说</h4>
+								<svg class="w-4 h-4 text-(--primary)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+								</svg>
+								<h4 class="font-bold text-sm text-(--primary)">修改说说</h4>
 								<span class="text-[11px] font-mono opacity-60">ID: {item.id}</span>
 							</div>
 
@@ -385,13 +395,13 @@ onMount(() => {
 								onclick={cancelEditing}
 								class="text-xs px-2.5 py-1 rounded-md text-(--content-meta) hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer"
 							>
-								✕ 取消
+								取消
 							</button>
 						</div>
 
 						{#if editErrorMessage}
 							<div class="p-2.5 mb-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 text-xs">
-								⚠️ {editErrorMessage}
+								{editErrorMessage}
 							</div>
 						{/if}
 
@@ -448,9 +458,12 @@ onMount(() => {
 												<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
 												<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
 											</svg>
-											<span>正在上传 R2...</span>
+											<span>正在上传...</span>
 										{:else}
-											<span>🖼️ 上传/追加配图</span>
+											<svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+											</svg>
+											<span>上传图片</span>
 										{/if}
 									</button>
 								</div>
@@ -482,8 +495,11 @@ onMount(() => {
 						<!-- 位置与置顶设置 -->
 						<div class="flex flex-wrap items-center justify-between gap-3 mt-3 pt-3 border-t border-(--line-divider)">
 							<div class="flex items-center gap-3">
-								<div class="flex items-center gap-1 text-xs">
-									<span class="text-(--content-meta)">📍</span>
+								<div class="flex items-center gap-1.5 text-xs">
+									<svg class="w-3.5 h-3.5 text-(--content-meta)" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+										<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+									</svg>
 									<input
 										type="text"
 										bind:value={editLocation}
@@ -498,7 +514,7 @@ onMount(() => {
 										bind:checked={editPinned}
 										class="rounded border-(--line-divider) text-(--primary) focus:ring-(--primary) cursor-pointer"
 									/>
-									<span>📌 置顶此条</span>
+									<span>置顶此说说</span>
 								</label>
 							</div>
 
@@ -526,21 +542,21 @@ onMount(() => {
 										</svg>
 										<span>保存中...</span>
 									{:else}
-										<span>💾 保存修改</span>
+										<span>保存修改</span>
 									{/if}
 								</button>
 							</div>
 						</div>
 					</div>
 				{:else}
-					<!-- 📖 普通展示卡片 -->
+					<!-- 普通展示卡片 -->
 					<div class="p-4 rounded-xl border border-(--line-divider) bg-black/[0.02] dark:bg-white/[0.02] hover:border-(--primary)/40 transition-all relative">
 						<!-- 条目顶部元信息 -->
 						<div class="flex items-center justify-between gap-2 mb-2 text-xs">
 							<div class="flex items-center gap-2 flex-wrap">
 								{#if item.pinned}
 									<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-(--primary)/15 text-(--primary) font-semibold text-[11px]">
-										📌 置顶
+										置顶
 									</span>
 								{/if}
 								<time class="text-(--content-meta)">
@@ -552,8 +568,12 @@ onMount(() => {
 									</span>
 								{/if}
 								{#if item.location}
-									<span class="text-(--content-meta) flex items-center gap-0.5">
-										📍 {item.location}
+									<span class="text-(--content-meta) flex items-center gap-1">
+										<svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+										</svg>
+										<span>{item.location}</span>
 									</span>
 								{/if}
 							</div>
@@ -596,7 +616,7 @@ onMount(() => {
 							</span>
 
 							<div class="flex items-center gap-2">
-								<!-- ✏️ 编辑说说按钮 -->
+								<!-- 编辑说说按钮 -->
 								<button
 									type="button"
 									onclick={() => startEditing(item)}
@@ -604,7 +624,7 @@ onMount(() => {
 									class="px-2.5 py-1 rounded-md text-xs font-medium bg-(--primary)/10 text-(--primary) hover:bg-(--primary)/20 transition-colors cursor-pointer"
 									title="修改此条说说的文字、图片或位置"
 								>
-									✏️ 修改说说
+									编辑
 								</button>
 
 								<!-- 切换置顶按钮 -->
@@ -614,7 +634,7 @@ onMount(() => {
 									disabled={processingId === item.id}
 									class="px-2.5 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer {item.pinned ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20' : 'bg-black/5 dark:bg-white/5 text-(--content-meta) hover:bg-(--primary)/15 hover:text-(--primary)'}"
 								>
-									{item.pinned ? "取消置顶" : "📌 置顶此条"}
+									{item.pinned ? "取消置顶" : "置顶"}
 								</button>
 
 								<!-- 删除按钮 -->
@@ -644,7 +664,7 @@ onMount(() => {
 										disabled={processingId === item.id}
 										class="px-2.5 py-1 rounded-md text-xs bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 font-medium transition-colors cursor-pointer"
 									>
-										🗑️ 删除
+										删除
 									</button>
 								{/if}
 							</div>

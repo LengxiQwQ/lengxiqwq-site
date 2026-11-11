@@ -1076,7 +1076,7 @@ export function applyBannerCarouselEnabledToDocument(enabled: boolean): void {
 
 // Card border functions
 export function getDefaultCardBorderEnabled(): boolean {
-	return siteConfig.card?.border ?? false;
+	return siteConfig.card?.border ?? true;
 }
 
 export function getStoredCardBorderEnabled(): boolean {
@@ -1107,7 +1107,7 @@ export function setCardBorderEnabled(enabled: boolean): void {
 
 // Card follow theme functions
 export function getDefaultCardFollowThemeEnabled(): boolean {
-	return siteConfig.card?.followTheme ?? false;
+	return siteConfig.card?.followTheme ?? true;
 }
 
 export function getStoredCardFollowThemeEnabled(): boolean {
