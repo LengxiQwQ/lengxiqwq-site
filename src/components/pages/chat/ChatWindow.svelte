@@ -57,11 +57,12 @@ interface Props {
 		mentionKeys: string[],
 		replyToUid?: string,
 	) => void;
+	onRecallMessage?: (msgUid: string) => void;
 	onDeleteMessage: (msgUid: string) => void;
 	onNotify?: (msg: string) => void;
 	onRequireAuth: () => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
-	onMentionUser: (name: string) => void;
+	onMentionUser: (name: string, userKey?: string) => void;
 }
 
 const {
@@ -97,6 +98,7 @@ const {
 	noticeText = "",
 	onToggleSettings,
 	onSendMessage,
+	onRecallMessage,
 	onDeleteMessage,
 	onNotify,
 	onRequireAuth,
@@ -117,7 +119,17 @@ let mentionMenuOpen = $state(false);
 let mentionQuery = $state("");
 let mentionTriggerStart = $state(-1);
 let mentionActiveIndex = $state(0);
-let selectedMentionMap = $state<Record<string, string>>({});
+let selectedMentionMap = $state<Record<string, string[]>>({});
+
+function addSelectedMentionKey(name: string, userKey?: string) {
+	if (!name || !userKey) return;
+	const existing = selectedMentionMap[name] ?? [];
+	if (existing.includes(userKey)) return;
+	selectedMentionMap = {
+		...selectedMentionMap,
+		[name]: [...existing, userKey],
+	};
+}
 
 let showMentionHistory = $state(false);
 let unreadMentionUids = $state<string[]>([]);
@@ -153,13 +165,23 @@ const skipVoteBanner = $derived.by(() => {
 	const hasVotedSkip = Boolean(
 		currentUser && current.skipVotes.includes(currentUser.userKey),
 	);
+	const otherUnmutedCount = onlineMembers.filter(
+		(m) =>
+			(!currentUser || m.userKey !== currentUser.userKey) &&
+			m.isMuted === false,
+	).length;
+	const canSkipAloneOrMuted =
+		Boolean(currentUser) &&
+		onlineMembers.length >= 2 &&
+		otherUnmutedCount === 0;
 
 	return {
 		voterLabel,
 		title: current.track.title,
 		voteCount,
 		voteThreshold,
-		canApproveSkip: isAdmin || isOwnRequest,
+		canApproveSkip:
+			isAdmin || isOwnRequest || current.isFallback || canSkipAloneOrMuted,
 		hasVotedSkip,
 	};
 });
@@ -172,6 +194,7 @@ const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
 let nowMs = $state(Date.now());
 
 let messageContainer: HTMLDivElement | null = $state(null);
+let messageContentEl: HTMLDivElement | null = $state(null);
 let inputEl: HTMLTextAreaElement | null = $state(null);
 let fileInputEl: HTMLInputElement | null = $state(null);
 let dockEl: HTMLDivElement | null = $state(null);
@@ -186,6 +209,8 @@ let highlightClearTimer: number | null = null;
 let unreadHighlightTimer: number | null = null;
 let lastRenderedVisibleLen = 0;
 let isStickyAtBottom = true;
+let lastScrollHeight = 0;
+let lastClientHeight = 0;
 
 function getLastSeenStorageKey(rId: string, uKey: string): string {
 	return `${LAST_SEEN_PREFIX}${rId}:${uKey}`;
@@ -337,8 +362,8 @@ function isMentionedToMe(msg: ChatMessageRecord): boolean {
 	) {
 		return false;
 	}
-	if (msg.mentionKeys?.includes(currentUser.userKey)) {
-		return true;
+	if (Array.isArray(msg.mentionKeys) && msg.mentionKeys.length > 0) {
+		return msg.mentionKeys.includes(currentUser.userKey);
 	}
 	const myName = currentUser.name.trim().toLowerCase();
 	return Boolean(
@@ -409,7 +434,39 @@ function getScrollGap(): number {
 	);
 }
 
+function snapScrollToBottom() {
+	if (!messageContainer) return;
+	messageContainer.scrollTop = messageContainer.scrollHeight;
+	lastScrollHeight = messageContainer.scrollHeight;
+	lastClientHeight = messageContainer.clientHeight;
+	isStickyAtBottom = true;
+	showScrollBottomBtn = false;
+	newMessagesWhileScrolled = 0;
+}
+
 function handleMessageScroll() {
+	if (!messageContainer) return;
+	const sh = messageContainer.scrollHeight;
+	const ch = messageContainer.clientHeight;
+	const layoutChanged =
+		(lastScrollHeight > 0 && sh !== lastScrollHeight) ||
+		(lastClientHeight > 0 && ch !== lastClientHeight);
+	lastScrollHeight = sh;
+	lastClientHeight = ch;
+
+	// 如果原本处于贴底状态，且本次 scroll 事件伴随容器/内容高度变化（例如平板 100dvh 稳定、软键盘弹起、图片撑开），
+	// 立即重新贴底，防止被浏览器当成用户手动上滑而脱离贴底锁定
+	if (
+		isStickyAtBottom &&
+		layoutChanged &&
+		!targetMessageUid &&
+		!highlightedMsgUid &&
+		!highlightUnreadDivider
+	) {
+		snapScrollToBottom();
+		return;
+	}
+
 	const gap = getScrollGap();
 	isStickyAtBottom = gap < 120;
 	showScrollBottomBtn = gap > 180;
@@ -432,19 +489,37 @@ function handleMessageScroll() {
 
 async function scrollToBottom(smooth = false) {
 	await tick();
-	if (messageContainer) {
+	if (!messageContainer) return;
+	if (smooth) {
 		messageContainer.scrollTo({
 			top: messageContainer.scrollHeight,
-			behavior: smooth ? "smooth" : "auto",
+			behavior: "smooth",
 		});
+		lastScrollHeight = messageContainer.scrollHeight;
+		lastClientHeight = messageContainer.clientHeight;
 		isStickyAtBottom = true;
 		showScrollBottomBtn = false;
 		newMessagesWhileScrolled = 0;
+		return;
 	}
+	snapScrollToBottom();
+	// 在平板及移动端上，视口高度（100dvh）与文本/弹性盒排版常在下一帧才完全收敛，
+	// 补一次 rAF 贴底确保初始进入和发图后精确停靠在最底部
+	requestAnimationFrame(() => {
+		if (
+			isStickyAtBottom &&
+			!targetMessageUid &&
+			!highlightedMsgUid &&
+			!highlightUnreadDivider
+		) {
+			snapScrollToBottom();
+		}
+	});
 }
 
 async function jumpToMessage(msgUid: string) {
 	showMentionHistory = false;
+	isStickyAtBottom = false;
 	showAllLoaded = true;
 	const targetMsg = messages.find((m) => m.msgUid === msgUid);
 	if (currentUser && targetMsg) {
@@ -470,10 +545,11 @@ async function jumpToMessage(msgUid: string) {
 	}
 	highlightClearTimer = window.setTimeout(() => {
 		highlightedMsgUid = "";
-	}, 1800);
+	}, 3800);
 }
 
 async function scrollToUnreadDivider() {
+	isStickyAtBottom = false;
 	showAllLoaded = true;
 	await tick();
 	const dividerEl = messageContainer?.querySelector<HTMLElement>(
@@ -498,6 +574,7 @@ async function scrollToUnreadDivider() {
 }
 
 function handleJumpToUnread() {
+	isStickyAtBottom = false;
 	if (hasUnloadedUnread) {
 		showAllLoaded = true;
 		onLoadHistory?.(sessionUnreadSince, true);
@@ -514,6 +591,7 @@ function dismissUnreadBar() {
 }
 
 async function handleExpandOlderMessages() {
+	isStickyAtBottom = false;
 	const prevHeight = messageContainer?.scrollHeight ?? 0;
 	const prevTop = messageContainer?.scrollTop ?? 0;
 	if (isLocalFolded) {
@@ -522,6 +600,8 @@ async function handleExpandOlderMessages() {
 		if (messageContainer) {
 			messageContainer.scrollTop =
 				prevTop + (messageContainer.scrollHeight - prevHeight);
+			lastScrollHeight = messageContainer.scrollHeight;
+			lastClientHeight = messageContainer.clientHeight;
 		}
 		return;
 	}
@@ -570,6 +650,52 @@ onMount(() => {
 
 	void scrollToBottom();
 
+	let rafSyncId: number | null = null;
+	const scheduleSnapIfSticky = () => {
+		if (
+			!isStickyAtBottom ||
+			targetMessageUid ||
+			highlightedMsgUid ||
+			highlightUnreadDivider
+		) {
+			return;
+		}
+		snapScrollToBottom();
+		if (rafSyncId !== null) window.cancelAnimationFrame(rafSyncId);
+		rafSyncId = window.requestAnimationFrame(() => {
+			rafSyncId = null;
+			if (
+				isStickyAtBottom &&
+				!targetMessageUid &&
+				!highlightedMsgUid &&
+				!highlightUnreadDivider
+			) {
+				snapScrollToBottom();
+			}
+		});
+	};
+
+	const resizeObserver =
+		typeof ResizeObserver !== "undefined"
+			? new ResizeObserver(() => {
+					scheduleSnapIfSticky();
+				})
+			: null;
+	if (messageContainer) {
+		resizeObserver?.observe(messageContainer);
+	}
+	if (messageContentEl) {
+		resizeObserver?.observe(messageContentEl);
+	}
+
+	const handleMediaLoad = (e: Event) => {
+		const target = e.target as HTMLElement | null;
+		if (target && (target.tagName === "IMG" || target.tagName === "VIDEO")) {
+			scheduleSnapIfSticky();
+		}
+	};
+	messageContainer?.addEventListener("load", handleMediaLoad, true);
+
 	const handlePointerDown = (e: PointerEvent) => {
 		const target = e.target as HTMLElement | null;
 		if (!target) return;
@@ -591,6 +717,9 @@ onMount(() => {
 	document.addEventListener("pointerdown", handlePointerDown);
 	document.addEventListener("keydown", handleDocKeydown);
 	return () => {
+		resizeObserver?.disconnect();
+		messageContainer?.removeEventListener("load", handleMediaLoad, true);
+		if (rafSyncId !== null) window.cancelAnimationFrame(rafSyncId);
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleDocKeydown);
 		if (alertAutoHideTimer !== null) window.clearTimeout(alertAutoHideTimer);
@@ -682,12 +811,6 @@ $effect(() => {
 				showScrollBottomBtn = getScrollGap() > 180;
 			}
 		}
-	}
-
-	if (visibleMessages.some((m) => m.attachments.length > 0)) {
-		void tick().then(() => {
-			document.dispatchEvent(new CustomEvent("chat:media-rendered"));
-		});
 	}
 
 	if (replyingTo && !msgs.some((m) => m.msgUid === replyingTo?.msgUid)) {
@@ -824,14 +947,48 @@ $effect(() => {
 	return () => observer.disconnect();
 });
 
+function syncInputHeight() {
+	if (!inputEl) return;
+	if (
+		typeof CSS !== "undefined" &&
+		typeof CSS.supports === "function" &&
+		CSS.supports("field-sizing", "content")
+	) {
+		if (inputEl.style.height) {
+			inputEl.style.height = "";
+		}
+		return;
+	}
+	inputEl.style.height = "auto";
+	inputEl.style.height = `${inputEl.scrollHeight}px`;
+}
+
+$effect(() => {
+	const _text = inputText;
+	const _el = inputEl;
+	if (!_el) return;
+	void tick().then(() => {
+		syncInputHeight();
+	});
+});
+
+$effect(() => {
+	const container = messageContainer;
+	if (!container || typeof ResizeObserver === "undefined") return;
+	const observer = new ResizeObserver(() => {
+		if (isStickyAtBottom && !targetMessageUid) {
+			container.scrollTop = container.scrollHeight;
+		}
+	});
+	observer.observe(container);
+	return () => observer.disconnect();
+});
+
 $effect(() => {
 	if (mentionEvent && mentionEvent.seq !== lastMentionSeq) {
 		lastMentionSeq = mentionEvent.seq;
 		if (mentionEvent.userKey) {
-			selectedMentionMap = {
-				...selectedMentionMap,
-				[mentionEvent.name]: mentionEvent.userKey,
-			};
+			addSelectedMentionKey(mentionEvent.name, mentionEvent.userKey);
 		}
 		insertAtCursor(
 			`${inputText && !inputText.endsWith(" ") ? " " : ""}@${mentionEvent.name} `,
@@ -888,10 +1045,7 @@ function selectMentionCandidate(candidate: ChatMentionCandidate) {
 	const suffix = inputText.slice(caret);
 	const inserted = `@${candidate.name} `;
 	inputText = `${prefix}${inserted}${suffix}`;
-	selectedMentionMap = {
-		...selectedMentionMap,
-		[candidate.name]: candidate.userKey,
-	};
+	addSelectedMentionKey(candidate.name, candidate.userKey);
 	mentionMenuOpen = false;
 	mentionTriggerStart = -1;
 	mentionQuery = "";
@@ -908,9 +1062,11 @@ function selectMentionCandidate(candidate: ChatMentionCandidate) {
 function collectMentionKeys(content: string): string[] {
 	const lower = content.toLowerCase();
 	const keys = new Set<string>();
-	for (const [name, key] of Object.entries(selectedMentionMap)) {
+	for (const [name, keyList] of Object.entries(selectedMentionMap)) {
 		if (lower.includes(`@${name.toLowerCase()}`)) {
-			keys.add(key);
+			for (const key of keyList) {
+				keys.add(key);
+			}
 		}
 	}
 	return Array.from(keys);
@@ -949,6 +1105,7 @@ function handleSend() {
 	inputText = "";
 	pendingImages = [];
 	replyingTo = null;
+	selectedMentionMap = {};
 	uploadError = "";
 	selectedMentionMap = {};
 	mentionMenuOpen = false;
@@ -1273,77 +1430,82 @@ function removePendingImage(index: number) {
     <div
       bind:this={messageContainer}
       onscroll={handleMessageScroll}
-      class="flex-1 overflow-y-auto custom-scrollbar px-4 md:px-5 py-4 min-h-0 space-y-3"
+      class="flex-1 overflow-y-auto custom-scrollbar px-4 md:px-5 py-4 min-h-0"
     >
-      {#if isLocalFolded || hasMoreHistory}
-        <div class="flex justify-center pb-1">
-          <button
-            type="button"
-            disabled={isLoadingHistory}
-            class="chat-history-expand-btn"
-            onclick={() => void handleExpandOlderMessages()}
-          >
-            {#if isLoadingHistory}
-              正在加载更早的消息...
-            {:else if isLocalFolded}
-              还有 {localFoldedCount} 条较早消息已折叠 · 点击展开
-            {:else}
-              ↑ 加载更早的历史消息
-            {/if}
-          </button>
-        </div>
-      {/if}
-
-      {#if renderedMessages.length === 0}
-        <div class="h-full flex flex-col items-center justify-center text-center py-8 text-xs text-[var(--chat-meta-color)]">
-          {#if messages.length > 0 && !showMusicNotices}
-            <p class="m-0">当前已隐藏聊天中的点歌记录，发条消息开启话题吧~</p>
-          {:else}
-            <p class="m-0">房间暂时很安静，发条消息或点首歌开启话题吧~</p>
-          {/if}
-        </div>
-      {:else}
-        {#each renderedMessages as msg (msg.msgUid)}
-          {#if firstUnreadMsgUid === msg.msgUid}
-            <div
-              data-unread-divider
-              class="chat-unread-divider {highlightUnreadDivider ? 'highlight' : ''}"
-              role="separator"
+      <div bind:this={messageContentEl} class="min-h-full flex flex-col gap-3">
+        {#if isLocalFolded || hasMoreHistory}
+          <div class="flex justify-center pb-1">
+            <button
+              type="button"
+              disabled={isLoadingHistory}
+              class="chat-history-expand-btn"
+              onclick={() => void handleExpandOlderMessages()}
             >
-              <span class="chat-unread-divider-line"></span>
-              <span class="chat-unread-divider-label">
-                上次 {formatUnreadTime(sessionUnreadSince)} 阅读到这里
-              </span>
-              <span class="chat-unread-divider-line"></span>
-            </div>
-          {/if}
-          {@const isSelf = Boolean(currentUser && msg.userKey === currentUser.userKey)}
-          {@const isAdmin = Boolean(currentUser?.isAdmin)}
-          {@const serverNow = nowMs + clockOffsetMs}
-          {@const canDelete = Boolean(
-            currentUser &&
-              msg.kind === "user" &&
-              (isAdmin ||
-                (isSelf && serverNow - msg.createdAt <= RECALL_WINDOW_MS)),
-          )}
-          {@const deleteLabel = isAdmin ? "删除" : "撤回"}
-          <ChatMessage
-            message={msg}
-            isSelf={isSelf}
-            isMentionedMe={isMentionedToMe(msg)}
-            isHighlighted={highlightedMsgUid === msg.msgUid}
-            currentUserName={currentUser?.name || ""}
-            canDelete={canDelete}
-            deleteLabel={deleteLabel}
-            stickerMap={stickerMap}
-            onDelete={onDeleteMessage}
-            onReply={msg.kind === "user" ? handleStartReply : undefined}
-            onJumpToMessage={handleJumpToReply}
-            onOpenUserProfile={onOpenUserProfile}
-            onMention={onMentionUser}
-          />
-        {/each}
-      {/if}
+              {#if isLoadingHistory}
+                正在加载更早的消息...
+              {:else if isLocalFolded}
+                还有 {localFoldedCount} 条较早消息已折叠 · 点击展开
+              {:else}
+                ↑ 加载更早的历史消息
+              {/if}
+            </button>
+          </div>
+        {/if}
+
+        {#if renderedMessages.length === 0}
+          <div class="flex-1 flex flex-col items-center justify-center text-center py-8 text-xs text-[var(--chat-meta-color)]">
+            {#if messages.length > 0 && !showMusicNotices}
+              <p class="m-0">当前已隐藏聊天中的点歌记录，发条消息开启话题吧~</p>
+            {:else}
+              <p class="m-0">房间暂时很安静，发条消息或点首歌开启话题吧~</p>
+            {/if}
+          </div>
+        {:else}
+          {#each renderedMessages as msg (msg.msgUid)}
+            {#if firstUnreadMsgUid === msg.msgUid}
+              <div
+                data-unread-divider
+                class="chat-unread-divider {highlightUnreadDivider ? 'highlight' : ''}"
+                role="separator"
+              >
+                <span class="chat-unread-divider-line"></span>
+                <span class="chat-unread-divider-label">
+                  上次 {formatUnreadTime(sessionUnreadSince)} 阅读到这里
+                </span>
+                <span class="chat-unread-divider-line"></span>
+              </div>
+            {/if}
+            {@const isSelf = Boolean(currentUser && msg.userKey === currentUser.userKey)}
+            {@const isAdmin = Boolean(currentUser?.isAdmin)}
+            {@const serverNow = nowMs + clockOffsetMs}
+            {@const canRecall = Boolean(
+              currentUser &&
+                msg.kind === "user" &&
+                (isAdmin ||
+                  (isSelf && serverNow - msg.createdAt <= RECALL_WINDOW_MS)),
+            )}
+            {@const canDelete = Boolean(
+              currentUser && msg.kind === "user" && isAdmin,
+            )}
+            <ChatMessage
+              message={msg}
+              isSelf={isSelf}
+              isMentionedMe={isMentionedToMe(msg)}
+              isHighlighted={highlightedMsgUid === msg.msgUid}
+              currentUserName={currentUser?.name || ""}
+              canRecall={canRecall}
+              canDelete={canDelete}
+              stickerMap={stickerMap}
+              onRecall={onRecallMessage}
+              onDelete={onDeleteMessage}
+              onReply={msg.kind === "user" ? handleStartReply : undefined}
+              onJumpToMessage={handleJumpToReply}
+              onOpenUserProfile={onOpenUserProfile}
+              onMention={onMentionUser}
+            />
+          {/each}
+        {/if}
+      </div>
     </div>
 
     {#if showScrollBottomBtn}
@@ -1382,28 +1544,6 @@ function removePendingImage(index: number) {
     <!-- 统一表情面板（纯图标 Tab）：1. 颜文字 -> 2. QQ -> 3. 贴纸 -->
     {#if activePopover === "emoji"}
       <div class="chat-emoji-popover chat-sticker-popover" role="dialog" aria-label="颜文字与表情贴纸">
-        <div class="chat-picker-tabs">
-          <button
-            type="button"
-            class="chat-picker-tab {activeEmojiTab === 'kaomoji' ? 'active' : ''}"
-            aria-label="颜文字"
-            onclick={() => (activeEmojiTab = "kaomoji")}
-          >
-            <span class="font-bold text-xs leading-none">OωO</span>
-          </button>
-
-          {#each orderedStickerPacks as pack (pack.id)}
-            <button
-              type="button"
-              class="chat-picker-tab {activeEmojiTab === pack.id ? 'active' : ''}"
-              aria-label={pack.displayName}
-              onclick={() => (activeEmojiTab = pack.id)}
-            >
-              <img src={pack.iconUrl} alt={pack.displayName} class="w-5 h-5 object-contain" />
-            </button>
-          {/each}
-        </div>
-
         <div class="chat-picker-body custom-scrollbar">
           {#if activeEmojiTab === "kaomoji"}
             <div class="space-y-2.5">
@@ -1432,23 +1572,60 @@ function removePendingImage(index: number) {
           {:else}
             {@const currentPack = orderedStickerPacks.find((p) => p.id === activeEmojiTab)}
             {#if currentPack}
-              <div class="grid grid-cols-5 sm:grid-cols-6 gap-1.5">
+              {@const isStickerPack = currentPack.category === "sticker"}
+              {@const isQQPack = currentPack.category === "qq"}
+              <div class={isStickerPack ? "grid grid-cols-4 sm:grid-cols-6 gap-2" : "grid grid-cols-8 sm:grid-cols-11 gap-1"}>
                 {#each currentPack.items as item (item.code)}
                   <button
                     type="button"
-                    class="chat-sticker-btn"
+                    class="chat-sticker-btn {isStickerPack ? 'chat-sticker-btn--sticker' : 'chat-sticker-btn--emoji'}"
                     title={item.name}
                     onclick={() => {
                       insertAtCursor(item.code);
                       activePopover = "none";
                     }}
                   >
-                    <img src={item.url} alt={item.name} loading="lazy" class="w-8 h-8 object-contain" />
+                    <img
+                      src={item.url}
+                      alt={item.name}
+                      loading="lazy"
+                      class={isStickerPack
+                        ? "w-14 h-14 sm:w-16 sm:h-16 max-w-full object-contain"
+                        : isQQPack
+                          ? "w-6 h-6 object-contain"
+                          : "w-[26px] h-[26px] object-contain"}
+                    />
                   </button>
                 {/each}
               </div>
             {/if}
           {/if}
+        </div>
+
+        <div class="chat-picker-tabs" role="tablist" aria-label="表情分类">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeEmojiTab === "kaomoji"}
+            class="chat-picker-tab {activeEmojiTab === 'kaomoji' ? 'active' : ''}"
+            aria-label="颜文字"
+            onclick={() => (activeEmojiTab = "kaomoji")}
+          >
+            <span class="font-bold text-xs leading-none">OωO</span>
+          </button>
+
+          {#each orderedStickerPacks as pack (pack.id)}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeEmojiTab === pack.id}
+              class="chat-picker-tab {activeEmojiTab === pack.id ? 'active' : ''}"
+              aria-label={pack.displayName}
+              onclick={() => (activeEmojiTab = pack.id)}
+            >
+              <img src={pack.iconUrl} alt={pack.displayName} class="w-5 h-5 object-contain" />
+            </button>
+          {/each}
         </div>
       </div>
     {/if}

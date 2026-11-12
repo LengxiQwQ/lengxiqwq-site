@@ -21,7 +21,7 @@ const stickerPackUrls = (commentConfig.waline?.emoji ?? []).filter(
 );
 ---
 
-<MainGridLayout title="聊天" description="实时聊天室">
+<MainGridLayout title="聊天室" description="实时聊天室">
     {/* 首帧前（body 解析前）同步激活聊天页隔离标记与外观缓存，彻底避免刷新时闪现旧模板；Swup 软切换由 swup-transitions.ts 原子接管 */}
     <script is:inline slot="head" data-swup-ignore-script>
         (function () {

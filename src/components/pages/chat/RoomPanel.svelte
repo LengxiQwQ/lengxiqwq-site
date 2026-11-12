@@ -192,7 +192,7 @@ function formatOfflineTime(ts: number): string {
                     </span>
                   </div>
                   <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
-                    {member.authType === "waline" ? "已认证" : "访客"} · {member.status}
+                    {member.status}
                   </span>
                 </div>
               </div>
@@ -268,7 +268,7 @@ function formatOfflineTime(ts: number): string {
                     </span>
                   </div>
                   <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
-                    {member.authType === "waline" ? "已认证" : "访客"} · {formatOfflineTime(member.lastSeenAt)}
+                    {formatOfflineTime(member.lastSeenAt)}
                   </span>
                 </div>
               </div>
@@ -307,7 +307,7 @@ function formatOfflineTime(ts: number): string {
             </span>
           </div>
           <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
-            {currentUser.authType === "waline" ? "已认证" : "访客"} · {currentUser.status || "在线"}
+            {currentUser.status || "在线"}
           </span>
         </div>
       </button>

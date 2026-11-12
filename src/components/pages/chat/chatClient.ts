@@ -23,6 +23,7 @@ export interface RoomInitPacket {
 	type: "room:init";
 	roomId: string;
 	self: ChatSessionUser | null;
+	mergedGuestHistory?: boolean;
 	messages: ChatMessageRecord[];
 	hasMoreHistory?: boolean;
 	lastReadAt?: number;
@@ -38,7 +39,17 @@ export interface RoomInitPacket {
 export type ServerPacket =
 	| RoomInitPacket
 	| { type: "pong"; serverTime: number }
-	| { type: "auth:result"; user: ChatSessionUser | null }
+	| {
+			type: "auth:result";
+			user: ChatSessionUser | null;
+			mergedGuestHistory?: boolean;
+	  }
+	| {
+			type: "member:merged";
+			roomId: string;
+			fromUserKeys: string[];
+			user: ChatSessionUser;
+	  }
 	| {
 			type: "presence:update";
 			roomId: string;
@@ -59,7 +70,12 @@ export type ServerPacket =
 	| { type: "chat:recalled"; roomId: string; msgUid: string }
 	| ({ type: "music:state"; roomId: string } & RoomMusicState)
 	| { type: "playlist:updated"; roomId: string }
-	| { type: "error"; code?: string; message: string };
+	| {
+			type: "error";
+			code?: string;
+			authKind?: "waline" | "guest";
+			message: string;
+	  };
 
 export function normalizeServerUrl(raw?: string): string {
 	return (raw || "").trim().replace(/\/+$/, "");
@@ -195,12 +211,18 @@ export function persistWalineCommentMeta(meta: StoredGuestMeta): void {
 	}
 }
 
-export function persistGuestAuth(token: string, meta: StoredGuestMeta): void {
+export function persistGuestAuth(
+	token: string,
+	meta: StoredGuestMeta,
+	options?: { skipCommentMeta?: boolean },
+): void {
 	if (typeof localStorage === "undefined") return;
 	try {
 		localStorage.setItem(GUEST_TOKEN_STORAGE_KEY, token);
 		localStorage.setItem(GUEST_EMAIL_STORAGE_KEY, JSON.stringify(meta));
-		persistWalineCommentMeta(meta);
+		if (!options?.skipCommentMeta) {
+			persistWalineCommentMeta(meta);
+		}
 	} catch {
 		// Ignore
 	}
@@ -324,8 +346,16 @@ export function openWalineLoginPopup(
 	walineServerUrl: string,
 	onSuccess: (token: string) => void,
 	onCancel?: () => void,
+	onBlocked?: () => void,
 ): () => void {
 	const base = normalizeServerUrl(walineServerUrl);
+	let walineOrigin = "";
+	try {
+		walineOrigin = new URL(base).origin;
+	} catch {
+		walineOrigin = "";
+	}
+	const initialToken = readStoredWalineToken();
 	const width = 960;
 	const height = 620;
 	const left = Math.max(
@@ -345,6 +375,7 @@ export function openWalineLoginPopup(
 	);
 
 	if (!popup) {
+		onBlocked?.();
 		onCancel?.();
 		return () => {};
 	}
@@ -356,6 +387,8 @@ export function openWalineLoginPopup(
 	};
 
 	const onMessage = (event: MessageEvent) => {
+		if (walineOrigin && event.origin !== walineOrigin) return;
+		if (event.source && event.source !== popup) return;
 		const payload = event.data as {
 			type?: string;
 			data?: {
@@ -406,7 +439,7 @@ export function openWalineLoginPopup(
 			finished = true;
 			cleanup();
 			const maybeToken = readStoredWalineToken();
-			if (maybeToken) {
+			if (maybeToken && maybeToken !== initialToken) {
 				onSuccess(maybeToken);
 			} else {
 				onCancel?.();
@@ -422,12 +455,14 @@ export function openWalineLoginPopup(
 
 export async function registerGuestSession(
 	chatServerUrl: string,
-	input: StoredGuestMeta,
+	input: StoredGuestMeta & { room?: string; allowSplitGuest?: boolean },
 ): Promise<{
 	ok: boolean;
 	token?: string;
 	user?: ChatSessionUser;
 	error?: string;
+	code?: string;
+	allowSplitGuest?: boolean;
 }> {
 	const base = normalizeServerUrl(chatServerUrl);
 	if (!base) {
@@ -444,11 +479,28 @@ export async function registerGuestSession(
 			token?: string;
 			user?: ChatSessionUser;
 			error?: string;
+			code?: string;
+			allowSplitGuest?: boolean;
 		};
 		if (!resp.ok || !data.ok || !data.token || !data.user) {
-			return { ok: false, error: data.error || "访客认证失败" };
+			return {
+				ok: false,
+				error: data.error || "访客认证失败",
+				code: data.code,
+				allowSplitGuest: resp.status === 403 ? false : data.allowSplitGuest,
+			};
 		}
-		persistGuestAuth(data.token, input);
+		persistGuestAuth(
+			data.token,
+			{
+				nickname: input.nickname,
+				email: input.email,
+				url: input.url,
+			},
+			{
+				skipCommentMeta: Boolean(data.user.isolated || input.allowSplitGuest),
+			},
+		);
 		return { ok: true, token: data.token, user: data.user };
 	} catch {
 		return { ok: false, error: "网络异常，无法连接聊天室服务端" };

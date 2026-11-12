@@ -1,6 +1,7 @@
 <script lang="ts">
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
+import { openChatImageLightbox } from "./chatLightbox";
 import type { ChatMessageRecord, ChatUserDetailSeed } from "./chatTypes";
 import {
 	formatChatReplyPreview,
@@ -14,14 +15,15 @@ interface Props {
 	isMentionedMe?: boolean;
 	isHighlighted?: boolean;
 	currentUserName?: string;
+	canRecall?: boolean;
 	canDelete?: boolean;
-	deleteLabel?: string;
 	stickerMap: Map<string, StickerItem>;
+	onRecall?: (msgUid: string) => void;
 	onDelete?: (msgUid: string) => void;
 	onReply?: (message: ChatMessageRecord) => void;
 	onJumpToMessage?: (msgUid: string) => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
-	onMention?: (name: string) => void;
+	onMention?: (name: string, userKey?: string) => void;
 }
 
 const {
@@ -30,9 +32,10 @@ const {
 	isMentionedMe = false,
 	isHighlighted = false,
 	currentUserName = "",
+	canRecall = false,
 	canDelete = false,
-	deleteLabel = "撤回",
 	stickerMap,
+	onRecall,
 	onDelete,
 	onReply,
 	onJumpToMessage,
@@ -49,7 +52,7 @@ const stickerSegments = $derived(
 );
 const isStickerOnly = $derived(
 	message.attachments.length === 0 &&
-		stickerSegments.length > 0 &&
+		stickerSegments.some((seg) => seg.category === "sticker") &&
 		segments.every(
 			(seg) =>
 				seg.kind === "sticker" ||
@@ -87,6 +90,72 @@ const roleBadge = $derived.by(() => {
 		? { label: message.badge, type: message.badgeType }
 		: null;
 });
+interface RecallNoticeParsed {
+	actorName: string;
+	targetName?: string;
+}
+
+const recallNoticeParsed = $derived.by<RecallNoticeParsed | null>(() => {
+	if (message.kind !== "system") return null;
+	const content = message.content?.trim() || "";
+	const adminMatch = content.match(/^(.+?)\s+撤回了\s+(.+?)\s+的一条消息$/);
+	if (adminMatch) {
+		return {
+			actorName: adminMatch[1].trim(),
+			targetName: adminMatch[2].trim(),
+		};
+	}
+	const selfMatch = content.match(/^(.+?)\s+撤回了一条消息$/);
+	if (selfMatch) {
+		return {
+			actorName: selfMatch[1].trim(),
+		};
+	}
+	return null;
+});
+
+function handleOpenSystemUserProfile(name: string, explicitUserKey?: string) {
+	if (!onOpenUserProfile) return;
+	const cleanName = name.trim();
+	const key =
+		explicitUserKey ||
+		(message.userKey && (!message.name || message.name === cleanName)
+			? message.userKey
+			: "");
+	const useMessageMeta = Boolean(key && key === message.userKey);
+	onOpenUserProfile({
+		userKey: key,
+		name: cleanName || "成员",
+		avatar: useMessageMeta ? message.avatar : undefined,
+		url: useMessageMeta ? message.url : undefined,
+		badge: useMessageMeta ? roleBadge?.label || message.badge : undefined,
+		badgeType: useMessageMeta
+			? roleBadge?.type || message.badgeType
+			: undefined,
+		isAdmin: useMessageMeta ? message.isAdmin : undefined,
+		authType: key
+			? key.startsWith("waline:")
+				? "waline"
+				: "guest"
+			: undefined,
+	});
+}
+
+function handleOpenProfileForReplyTo() {
+	if (!onOpenUserProfile || !message.replyTo) return;
+	const rep = message.replyTo;
+	if (!rep.userKey && !rep.name) return;
+	onOpenUserProfile({
+		userKey: rep.userKey || "",
+		name: rep.name || "用户",
+		authType: rep.userKey
+			? rep.userKey.startsWith("waline:")
+				? "waline"
+				: "guest"
+			: undefined,
+	});
+}
+
 function handleAvatarClick() {
 	if (onOpenUserProfile && message.userKey) {
 		onOpenUserProfile({
@@ -102,7 +171,7 @@ function handleAvatarClick() {
 		return;
 	}
 	if (!isSelf) {
-		onMention?.(message.name);
+		onMention?.(message.name, message.userKey);
 	}
 }
 </script>
@@ -112,10 +181,16 @@ function handleAvatarClick() {
     <button
       type="button"
       class="chat-reply-quote {isSelf ? 'self' : 'other'} {message.replyTo.isRecalled ? 'recalled' : ''}"
-      title={message.replyTo.isRecalled ? "原消息已撤回" : "点击定位到原消息"}
+      title={message.replyTo.isRecalled
+        ? `原消息已撤回 · 点击查看 ${message.replyTo.name || "用户"} 的个人资料`
+        : "点击定位到原消息"}
       onclick={() => {
-        if (message.replyTo && !message.replyTo.isRecalled) {
-          onJumpToMessage?.(message.replyTo.msgUid);
+        if (message.replyTo) {
+          if (!message.replyTo.isRecalled) {
+            onJumpToMessage?.(message.replyTo.msgUid);
+          } else {
+            handleOpenProfileForReplyTo();
+          }
         }
       }}
     >
@@ -129,7 +204,30 @@ function handleAvatarClick() {
   <div class="w-full flex justify-center my-1.5">
     <div class="chat-system-msg">
       <span class="w-1.5 h-1.5 rounded-full bg-[var(--primary)] opacity-80 shrink-0"></span>
-      <span>{message.content}</span>
+      {#if recallNoticeParsed}
+        <span class="inline-flex flex-wrap items-center justify-center gap-x-1">
+          <button
+            type="button"
+            class="chat-system-msg-link"
+            title={`查看 ${recallNoticeParsed.actorName} 的个人资料`}
+            onclick={() => handleOpenSystemUserProfile(recallNoticeParsed.actorName, message.userKey)}
+          >{recallNoticeParsed.actorName}</button>
+          {#if recallNoticeParsed.targetName}
+            <span>撤回了</span>
+            <button
+              type="button"
+              class="chat-system-msg-link"
+              title={`查看 ${recallNoticeParsed.targetName} 的个人资料`}
+              onclick={() => handleOpenSystemUserProfile(recallNoticeParsed.targetName || "", message.mentionKeys?.[0])}
+            >{recallNoticeParsed.targetName}</button>
+            <span>的一条消息</span>
+          {:else}
+            <span>撤回了一条消息</span>
+          {/if}
+        </span>
+      {:else}
+        <span>{message.content}</span>
+      {/if}
     </div>
   </div>
 {:else if isSelf}
@@ -150,7 +248,7 @@ function handleAvatarClick() {
     </button>
 
     <div class="flex flex-col items-end max-w-[74%] min-w-0">
-      {#if message.name || roleBadge || onReply || (canDelete && onDelete)}
+      {#if message.name || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
         <div class="flex items-center justify-end gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if canDelete && onDelete}
             <button
@@ -158,7 +256,16 @@ function handleAvatarClick() {
               class="chat-msg-action-btn hover:text-red-500"
               onclick={() => onDelete?.(message.msgUid)}
             >
-              {deleteLabel}
+              删除
+            </button>
+          {/if}
+          {#if canRecall && onRecall}
+            <button
+              type="button"
+              class="chat-msg-action-btn hover:text-[var(--primary)]"
+              onclick={() => onRecall?.(message.msgUid)}
+            >
+              撤回
             </button>
           {/if}
           {#if onReply}
@@ -190,8 +297,10 @@ function handleAvatarClick() {
                 src={seg.url}
                 alt={seg.alt}
                 title={seg.alt}
-                class="chat-sticker-large {stickerSegments.length === 1 ? 'single' : ''}"
-                loading="lazy"
+                decoding="async"
+                class={seg.category === "sticker"
+                  ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
+                  : `chat-sticker chat-sticker--${seg.category}`}
               />
             {/each}
           </div>
@@ -215,13 +324,17 @@ function handleAvatarClick() {
               {#each message.attachments as att (att.url)}
                 <a
                   href={att.url}
-                  data-fancybox="chat-images"
-                  class="block overflow-hidden rounded-lg border border-black/10 dark:border-white/10"
+                  data-chat-image={att.url}
+                  class="block overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
+                  onclick={(e) => {
+                    e.preventDefault();
+                    void openChatImageLightbox(att.url, e.currentTarget);
+                  }}
                 >
                   <img
                     src={att.url}
                     alt="聊天图片"
-                    loading="lazy"
+                    decoding="async"
                     class="chat-msg-image"
                   />
                 </a>
@@ -256,7 +369,7 @@ function handleAvatarClick() {
     </button>
 
     <div class="flex flex-col items-start max-w-[74%] min-w-0">
-      {#if message.name || roleBadge || onReply || (canDelete && onDelete)}
+      {#if message.name || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if message.url}
             <a
@@ -286,13 +399,22 @@ function handleAvatarClick() {
               回复
             </button>
           {/if}
+          {#if canRecall && onRecall}
+            <button
+              type="button"
+              class="chat-msg-action-btn hover:text-[var(--primary)]"
+              onclick={() => onRecall?.(message.msgUid)}
+            >
+              撤回
+            </button>
+          {/if}
           {#if canDelete && onDelete}
             <button
               type="button"
               class="chat-msg-action-btn hover:text-red-500"
               onclick={() => onDelete?.(message.msgUid)}
             >
-              {deleteLabel}
+              删除
             </button>
           {/if}
         </div>
@@ -309,8 +431,10 @@ function handleAvatarClick() {
                 src={seg.url}
                 alt={seg.alt}
                 title={seg.alt}
-                class="chat-sticker-large {stickerSegments.length === 1 ? 'single' : ''}"
-                loading="lazy"
+                decoding="async"
+                class={seg.category === "sticker"
+                  ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
+                  : `chat-sticker chat-sticker--${seg.category}`}
               />
             {/each}
           </div>
@@ -334,13 +458,17 @@ function handleAvatarClick() {
               {#each message.attachments as att (att.url)}
                 <a
                   href={att.url}
-                  data-fancybox="chat-images"
-                  class="block overflow-hidden rounded-lg border border-black/10 dark:border-white/10"
+                  data-chat-image={att.url}
+                  class="block overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
+                  onclick={(e) => {
+                    e.preventDefault();
+                    void openChatImageLightbox(att.url, e.currentTarget);
+                  }}
                 >
                   <img
                     src={att.url}
                     alt="聊天图片"
-                    loading="lazy"
+                    decoding="async"
                     class="chat-msg-image"
                   />
                 </a>

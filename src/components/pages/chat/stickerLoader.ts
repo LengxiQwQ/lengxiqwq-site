@@ -1,20 +1,45 @@
+export type StickerCategory = "qq" | "emoji" | "sticker";
+
 export interface StickerItem {
 	code: string;
 	name: string;
 	url: string;
+	category: StickerCategory;
 }
 
 export interface StickerPack {
 	id: string;
 	name: string;
 	iconUrl: string;
+	category: StickerCategory;
 	items: StickerItem[];
 }
 
 export type ChatContentSegment =
 	| { kind: "text"; text: string }
 	| { kind: "mention"; text: string; target: string }
-	| { kind: "sticker"; code: string; url: string; alt: string };
+	| {
+			kind: "sticker";
+			code: string;
+			url: string;
+			alt: string;
+			category: StickerCategory;
+	  };
+
+function resolveStickerCategory(
+	baseUrl: string,
+	prefix: string,
+): StickerCategory {
+	const lowerUrl = baseUrl.toLowerCase();
+	const lowerPrefix = prefix.toLowerCase();
+	if (lowerUrl.endsWith("/qq") || lowerPrefix === "qq_") {
+		return "qq";
+	}
+	if (lowerUrl.endsWith("/bmoji") || lowerPrefix === "bmoji_") {
+		return "emoji";
+	}
+	return "sticker";
+}
 
 interface RawStickerManifest {
 	name?: string;
@@ -53,10 +78,12 @@ export async function loadStickerPacks(
 				const itemsRaw = Array.isArray(manifest.items) ? manifest.items : [];
 				if (itemsRaw.length === 0) continue;
 
+				const category = resolveStickerCategory(baseUrl, prefix);
 				const items: StickerItem[] = itemsRaw.map((itemName) => ({
 					code: `:${prefix}${itemName}:`,
 					name: itemName,
 					url: `${baseUrl}/${encodeURIComponent(`${prefix}${itemName}`)}.${ext}`,
+					category,
 				}));
 
 				const iconName = manifest.icon || itemsRaw[0];
@@ -65,6 +92,7 @@ export async function loadStickerPacks(
 					id: baseUrl,
 					name: manifest.name || "表情包",
 					iconUrl,
+					category,
 					items,
 				});
 			} catch {
@@ -134,6 +162,7 @@ export function parseChatSegments(
 					code: sticker.code,
 					url: sticker.url,
 					alt: sticker.name,
+					category: sticker.category,
 				});
 			} else {
 				segments.push({ kind: "text", text: token });

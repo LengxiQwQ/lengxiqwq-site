@@ -54,6 +54,13 @@ const roleBadge = $derived.by(() => {
 	return { label: "访客", type: "tag" as const, hint: "访客登录固定头衔" };
 });
 
+const isIsolatedGuest = $derived(
+	Boolean(
+		currentUser?.authType === "guest" &&
+			(currentUser?.isolated || currentUser?.userKey.startsWith("guest:iso_")),
+	),
+);
+
 $effect(() => {
 	if (open && currentUser) {
 		draftNickname = currentUser.name;
@@ -62,7 +69,9 @@ $effect(() => {
 		draftBio = currentUser.bio || "";
 		draftUrl = currentUser.url || "";
 		draftAvatar = currentUser.avatar || "";
-		draftNotifyEmail = currentUser.notifyEmail !== false;
+		draftNotifyEmail = isIsolatedGuest
+			? false
+			: currentUser.notifyEmail !== false;
 		initialAvatar = currentUser.avatar || "";
 		avatarEdited = false;
 	}
@@ -77,7 +86,7 @@ function handleSubmit(e: SubmitEvent) {
 		status: draftStatus.trim().slice(0, 16) || "在线",
 		bio: draftBio.trim().slice(0, 80),
 		url: draftUrl.trim().slice(0, 200),
-		notifyEmail: draftNotifyEmail,
+		notifyEmail: isIsolatedGuest ? false : draftNotifyEmail,
 	};
 	if (avatarEdited || draftAvatar.trim() !== initialAvatar) {
 		payload.avatar = draftAvatar.trim().slice(0, 400);
@@ -117,7 +126,7 @@ function handleSubmit(e: SubmitEvent) {
                 </span>
               </div>
               <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
-                {currentUser.authType === "waline" ? "已认证" : "访客"} · {draftStatus.trim() || "在线"}
+                {draftStatus.trim() || "在线"}
               </div>
             </div>
           </div>
@@ -268,18 +277,26 @@ function handleSubmit(e: SubmitEvent) {
                 <div class="min-w-0">
                   <div class="text-xs font-medium text-(--btn-content)">离线 @ 与回复邮件提醒</div>
                   <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
-                    不在线时有人 @ 或回复你，将发送摘要邮件至账号邮箱
+                    {#if isIsolatedGuest}
+                      独立临时身份未经邮箱所有权验证，已禁用离线邮件提醒，防止误发邮件
+                    {:else}
+                      不在线时有人 @ 或回复你，将发送摘要邮件至账号邮箱
+                    {/if}
                   </div>
                 </div>
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={draftNotifyEmail}
+                  aria-checked={isIsolatedGuest ? false : draftNotifyEmail}
                   aria-label="切换离线 @ 邮件提醒"
-                  class="p-0 border-none bg-transparent cursor-pointer shrink-0"
-                  onclick={() => (draftNotifyEmail = !draftNotifyEmail)}
+                  disabled={isIsolatedGuest}
+                  class="p-0 border-none bg-transparent shrink-0 {isIsolatedGuest ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}"
+                  onclick={() => {
+                    if (isIsolatedGuest) return;
+                    draftNotifyEmail = !draftNotifyEmail;
+                  }}
                 >
-                  <span class="chat-switch-track {draftNotifyEmail ? 'checked' : ''}" aria-hidden="true">
+                  <span class="chat-switch-track {!isIsolatedGuest && draftNotifyEmail ? 'checked' : ''}" aria-hidden="true">
                     <span class="chat-switch-thumb"></span>
                   </span>
                 </button>

@@ -138,6 +138,7 @@ export function restoreTextSegments(
 					code: sticker.code,
 					url: sticker.url,
 					alt: sticker.name,
+					category: sticker.category,
 				});
 			}
 		} else if (kind === "MNT") {

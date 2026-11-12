@@ -31,7 +31,7 @@ interface Props {
 	messages: ChatMessageRecord[];
 	musicHistoryLogs?: MusicHistoryLogEntry[];
 	onClose: () => void;
-	onMention: (name: string) => void;
+	onMention: (name: string, userKey?: string) => void;
 	onEditSelf: () => void;
 	onEnqueueTrack?: (track: ChatMusicTrack) => void;
 	onOpenPlaylist?: (playlistId: string) => void;
@@ -501,7 +501,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               class="chat-send-btn flex-1 h-9! rounded-xl! text-xs! truncate px-3!"
               onclick={() => {
                 onClose();
-                onMention(profile.name);
+                onMention(profile.name, profile.userKey);
               }}
             >
               @ {profile.name}

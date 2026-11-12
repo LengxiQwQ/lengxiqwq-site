@@ -11,6 +11,7 @@ export interface ChatSessionUser {
 	badge: string;
 	badgeType: BadgeType;
 	isAdmin: boolean;
+	isolated?: boolean;
 	status?: string;
 	bio?: string;
 	notifyEmail?: boolean;

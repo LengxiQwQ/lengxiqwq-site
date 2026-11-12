@@ -3,6 +3,8 @@ import { onMount, tick, untrack } from "svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import { formatClockSeconds } from "./chatClient";
 import type {
+	ChatMentionCandidate,
+	ChatOnlineMember,
 	ChatSessionUser,
 	ChatUserDetailSeed,
 	MusicHistoryEntry,
@@ -40,12 +42,15 @@ interface Props {
 	musicState: RoomMusicState | null;
 	currentUser: ChatSessionUser | null;
 	onlineMemberCount: number;
+	onlineMembers?: ChatOnlineMember[];
+	mentionMembers?: ChatMentionCandidate[];
 	clockOffsetMs: number;
 	initialVolume?: number;
 	onSearchOnline: (keyword: string) => Promise<ChatMusicTrack[]>;
 	onEnqueueTrack: (track: ChatMusicTrack) => void;
 	onRemoveQueue: (uid: string) => void;
 	onPlayQueued: (uid: string) => void;
+	isSkippingTrack?: boolean;
 	onSkipTrack: () => void;
 	onVoteSkip: () => void;
 	onReportDuration: (playUid: string, durationSec: number) => void;
@@ -84,12 +89,15 @@ const {
 	musicState = null,
 	currentUser = null,
 	onlineMemberCount = 0,
+	onlineMembers = [],
+	mentionMembers = [],
 	clockOffsetMs = 0,
 	initialVolume = 1,
 	onSearchOnline,
 	onEnqueueTrack,
 	onRemoveQueue,
 	onPlayQueued,
+	isSkippingTrack = false,
 	onSkipTrack,
 	onVoteSkip,
 	onReportDuration,
@@ -117,6 +125,7 @@ interface HistoryRequesterOption {
 	key: string;
 	name: string;
 	avatar: string;
+	badge: string;
 	trackCount: number;
 	totalRequests: number;
 	isMe: boolean;
@@ -129,6 +138,7 @@ let showRequesterFilter = $state(false);
 let isListening = $state(false);
 let hasJoinedAudio = $state(false);
 let isSyncingAudio = false;
+let syncAudioSeq = 0;
 let internalAudioAction = false;
 let playerPaneMode = $state<PlayerPaneMode>("split");
 let lyricsScrolling = $state(false);
@@ -291,18 +301,39 @@ const historyRequesters = $derived.by<HistoryRequesterOption[]>(() => {
 		}
 	}
 
+	const memberByKey = new Map<string, { badge: string; authType?: string }>();
+	for (const m of mentionMembers) {
+		memberByKey.set(m.userKey, { badge: m.badge, authType: m.authType });
+	}
+	for (const m of onlineMembers) {
+		memberByKey.set(m.userKey, { badge: m.badge, authType: m.authType });
+	}
+
 	return Array.from(peopleMap.values())
-		.map((p) => ({
-			key: p.key,
-			name:
-				currentUser && p.key === currentUser.userKey
-					? currentUser.name
-					: p.name,
-			avatar: p.avatar,
-			trackCount: p.tracks.size,
-			totalRequests: p.totalRequests,
-			isMe: Boolean(currentUser && p.key === currentUser.userKey),
-		}))
+		.map((p) => {
+			const meta = memberByKey.get(p.key);
+			const badge =
+				(currentUser && p.key === currentUser.userKey
+					? currentUser.badge
+					: meta?.badge) ||
+				(p.key.startsWith("waline:")
+					? "已认证"
+					: p.key.startsWith("guest:")
+						? "访客"
+						: "");
+			return {
+				key: p.key,
+				name:
+					currentUser && p.key === currentUser.userKey
+						? currentUser.name
+						: p.name,
+				avatar: p.avatar,
+				badge,
+				trackCount: p.tracks.size,
+				totalRequests: p.totalRequests,
+				isMe: Boolean(currentUser && p.key === currentUser.userKey),
+			};
+		})
 		.sort((a, b) => {
 			if (a.isMe !== b.isMe) return a.isMe ? -1 : 1;
 			return (
@@ -406,6 +437,32 @@ const volumeRatio = $derived(isListening ? volume : 0);
 
 const queuedTrackIds = $derived(new Set(queue.map((item) => item.track.id)));
 
+const currentRequesterAvatar = $derived.by(() => {
+	if (
+		!currentPlay ||
+		currentPlay.isFallback ||
+		!currentPlay.requesterKey ||
+		currentPlay.requesterKey === "system:fallback"
+	) {
+		return "";
+	}
+	if (
+		currentUser &&
+		currentPlay.requesterKey === currentUser.userKey &&
+		currentUser.avatar
+	) {
+		return currentUser.avatar;
+	}
+	const memberMatch = mentionMembers.find(
+		(m) => m.userKey === currentPlay.requesterKey && m.avatar,
+	);
+	if (memberMatch?.avatar) return memberMatch.avatar;
+	const logMatch = (musicState?.historyLogs ?? []).find(
+		(l) => l.requesterKey === currentPlay.requesterKey && l.requesterAvatar,
+	);
+	return logMatch?.requesterAvatar || "";
+});
+
 const isAdmin = $derived(Boolean(currentUser?.isAdmin));
 const isOwnRequest = $derived(
 	Boolean(
@@ -416,12 +473,25 @@ const isOwnRequest = $derived(
 	),
 );
 const isSoloMode = $derived(onlineMemberCount <= 1);
+const otherUnmutedCount = $derived(
+	onlineMembers.filter(
+		(m) =>
+			(!currentUser || m.userKey !== currentUser.userKey) &&
+			m.isMuted === false,
+	).length,
+);
 const canDirectSkip = $derived(
-	Boolean(currentUser && currentPlay) &&
-		(isAdmin || isOwnRequest || (isSoloMode && soloCooldownRemainSec === 0)),
+	Boolean(currentPlay) &&
+		(currentPlay.isFallback ||
+			(Boolean(currentUser) &&
+				(isAdmin ||
+					isOwnRequest ||
+					(isSoloMode && soloCooldownRemainSec === 0) ||
+					(!isSoloMode && otherUnmutedCount === 0)))),
 );
 const isSoloCoolingDown = $derived(
 	Boolean(currentUser && currentPlay) &&
+		!currentPlay.isFallback &&
 		!isAdmin &&
 		!isOwnRequest &&
 		isSoloMode &&
@@ -461,7 +531,7 @@ function canToggleCatalogTrack(song: ChatMusicTrack): boolean {
 }
 
 function switchMusicTab(tab: MusicTab) {
-	if (!currentUser && tab !== "player" && tab !== "playlist") {
+	if (!currentUser && tab !== "player") {
 		onRequestAuth?.();
 		return;
 	}
@@ -469,13 +539,16 @@ function switchMusicTab(tab: MusicTab) {
 }
 
 $effect(() => {
-	if (!currentUser && activeTab !== "player" && activeTab !== "playlist") {
+	if (!currentUser && activeTab !== "player") {
 		activeTab = "player";
 		searchQuery = "";
 		searchResults = [];
 		searchError = "";
 		selectedRequesterKey = "";
 		showRequesterFilter = false;
+		selectedPlaylist = null;
+		playlistTrackFilter = "";
+		confirmDeletePlaylistId = "";
 	}
 });
 
@@ -496,6 +569,20 @@ function formatPlaylistDate(ts: number): string {
 function canManagePlaylist(playlist: PlaylistSummary | null): boolean {
 	if (!playlist || !isWalineLoggedIn || !currentUser) return false;
 	return currentUser.isAdmin || playlist.ownerKey === currentUser.userKey;
+}
+
+function resolveSafeExternalUrl(raw?: string): string {
+	const trimmed = (raw || "").trim();
+	if (!trimmed) return "";
+	try {
+		const parsed = new URL(trimmed);
+		if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+			return parsed.toString();
+		}
+	} catch {
+		// Ignore non-URL source strings
+	}
+	return "";
 }
 
 async function loadPlaylists(): Promise<void> {
@@ -536,6 +623,10 @@ $effect(() => {
 		externalPlaylistRequest.seq !== lastExternalPlaylistSeq
 	) {
 		lastExternalPlaylistSeq = externalPlaylistRequest.seq;
+		if (!currentUser) {
+			onRequestAuth?.();
+			return;
+		}
 		activeTab = "playlist";
 		void openPlaylistDetail(externalPlaylistRequest.playlistId);
 	}
@@ -801,7 +892,9 @@ function handleRandomPlayFromPlaylist(detail: PlaylistDetail): void {
 	if (pool.length === 0) return;
 	const chosen = pool[Math.floor(Math.random() * pool.length)];
 	if (!chosen) return;
-	onEnqueueTrack(toEnqueueableTrack(chosen, detail.id));
+	const track = toEnqueueableTrack(chosen, detail.id);
+	markPendingAutoUnmuteIfImmediate(track.id);
+	onEnqueueTrack(track);
 }
 
 function normalizeMatchTitle(raw: string): string {
@@ -1150,7 +1243,8 @@ function muteLocally() {
 	}
 }
 
-async function seekAndPlayCurrent(el: HTMLAudioElement) {
+async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
+	const mySeq = ++syncAudioSeq;
 	isSyncingAudio = true;
 	try {
 		if (el.readyState < 1) {
@@ -1158,6 +1252,13 @@ async function seekAndPlayCurrent(el: HTMLAudioElement) {
 				el.addEventListener("loadedmetadata", () => resolve(), { once: true });
 				window.setTimeout(resolve, 1800);
 			});
+		}
+		if (
+			!isListening ||
+			syncAudioSeq !== mySeq ||
+			(expectedUid && currentPlay?.uid !== expectedUid)
+		) {
+			return;
 		}
 
 		const target = computeExpectedElapsed();
@@ -1173,18 +1274,39 @@ async function seekAndPlayCurrent(el: HTMLAudioElement) {
 				window.setTimeout(resolve, 900);
 			});
 		}
+		if (
+			!isListening ||
+			syncAudioSeq !== mySeq ||
+			(expectedUid && currentPlay?.uid !== expectedUid)
+		) {
+			return;
+		}
 		await el.play();
 		roomElapsed = computeExpectedElapsed();
-	} catch {
-		isListening = false;
-		el.muted = true;
+	} catch (err) {
+		const isSupersededOrAbort =
+			(err instanceof DOMException && err.name === "AbortError") ||
+			(expectedUid !== undefined && currentPlay?.uid !== expectedUid);
+		if (!isSupersededOrAbort) {
+			if (err instanceof DOMException && err.name === "NotAllowedError") {
+				isListening = false;
+				el.muted = true;
+			} else if (expectedUid && reportedErrorUid !== expectedUid) {
+				// 单曲音源失效（如 NotSupportedError）时仅上报切歌，不关闭用户的持续收听状态
+				reportedErrorUid = expectedUid;
+				onReportError(expectedUid);
+			}
+		}
 	} finally {
-		isSyncingAudio = false;
+		if (syncAudioSeq === mySeq) {
+			isSyncingAudio = false;
+		}
 	}
 }
 
 async function startOrResumeAudio() {
 	if (!audioEl || !currentPlay) return;
+	const targetUid = currentPlay.uid;
 	if (volume === 0) volume = 0.5;
 	hasJoinedAudio = true;
 	isListening = true;
@@ -1199,7 +1321,7 @@ async function startOrResumeAudio() {
 		internalAudioAction = false;
 	}, 50);
 
-	await seekAndPlayCurrent(audioEl);
+	await seekAndPlayCurrent(audioEl, targetUid);
 	updateMediaSessionMetadata();
 }
 
@@ -1209,6 +1331,48 @@ async function toggleListen() {
 		return;
 	}
 	await startOrResumeAudio();
+}
+
+let isDraggingVolume = $state(false);
+let volumeSliderEl: HTMLDivElement | null = $state(null);
+
+function updateVolumeFromPointer(clientX: number) {
+	if (!volumeSliderEl) return;
+	const rect = volumeSliderEl.getBoundingClientRect();
+	if (rect.width <= 0) return;
+	const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+	handleVolumeInput(Math.round(ratio * 100) / 100);
+}
+
+function handleVolumePointerDown(e: PointerEvent) {
+	if (e.button !== 0 && e.pointerType === "mouse") return;
+	e.preventDefault();
+	isDraggingVolume = true;
+	volumeSliderEl?.setPointerCapture(e.pointerId);
+	updateVolumeFromPointer(e.clientX);
+}
+
+function handleVolumePointerMove(e: PointerEvent) {
+	if (!isDraggingVolume) return;
+	updateVolumeFromPointer(e.clientX);
+}
+
+function handleVolumePointerEnd(e: PointerEvent) {
+	if (!isDraggingVolume) return;
+	isDraggingVolume = false;
+	if (volumeSliderEl?.hasPointerCapture(e.pointerId)) {
+		volumeSliderEl.releasePointerCapture(e.pointerId);
+	}
+}
+
+function handleVolumeKeyDown(e: KeyboardEvent) {
+	if (e.key === "ArrowLeft" || e.key === "ArrowDown") {
+		e.preventDefault();
+		handleVolumeInput(Math.round(Math.max(0, volumeRatio - 0.05) * 100) / 100);
+	} else if (e.key === "ArrowRight" || e.key === "ArrowUp") {
+		e.preventDefault();
+		handleVolumeInput(Math.round(Math.min(1, volumeRatio + 0.05) * 100) / 100);
+	}
 }
 
 function handleVolumeInput(value: number) {
@@ -1282,8 +1446,9 @@ $effect(() => {
 	void loadLyricsForUrl(active.track.lrcUrl || active.track.lrc);
 	updateMediaSessionMetadata();
 
+	const targetUid = active.uid;
 	void tick().then(async () => {
-		if (!audioEl) return;
+		if (!audioEl || currentPlay?.uid !== targetUid) return;
 		internalAudioAction = true;
 		audioEl.load();
 		window.setTimeout(() => {
@@ -1295,7 +1460,7 @@ $effect(() => {
 		} else if (isListening) {
 			audioEl.muted = false;
 			audioEl.volume = volume;
-			await seekAndPlayCurrent(audioEl);
+			await seekAndPlayCurrent(audioEl, targetUid);
 		}
 	});
 });
@@ -1339,6 +1504,14 @@ async function runSearch(q: string) {
 	}
 }
 
+function markPendingAutoUnmuteIfImmediate(songId: string): void {
+	// 当前没有歌或正在冷场轮播时，点歌会立即切播，自动取消静音开播；已有用户点播在放则保持静音
+	if ((!currentPlay || currentPlay.isFallback) && currentUser) {
+		pendingAutoUnmuteTrackId = songId;
+		pendingAutoUnmuteAt = Date.now();
+	}
+}
+
 function handleToggleQueueTrack(song: ChatMusicTrack) {
 	if (isTrackCurrent(song)) return;
 	const existing = findQueuedEntryForSong(song);
@@ -1346,11 +1519,7 @@ function handleToggleQueueTrack(song: ChatMusicTrack) {
 		if (!canRemoveEntry(existing)) return;
 		onRemoveQueue(existing.uid);
 	} else {
-		// 当前没有歌在播放时，自己点的第一首歌自动取消静音开播；已有歌在播则保持静音
-		if (!currentPlay && currentUser) {
-			pendingAutoUnmuteTrackId = song.id;
-			pendingAutoUnmuteAt = Date.now();
-		}
+		markPendingAutoUnmuteIfImmediate(song.id);
 		onEnqueueTrack(song);
 	}
 }
@@ -1460,13 +1629,20 @@ $effect(() => {
     ondurationchange={syncDurationFromAudio}
     oncanplay={syncDurationFromAudio}
     onpause={() => {
-      // 响应硬件耳机/系统后台暂停：自动转入“本地静音”态，不停止房间时钟
-      if (!internalAudioAction && isListening) {
-        isListening = false;
-        if (audioEl) audioEl.muted = true;
-        if (typeof navigator !== "undefined" && "mediaSession" in navigator && hasJoinedAudio) {
-          navigator.mediaSession.playbackState = "paused";
-        }
+      // 自然播完（ended）、曲目切换/校时中或内部主动暂停触发的 pause 不视为硬件暂停，保持收听状态不断开
+      if (
+        internalAudioAction ||
+        isSyncingAudio ||
+        !isListening ||
+        !currentPlay ||
+        audioEl?.ended
+      ) {
+        return;
+      }
+      isListening = false;
+      if (audioEl) audioEl.muted = true;
+      if (typeof navigator !== "undefined" && "mediaSession" in navigator && hasJoinedAudio) {
+        navigator.mediaSession.playbackState = "paused";
       }
     }}
     onended={() => {
@@ -1707,23 +1883,37 @@ $effect(() => {
               {currentPlay ? currentPlay.track.title : "未在播放"}
             </h3>
 
-            <div class="flex items-center gap-1.5 min-w-0 mt-0.5">
-              <span class="text-xs font-medium text-[var(--chat-meta-color)] truncate">
+            <div class="flex items-center gap-1.5 w-full min-w-0 mt-0.5 overflow-hidden">
+              <span class="min-w-0 text-xs font-medium text-[var(--chat-meta-color)] truncate">
                 {currentPlay ? currentPlay.track.artist : !musicState ? "正在连接电台..." : "暂无点播歌曲"}
               </span>
               {#if currentPlay}
-                {#if currentPlay.requesterKey && currentPlay.requesterKey !== "system:fallback" && onOpenUserProfile}
+                {@const isSystemFallback =
+                  currentPlay.isFallback || currentPlay.requesterKey === "system:fallback"}
+                {#if !isSystemFallback && currentPlay.requesterKey && onOpenUserProfile}
                   <button
                     type="button"
-                    class="shrink-0 text-[10px] font-medium px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)] hover:bg-(--primary)/20 border-none cursor-pointer transition-colors"
+                    class="inline-flex items-center justify-center gap-1.5 shrink-0 max-w-[min(10.5rem,62%)] h-[22px] pl-[3px] pr-2 py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)] hover:bg-(--primary)/20 border-none cursor-pointer transition-colors"
                     title={`查看 ${currentPlay.requesterName} 的个人资料`}
                     onclick={() => openRequesterProfile(currentPlay.requesterKey, currentPlay.requesterName)}
                   >
-                    点歌：{currentPlay.requesterName}
+                    <ChatAvatar
+                      src={currentRequesterAvatar}
+                      name={currentPlay.requesterName}
+                      size="2xs"
+                    />
+                    <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
                   </button>
                 {:else}
-                  <span class="shrink-0 text-[10px] font-medium px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
-                    点歌：{currentPlay.requesterName}
+                  <span class="inline-flex items-center justify-center gap-1.5 shrink-0 max-w-[min(10.5rem,62%)] h-[22px] {isSystemFallback ? 'px-2' : 'pl-[3px] pr-2'} py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                    {#if !isSystemFallback}
+                      <ChatAvatar
+                        src={currentRequesterAvatar}
+                        name={currentPlay.requesterName}
+                        size="2xs"
+                      />
+                    {/if}
+                    <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
                   </span>
                 {/if}
               {/if}
@@ -1755,20 +1945,25 @@ $effect(() => {
                     </svg>
                   {/if}
                 </button>
-                <div class="w-14 flex items-center">
-                  <div class="chat-slim-slider" style="--pct: {volumeRatio};">
+                <div class="w-16 flex items-center">
+                  <div
+                    bind:this={volumeSliderEl}
+                    role="slider"
+                    tabindex="0"
+                    aria-label="音量"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(volumeRatio * 100)}
+                    class="chat-slim-slider {isDraggingVolume ? 'chat-slim-slider--dragging' : ''}"
+                    style="--pct: {volumeRatio};"
+                    onpointerdown={handleVolumePointerDown}
+                    onpointermove={handleVolumePointerMove}
+                    onpointerup={handleVolumePointerEnd}
+                    onpointercancel={handleVolumePointerEnd}
+                    onkeydown={handleVolumeKeyDown}
+                  >
                     <div class="chat-slim-slider-fill"></div>
                     <div class="chat-slim-slider-thumb"></div>
-                    <input
-                      type="range"
-                      aria-label="音量"
-                      min="0"
-                      max="1"
-                      step="0.02"
-                      value={volumeRatio}
-                      class="chat-slim-slider-input"
-                      oninput={(e) => handleVolumeInput(Number(e.currentTarget.value))}
-                    />
                   </div>
                 </div>
               </div>
@@ -1802,14 +1997,22 @@ $effect(() => {
               {@const activeThreshold = musicState?.voteThreshold ?? 2}
               <button
                 type="button"
-                class="chat-skip-pill whitespace-nowrap {activeVotes > 0 ? 'voted' : ''}"
-                aria-label={activeVotes > 0 ? `已有 ${activeVotes}/${activeThreshold} 人投票切歌，点击立即切歌` : "切歌"}
-                title={activeVotes > 0 ? `已有 ${activeVotes}/${activeThreshold} 人投票切歌，点击立即切歌` : "切歌"}
+                disabled={isSkippingTrack}
+                class="chat-skip-pill whitespace-nowrap {activeVotes > 0 ? 'voted' : ''} disabled:opacity-75 disabled:cursor-wait!"
+                aria-label={isSkippingTrack ? "正在切歌..." : activeVotes > 0 ? `已有 ${activeVotes}/${activeThreshold} 人投票切歌，点击立即切歌` : "切歌"}
+                title={isSkippingTrack ? "正在切歌..." : activeVotes > 0 ? `已有 ${activeVotes}/${activeThreshold} 人投票切歌，点击立即切歌` : "切歌"}
                 onclick={onSkipTrack}
               >
-                <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-                </svg>
+                {#if isSkippingTrack}
+                  <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                  </svg>
+                {:else}
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                  </svg>
+                {/if}
                 <span>切歌</span>
               </button>
             {:else if isSoloCoolingDown}
@@ -1828,15 +2031,23 @@ $effect(() => {
             {:else}
               <button
                 type="button"
-                class="chat-skip-pill whitespace-nowrap {hasVotedSkip ? 'voted' : ''}"
+                disabled={isSkippingTrack}
+                class="chat-skip-pill whitespace-nowrap {hasVotedSkip ? 'voted' : ''} disabled:opacity-75 disabled:cursor-wait!"
                 aria-pressed={hasVotedSkip}
-                aria-label={hasVotedSkip ? "已投票切歌，点击取消" : "投票切歌"}
-                title={hasVotedSkip ? "已发起/投票切歌，点击可取消" : "发起或投票切歌"}
+                aria-label={isSkippingTrack ? "正在切歌..." : hasVotedSkip ? "已投票切歌，点击取消" : "投票切歌"}
+                title={isSkippingTrack ? "正在切歌..." : hasVotedSkip ? "已发起/投票切歌，点击可取消" : "发起或投票切歌"}
                 onclick={onVoteSkip}
               >
-                <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-                </svg>
+                {#if isSkippingTrack}
+                  <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                  </svg>
+                {:else}
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                  </svg>
+                {/if}
                 <span>{hasVotedSkip ? "已投" : "切歌"}</span>
               </button>
             {/if}
@@ -1904,17 +2115,20 @@ $effect(() => {
             style={playerPaneMode === "split" ? "flex: 56 1 0%;" : "flex: 1 1 0%;"}
           >
             {#if !currentPlay}
-              <div class="flex-1 flex flex-col items-center justify-center gap-2.5 py-4 text-center">
+              <div class="flex-1 flex flex-col items-center justify-center gap-3.5 py-4 text-center">
                 <p class="text-xs text-[var(--chat-meta-color)] m-0">
                   {!musicState ? "正在连接房间同步电台..." : "暂无播放歌曲，点一首歌和大家一起听吧~"}
                 </p>
                 {#if musicState}
                   <button
                     type="button"
-                    class="chat-queue-toggle-btn"
+                    class="chat-send-btn h-9! px-5! rounded-full! text-[13px]! gap-1.5"
                     onclick={() => switchMusicTab("search")}
                   >
-                    去点歌
+                    <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                    </svg>
+                    <span>去点歌</span>
                   </button>
                 {/if}
               </div>
@@ -1975,8 +2189,19 @@ $effect(() => {
             </div>
 
             {#if queue.length === 0}
-              <div class="flex-1 flex items-center justify-center text-xs text-[var(--chat-meta-color)]">
-                暂无待播歌曲
+              <div class="flex-1 flex flex-col items-center justify-center gap-1 text-center px-3">
+                {#if currentPlay?.isFallback}
+                  <span class="text-xs font-medium text-[var(--deep-text)]">
+                    正在冷场轮播
+                  </span>
+                  <span class="text-[11px] text-[var(--chat-meta-color)] leading-relaxed">
+                    背景音乐轮播中，点歌将立即切播 · 所有人可随时切歌
+                  </span>
+                {:else}
+                  <span class="text-xs text-[var(--chat-meta-color)]">
+                    暂无待播歌曲
+                  </span>
+                {/if}
               </div>
             {:else}
               <div
@@ -2242,7 +2467,7 @@ $effect(() => {
                   {#if pl.ownerAvatar}
                     <img src={pl.ownerAvatar} alt="" class="w-3 h-3 rounded-full object-cover shrink-0" />
                   {/if}
-                  <span class="truncate">分享：{pl.ownerName}</span>
+                  <span class="truncate">{pl.ownerName}</span>
                 </span>
               {:else if pl.updatedAt}
                 <span>· {formatPlaylistDate(pl.updatedAt)}</span>
@@ -2380,6 +2605,7 @@ $effect(() => {
     {/snippet}
 
     {#if selectedPlaylist}
+      {@const safeSourceUrl = resolveSafeExternalUrl(selectedPlaylist.sourceUrl)}
       <!-- 歌单详情视图 -->
       <div class="flex-1 min-h-0 flex flex-col">
         <div class="px-3 pt-2.5 pb-2 border-b border-[var(--chat-divider-color)] space-y-2 shrink-0">
@@ -2449,7 +2675,7 @@ $effect(() => {
                   {#if onOpenUserProfile && selectedPlaylist.ownerKey}
                     <button
                       type="button"
-                      class="bg-transparent border-none p-0 text-[10px] text-[var(--chat-accent-text)] hover:underline cursor-pointer truncate"
+                      class="inline-flex items-center gap-1 min-w-0 bg-transparent border-none p-0 text-[10px] text-[var(--chat-accent-text)] hover:underline cursor-pointer"
                       onclick={() =>
                         selectedPlaylist &&
                         openRequesterProfile(
@@ -2457,10 +2683,18 @@ $effect(() => {
                           selectedPlaylist.ownerName,
                         )}
                     >
-                      分享者：{selectedPlaylist.ownerName}
+                      {#if selectedPlaylist.ownerAvatar}
+                        <img src={selectedPlaylist.ownerAvatar} alt="" class="w-3 h-3 rounded-full object-cover shrink-0" />
+                      {/if}
+                      <span class="truncate">{selectedPlaylist.ownerName}</span>
                     </button>
                   {:else}
-                    <span class="truncate">分享者：{selectedPlaylist.ownerName}</span>
+                    <span class="inline-flex items-center gap-1 min-w-0">
+                      {#if selectedPlaylist.ownerAvatar}
+                        <img src={selectedPlaylist.ownerAvatar} alt="" class="w-3 h-3 rounded-full object-cover shrink-0" />
+                      {/if}
+                      <span class="truncate">{selectedPlaylist.ownerName}</span>
+                    </span>
                   {/if}
                 {/if}
                 {#if selectedPlaylist.retrievalMode === "preview"}
@@ -2489,10 +2723,31 @@ $effect(() => {
                     <line x1="4" y1="4" x2="9" y2="9" />
                   </svg>
                 </button>
-                <span class="chat-playlist-tooltip {!canManagePlaylist(selectedPlaylist) ? 'align-right' : ''}" role="tooltip">
+                <span class="chat-playlist-tooltip {!canManagePlaylist(selectedPlaylist) && !safeSourceUrl ? 'align-right' : ''}" role="tooltip">
                   随机点一首
                 </span>
               </div>
+
+              {#if safeSourceUrl}
+                <div class="chat-playlist-action-wrap">
+                  <a
+                    href={safeSourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="chat-playlist-icon-btn no-underline"
+                    aria-label={`前往${formatPlatformLabel(selectedPlaylist.platform)}原歌单`}
+                  >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                      <polyline points="15 3 21 3 21 9" />
+                      <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
+                  </a>
+                  <span class="chat-playlist-tooltip {!canManagePlaylist(selectedPlaylist) ? 'align-right' : ''}" role="tooltip">
+                    前往{formatPlatformLabel(selectedPlaylist.platform)}原歌单
+                  </span>
+                </div>
+              {/if}
 
               {#if canManagePlaylist(selectedPlaylist)}
                 <div class="chat-playlist-action-wrap">
@@ -2862,6 +3117,9 @@ $effect(() => {
                       size="2xs"
                     />
                     <span class="truncate">{person.name}</span>
+                    {#if person.badge}
+                      <span class="shrink-0 text-[9px] px-1 py-px rounded bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)]">{person.badge}</span>
+                    {/if}
                     {#if person.isMe}
                       <span class="shrink-0 text-[9px] px-1 py-px rounded bg-(--primary)/15 text-[var(--chat-accent-text)]">我</span>
                     {/if}
@@ -2905,7 +3163,7 @@ $effect(() => {
             {@const subtitle = [
               entry.track.artist,
               entry.track.durationSec ? formatTime(entry.track.durationSec) : "",
-              entry.lastRequesterName ? `点歌：${entry.lastRequesterName}` : "",
+              entry.lastRequesterName || "",
             ].filter(Boolean).join(" · ")}
             {@render trackRequestRow(
               entry.track,
@@ -2930,6 +3188,7 @@ $effect(() => {
       hasVotedSkip={hasVotedSkip}
       voteCount={musicState?.voteCount ?? 0}
       voteThreshold={musicState?.voteThreshold ?? 2}
+      isSkippingTrack={isSkippingTrack}
       variant="panel"
       onOpenLyrics={() => switchMusicTab("player")}
       onToggleListen={() => void toggleListen()}

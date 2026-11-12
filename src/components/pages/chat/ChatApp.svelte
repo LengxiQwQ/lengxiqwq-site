@@ -59,7 +59,6 @@ const {
 	initialMusicVolume = 1,
 }: Props = $props();
 
-const PROFILE_OVERRIDE_PREFIX = "fireflyChatProfileV2:";
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
 
 let activeTab = $state<"room" | "chat" | "music">("chat");
@@ -77,6 +76,8 @@ let serverUnreadCount = $state(0);
 let serverUnreadUserCount = $state(0);
 let unreadJumpSeq = $state(0);
 let musicState = $state<RoomMusicState | null>(null);
+let isSkippingTrack = $state(false);
+let skipPendingTimer: number | null = null;
 let clockOffsetMs = $state(0);
 let noticeText = $state("");
 let targetMessageUid = $state("");
@@ -99,6 +100,7 @@ let mobilePlaybackStatus = $state({
 
 let lastMarkedServerReadAt = 0;
 let lastReportedAudioKey = "";
+const socketHandshakeAuth = new WeakMap<WebSocket, string>();
 
 $effect(() => {
 	const userKey = currentUser?.userKey || "";
@@ -168,6 +170,19 @@ let showSettings = $state(false);
 let showProfileModal = $state(false);
 let showAuthModal = $state(false);
 let showUserDetailModal = $state(false);
+
+function openAuthModal() {
+	showUserDetailModal = false;
+	showProfileModal = false;
+	showAuthModal = true;
+}
+
+$effect(() => {
+	if (showAuthModal) {
+		showUserDetailModal = false;
+		showProfileModal = false;
+	}
+});
 let userDetailSeed = $state<ChatUserDetailSeed | null>(null);
 let externalPlaylistRequest = $state<
 	{ playlistId: string; seq: number } | undefined
@@ -196,6 +211,53 @@ const activeMeta = $derived(
 );
 const normalizedChatServer = $derived(normalizeServerUrl(chatServerUrl));
 
+function clearSkipPending() {
+	isSkippingTrack = false;
+	if (skipPendingTimer !== null) {
+		window.clearTimeout(skipPendingTimer);
+		skipPendingTimer = null;
+	}
+}
+
+function startSkipPending() {
+	isSkippingTrack = true;
+	if (skipPendingTimer !== null) {
+		window.clearTimeout(skipPendingTimer);
+	}
+	skipPendingTimer = window.setTimeout(() => {
+		isSkippingTrack = false;
+		skipPendingTimer = null;
+	}, 12000);
+}
+
+function handleSkipTrack() {
+	if (!currentUser) {
+		showAuthModal = true;
+		return;
+	}
+	if (isSkippingTrack) return;
+	if (sendPacket({ type: "music:skip" })) {
+		startSkipPending();
+	}
+}
+
+function handleVoteSkip() {
+	if (!currentUser) {
+		showAuthModal = true;
+		return;
+	}
+	if (isSkippingTrack) return;
+	const hasVoted = Boolean(
+		musicState?.current?.skipVotes.includes(currentUser.userKey),
+	);
+	const willPass =
+		!hasVoted &&
+		(musicState?.voteCount ?? 0) + 1 >= (musicState?.voteThreshold ?? 2);
+	if (sendPacket({ type: "music:vote_skip" }) && willPass) {
+		startSkipPending();
+	}
+}
+
 function showNotice(msg: string) {
 	noticeText = msg;
 	if (noticeTimer !== null) window.clearTimeout(noticeTimer);
@@ -216,54 +278,6 @@ function sendPacket(packet: Record<string, unknown>): boolean {
 function getFixedRoleBadge(user: ChatSessionUser): string {
 	if (user.isAdmin) return "站长";
 	return user.authType === "waline" ? "已认证" : "访客";
-}
-
-function applySavedProfileOverrideIfNeeded(user: ChatSessionUser | null) {
-	if (!user || typeof localStorage === "undefined") return;
-	try {
-		const raw = localStorage.getItem(
-			`${PROFILE_OVERRIDE_PREFIX}${user.userKey}`,
-		);
-		if (!raw) return;
-		const parsed = JSON.parse(raw) as Partial<ChatProfileDraft>;
-		const nextName =
-			typeof parsed.nickname === "string" ? parsed.nickname.trim() : "";
-		const nextBadge = getFixedRoleBadge(user);
-		const nextStatus =
-			typeof parsed.status === "string" ? parsed.status.trim() : "";
-		const nextUrl = typeof parsed.url === "string" ? parsed.url.trim() : "";
-		const nextBio = typeof parsed.bio === "string" ? parsed.bio.trim() : "";
-		const nextAvatar =
-			typeof parsed.avatar === "string" ? parsed.avatar.trim() : undefined;
-
-		const changed =
-			(nextName && nextName !== user.name) ||
-			(nextStatus && nextStatus !== (user.status || "在线")) ||
-			(typeof parsed.url === "string" && nextUrl !== user.url) ||
-			(typeof parsed.bio === "string" && nextBio !== (user.bio || "")) ||
-			(nextAvatar !== undefined &&
-				nextAvatar !== "" &&
-				nextAvatar !== user.avatar);
-
-		if (changed) {
-			const packet: Record<string, unknown> = {
-				type: "auth:update_profile",
-				nickname: nextName || user.name,
-				badge: nextBadge,
-				status: nextStatus || user.status || "在线",
-				url: typeof parsed.url === "string" ? nextUrl : user.url,
-			};
-			if (typeof parsed.bio === "string") {
-				packet.bio = nextBio;
-			}
-			if (nextAvatar !== undefined && nextAvatar !== "") {
-				packet.avatar = nextAvatar;
-			}
-			sendPacket(packet);
-		}
-	} catch {
-		// Ignore invalid stored override
-	}
 }
 
 function connectRoom(roomId: string) {
@@ -296,13 +310,32 @@ function connectRoom(roomId: string) {
 		currentAuth,
 		storedLastRead,
 	);
+	const handshakeSig = currentAuth
+		? `${currentAuth.kind}:${currentAuth.token}`
+		: "none:";
 	const socket = new WebSocket(wsUrl);
+	socketHandshakeAuth.set(socket, handshakeSig);
 	ws = socket;
 
 	socket.addEventListener("open", () => {
 		if (ws !== socket) return;
 		connectionState = "connected";
 		reconnectAttempt = 0;
+
+		const currentSig = currentAuth
+			? `${currentAuth.kind}:${currentAuth.token}`
+			: "none:";
+		if (currentSig !== socketHandshakeAuth.get(socket)) {
+			if (currentAuth) {
+				sendPacket({
+					type: "auth:sync",
+					authKind: currentAuth.kind,
+					token: currentAuth.token,
+				});
+			} else {
+				sendPacket({ type: "auth:logout" });
+			}
+		}
 
 		sendPacket({
 			type: "room:register_fallback",
@@ -347,8 +380,11 @@ function connectRoom(roomId: string) {
 				mentionMembers = packet.mentionMembers ?? [];
 				totalOnlineCount = packet.totalCount;
 				musicState = packet.music;
+				clearSkipPending();
 				clockOffsetMs = packet.music.serverTime - Date.now();
-				applySavedProfileOverrideIfNeeded(packet.self);
+				if (packet.mergedGuestHistory) {
+					showNotice("已自动合并同邮箱的历史访客记录至当前账号");
+				}
 				break;
 			}
 			case "chat:history_batch": {
@@ -380,6 +416,110 @@ function connectRoom(roomId: string) {
 					walineToken = "";
 				}
 				playlistRefreshSeq += 1;
+				if (packet.mergedGuestHistory) {
+					showNotice("已自动合并同邮箱的历史访客记录至当前账号");
+				}
+				break;
+			}
+			case "member:merged": {
+				if (packet.roomId === currentRoom && packet.fromUserKeys.length > 0) {
+					const fromSet = new Set(packet.fromUserKeys);
+					const targetUser = packet.user;
+					const remapList = (keys?: string[]) => {
+						if (!keys || keys.length === 0) return keys;
+						const seen = new Set<string>();
+						const out: string[] = [];
+						for (const k of keys) {
+							const mapped = fromSet.has(k) ? targetUser.userKey : k;
+							if (!mapped || seen.has(mapped)) continue;
+							seen.add(mapped);
+							out.push(mapped);
+						}
+						return out;
+					};
+					messages = messages.map((m) => {
+						const isSender = fromSet.has(m.userKey);
+						const isReplyTarget = m.replyTo && fromSet.has(m.replyTo.userKey);
+						const hasMention = m.mentionKeys?.some((k) => fromSet.has(k));
+						if (!isSender && !isReplyTarget && !hasMention) return m;
+						return {
+							...m,
+							...(isSender
+								? {
+										userKey: targetUser.userKey,
+										name: targetUser.name,
+										avatar: targetUser.avatar,
+										url: targetUser.url,
+										badge: targetUser.badge,
+										badgeType: targetUser.badgeType,
+										isAdmin: targetUser.isAdmin,
+									}
+								: {}),
+							...(isReplyTarget && m.replyTo
+								? {
+										replyTo: {
+											...m.replyTo,
+											userKey: targetUser.userKey,
+											name: targetUser.name,
+										},
+									}
+								: {}),
+							...(hasMention ? { mentionKeys: remapList(m.mentionKeys) } : {}),
+						};
+					});
+					if (musicState) {
+						musicState = {
+							...musicState,
+							current: musicState.current
+								? {
+										...musicState.current,
+										...(!musicState.current.isFallback &&
+										fromSet.has(musicState.current.requesterKey)
+											? {
+													requesterKey: targetUser.userKey,
+													requesterName: targetUser.name,
+												}
+											: {}),
+										skipVotes: remapList(musicState.current.skipVotes) ?? [],
+										errorReports:
+											remapList(musicState.current.errorReports) ?? [],
+									}
+								: null,
+							queue: musicState.queue.map((q) =>
+								fromSet.has(q.requesterKey)
+									? {
+											...q,
+											requesterKey: targetUser.userKey,
+											requesterName: targetUser.name,
+										}
+									: q,
+							),
+							historyLogs: musicState.historyLogs.map((h) =>
+								fromSet.has(h.requesterKey)
+									? {
+											...h,
+											requesterKey: targetUser.userKey,
+											requesterName: targetUser.name,
+											requesterAvatar: targetUser.avatar,
+										}
+									: h,
+							),
+						};
+					}
+					if (userDetailSeed && fromSet.has(userDetailSeed.userKey)) {
+						userDetailSeed = {
+							...userDetailSeed,
+							userKey: targetUser.userKey,
+							authType: targetUser.authType,
+							name: targetUser.name,
+							avatar: targetUser.avatar,
+							url: targetUser.url,
+							badge: targetUser.badge,
+							badgeType: targetUser.badgeType,
+							isAdmin: targetUser.isAdmin,
+						};
+					}
+				}
 				break;
 			}
 			case "playlist:updated": {
@@ -407,10 +547,12 @@ function connectRoom(roomId: string) {
 							currentUser &&
 							packet.message.kind === "user" &&
 							packet.message.userKey !== currentUser.userKey &&
-							(packet.message.mentionKeys?.includes(currentUser.userKey) ||
-								packet.message.mentions.some(
-									(n) => n.toLowerCase() === currentUser?.name.toLowerCase(),
-								))
+							(packet.message.mentionKeys &&
+							packet.message.mentionKeys.length > 0
+								? packet.message.mentionKeys.includes(currentUser.userKey)
+								: packet.message.mentions.some(
+										(n) => n.toLowerCase() === currentUser?.name.toLowerCase(),
+									))
 						) {
 							if (!baseDocumentTitle) baseDocumentTitle = document.title;
 							document.title = `[有人@你] ${baseDocumentTitle}`;
@@ -430,7 +572,7 @@ function connectRoom(roomId: string) {
 										...m,
 										replyTo: {
 											...m.replyTo,
-											userKey: "",
+											userKey: m.replyTo.userKey || "",
 											content: "",
 											hasImage: false,
 											isRecalled: true,
@@ -443,6 +585,11 @@ function connectRoom(roomId: string) {
 			}
 			case "music:state": {
 				if (packet.roomId === currentRoom) {
+					const prevUid = musicState?.current?.uid ?? "";
+					const nextUid = packet.current?.uid ?? "";
+					if (!nextUid || nextUid !== prevUid) {
+						clearSkipPending();
+					}
 					clockOffsetMs = packet.serverTime - Date.now();
 					musicState = {
 						current: packet.current,
@@ -460,8 +607,33 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "error": {
+				clearSkipPending();
 				if (packet.code === "AUTH_REQUIRED") {
 					showAuthModal = true;
+				} else if (packet.code === "WALINE_LOGIN_REQUIRED") {
+					clearGuestAuth();
+					if (currentAuth?.kind === "guest") {
+						currentAuth = null;
+					}
+					lastMarkedServerReadAt = 0;
+					showAuthModal = true;
+				} else if (packet.code === "TOKEN_INVALID") {
+					const invalidKind = packet.authKind ?? currentAuth?.kind;
+					if (invalidKind === "waline") {
+						clearWalineAuth();
+						walineToken = "";
+						if (currentAuth?.kind === "waline") {
+							currentAuth = null;
+							currentUser = null;
+						}
+					} else if (invalidKind === "guest") {
+						clearGuestAuth();
+						if (currentAuth?.kind === "guest") {
+							currentAuth = null;
+							currentUser = null;
+						}
+					}
+					lastMarkedServerReadAt = 0;
 				}
 				if (packet.message) {
 					showNotice(packet.message);
@@ -474,6 +646,7 @@ function connectRoom(roomId: string) {
 	socket.addEventListener("close", () => {
 		if (ws !== socket || isUnmounted) return;
 		ws = null;
+		clearSkipPending();
 		connectionState = "reconnecting";
 		const delay = Math.min(10000, 1000 * 2 ** Math.min(4, reconnectAttempt));
 		reconnectAttempt += 1;
@@ -499,8 +672,10 @@ function handleRoomSelect(roomId: string) {
 	sessionUnreadSince = 0;
 	serverUnreadCount = 0;
 	serverUnreadUserCount = 0;
+	lastMarkedServerReadAt = 0;
 	onlineMembers = [];
 	musicState = null;
+	clearSkipPending();
 	reconnectAttempt = 0;
 	connectRoom(roomId);
 	if (activeTab === "room") {
@@ -508,13 +683,13 @@ function handleRoomSelect(roomId: string) {
 	}
 }
 
-function handleMentionUser(name: string) {
+function handleMentionUser(name: string, userKey?: string) {
 	if (!currentUser) {
-		showAuthModal = true;
+		openAuthModal();
 		return;
 	}
 	mentionSeq += 1;
-	mentionEvent = { name, seq: mentionSeq };
+	mentionEvent = { name, ...(userKey ? { userKey } : {}), seq: mentionSeq };
 	if (activeTab !== "chat") {
 		activeTab = "chat";
 	}
@@ -538,6 +713,9 @@ function handleDirectWalineLogin() {
 			walineLoginWaiting = false;
 			cancelWalinePopup = null;
 		},
+		() => {
+			showNotice("登录窗口被浏览器拦截，请允许本站弹出窗口后重试");
+		},
 	);
 }
 
@@ -547,9 +725,13 @@ function handleAuthenticated(
 ) {
 	if (auth.kind === "waline") {
 		clearGuestAuth();
+	} else {
+		// 切换或确认为访客登录时清理可能失效的旧 Waline 凭证，防止刷新被拉回旁观态
+		clearWalineAuth();
 	}
 	currentAuth = auth;
 	walineToken = auth.kind === "waline" ? auth.token : "";
+	lastMarkedServerReadAt = 0;
 	if (user) {
 		currentUser = user;
 	}
@@ -570,6 +752,7 @@ function handleLogout() {
 	currentAuth = null;
 	walineToken = "";
 	currentUser = null;
+	lastMarkedServerReadAt = 0;
 	playlistRefreshSeq += 1;
 	sendPacket({ type: "auth:logout" });
 	showNotice("已退出当前聊天身份，进入只读旁观模式");
@@ -577,11 +760,45 @@ function handleLogout() {
 
 function handleOpenUserProfile(seed: ChatUserDetailSeed) {
 	if (!seed.userKey && !seed.name) return;
-	userDetailSeed = seed;
+	let enriched: ChatUserDetailSeed = { ...seed };
+	const needsKey =
+		!enriched.userKey ||
+		enriched.userKey.startsWith("name:") ||
+		enriched.userKey === "system:fallback";
+	if (needsKey && enriched.name) {
+		const onlineMatch = onlineMembers.find((m) => m.name === enriched.name);
+		const mentionMatch = mentionMembers.find((m) => m.name === enriched.name);
+		const selfMatch =
+			currentUser && currentUser.name === enriched.name ? currentUser : null;
+		const msgMatch = [...messages]
+			.reverse()
+			.find((m) => m.kind === "user" && m.name === enriched.name && m.userKey);
+		const match = onlineMatch || mentionMatch || selfMatch || msgMatch;
+		if (match) {
+			enriched = {
+				...enriched,
+				userKey: match.userKey,
+				authType:
+					enriched.authType ||
+					("authType" in match ? match.authType : undefined) ||
+					(match.userKey.startsWith("waline:") ? "waline" : "guest"),
+				avatar: enriched.avatar || match.avatar,
+				url: enriched.url || match.url,
+				badge: enriched.badge || match.badge,
+				badgeType: enriched.badgeType || match.badgeType,
+				isAdmin: enriched.isAdmin ?? match.isAdmin,
+			};
+		}
+	}
+	userDetailSeed = enriched;
 	showUserDetailModal = true;
 }
 
 function handleOpenPlaylistFromProfile(playlistId: string) {
+	if (!currentUser) {
+		openAuthModal();
+		return;
+	}
 	showUserDetailModal = false;
 	externalPlaylistSeq += 1;
 	externalPlaylistRequest = { playlistId, seq: externalPlaylistSeq };
@@ -597,24 +814,6 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 	const cleanStatus = draft.status.trim().slice(0, 16) || "在线";
 	const cleanUrl = draft.url.trim().slice(0, 200);
 	const cleanBio = (draft.bio ?? "").trim().slice(0, 80);
-	const stored: ChatProfileDraft = {
-		nickname: cleanNick,
-		badge: cleanBadge,
-		status: cleanStatus,
-		url: cleanUrl,
-		bio: cleanBio,
-	};
-	if (typeof draft.avatar === "string" && draft.avatar.trim()) {
-		stored.avatar = draft.avatar.trim().slice(0, 400);
-	}
-	try {
-		localStorage.setItem(
-			`${PROFILE_OVERRIDE_PREFIX}${currentUser.userKey}`,
-			JSON.stringify(stored),
-		);
-	} catch {
-		// Ignore
-	}
 	const packet: Record<string, unknown> = {
 		type: "auth:update_profile",
 		nickname: cleanNick,
@@ -629,8 +828,9 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 	if (typeof draft.notifyEmail === "boolean") {
 		packet.notifyEmail = draft.notifyEmail;
 	}
-	sendPacket(packet);
-	showNotice("个人资料已更新");
+	if (sendPacket(packet)) {
+		showNotice("个人资料已更新");
+	}
 }
 
 function handleSendMessage(
@@ -684,8 +884,12 @@ function handleMarkRead(timestamp: number) {
 	}
 }
 
-function handleDeleteMessage(msgUid: string) {
+function handleRecallMessage(msgUid: string) {
 	sendPacket({ type: "chat:recall", msgUid });
+}
+
+function handleDeleteMessage(msgUid: string) {
+	sendPacket({ type: "chat:delete", msgUid });
 }
 
 async function handleSearchOnline(keyword: string): Promise<ChatMusicTrack[]> {
@@ -694,7 +898,7 @@ async function handleSearchOnline(keyword: string): Promise<ChatMusicTrack[]> {
 
 function handleEnqueueTrack(track: ChatMusicTrack) {
 	if (!currentUser) {
-		showAuthModal = true;
+		openAuthModal();
 		return;
 	}
 	sendPacket({
@@ -758,6 +962,7 @@ onMount(() => {
 		cancelWalinePopup?.();
 		if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
+		if (skipPendingTimer !== null) window.clearTimeout(skipPendingTimer);
 		if (ws) {
 			try {
 				ws.close(1000, "unmount");
@@ -811,20 +1016,8 @@ onMount(() => {
           targetMessageUid={targetMessageUid}
           clockOffsetMs={clockOffsetMs}
           musicState={musicState}
-          onSkipTrack={() => {
-            if (!currentUser) {
-              showAuthModal = true;
-              return;
-            }
-            sendPacket({ type: "music:skip" });
-          }}
-          onVoteSkip={() => {
-            if (!currentUser) {
-              showAuthModal = true;
-              return;
-            }
-            sendPacket({ type: "music:vote_skip" });
-          }}
+          onSkipTrack={handleSkipTrack}
+          onVoteSkip={handleVoteSkip}
           onLoadHistory={handleLoadHistory}
           onMarkRead={handleMarkRead}
           onClearTargetMessage={() => {
@@ -846,6 +1039,7 @@ onMount(() => {
           noticeText={noticeText}
           onToggleSettings={() => (showSettings = !showSettings)}
           onSendMessage={handleSendMessage}
+          onRecallMessage={handleRecallMessage}
           onDeleteMessage={handleDeleteMessage}
           onNotify={showNotice}
           onRequireAuth={() => (showAuthModal = true)}
@@ -873,6 +1067,8 @@ onMount(() => {
         musicState={musicState}
         currentUser={currentUser}
         onlineMemberCount={onlineMembers.length}
+        onlineMembers={onlineMembers}
+        mentionMembers={mentionMembers}
         clockOffsetMs={clockOffsetMs}
         initialVolume={initialMusicVolume}
         onSearchOnline={handleSearchOnline}
@@ -894,20 +1090,9 @@ onMount(() => {
           }
           sendPacket({ type: "music:play_queued", uid });
         }}
-        onSkipTrack={() => {
-          if (!currentUser) {
-            showAuthModal = true;
-            return;
-          }
-          sendPacket({ type: "music:skip" });
-        }}
-        onVoteSkip={() => {
-          if (!currentUser) {
-            showAuthModal = true;
-            return;
-          }
-          sendPacket({ type: "music:vote_skip" });
-        }}
+        isSkippingTrack={isSkippingTrack}
+        onSkipTrack={handleSkipTrack}
+        onVoteSkip={handleVoteSkip}
         onReportDuration={(playUid, durationSec) =>
           sendPacket({ type: "music:report_duration", playUid, durationSec })
         }
@@ -921,15 +1106,6 @@ onMount(() => {
       />
     </div>
   </div>
-
-  <!-- 身份准入二选一弹窗 -->
-  <ChatAuthModal
-    open={showAuthModal}
-    chatServerUrl={normalizedChatServer}
-    walineServerUrl={walineServerUrl}
-    onAuthenticated={handleAuthenticated}
-    onClose={() => (showAuthModal = false)}
-  />
 
   <!-- 个人资料独立编辑弹窗 -->
   <ChatProfileModal
@@ -967,6 +1143,16 @@ onMount(() => {
     }}
   />
 
+  <!-- 身份准入二选一弹窗（最高层级，唤起时自动收起其他底层弹窗） -->
+  <ChatAuthModal
+    open={showAuthModal}
+    roomId={currentRoom}
+    chatServerUrl={normalizedChatServer}
+    walineServerUrl={walineServerUrl}
+    onAuthenticated={handleAuthenticated}
+    onClose={() => (showAuthModal = false)}
+  />
+
   <!-- 移动端跨面板全局迷你播放条（仅非点歌面板且有曲目播放时展示） -->
   {#if musicState?.current && activeTab !== "music"}
     <MiniPlayerBar
@@ -980,26 +1166,15 @@ onMount(() => {
       hasVotedSkip={mobilePlaybackStatus.hasVotedSkip}
       voteCount={musicState.voteCount}
       voteThreshold={musicState.voteThreshold}
+      isSkippingTrack={isSkippingTrack}
       variant="mobile"
       onOpenLyrics={() => {
         activeTab = "music";
         musicPanelRef?.openPlayerTab?.();
       }}
       onToggleListen={() => musicPanelRef?.toggleListenControl?.()}
-      onSkipTrack={() => {
-        if (!currentUser) {
-          showAuthModal = true;
-          return;
-        }
-        sendPacket({ type: "music:skip" });
-      }}
-      onVoteSkip={() => {
-        if (!currentUser) {
-          showAuthModal = true;
-          return;
-        }
-        sendPacket({ type: "music:vote_skip" });
-      }}
+      onSkipTrack={handleSkipTrack}
+      onVoteSkip={handleVoteSkip}
     />
   {/if}
 

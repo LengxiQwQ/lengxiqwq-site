@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Token, Tokens } from "marked";
+import { openChatImageLightbox } from "./chatLightbox";
 import {
 	type ChatMarkdownAst,
 	isSafeImageUrl,
@@ -79,8 +80,12 @@ function getInlineChildren(token: Token): Token[] | undefined {
       {#if safeSrc}
         <a
           href={safeSrc}
-          data-fancybox="chat-images"
-          class="inline-block my-1 overflow-hidden rounded-lg border border-black/10 dark:border-white/10"
+          data-chat-image={safeSrc}
+          class="inline-block my-1 overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
+          onclick={(e) => {
+            e.preventDefault();
+            void openChatImageLightbox(safeSrc, e.currentTarget);
+          }}
         >
           <img
             src={safeSrc}
@@ -103,7 +108,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
       {:else}
         {#each restoreTextSegments((tok as Tokens.Text).text, ast) as seg, sIdx (`${sIdx}-${seg.kind}`)}
           {#if seg.kind === "sticker"}
-            <img src={seg.url} alt={seg.alt} title={seg.alt} class="chat-sticker" loading="lazy" />
+            <img src={seg.url} alt={seg.alt} title={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
           {:else if seg.kind === "mention"}
             <span class="chat-mention-pill {isSelfMentionTarget(seg.target) ? 'self' : ''}">{seg.text}</span>
           {:else}

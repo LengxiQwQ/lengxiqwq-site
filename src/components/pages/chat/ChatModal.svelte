@@ -9,6 +9,7 @@ interface Props {
 	size?: "sm" | "md" | "lg";
 	fillHeightOnDesktop?: boolean;
 	lockedMinHeight?: number;
+	topPriority?: boolean;
 	onClose: () => void;
 	headerExtra?: Snippet;
 	children: Snippet;
@@ -22,6 +23,7 @@ const {
 	size = "sm",
 	fillHeightOnDesktop = false,
 	lockedMinHeight = 0,
+	topPriority = false,
 	onClose,
 	headerExtra,
 	children,
@@ -64,7 +66,7 @@ const sizeClass = $derived(
 {#if open}
   <div
     bind:this={backdropEl}
-    class="chat-modal-backdrop"
+    class="chat-modal-backdrop {topPriority ? 'chat-modal-backdrop--top' : ''}"
     role="presentation"
     onpointerdown={handlePointerDown}
     onclick={handleBackdropClick}
