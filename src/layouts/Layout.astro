@@ -432,6 +432,12 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
           ? (storedCustom || ((storedHue && storedHue !== "165") ? storedHue : configHue))
           : configHue;
 
+      const isChatRoute = /^\/chat\/?$/.test(window.location.pathname || "");
+      const fixedChatWallpaper = "/wallpapers/desktop/wuthering-waves-encore.webp";
+      if (isChatRoute) {
+        window.__initialWallpaperSrc = fixedChatWallpaper;
+      }
+
       // 若处于非自定义模式（即预设模式或跟随壁纸模式），在首屏解析时直接选定随机壁纸并秒开对应的预设色相
       if (hueMode !== "custom" && wallpaperSrcList) {
         try {
@@ -457,8 +463,10 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
             ? (mbList.length > 0 ? mbList : dtList)
             : (dtList.length > 0 ? dtList : mbList);
 
-          if (activeList.length > 0) {
-            const chosenSrc = activeList[Math.floor(Math.random() * activeList.length)];
+          if (activeList.length > 0 || isChatRoute) {
+            const chosenSrc = isChatRoute
+              ? fixedChatWallpaper
+              : activeList[Math.floor(Math.random() * activeList.length)];
             window.__initialWallpaperSrc = chosenSrc;
 
             let clean = chosenSrc.split("?")[0].split("#")[0];

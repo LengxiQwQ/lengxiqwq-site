@@ -326,17 +326,53 @@ const wallpaperPosition = state.isFullscreenMode
                 }
             }
 
+            function activateSpecificSlide(slideEl, immediate, forceVisible) {
+                if (!slideEl) return;
+                var allSlides = container.querySelectorAll('.slide-item');
+                if (immediate) slideEl.style.transition = 'none';
+                for (var a = 0; a < allSlides.length; a++) {
+                    allSlides[a].classList.remove('active', 'chat-force-visible');
+                }
+                if (forceVisible) {
+                    slideEl.classList.add('chat-force-visible');
+                }
+                slideEl.classList.add('active');
+                materialize(slideEl, Boolean(immediate));
+                notifyWallpaperChange(slideEl);
+                if (immediate) {
+                    requestAnimationFrame(function () {
+                        requestAnimationFrame(function () { slideEl.style.transition = ''; });
+                    });
+                }
+            }
+
+            function findSlideIndexBySrc(slideList, targetSrc) {
+                if (!targetSrc) return -1;
+                for (var i = 0; i < slideList.length; i++) {
+                    var s = slideList[i].getAttribute('data-wallpaper-src');
+                    if (s === targetSrc || (s && targetSrc.indexOf(s) !== -1) || (s && s.indexOf(targetSrc) !== -1)) {
+                        return i;
+                    }
+                }
+                return -1;
+            }
+
             function changeToSlide(targetIndex, resetProgress) {
                 var slides = getVisibleSlides();
                 if (slides.length <= 1) return;
                 if (transitioning) return;
+
+                var allSlides = container.querySelectorAll('.slide-item');
+                for (var c = 0; c < allSlides.length; c++) {
+                    allSlides[c].classList.remove('chat-force-visible');
+                }
 
                 var nextIndex = targetIndex;
                 if (nextIndex >= slides.length) nextIndex = 0;
                 else if (nextIndex < 0) nextIndex = slides.length - 1;
 
                 var currentIndex = getCurrentIndex(slides);
-                if (nextIndex === currentIndex) return;
+                if (nextIndex === currentIndex && slides[nextIndex].classList.contains('active')) return;
 
                 // 目标图可能还躺在 <template> 里，先实例化再切
                 materialize(slides[nextIndex], false);
@@ -371,6 +407,7 @@ const wallpaperPosition = state.isFullscreenMode
 
             function startAutoPlay() {
                 stopAutoPlay();
+                if (document.documentElement.hasAttribute('data-chat-page')) return;
                 if (!isCarouselEnabled()) return;
                 if (!isBannerWallpaperMode()) return;
 
@@ -436,7 +473,20 @@ const wallpaperPosition = state.isFullscreenMode
             window.addEventListener('switchWallpaper', function(e) {
                 if (!e.detail) return;
                 var slides = getVisibleSlides();
-                if (!slides.length) return;
+                if (e.detail.pauseCarousel) {
+                    stopAutoPlay();
+                }
+                if (e.detail.restoreBlogDefault) {
+                    if (slides.length > 0) {
+                        var restoreIdx = slides.length > 1 ? Math.floor(Math.random() * slides.length) : 0;
+                        activateSpecificSlide(slides[restoreIdx], Boolean(e.detail.immediate), false);
+                        if (isCarouselEnabled() && isBannerWallpaperMode()) {
+                            startAutoPlay();
+                        }
+                    }
+                    return;
+                }
+                if (!slides.length && !e.detail.src) return;
                 if (e.detail.action === 'prev') {
                     changeToSlide(getCurrentIndex(slides) - 1);
                     return;
@@ -447,12 +497,23 @@ const wallpaperPosition = state.isFullscreenMode
                 }
                 if (e.detail.src) {
                     var targetSrc = e.detail.src;
-                    for (var i = 0; i < slides.length; i++) {
-                        var s = slides[i].getAttribute('data-wallpaper-src');
-                        if (s === targetSrc || (s && targetSrc.indexOf(s) !== -1) || (s && s.indexOf(targetSrc) !== -1)) {
-                            changeToSlide(i);
-                            return;
+                    var visIdx = findSlideIndexBySrc(slides, targetSrc);
+                    if (visIdx >= 0) {
+                        if (e.detail.immediate) {
+                            activateSpecificSlide(slides[visIdx], true, false);
+                        } else {
+                            changeToSlide(visIdx);
                         }
+                        if (!e.detail.pauseCarousel && e.detail.resumeCarousel && isCarouselEnabled() && isBannerWallpaperMode()) {
+                            startAutoPlay();
+                        }
+                        return;
+                    }
+                    var allSlidesList = container.querySelectorAll('.slide-item');
+                    var anyIdx = findSlideIndexBySrc(allSlidesList, targetSrc);
+                    if (anyIdx >= 0) {
+                        activateSpecificSlide(allSlidesList[anyIdx], Boolean(e.detail.immediate), true);
+                        return;
                     }
                 }
                 if (typeof e.detail.index === 'number') {
@@ -463,37 +524,27 @@ const wallpaperPosition = state.isFullscreenMode
             // 随机首张：只有被抽中的这一张会真的下载，其余仍留在 <template> 里
             // 优先与 <head> 中秒开预选的壁纸同步，确保首帧主题色与壁纸零闪烁秒对齐
             var slides = getVisibleSlides();
-            var startIdx = -1;
+            var firstSlide = null;
+            var isForcedMobileSlide = false;
             if (window.__initialWallpaperSrc) {
-                for (var sIdx = 0; sIdx < slides.length; sIdx++) {
-                    var swp = slides[sIdx].getAttribute('data-wallpaper-src');
-                    if (swp === window.__initialWallpaperSrc || (swp && window.__initialWallpaperSrc.indexOf(swp) !== -1) || (swp && swp.indexOf(window.__initialWallpaperSrc) !== -1)) {
-                        startIdx = sIdx;
-                        break;
+                var initVisIdx = findSlideIndexBySrc(slides, window.__initialWallpaperSrc);
+                if (initVisIdx >= 0) {
+                    firstSlide = slides[initVisIdx];
+                } else {
+                    var initAllSlides = container.querySelectorAll('.slide-item');
+                    var initAnyIdx = findSlideIndexBySrc(initAllSlides, window.__initialWallpaperSrc);
+                    if (initAnyIdx >= 0) {
+                        firstSlide = initAllSlides[initAnyIdx];
+                        isForcedMobileSlide = true;
                     }
                 }
             }
-            if (startIdx < 0) {
-                startIdx = slides.length > 1 ? Math.floor(Math.random() * slides.length) : 0;
+            if (!firstSlide && slides.length > 0) {
+                var randIdx = slides.length > 1 ? Math.floor(Math.random() * slides.length) : 0;
+                firstSlide = slides[randIdx];
             }
-            var firstSlide = slides[startIdx];
             // .slide-item 自带 1000ms 的 opacity 过渡，首张不该吃它（它是 LCP 元素）。
-            // 必须在下面加 active 之前就关掉，否则过渡已经启动了。
-            if (firstSlide) firstSlide.style.transition = 'none';
-            var allSlides = container.querySelectorAll('.slide-item');
-            for (var a = 0; a < allSlides.length; a++) {
-                allSlides[a].classList.remove('active');
-            }
-            if (firstSlide) firstSlide.classList.add('active');
-            materialize(firstSlide, true);
-            notifyWallpaperChange(firstSlide, false);
-            if (firstSlide) {
-                // 下一帧再放开，后续轮播切换的交叉淡入照旧。双 rAF 是为了确保
-                // opacity:1 已经 flush 成新的 before-change style，恢复时不会倒着跑一遍
-                requestAnimationFrame(function () {
-                    requestAnimationFrame(function () { firstSlide.style.transition = ''; });
-                });
-            }
+            activateSpecificSlide(firstSlide, true, isForcedMobileSlide);
 
             // 断点跨过 1024px 时，另一侧那组还没有实例化过的 active，需要补上
             if (window.matchMedia) {

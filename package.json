@@ -8,9 +8,9 @@
 	"packageManager": "pnpm@11.22.0",
 	"scripts": {
 		"predev": "npx tsx scripts/sync-content.ts --for-dev",
-		"dev": "astro dev",
+		"dev": "astro dev --host",
 		"prestart": "npx tsx scripts/sync-content.ts --for-dev",
-		"start": "astro dev",
+		"start": "astro dev --host",
 		"precheck": "npx tsx scripts/sync-content.ts",
 		"check": "astro check",
 		"prebuild": "npx tsx scripts/sync-content.ts",

@@ -10,6 +10,7 @@ export type {
 	BooknavItem,
 	BooknavPageConfig,
 } from "./booknavConfig";
+export type { ChatConfig, ChatRoomMeta } from "./chatConfig";
 export type { CommentConfig } from "./commentConfig";
 export type { CoverImageConfig } from "./coverImageConfig";
 export type {

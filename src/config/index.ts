@@ -32,6 +32,8 @@ export type {
 	BooknavGroup,
 	BooknavItem,
 	BooknavPageConfig,
+	ChatConfig,
+	ChatRoomMeta,
 	CommentConfig,
 	CoverImageConfig,
 	CursorConfig,
@@ -77,6 +79,7 @@ export { backgroundWallpaper } from "./backgroundWallpaper"; // 背景壁纸配�
 export { booknavConfig, booknavPageConfig } from "./booknavConfig"; // 书签导航配置
 export { changelogConfig } from "./changelogConfig"; // 博客日志配置
 // 功能配置
+export { chatConfig } from "./chatConfig"; // 聊天室配置
 export { commentConfig } from "./commentConfig"; // 评论系统配置
 export { coverImageConfig } from "./coverImageConfig"; // 封面图配置
 export { devicesConfig } from "./devicesConfig"; // 设备列表配置

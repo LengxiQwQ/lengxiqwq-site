@@ -57,6 +57,345 @@ function finishProgressBar(): void {
 	);
 }
 
+const CHAT_FIXED_WALLPAPER = "/wallpapers/desktop/wuthering-waves-encore.webp";
+let chatSavedBlogWallpaperSrc = "";
+
+function switchChatRouteWallpaper(isChatPage: boolean): void {
+	if (typeof window === "undefined") return;
+	const win = window as unknown as { __currentWallpaperSrc?: string };
+	if (isChatPage) {
+		const currentSrc = win.__currentWallpaperSrc || "";
+		if (currentSrc && !currentSrc.includes("wuthering-waves-encore")) {
+			chatSavedBlogWallpaperSrc = currentSrc;
+		}
+		window.dispatchEvent(
+			new CustomEvent("switchWallpaper", {
+				detail: {
+					src: CHAT_FIXED_WALLPAPER,
+					immediate: true,
+					pauseCarousel: true,
+				},
+			}),
+		);
+		return;
+	}
+
+	if (chatSavedBlogWallpaperSrc) {
+		const restoreSrc = chatSavedBlogWallpaperSrc;
+		chatSavedBlogWallpaperSrc = "";
+		window.dispatchEvent(
+			new CustomEvent("switchWallpaper", {
+				detail: {
+					src: restoreSrc,
+					immediate: true,
+					resumeCarousel: true,
+				},
+			}),
+		);
+	} else {
+		window.dispatchEvent(
+			new CustomEvent("switchWallpaper", {
+				detail: {
+					restoreBlogDefault: true,
+					immediate: true,
+				},
+			}),
+		);
+	}
+}
+
+/** Swup 软切换进/出聊天室时同步或清理聊天室专属隔离状态 */
+function syncChatPageRuntimeState(isChatPage: boolean): void {
+	const root = document.documentElement;
+	if (!isChatPage) {
+		root.removeAttribute("data-chat-page");
+		root.removeAttribute("data-chat-scheme");
+		root.removeAttribute("data-chat-custom-hue");
+		root.style.removeProperty("--chat-hue");
+		root.style.removeProperty("--chat-bg-blur");
+		root.style.removeProperty("--chat-bg-dim");
+		root.style.removeProperty("--chat-panel-blur");
+		root.style.removeProperty("--chat-panel-opacity");
+		root.style.removeProperty("--chat-panel-radius");
+		return;
+	}
+
+	root.setAttribute("data-chat-page", "true");
+	try {
+		const raw = localStorage.getItem("fireflyChatAppearance");
+		if (!raw) return;
+		const prefs = JSON.parse(raw) as {
+			bgBlur?: unknown;
+			bgDim?: unknown;
+			panelBlur?: unknown;
+			panelOpacity?: unknown;
+			panelRadius?: unknown;
+			chatScheme?: unknown;
+			chatHue?: unknown;
+		};
+		if (typeof prefs.bgBlur === "number") {
+			root.style.setProperty("--chat-bg-blur", `${prefs.bgBlur}px`);
+		}
+		if (typeof prefs.bgDim === "number") {
+			root.style.setProperty("--chat-bg-dim", String(prefs.bgDim / 100));
+		}
+		if (typeof prefs.panelBlur === "number") {
+			root.style.setProperty("--chat-panel-blur", `${prefs.panelBlur}px`);
+		}
+		if (typeof prefs.panelOpacity === "number") {
+			root.style.setProperty("--chat-panel-opacity", `${prefs.panelOpacity}%`);
+		}
+		if (typeof prefs.panelRadius === "number") {
+			root.style.setProperty("--chat-panel-radius", `${prefs.panelRadius}px`);
+		}
+		if (prefs.chatScheme === "light" || prefs.chatScheme === "dark") {
+			root.setAttribute("data-chat-scheme", prefs.chatScheme);
+		}
+		if (typeof prefs.chatHue === "number") {
+			root.setAttribute("data-chat-custom-hue", "true");
+			root.style.setProperty("--chat-hue", String(prefs.chatHue));
+		}
+	} catch {
+		// 忽略无效本地缓存
+	}
+}
+
+let chatWallpaperRaf = 0;
+let chatWallpaperCleanupTimer: number | null = null;
+let chatWallpaperCurtainEl: HTMLElement | null = null;
+
+function getVisibleWallpaperImage(
+	wrapper: HTMLElement,
+): HTMLImageElement | null {
+	const imgs = Array.from(wrapper.querySelectorAll<HTMLImageElement>("img"));
+	return (
+		imgs.find((img) => {
+			const rect = img.getBoundingClientRect();
+			if (rect.width <= 0 || rect.height <= 0) return false;
+			const slide = img.closest(".slide-item");
+			if (slide && !slide.classList.contains("active")) return false;
+			return Number.parseFloat(getComputedStyle(img).opacity || "1") > 0;
+		}) ?? null
+	);
+}
+
+function getOverlayDimBackground(wrapper: HTMLElement): string | null {
+	const dimEl = wrapper.querySelector<HTMLElement>(".banner-dim-overlay");
+	if (!dimEl) return null;
+	const cs = getComputedStyle(dimEl);
+	if (cs.backgroundImage && cs.backgroundImage !== "none") {
+		return cs.backgroundImage;
+	}
+	if (cs.backgroundColor && cs.backgroundColor !== "rgba(0, 0, 0, 0)") {
+		return cs.backgroundColor;
+	}
+	return null;
+}
+
+function buildSnapshotLayer(
+	imgSrc: string,
+	rect: DOMRect,
+	filter: string,
+	transform: string,
+	objectPosition: string,
+	dimBackground: string | null,
+): HTMLDivElement {
+	const box = document.createElement("div");
+	box.style.cssText = [
+		"position:fixed",
+		"left:0",
+		"width:100%",
+		`top:${rect.top}px`,
+		`height:${rect.height}px`,
+		"overflow:hidden",
+		"opacity:1",
+		"will-change:opacity",
+		"pointer-events:none",
+	].join(";");
+
+	const img = document.createElement("img");
+	img.src = imgSrc;
+	img.alt = "";
+	img.style.cssText = [
+		"width:100%",
+		"height:100%",
+		"display:block",
+		"object-fit:cover",
+		`object-position:${objectPosition || "center"}`,
+		`filter:${filter}`,
+		`transform:${transform}`,
+		"pointer-events:none",
+	].join(";");
+	box.appendChild(img);
+
+	if (dimBackground) {
+		const dim = document.createElement("div");
+		dim.style.cssText = `position:absolute;inset:0;background:${dimBackground};pointer-events:none;`;
+		box.appendChild(dim);
+	}
+
+	return box;
+}
+
+function buildPageBgCurtainSheet(startTopPx: number): HTMLDivElement {
+	const sheet = document.createElement("div");
+	sheet.style.cssText = [
+		"position:fixed",
+		"left:0",
+		"right:0",
+		"top:0",
+		"height:100vh",
+		"background:var(--page-bg)",
+		`transform:translate3d(0, ${startTopPx}px, 0)`,
+		"will-change:transform",
+		"pointer-events:none",
+	].join(";");
+
+	const lip = document.createElement("div");
+	lip.style.cssText = [
+		"position:absolute",
+		"left:0",
+		"right:0",
+		"top:-72px",
+		"height:72px",
+		"background:linear-gradient(to bottom, transparent, var(--page-bg))",
+		"pointer-events:none",
+	].join(";");
+	sheet.appendChild(lip);
+
+	return sheet;
+}
+
+function cleanupChatWallpaperTransition(): void {
+	if (chatWallpaperRaf) {
+		cancelAnimationFrame(chatWallpaperRaf);
+		chatWallpaperRaf = 0;
+	}
+	if (chatWallpaperCleanupTimer !== null) {
+		window.clearTimeout(chatWallpaperCleanupTimer);
+		chatWallpaperCleanupTimer = null;
+	}
+	if (chatWallpaperCurtainEl) {
+		chatWallpaperCurtainEl.remove();
+		chatWallpaperCurtainEl = null;
+	}
+}
+
+/**
+ * 进出聊天室时用纯 GPU 合成层幕布（仅 transform + opacity）完成壁纸展开/收起，
+ * 避免对全屏壁纸做逐帧 height 重排或动态 blur 半径重栅格化造成掉帧。
+ */
+function transitionChatPageWithWallpaper(visitToUrl?: string): void {
+	const root = document.documentElement;
+	const wasChatPage = root.hasAttribute("data-chat-page");
+	const isChatPage = Boolean(document.getElementById("chat-page"));
+	const targetUrl = visitToUrl || window.location.pathname;
+	const targetIsHome = !isChatPage && pathsEqual(targetUrl, url("/"));
+
+	if (wasChatPage === isChatPage) {
+		syncChatPageRuntimeState(isChatPage);
+		return;
+	}
+
+	cleanupChatWallpaperTransition();
+
+	const wrapper = document.getElementById("wallpaper-wrapper");
+	const wallpaperMode = root.getAttribute("data-wallpaper-mode");
+	const reducedMotion =
+		typeof window.matchMedia === "function" &&
+		window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+	if (!wrapper || wallpaperMode === "none" || reducedMotion) {
+		document.body.classList.toggle("is-home", targetIsHome);
+		syncChatPageRuntimeState(isChatPage);
+		switchChatRouteWallpaper(isChatPage);
+		syncBannerHomeTextVisibility();
+		return;
+	}
+
+	// FIRST：采样旧页壁纸位置与静态滤镜/缩放状态
+	const prevComputed = getComputedStyle(wrapper);
+	const prevVisible =
+		prevComputed.display !== "none" &&
+		Number.parseFloat(prevComputed.opacity || "1") > 0;
+	const prevRect = prevVisible ? wrapper.getBoundingClientRect() : null;
+	const prevImg = prevVisible ? getVisibleWallpaperImage(wrapper) : null;
+	const prevImgSrc = prevImg ? prevImg.currentSrc || prevImg.src : "";
+	const prevImgStyle = prevImg ? getComputedStyle(prevImg) : null;
+	const prevDimBg = prevVisible ? getOverlayDimBackground(wrapper) : null;
+
+	// LAST：一次性切换至最终目标壁纸布局，不再对 #wallpaper-wrapper 本身做逐帧变形
+	document.body.classList.toggle("is-home", targetIsHome);
+	syncChatPageRuntimeState(isChatPage);
+	switchChatRouteWallpaper(isChatPage);
+	syncBannerHomeTextVisibility();
+
+	const nextComputed = getComputedStyle(wrapper);
+	const nextVisible = nextComputed.display !== "none";
+	const nextRect = nextVisible ? wrapper.getBoundingClientRect() : null;
+
+	const viewportH = window.innerHeight;
+	const prevBottom =
+		prevVisible && prevRect
+			? Math.max(0, Math.min(viewportH, prevRect.bottom))
+			: 0;
+	const nextBottom =
+		nextVisible && nextRect
+			? Math.max(0, Math.min(viewportH, nextRect.bottom))
+			: 0;
+
+	const curtain = document.createElement("div");
+	curtain.id = "chat-wallpaper-curtain";
+	curtain.style.cssText =
+		"position:fixed;inset:0;z-index:20;pointer-events:none;overflow:hidden;";
+
+	let snapshotBox: HTMLDivElement | null = null;
+	if (prevVisible && prevRect && prevImgSrc && prevImgStyle) {
+		snapshotBox = buildSnapshotLayer(
+			prevImgSrc,
+			prevRect,
+			prevImgStyle.filter,
+			prevImgStyle.transform,
+			prevImgStyle.objectPosition,
+			prevDimBg,
+		);
+		curtain.appendChild(snapshotBox);
+	}
+
+	let sheet: HTMLDivElement | null = null;
+	if (Math.abs(prevBottom - nextBottom) > 2) {
+		sheet = buildPageBgCurtainSheet(isChatPage ? prevBottom : viewportH);
+		curtain.appendChild(sheet);
+	}
+
+	if (!snapshotBox && !sheet) {
+		return;
+	}
+
+	document.body.appendChild(curtain);
+	chatWallpaperCurtainEl = curtain;
+	void curtain.offsetHeight;
+
+	chatWallpaperRaf = requestAnimationFrame(() => {
+		chatWallpaperRaf = 0;
+		if (snapshotBox) {
+			snapshotBox.style.transition =
+				"opacity 200ms cubic-bezier(0.22, 1, 0.36, 1)";
+			snapshotBox.style.opacity = "0";
+		}
+		if (sheet) {
+			sheet.style.transition = "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)";
+			sheet.style.transform = `translate3d(0, ${
+				isChatPage ? viewportH : nextBottom
+			}px, 0)`;
+		}
+	});
+
+	chatWallpaperCleanupTimer = window.setTimeout(() => {
+		cleanupChatWallpaperTransition();
+	}, 250);
+}
+
 /**
  * Swup 页面切换编排（从 Layout.astro 迁出）。
  * 注册 link:click / content:replace / visit:start / page:view / visit:end 钩子。
@@ -101,62 +440,79 @@ function registerSwupHooks(): void {
 			}
 		},
 	);
-	window.swup.hooks.on("content:replace", () => {
-		initializeFloatingPanels();
+	window.swup.hooks.on(
+		"content:replace",
+		(visit?: { to?: { url?: string } }) => {
+			transitionChatPageWithWallpaper(visit?.to?.url);
 
-		// 侧边栏组件可见性由 page:view 统一更新（含 refreshSidebarStickyState 的
-		// offsetHeight 布局读取），content:replace 不重复执行，避免每趟切页强制布局两次
+			initializeFloatingPanels();
 
-		// 只处理katex元素的容器，使用浏览器原生滚动条
-		scheduleContentOverflowEnhancements();
+			// 侧边栏组件可见性由 page:view 统一更新（含 refreshSidebarStickyState 的
+			// offsetHeight 布局读取），content:replace 不重复执行，避免每趟切页强制布局两次
 
-		// 重新初始化图标加载器
-		import("@/utils/icon-loader").then(({ initIconLoader }) => {
-			initIconLoader();
-		});
+			// 只处理katex元素的容器，使用浏览器原生滚动条
+			scheduleContentOverflowEnhancements();
 
-		// 重新初始化semifull模式的滚动检测
-		// （全屏模式跳过：导航栏状态由 updateNavbarTransparency 统一管理，
-		//   避免切换页面时 initSemifullScrollDetection 重置 scrolled 导致背景闪烁）
-		const navbar = document.getElementById("navbar");
-		if (navbar) {
-			const transparentMode = navbar.getAttribute("data-transparent-mode");
-			const navWallpaperMode = document.documentElement.getAttribute(
-				"data-wallpaper-mode",
-			);
+			// 重新初始化图标加载器
+			import("@/utils/icon-loader").then(({ initIconLoader }) => {
+				initIconLoader();
+			});
 
-			if (transparentMode === "semifull" && navWallpaperMode !== "fullscreen") {
-				// 重新调用初始化函数来重新绑定滚动事件
-				if (typeof window.initSemifullScrollDetection === "function") {
-					window.initSemifullScrollDetection();
+			// 重新初始化semifull模式的滚动检测
+			// （全屏模式跳过：导航栏状态由 updateNavbarTransparency 统一管理，
+			//   避免切换页面时 initSemifullScrollDetection 重置 scrolled 导致背景闪烁）
+			const navbar = document.getElementById("navbar");
+			if (navbar) {
+				const transparentMode = navbar.getAttribute("data-transparent-mode");
+				const navWallpaperMode = document.documentElement.getAttribute(
+					"data-wallpaper-mode",
+				);
+
+				if (
+					transparentMode === "semifull" &&
+					navWallpaperMode !== "fullscreen"
+				) {
+					// 重新调用初始化函数来重新绑定滚动事件
+					if (typeof window.initSemifullScrollDetection === "function") {
+						window.initSemifullScrollDetection();
+					}
 				}
 			}
-		}
-	});
+		},
+	);
 	window.swup.hooks.on("visit:start", (visit: { to: { url: string } }) => {
 		// Start progress bar（WAAPI 合成线程动画，不强制回流）
 		startProgressBar();
+
+		const bodyElement = document.querySelector("body") as HTMLElement;
+		const isHomePage = pathsEqual(visit.to.url, url("/"));
+		const fromChatPage =
+			document.documentElement.hasAttribute("data-chat-page");
+		const toChatPage = pathsEqual(visit.to.url, url("/chat/"));
 
 		// 先回顶，让后续 FLIP 在 scroll=0 的坐标系内计算：
 		// 若在切页后才回顶，FLIP 的 invert 是按切页前滚动位置校准的，scroll 一复位就会导致
 		// 内容区从视口上方之外（滚动较深时 top<0）开始、再落回，表现为“冲过头再回落”。
 		// 必须用 instant：html 上有 scroll-behavior:smooth（main.css），behavior:"auto" 会被当作平滑滚动，
 		// 在 FLIP 期间与内容位移叠加、同样造成“顶到最顶部再回落”。
-		// 移动端（<768）不使用即时回顶，避免闪烁（由 swup 默认滚动接管）
-		if (window.innerWidth >= 768) {
+		// 移动端（<768）仅在进出聊天室时即时回顶以保证全屏壁纸坐标对齐，其余切页仍由 swup 默认滚动接管
+		if (window.innerWidth >= 768 || fromChatPage || toChatPage) {
 			window.scrollTo({ top: 0, behavior: "instant" });
 		}
 
-		// 更新首页状态（body.is-home 驱动 CSS --content-top 等）
-		const bodyElement = document.querySelector("body") as HTMLElement;
-		const isHomePage = pathsEqual(visit.to.url, url("/"));
+		// 更新首页状态（body.is-home 驱动 CSS --content-top 等）；
+		// 进出聊天室时延后至 content:replace 与 data-chat-page 原子同步，避免提前触发横幅/边距二次跳变
 		const wasHome = bodyElement.classList.contains("is-home");
 		const contentPanel = document.querySelector(
 			".content-panel",
 		) as HTMLElement | null;
-		// FLIP 只在 is-home 状态变化（首页↔非首页）时才有意义；文章↔文章、首页↔首页
-		// 类未变 → delta 必为 0，直接短路，避免常见切页白付两次强制布局读取
-		if (isHomePage !== wasHome && contentPanel) {
+		// FLIP 只在 is-home 状态变化（首页↔非首页）时才有意义；进出独立全屏聊天室跳过内容面板 FLIP，避免垂直错位
+		if (
+			isHomePage !== wasHome &&
+			!fromChatPage &&
+			!toChatPage &&
+			contentPanel
+		) {
 			const oldTop = contentPanel.getBoundingClientRect().top; // 类切换前读
 			bodyElement.classList.toggle("is-home", isHomePage);
 			const newTop = contentPanel.getBoundingClientRect().top; // 类切换后读

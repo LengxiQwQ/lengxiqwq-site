@@ -1,0 +1,63 @@
+---
+import ChatApp from "@/components/pages/chat/ChatApp.svelte";
+import type { ChatMusicTrack } from "@/components/pages/chat/musicTypes";
+import { chatConfig, commentConfig, siteConfig } from "@/config";
+import MainGridLayout from "@/layouts/MainGridLayout.astro";
+
+import "@/styles/pages/chat.css";
+
+// 页面开关检查
+if (!siteConfig.pages.chat) {
+	return Astro.redirect("/404/");
+}
+
+// 暂不注入站点默认曲库，待后续导入歌单后再配置默认电台列表
+const musicTracks: ChatMusicTrack[] = [];
+const initialVolume = 1;
+const walineServerUrl = commentConfig.waline?.serverURL ?? "";
+const stickerPackUrls = (commentConfig.waline?.emoji ?? []).filter(
+	(entry): entry is string =>
+		typeof entry === "string" && !entry.includes("bmoji"),
+);
+---
+
+<MainGridLayout title="聊天" description="实时聊天室">
+    {/* 首帧前（body 解析前）同步激活聊天页隔离标记与外观缓存，彻底避免刷新时闪现旧模板 */}
+    <script is:inline slot="head">
+        (function () {
+            var root = document.documentElement;
+            root.setAttribute("data-chat-page", "true");
+            try {
+                var raw = localStorage.getItem("fireflyChatAppearance");
+                if (raw) {
+                    var prefs = JSON.parse(raw);
+                    if (typeof prefs.bgBlur === "number") root.style.setProperty("--chat-bg-blur", prefs.bgBlur + "px");
+                    if (typeof prefs.bgDim === "number") root.style.setProperty("--chat-bg-dim", String(prefs.bgDim / 100));
+                    if (typeof prefs.panelBlur === "number") root.style.setProperty("--chat-panel-blur", prefs.panelBlur + "px");
+                    if (typeof prefs.panelOpacity === "number") root.style.setProperty("--chat-panel-opacity", prefs.panelOpacity + "%");
+                    if (typeof prefs.panelRadius === "number") root.style.setProperty("--chat-panel-radius", prefs.panelRadius + "px");
+                    if (prefs.chatScheme === "light" || prefs.chatScheme === "dark") {
+                        root.setAttribute("data-chat-scheme", prefs.chatScheme);
+                    }
+                    if (typeof prefs.chatHue === "number") {
+                        root.setAttribute("data-chat-custom-hue", "true");
+                        root.style.setProperty("--chat-hue", String(prefs.chatHue));
+                    }
+                }
+            } catch (_) {}
+        })();
+    </script>
+
+    <div id="chat-page" class="chat-page-container">
+        <ChatApp
+            client:load
+            chatServerUrl={chatConfig.serverURL}
+            walineServerUrl={walineServerUrl}
+            rooms={chatConfig.rooms}
+            enableImageUpload={chatConfig.enableImageUpload}
+            stickerPackUrls={stickerPackUrls}
+            musicTracks={musicTracks}
+            initialMusicVolume={initialVolume}
+        />
+    </div>
+</MainGridLayout>

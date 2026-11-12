@@ -115,7 +115,7 @@
     display: block;
   }
   @media (max-width: 1023px) {
-    html[data-wallpaper-mode="banner"] body:not(.is-home) #wallpaper-wrapper {
+    html[data-wallpaper-mode="banner"]:not([data-chat-page]) body:not(.is-home) #wallpaper-wrapper {
       display: none !important;
     }
   }

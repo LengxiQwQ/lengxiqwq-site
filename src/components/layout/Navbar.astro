@@ -660,6 +660,11 @@ if (document.readyState === 'loading') {
 <style is:global>
     @reference "../../styles/main.css";
 
+    html[data-chat-page] #music-player-switch,
+    html[data-chat-page] #music-nav-panel {
+        display: none !important;
+    }
+
     .site-switcher-container {
         position: relative !important;
         display: flex !important;
