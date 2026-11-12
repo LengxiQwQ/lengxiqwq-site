@@ -1,6 +1,7 @@
 <script lang="ts">
 import { onMount, tick } from "svelte";
 import { KAOMOJI_PRESETS } from "@/constants/kaomoji";
+import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import { uploadChatImage } from "./chatClient";
 import type {
@@ -8,10 +9,15 @@ import type {
 	ChatMessageRecord,
 	ChatOnlineMember,
 	ChatSessionUser,
+	ChatUserDetailSeed,
 	ImageAttachment,
 	RoomMusicState,
 } from "./chatTypes";
-import type { StickerItem, StickerPack } from "./stickerLoader";
+import {
+	formatChatReplyPreview,
+	type StickerItem,
+	type StickerPack,
+} from "./stickerLoader";
 
 interface Props {
 	roomId: string;
@@ -30,6 +36,7 @@ interface Props {
 	mentionMembers?: ChatMentionCandidate[];
 	isChatTabActive?: boolean;
 	targetMessageUid?: string;
+	clockOffsetMs?: number;
 	musicState?: RoomMusicState | null;
 	onSkipTrack?: () => void;
 	onVoteSkip?: () => void;
@@ -48,9 +55,12 @@ interface Props {
 		content: string,
 		attachments: ImageAttachment[],
 		mentionKeys: string[],
+		replyToUid?: string,
 	) => void;
 	onDeleteMessage: (msgUid: string) => void;
+	onNotify?: (msg: string) => void;
 	onRequireAuth: () => void;
+	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onMentionUser: (name: string) => void;
 }
 
@@ -71,6 +81,7 @@ const {
 	mentionMembers = [],
 	isChatTabActive = true,
 	targetMessageUid = "",
+	clockOffsetMs = 0,
 	musicState = null,
 	onSkipTrack,
 	onVoteSkip,
@@ -87,17 +98,20 @@ const {
 	onToggleSettings,
 	onSendMessage,
 	onDeleteMessage,
+	onNotify,
 	onRequireAuth,
+	onOpenUserProfile,
 	onMentionUser,
 }: Props = $props();
 
 let inputText = $state("");
 let pendingImages = $state<ImageAttachment[]>([]);
+let replyingTo = $state<ChatMessageRecord | null>(null);
 let isUploadingImage = $state(false);
 let uploadError = $state("");
 let activePopover = $state<"none" | "emoji">("none");
 let activeEmojiTab = $state<string>("kaomoji");
-let showMusicNotices = $state(true);
+let showMusicNotices = $state(false);
 
 let mentionMenuOpen = $state(false);
 let mentionQuery = $state("");
@@ -114,6 +128,8 @@ let showAllLoaded = $state(false);
 let unreadBarDismissed = $state(false);
 let isUnreadDividerInView = $state(false);
 let highlightUnreadDivider = $state(false);
+let showScrollBottomBtn = $state(false);
+let newMessagesWhileScrolled = $state(0);
 
 const skipVoteBanner = $derived.by(() => {
 	const current = musicState?.current ?? null;
@@ -149,8 +165,11 @@ const skipVoteBanner = $derived.by(() => {
 });
 
 const VISIBLE_FOLD_LIMIT = 40;
+const RECALL_WINDOW_MS = 5 * 60_000;
 const SHOW_MUSIC_NOTICES_KEY = "lengxi_chat_show_music_notices";
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
+
+let nowMs = $state(Date.now());
 
 let messageContainer: HTMLDivElement | null = $state(null);
 let inputEl: HTMLTextAreaElement | null = $state(null);
@@ -380,17 +399,23 @@ const activeAlertMessage = $derived.by<ChatMessageRecord | null>(() => {
 	return messages.find((m) => m.msgUid === targetUid) ?? null;
 });
 
-function checkIsNearBottom(): boolean {
-	if (!messageContainer) return true;
-	const gap =
+function getScrollGap(): number {
+	if (!messageContainer) return 0;
+	return Math.max(
+		0,
 		messageContainer.scrollHeight -
-		messageContainer.scrollTop -
-		messageContainer.clientHeight;
-	return gap < 120;
+			messageContainer.scrollTop -
+			messageContainer.clientHeight,
+	);
 }
 
 function handleMessageScroll() {
-	isStickyAtBottom = checkIsNearBottom();
+	const gap = getScrollGap();
+	isStickyAtBottom = gap < 120;
+	showScrollBottomBtn = gap > 180;
+	if (isStickyAtBottom) {
+		newMessagesWhileScrolled = 0;
+	}
 	if (
 		isStickyAtBottom &&
 		currentUser &&
@@ -405,11 +430,16 @@ function handleMessageScroll() {
 	}
 }
 
-async function scrollToBottom() {
+async function scrollToBottom(smooth = false) {
 	await tick();
 	if (messageContainer) {
-		messageContainer.scrollTop = messageContainer.scrollHeight;
+		messageContainer.scrollTo({
+			top: messageContainer.scrollHeight,
+			behavior: smooth ? "smooth" : "auto",
+		});
 		isStickyAtBottom = true;
+		showScrollBottomBtn = false;
+		newMessagesWhileScrolled = 0;
 	}
 }
 
@@ -529,7 +559,9 @@ function formatShortTime(ts: number): string {
 onMount(() => {
 	try {
 		const saved = localStorage.getItem(SHOW_MUSIC_NOTICES_KEY);
-		if (saved === "0" || saved === "false") {
+		if (saved === "1" || saved === "true") {
+			showMusicNotices = true;
+		} else if (saved === "0" || saved === "false") {
 			showMusicNotices = false;
 		}
 	} catch {
@@ -580,10 +612,13 @@ $effect(() => {
 		seenMessageUids = new Set();
 		unreadMentionUids = [];
 		alertBannerUid = null;
+		replyingTo = null;
 		showAllLoaded = false;
 		unreadBarDismissed = false;
 		isUnreadDividerInView = false;
 		highlightUnreadDivider = false;
+		showScrollBottomBtn = false;
+		newMessagesWhileScrolled = 0;
 		lastRenderedVisibleLen = visLen;
 		if (!targetMessageUid) {
 			void scrollToBottom();
@@ -638,9 +673,13 @@ $effect(() => {
 		}
 
 		if (visLen !== lastRenderedVisibleLen) {
+			const addedCount = Math.max(0, visLen - lastRenderedVisibleLen);
 			lastRenderedVisibleLen = visLen;
 			if (isStickyAtBottom && !targetMessageUid) {
 				void scrollToBottom();
+			} else if (!isStickyAtBottom && addedCount > 0) {
+				newMessagesWhileScrolled += addedCount;
+				showScrollBottomBtn = getScrollGap() > 180;
 			}
 		}
 	}
@@ -650,6 +689,40 @@ $effect(() => {
 			document.dispatchEvent(new CustomEvent("chat:media-rendered"));
 		});
 	}
+
+	if (replyingTo && !msgs.some((m) => m.msgUid === replyingTo?.msgUid)) {
+		replyingTo = null;
+	}
+});
+
+$effect(() => {
+	const userKey = currentUser?.userKey || "";
+	const isAdmin = Boolean(currentUser?.isAdmin);
+	const offset = clockOffsetMs;
+	const serverNow = nowMs + offset;
+	if (!userKey || isAdmin) return;
+
+	let earliestExpireLocal = Number.POSITIVE_INFINITY;
+	for (const m of renderedMessages) {
+		if (m.kind !== "user" || m.userKey !== userKey) continue;
+		const expireServer = m.createdAt + RECALL_WINDOW_MS;
+		if (expireServer > serverNow) {
+			const expireLocal = expireServer - offset;
+			if (expireLocal < earliestExpireLocal) {
+				earliestExpireLocal = expireLocal;
+			}
+		}
+	}
+
+	if (!Number.isFinite(earliestExpireLocal)) return;
+	const waitMs = Math.min(
+		60_000,
+		Math.max(50, earliestExpireLocal - Date.now() + 30),
+	);
+	const timer = window.setTimeout(() => {
+		nowMs = Date.now();
+	}, waitMs);
+	return () => window.clearTimeout(timer);
 });
 
 $effect(() => {
@@ -843,6 +916,25 @@ function collectMentionKeys(content: string): string[] {
 	return Array.from(keys);
 }
 
+function handleStartReply(msg: ChatMessageRecord) {
+	if (!currentUser) {
+		onRequireAuth();
+		return;
+	}
+	replyingTo = msg;
+	void tick().then(() => {
+		inputEl?.focus();
+	});
+}
+
+function handleJumpToReply(msgUid: string) {
+	if (messages.some((m) => m.msgUid === msgUid)) {
+		void jumpToMessage(msgUid);
+		return;
+	}
+	onNotify?.("原消息较早或已撤回");
+}
+
 function handleSend() {
 	const trimmed = inputText.trim();
 	if (!trimmed && pendingImages.length === 0) return;
@@ -852,9 +944,11 @@ function handleSend() {
 	}
 
 	const mentionKeys = collectMentionKeys(trimmed);
-	onSendMessage(trimmed, pendingImages, mentionKeys);
+	const replyToUid = replyingTo?.msgUid || "";
+	onSendMessage(trimmed, pendingImages, mentionKeys, replyToUid || undefined);
 	inputText = "";
 	pendingImages = [];
+	replyingTo = null;
 	uploadError = "";
 	selectedMentionMap = {};
 	mentionMenuOpen = false;
@@ -890,6 +984,12 @@ function handleKeydown(e: KeyboardEvent) {
 			mentionMenuOpen = false;
 			return;
 		}
+	}
+
+	if (e.key === "Escape" && replyingTo) {
+		e.preventDefault();
+		replyingTo = null;
+		return;
 	}
 
 	if (e.key === "Enter" && !e.shiftKey) {
@@ -995,13 +1095,12 @@ function removePendingImage(index: number) {
                   onclick={() => void jumpToMessage(item.msgUid)}
                 >
                   <div class="flex items-start gap-2 min-w-0 flex-1">
-                    {#if item.avatar}
-                      <img src={item.avatar} alt="" class="w-5 h-5 rounded-full object-cover shrink-0 mt-0.5" />
-                    {:else}
-                      <span class="w-5 h-5 rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)] text-[10px] font-bold inline-flex items-center justify-center shrink-0 mt-0.5">
-                        {item.name.slice(0, 1)}
-                      </span>
-                    {/if}
+                    <ChatAvatar
+                      src={item.avatar}
+                      name={item.name}
+                      size="xs"
+                      class="mt-0.5"
+                    />
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center justify-between gap-1">
                         <span class="font-semibold truncate text-[11px]">{item.name}</span>
@@ -1219,9 +1318,15 @@ function removePendingImage(index: number) {
             </div>
           {/if}
           {@const isSelf = Boolean(currentUser && msg.userKey === currentUser.userKey)}
+          {@const isAdmin = Boolean(currentUser?.isAdmin)}
+          {@const serverNow = nowMs + clockOffsetMs}
           {@const canDelete = Boolean(
-            currentUser && msg.kind === "user" && (currentUser.isAdmin || isSelf),
+            currentUser &&
+              msg.kind === "user" &&
+              (isAdmin ||
+                (isSelf && serverNow - msg.createdAt <= RECALL_WINDOW_MS)),
           )}
+          {@const deleteLabel = isAdmin ? "删除" : "撤回"}
           <ChatMessage
             message={msg}
             isSelf={isSelf}
@@ -1229,13 +1334,47 @@ function removePendingImage(index: number) {
             isHighlighted={highlightedMsgUid === msg.msgUid}
             currentUserName={currentUser?.name || ""}
             canDelete={canDelete}
+            deleteLabel={deleteLabel}
             stickerMap={stickerMap}
             onDelete={onDeleteMessage}
+            onReply={msg.kind === "user" ? handleStartReply : undefined}
+            onJumpToMessage={handleJumpToReply}
+            onOpenUserProfile={onOpenUserProfile}
             onMention={onMentionUser}
           />
         {/each}
       {/if}
     </div>
+
+    {#if showScrollBottomBtn}
+      <div class="chat-scroll-bottom-wrap">
+        <button
+          type="button"
+          class="chat-scroll-bottom-btn"
+          aria-label="滚动到底部最新消息"
+          onclick={() => {
+            void scrollToBottom(true);
+            if (currentUser && messages.length > 0) {
+              writeLastSeenAt(
+                roomId,
+                currentUser.userKey,
+                messages[messages.length - 1].createdAt,
+              );
+              onMarkRead?.(messages[messages.length - 1].createdAt);
+            }
+          }}
+        >
+          <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+          <span>
+            {newMessagesWhileScrolled > 0
+              ? `回到底部 (${newMessagesWhileScrolled} 条新消息)`
+              : "回到底部"}
+          </span>
+        </button>
+      </div>
+    {/if}
   </div>
 
   <!-- 统一底部输入停靠区 -->
@@ -1323,6 +1462,16 @@ function removePendingImage(index: number) {
           </div>
         {:else}
           {#each filteredMentionCandidates as person, idx (person.userKey)}
+            {@const personBadgeLabel = person.isAdmin
+              ? "站长"
+              : person.authType === "waline"
+                ? "已认证"
+                : "访客"}
+            {@const personBadgeType = person.isAdmin
+              ? "host"
+              : person.authType === "waline"
+                ? "accent"
+                : "tag"}
             <button
               type="button"
               role="option"
@@ -1336,13 +1485,11 @@ function removePendingImage(index: number) {
             >
               <div class="flex items-center gap-2 min-w-0 flex-1">
                 <div class="relative shrink-0">
-                  {#if person.avatar}
-                    <img src={person.avatar} alt={person.name} class="w-5 h-5 rounded-full object-cover" />
-                  {:else}
-                    <span class="w-5 h-5 rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)] text-[10px] font-bold inline-flex items-center justify-center">
-                      {person.name.slice(0, 1)}
-                    </span>
-                  {/if}
+                  <ChatAvatar
+                    src={person.avatar}
+                    name={person.name}
+                    size="xs"
+                  />
                   <span
                     class="chat-ac-status-dot {person.online ? 'online' : 'offline'}"
                     aria-hidden="true"
@@ -1351,11 +1498,9 @@ function removePendingImage(index: number) {
                 <span class="text-xs font-medium truncate text-[var(--deep-text)] dark:text-white/90">
                   {person.name}
                 </span>
-                {#if person.badge}
-                  <span class="chat-role-badge chat-role-badge--{person.badgeType} scale-90 origin-left">
-                    {person.badge}
-                  </span>
-                {/if}
+                <span class="chat-role-badge chat-role-badge--{personBadgeType} scale-90 origin-left">
+                  {personBadgeLabel}
+                </span>
               </div>
               <span class="text-[10px] shrink-0 {person.online ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[var(--chat-meta-color)] opacity-75'}">
                 {person.online ? "在线" : "离线"}
@@ -1368,6 +1513,30 @@ function removePendingImage(index: number) {
 
     <!-- 统一一体化毛玻璃输入卡片 -->
     <div class="chat-composer">
+      <!-- 正在回复提示条 -->
+      {#if replyingTo}
+        <div class="chat-reply-bar">
+          <div class="chat-reply-bar-main">
+            <span class="chat-reply-bar-label">回复 {replyingTo.name || "用户"}</span>
+            <span class="chat-reply-bar-text">
+              {formatChatReplyPreview(
+                replyingTo.content,
+                stickerMap,
+                replyingTo.attachments.length > 0,
+              )}
+            </span>
+          </div>
+          <button
+            type="button"
+            class="chat-reply-bar-close"
+            aria-label="取消回复"
+            onclick={() => (replyingTo = null)}
+          >
+            ×
+          </button>
+        </div>
+      {/if}
+
       <!-- 待发送图片预览条 -->
       {#if pendingImages.length > 0 || isUploadingImage || uploadError}
         <div class="px-3 pt-2.5 pb-1 flex flex-wrap items-center gap-2 border-b border-black/5 dark:border-white/10">

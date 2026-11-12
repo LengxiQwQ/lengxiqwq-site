@@ -161,3 +161,23 @@ export function parseChatSegments(
 
 	return segments;
 }
+
+export function formatChatReplyPreview(
+	content: string,
+	stickerMap?: Map<string, StickerItem>,
+	hasImage = false,
+	isRecalled = false,
+): string {
+	if (isRecalled) return "原消息已撤回";
+	const readable = content
+		.replace(/:[A-Za-z0-9_.-]+_([^:\s<>"]+?):/g, (full, fallbackName) => {
+			const matched = stickerMap?.get(full);
+			return `[${matched?.name || fallbackName}]`;
+		})
+		.replace(/\s+/g, " ")
+		.trim();
+	if (!readable) {
+		return hasImage ? "[图片]" : "[消息]";
+	}
+	return hasImage ? `[图片] ${readable}` : readable;
+}

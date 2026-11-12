@@ -4,12 +4,14 @@ import type { ChatRoomMeta } from "@/types/chatConfig";
 import ChatAuthModal from "./ChatAuthModal.svelte";
 import ChatProfileModal from "./ChatProfileModal.svelte";
 import ChatSettingsPopover from "./ChatSettingsPopover.svelte";
+import ChatUserDetailModal from "./ChatUserDetailModal.svelte";
 import ChatWindow from "./ChatWindow.svelte";
 import {
 	buildWsUrl,
 	clearGuestAuth,
 	clearWalineAuth,
 	normalizeServerUrl,
+	openWalineLoginPopup,
 	resolveInitialAuth,
 	type ServerPacket,
 	searchOnlineMusic,
@@ -20,10 +22,12 @@ import type {
 	ChatOnlineMember,
 	ChatProfileDraft,
 	ChatSessionUser,
+	ChatUserDetailSeed,
 	ConnectionState,
 	ImageAttachment,
 	RoomMusicState,
 } from "./chatTypes";
+import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import MusicPanel from "./MusicPanel.svelte";
 import type { ChatMusicTrack } from "./musicTypes";
 import RoomPanel from "./RoomPanel.svelte";
@@ -36,6 +40,7 @@ import {
 interface Props {
 	chatServerUrl?: string;
 	walineServerUrl?: string;
+	playlistOutApiUrl?: string;
 	rooms?: ChatRoomMeta[];
 	enableImageUpload?: boolean;
 	stickerPackUrls?: string[];
@@ -46,6 +51,7 @@ interface Props {
 const {
 	chatServerUrl = "",
 	walineServerUrl = "",
+	playlistOutApiUrl = "https://playlistout-api.lengxiqwq.com",
 	rooms = [{ id: "chat", name: "闲聊", subtitle: "随便聊聊日常与折腾" }],
 	enableImageUpload = true,
 	stickerPackUrls = ["/assets/stickers/qq", "/assets/stickers/miku"],
@@ -74,8 +80,40 @@ let musicState = $state<RoomMusicState | null>(null);
 let clockOffsetMs = $state(0);
 let noticeText = $state("");
 let targetMessageUid = $state("");
+let walineToken = $state("");
+let playlistRefreshSeq = $state(0);
+let musicPanelRef: {
+	toggleListenControl?: () => void;
+	openPlayerTab?: () => void;
+} | null = $state(null);
+let mobilePlaybackStatus = $state({
+	isListening: false,
+	isMuted: true,
+	elapsedSec: 0,
+	durationSec: 0,
+	canDirectSkip: false,
+	isSoloCoolingDown: false,
+	soloCooldownRemainSec: 0,
+	hasVotedSkip: false,
+});
 
 let lastMarkedServerReadAt = 0;
+let lastReportedAudioKey = "";
+
+$effect(() => {
+	const userKey = currentUser?.userKey || "";
+	const muted = mobilePlaybackStatus.isMuted;
+	if (connectionState !== "connected" || !userKey) {
+		lastReportedAudioKey = "";
+		return;
+	}
+	const key = `${currentRoom}:${userKey}:${muted ? 1 : 0}`;
+	if (key === lastReportedAudioKey) return;
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		lastReportedAudioKey = key;
+		ws.send(JSON.stringify({ type: "presence:audio", isMuted: muted }));
+	}
+});
 
 function readAnyStoredLastSeen(roomId: string): number {
 	if (typeof localStorage === "undefined") return 0;
@@ -129,16 +167,24 @@ function persistUserLastSeen(roomId: string, userKey: string, ts: number) {
 let showSettings = $state(false);
 let showProfileModal = $state(false);
 let showAuthModal = $state(false);
+let showUserDetailModal = $state(false);
+let userDetailSeed = $state<ChatUserDetailSeed | null>(null);
+let externalPlaylistRequest = $state<
+	{ playlistId: string; seq: number } | undefined
+>(undefined);
+let walineLoginWaiting = $state(false);
 let mentionEvent = $state<
 	{ name: string; userKey?: string; seq: number } | undefined
 >(undefined);
 let stickerPacks = $state<StickerPack[]>([]);
 
 let mentionSeq = 0;
+let externalPlaylistSeq = 0;
 let baseDocumentTitle = "";
 let ws: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 let noticeTimer: number | null = null;
+let cancelWalinePopup: (() => void) | null = null;
 let reconnectAttempt = 0;
 let isUnmounted = false;
 let currentAuth: { kind: "waline" | "guest"; token: string } | null = null;
@@ -167,6 +213,11 @@ function sendPacket(packet: Record<string, unknown>): boolean {
 	return true;
 }
 
+function getFixedRoleBadge(user: ChatSessionUser): string {
+	if (user.isAdmin) return "站长";
+	return user.authType === "waline" ? "已认证" : "访客";
+}
+
 function applySavedProfileOverrideIfNeeded(user: ChatSessionUser | null) {
 	if (!user || typeof localStorage === "undefined") return;
 	try {
@@ -177,24 +228,19 @@ function applySavedProfileOverrideIfNeeded(user: ChatSessionUser | null) {
 		const parsed = JSON.parse(raw) as Partial<ChatProfileDraft>;
 		const nextName =
 			typeof parsed.nickname === "string" ? parsed.nickname.trim() : "";
-		const nextBadge = user.isAdmin
-			? "站长"
-			: typeof parsed.badge === "string"
-				? parsed.badge
-				: "";
+		const nextBadge = getFixedRoleBadge(user);
 		const nextStatus =
 			typeof parsed.status === "string" ? parsed.status.trim() : "";
 		const nextUrl = typeof parsed.url === "string" ? parsed.url.trim() : "";
+		const nextBio = typeof parsed.bio === "string" ? parsed.bio.trim() : "";
 		const nextAvatar =
 			typeof parsed.avatar === "string" ? parsed.avatar.trim() : undefined;
 
 		const changed =
 			(nextName && nextName !== user.name) ||
-			(!user.isAdmin &&
-				typeof parsed.badge === "string" &&
-				nextBadge !== user.badge) ||
 			(nextStatus && nextStatus !== (user.status || "在线")) ||
 			(typeof parsed.url === "string" && nextUrl !== user.url) ||
+			(typeof parsed.bio === "string" && nextBio !== (user.bio || "")) ||
 			(nextAvatar !== undefined &&
 				nextAvatar !== "" &&
 				nextAvatar !== user.avatar);
@@ -207,6 +253,9 @@ function applySavedProfileOverrideIfNeeded(user: ChatSessionUser | null) {
 				status: nextStatus || user.status || "在线",
 				url: typeof parsed.url === "string" ? nextUrl : user.url,
 			};
+			if (typeof parsed.bio === "string") {
+				packet.bio = nextBio;
+			}
 			if (nextAvatar !== undefined && nextAvatar !== "") {
 				packet.avatar = nextAvatar;
 			}
@@ -327,6 +376,16 @@ function connectRoom(roomId: string) {
 			}
 			case "auth:result": {
 				currentUser = packet.user;
+				if (packet.user?.authType !== "waline") {
+					walineToken = "";
+				}
+				playlistRefreshSeq += 1;
+				break;
+			}
+			case "playlist:updated": {
+				if (packet.roomId === currentRoom) {
+					playlistRefreshSeq += 1;
+				}
 				break;
 			}
 			case "presence:update": {
@@ -360,9 +419,25 @@ function connectRoom(roomId: string) {
 				}
 				break;
 			}
-			case "chat:deleted": {
+			case "chat:deleted":
+			case "chat:recalled": {
 				if (packet.roomId === currentRoom) {
-					messages = messages.filter((m) => m.msgUid !== packet.msgUid);
+					messages = messages
+						.filter((m) => m.msgUid !== packet.msgUid)
+						.map((m) =>
+							m.replyTo?.msgUid === packet.msgUid
+								? {
+										...m,
+										replyTo: {
+											...m.replyTo,
+											userKey: "",
+											content: "",
+											hasImage: false,
+											isRecalled: true,
+										},
+									}
+								: m,
+						);
 				}
 				break;
 			}
@@ -445,14 +520,40 @@ function handleMentionUser(name: string) {
 	}
 }
 
+function handleDirectWalineLogin() {
+	if (!walineServerUrl) {
+		showNotice("未配置 Waline 服务地址");
+		return;
+	}
+	walineLoginWaiting = true;
+	cancelWalinePopup?.();
+	cancelWalinePopup = openWalineLoginPopup(
+		walineServerUrl,
+		(token) => {
+			walineLoginWaiting = false;
+			cancelWalinePopup = null;
+			handleAuthenticated({ kind: "waline", token });
+		},
+		() => {
+			walineLoginWaiting = false;
+			cancelWalinePopup = null;
+		},
+	);
+}
+
 function handleAuthenticated(
 	auth: { kind: "waline" | "guest"; token: string },
 	user?: ChatSessionUser,
 ) {
+	if (auth.kind === "waline") {
+		clearGuestAuth();
+	}
 	currentAuth = auth;
+	walineToken = auth.kind === "waline" ? auth.token : "";
 	if (user) {
 		currentUser = user;
 	}
+	playlistRefreshSeq += 1;
 	sendPacket({
 		type: "auth:sync",
 		authKind: auth.kind,
@@ -467,22 +568,41 @@ function handleLogout() {
 		clearGuestAuth();
 	}
 	currentAuth = null;
+	walineToken = "";
 	currentUser = null;
+	playlistRefreshSeq += 1;
 	sendPacket({ type: "auth:logout" });
 	showNotice("已退出当前聊天身份，进入只读旁观模式");
+}
+
+function handleOpenUserProfile(seed: ChatUserDetailSeed) {
+	if (!seed.userKey && !seed.name) return;
+	userDetailSeed = seed;
+	showUserDetailModal = true;
+}
+
+function handleOpenPlaylistFromProfile(playlistId: string) {
+	showUserDetailModal = false;
+	externalPlaylistSeq += 1;
+	externalPlaylistRequest = { playlistId, seq: externalPlaylistSeq };
+	if (activeTab !== "music") {
+		activeTab = "music";
+	}
 }
 
 function handleUpdateProfile(draft: ChatProfileDraft) {
 	if (!currentUser) return;
 	const cleanNick = draft.nickname.trim().slice(0, 16) || currentUser.name;
-	const cleanBadge = draft.badge.trim().slice(0, 10);
+	const cleanBadge = getFixedRoleBadge(currentUser);
 	const cleanStatus = draft.status.trim().slice(0, 16) || "在线";
 	const cleanUrl = draft.url.trim().slice(0, 200);
+	const cleanBio = (draft.bio ?? "").trim().slice(0, 80);
 	const stored: ChatProfileDraft = {
 		nickname: cleanNick,
 		badge: cleanBadge,
 		status: cleanStatus,
 		url: cleanUrl,
+		bio: cleanBio,
 	};
 	if (typeof draft.avatar === "string" && draft.avatar.trim()) {
 		stored.avatar = draft.avatar.trim().slice(0, 400);
@@ -501,6 +621,7 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 		badge: cleanBadge,
 		status: cleanStatus,
 		url: cleanUrl,
+		bio: cleanBio,
 	};
 	if (typeof draft.avatar === "string") {
 		packet.avatar = draft.avatar.trim().slice(0, 400);
@@ -516,17 +637,22 @@ function handleSendMessage(
 	content: string,
 	attachments: ImageAttachment[],
 	mentionKeys: string[] = [],
+	replyToUid = "",
 ) {
 	if (!currentUser) {
 		showAuthModal = true;
 		return;
 	}
-	sendPacket({
+	const packet: Record<string, unknown> = {
 		type: "chat:send",
 		content,
 		attachments,
 		mentionKeys,
-	});
+	};
+	if (replyToUid) {
+		packet.replyToUid = replyToUid;
+	}
+	sendPacket(packet);
 }
 
 function handleLoadHistory(sinceCreatedAt = 0, jumpTarget = false) {
@@ -559,7 +685,7 @@ function handleMarkRead(timestamp: number) {
 }
 
 function handleDeleteMessage(msgUid: string) {
-	sendPacket({ type: "chat:delete", msgUid });
+	sendPacket({ type: "chat:recall", msgUid });
 }
 
 async function handleSearchOnline(keyword: string): Promise<ChatMusicTrack[]> {
@@ -577,6 +703,9 @@ function handleEnqueueTrack(track: ChatMusicTrack) {
 			id: track.id,
 			provider: track.provider || "local",
 			sourceId: track.sourceId || track.id,
+			sourcePlatform: track.sourcePlatform,
+			playlistId: track.playlistId,
+			position: track.position,
 			title: track.title,
 			artist: track.artist,
 			album: track.album,
@@ -592,6 +721,7 @@ onMount(() => {
 	isUnmounted = false;
 	baseDocumentTitle = document.title;
 	currentAuth = resolveInitialAuth();
+	walineToken = currentAuth?.kind === "waline" ? currentAuth.token : "";
 
 	const urlParams = new URLSearchParams(window.location.search);
 	const paramRoom = urlParams.get("room")?.trim().toLowerCase() || "";
@@ -625,6 +755,7 @@ onMount(() => {
 	return () => {
 		isUnmounted = true;
 		document.removeEventListener("visibilitychange", handleVisibility);
+		cancelWalinePopup?.();
 		if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 		if (ws) {
@@ -646,11 +777,13 @@ onMount(() => {
         rooms={rooms}
         currentRoom={currentRoom}
         onlineMembers={onlineMembers}
+        mentionMembers={mentionMembers}
         totalOnlineCount={totalOnlineCount}
         currentUser={currentUser}
+        selfMuted={mobilePlaybackStatus.isMuted}
         connectionState={connectionState}
         onRoomSelect={handleRoomSelect}
-        onMentionUser={handleMentionUser}
+        onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
         onOpenAuth={() => (showAuthModal = true)}
         onLogout={handleLogout}
@@ -676,6 +809,7 @@ onMount(() => {
           mentionMembers={mentionMembers}
           isChatTabActive={activeTab === "chat"}
           targetMessageUid={targetMessageUid}
+          clockOffsetMs={clockOffsetMs}
           musicState={musicState}
           onSkipTrack={() => {
             if (!currentUser) {
@@ -713,8 +847,10 @@ onMount(() => {
           onToggleSettings={() => (showSettings = !showSettings)}
           onSendMessage={handleSendMessage}
           onDeleteMessage={handleDeleteMessage}
+          onNotify={showNotice}
           onRequireAuth={() => (showAuthModal = true)}
           onMentionUser={handleMentionUser}
+          onOpenUserProfile={handleOpenUserProfile}
         />
       </div>
 
@@ -726,7 +862,13 @@ onMount(() => {
 
     <div class="chat-panel chat-panel-right {activeTab === 'music' ? 'mobile-active' : ''}">
       <MusicPanel
+        bind:this={musicPanelRef}
         roomId={currentRoom}
+        chatServerUrl={normalizedChatServer}
+        playlistOutApiUrl={playlistOutApiUrl}
+        walineToken={walineToken}
+        playlistRefreshSeq={playlistRefreshSeq}
+        externalPlaylistRequest={externalPlaylistRequest}
         fallbackTracks={musicTracks}
         musicState={musicState}
         currentUser={currentUser}
@@ -735,6 +877,9 @@ onMount(() => {
         initialVolume={initialMusicVolume}
         onSearchOnline={handleSearchOnline}
         onEnqueueTrack={handleEnqueueTrack}
+        onNotify={showNotice}
+        onOpenUserProfile={handleOpenUserProfile}
+        onPlaybackStatusChange={(status) => (mobilePlaybackStatus = status)}
         onRemoveQueue={(uid) => {
           if (!currentUser) {
             showAuthModal = true;
@@ -771,6 +916,8 @@ onMount(() => {
           sendPacket({ type: "music:report_error", playUid })
         }
         onRequestAuth={() => (showAuthModal = true)}
+        onRequestWalineAuth={handleDirectWalineLogin}
+        walineLoginWaiting={walineLoginWaiting}
       />
     </div>
   </div>
@@ -788,9 +935,73 @@ onMount(() => {
   <ChatProfileModal
     open={showProfileModal}
     currentUser={currentUser}
+    walineServerUrl={walineServerUrl}
     onSave={handleUpdateProfile}
     onClose={() => (showProfileModal = false)}
   />
+
+  <!-- 用户详细资料卡弹窗 -->
+  <ChatUserDetailModal
+    open={showUserDetailModal}
+    seed={userDetailSeed}
+    roomId={currentRoom}
+    chatServerUrl={normalizedChatServer}
+    currentUser={currentUser}
+    onlineMembers={onlineMembers}
+    messages={messages}
+    musicHistoryLogs={musicState?.historyLogs ?? []}
+    onClose={() => (showUserDetailModal = false)}
+    onMention={handleMentionUser}
+    onEditSelf={() => {
+      showUserDetailModal = false;
+      showProfileModal = true;
+    }}
+    onEnqueueTrack={handleEnqueueTrack}
+    onOpenPlaylist={handleOpenPlaylistFromProfile}
+    onJumpToMessage={(msgUid) => {
+      showUserDetailModal = false;
+      targetMessageUid = msgUid;
+      if (activeTab !== "chat") {
+        activeTab = "chat";
+      }
+    }}
+  />
+
+  <!-- 移动端跨面板全局迷你播放条（仅非点歌面板且有曲目播放时展示） -->
+  {#if musicState?.current && activeTab !== "music"}
+    <MiniPlayerBar
+      currentPlay={musicState.current}
+      isListening={mobilePlaybackStatus.isListening}
+      elapsedSec={mobilePlaybackStatus.elapsedSec}
+      durationSec={mobilePlaybackStatus.durationSec}
+      canDirectSkip={mobilePlaybackStatus.canDirectSkip}
+      isSoloCoolingDown={mobilePlaybackStatus.isSoloCoolingDown}
+      soloCooldownRemainSec={mobilePlaybackStatus.soloCooldownRemainSec}
+      hasVotedSkip={mobilePlaybackStatus.hasVotedSkip}
+      voteCount={musicState.voteCount}
+      voteThreshold={musicState.voteThreshold}
+      variant="mobile"
+      onOpenLyrics={() => {
+        activeTab = "music";
+        musicPanelRef?.openPlayerTab?.();
+      }}
+      onToggleListen={() => musicPanelRef?.toggleListenControl?.()}
+      onSkipTrack={() => {
+        if (!currentUser) {
+          showAuthModal = true;
+          return;
+        }
+        sendPacket({ type: "music:skip" });
+      }}
+      onVoteSkip={() => {
+        if (!currentUser) {
+          showAuthModal = true;
+          return;
+        }
+        sendPacket({ type: "music:vote_skip" });
+      }}
+    />
+  {/if}
 
   <!-- 移动端底部 Tab 切换 -->
   <nav class="chat-mobile-tabs" aria-label="聊天室面板切换">

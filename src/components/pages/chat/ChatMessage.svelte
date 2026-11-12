@@ -1,7 +1,12 @@
 <script lang="ts">
+import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
-import type { ChatMessageRecord } from "./chatTypes";
-import { parseChatSegments, type StickerItem } from "./stickerLoader";
+import type { ChatMessageRecord, ChatUserDetailSeed } from "./chatTypes";
+import {
+	formatChatReplyPreview,
+	parseChatSegments,
+	type StickerItem,
+} from "./stickerLoader";
 
 interface Props {
 	message: ChatMessageRecord;
@@ -10,8 +15,12 @@ interface Props {
 	isHighlighted?: boolean;
 	currentUserName?: string;
 	canDelete?: boolean;
+	deleteLabel?: string;
 	stickerMap: Map<string, StickerItem>;
 	onDelete?: (msgUid: string) => void;
+	onReply?: (message: ChatMessageRecord) => void;
+	onJumpToMessage?: (msgUid: string) => void;
+	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onMention?: (name: string) => void;
 }
 
@@ -22,24 +31,14 @@ const {
 	isHighlighted = false,
 	currentUserName = "",
 	canDelete = false,
+	deleteLabel = "撤回",
 	stickerMap,
 	onDelete,
+	onReply,
+	onJumpToMessage,
+	onOpenUserProfile,
 	onMention,
 }: Props = $props();
-
-let imgError = $state(false);
-
-$effect(() => {
-	message.avatar;
-	imgError = false;
-});
-
-const isAvatarUrl = $derived(
-	!imgError &&
-		(message.avatar.startsWith("http://") ||
-			message.avatar.startsWith("https://") ||
-			message.avatar.startsWith("/")),
-);
 
 const segments = $derived(
 	parseChatSegments(message.content, stickerMap, message.mentions),
@@ -65,7 +64,66 @@ const formattedTime = $derived.by(() => {
 	const m = String(d.getMinutes()).padStart(2, "0");
 	return `${h}:${m}`;
 });
+
+const replyPreviewText = $derived.by(() => {
+	if (!message.replyTo) return "";
+	return formatChatReplyPreview(
+		message.replyTo.content,
+		stickerMap,
+		message.replyTo.hasImage,
+		message.replyTo.isRecalled,
+	);
+});
+
+const roleBadge = $derived.by(() => {
+	if (message.isAdmin) return { label: "站长", type: "host" as const };
+	if (message.userKey.startsWith("waline:")) {
+		return { label: "已认证", type: "accent" as const };
+	}
+	if (message.userKey.startsWith("guest:")) {
+		return { label: "访客", type: "tag" as const };
+	}
+	return message.badge
+		? { label: message.badge, type: message.badgeType }
+		: null;
+});
+function handleAvatarClick() {
+	if (onOpenUserProfile && message.userKey) {
+		onOpenUserProfile({
+			userKey: message.userKey,
+			authType: message.userKey.startsWith("waline:") ? "waline" : "guest",
+			name: message.name,
+			avatar: message.avatar,
+			url: message.url,
+			badge: roleBadge?.label || message.badge,
+			badgeType: roleBadge?.type || message.badgeType,
+			isAdmin: message.isAdmin,
+		});
+		return;
+	}
+	if (!isSelf) {
+		onMention?.(message.name);
+	}
+}
 </script>
+
+{#snippet replyQuoteBlock()}
+  {#if message.replyTo}
+    <button
+      type="button"
+      class="chat-reply-quote {isSelf ? 'self' : 'other'} {message.replyTo.isRecalled ? 'recalled' : ''}"
+      title={message.replyTo.isRecalled ? "原消息已撤回" : "点击定位到原消息"}
+      onclick={() => {
+        if (message.replyTo && !message.replyTo.isRecalled) {
+          onJumpToMessage?.(message.replyTo.msgUid);
+        }
+      }}
+    >
+      <span class="chat-reply-quote-author">{message.replyTo.name || "用户"}</span>
+      <span class="chat-reply-quote-text">{replyPreviewText}</span>
+    </button>
+  {/if}
+{/snippet}
 
 {#if message.kind === "system"}
   <div class="w-full flex justify-center my-1.5">
@@ -76,33 +134,44 @@ const formattedTime = $derived.by(() => {
   </div>
 {:else if isSelf}
   <div data-msg-uid={message.msgUid} class="flex flex-row-reverse items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}">
-    {#if isAvatarUrl}
-      <img
+    <button
+      type="button"
+      class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
+      title={`查看 ${message.name || "我"} 的个人资料`}
+      onclick={handleAvatarClick}
+    >
+      <ChatAvatar
         src={message.avatar}
+        name={message.name}
+        fallback="我"
         alt={message.name || "我"}
-        class="chat-avatar"
-        onerror={() => (imgError = true)}
+        size="md"
       />
-    {:else}
-      <div class="chat-avatar flex items-center justify-center font-bold text-sm text-[var(--btn-content)] select-none">
-        {message.name ? message.name.slice(0, 1) : "我"}
-      </div>
-    {/if}
+    </button>
 
     <div class="flex flex-col items-end max-w-[74%] min-w-0">
-      {#if message.name || message.badge}
+      {#if message.name || roleBadge || onReply || (canDelete && onDelete)}
         <div class="flex items-center justify-end gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if canDelete && onDelete}
             <button
               type="button"
-              class="opacity-0 group-hover:opacity-100 text-[11px] text-[var(--chat-meta-color)] hover:text-red-500 border-none bg-transparent cursor-pointer px-1 transition-opacity"
+              class="chat-msg-action-btn hover:text-red-500"
               onclick={() => onDelete?.(message.msgUid)}
             >
-              撤回
+              {deleteLabel}
             </button>
           {/if}
-          {#if message.badge}
-            <span class="chat-role-badge chat-role-badge--{message.badgeType}">{message.badge}</span>
+          {#if onReply}
+            <button
+              type="button"
+              class="chat-msg-action-btn hover:text-[var(--primary)]"
+              onclick={() => onReply?.(message)}
+            >
+              回复
+            </button>
+          {/if}
+          {#if roleBadge}
+            <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
           {/if}
           {#if message.name}
             <span class="text-xs text-[var(--chat-meta-color)] font-medium truncate">{message.name}</span>
@@ -111,19 +180,27 @@ const formattedTime = $derived.by(() => {
       {/if}
 
       {#if isStickerOnly}
-        <div class="chat-sticker-only-wrap justify-end">
-          {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
-            <img
-              src={seg.url}
-              alt={seg.alt}
-              title={seg.alt}
-              class="chat-sticker-large {stickerSegments.length === 1 ? 'single' : ''}"
-              loading="lazy"
-            />
-          {/each}
+        <div class="flex flex-col items-end gap-1">
+          {#if message.replyTo}
+            {@render replyQuoteBlock()}
+          {/if}
+          <div class="chat-sticker-only-wrap justify-end">
+            {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
+              <img
+                src={seg.url}
+                alt={seg.alt}
+                title={seg.alt}
+                class="chat-sticker-large {stickerSegments.length === 1 ? 'single' : ''}"
+                loading="lazy"
+              />
+            {/each}
+          </div>
         </div>
       {:else}
         <div class="chat-bubble chat-bubble-self">
+          {#if message.replyTo}
+            {@render replyQuoteBlock()}
+          {/if}
           {#if message.content.trim().length > 0}
             <ChatMarkdownContent
               content={message.content}
@@ -166,25 +243,20 @@ const formattedTime = $derived.by(() => {
     <button
       type="button"
       class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
-      title={`@ ${message.name}`}
-      onclick={() => onMention?.(message.name)}
+      title={`查看 ${message.name} 的个人资料`}
+      onclick={handleAvatarClick}
     >
-      {#if isAvatarUrl}
-        <img
-          src={message.avatar}
-          alt={message.name}
-          class="chat-avatar"
-          onerror={() => (imgError = true)}
-        />
-      {:else}
-        <div class="chat-avatar flex items-center justify-center font-bold text-sm text-[var(--chat-accent-text)] select-none">
-          {message.name ? message.name.slice(0, 1) : "?"}
-        </div>
-      {/if}
+      <ChatAvatar
+        src={message.avatar}
+        name={message.name}
+        fallback="?"
+        alt={message.name}
+        size="md"
+      />
     </button>
 
     <div class="flex flex-col items-start max-w-[74%] min-w-0">
-      {#if message.name || message.badge}
+      {#if message.name || roleBadge || onReply || (canDelete && onDelete)}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if message.url}
             <a
@@ -199,38 +271,55 @@ const formattedTime = $derived.by(() => {
           {:else if message.name}
             <span class="text-xs text-[var(--chat-meta-color)] font-medium truncate">{message.name}</span>
           {/if}
-          {#if message.badge}
-            <span class="chat-role-badge chat-role-badge--{message.badgeType}">{message.badge}</span>
+          {#if roleBadge}
+            <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
           {/if}
           {#if isMentionedMe}
             <span class="chat-mentioned-tag">@了你</span>
           {/if}
+          {#if onReply}
+            <button
+              type="button"
+              class="chat-msg-action-btn hover:text-[var(--primary)]"
+              onclick={() => onReply?.(message)}
+            >
+              回复
+            </button>
+          {/if}
           {#if canDelete && onDelete}
             <button
               type="button"
-              class="opacity-0 group-hover:opacity-100 text-[11px] text-[var(--chat-meta-color)] hover:text-red-500 border-none bg-transparent cursor-pointer px-1 transition-opacity"
+              class="chat-msg-action-btn hover:text-red-500"
               onclick={() => onDelete?.(message.msgUid)}
             >
-              删除
+              {deleteLabel}
             </button>
           {/if}
         </div>
       {/if}
 
       {#if isStickerOnly}
-        <div class="chat-sticker-only-wrap justify-start">
-          {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
-            <img
-              src={seg.url}
-              alt={seg.alt}
-              title={seg.alt}
-              class="chat-sticker-large {stickerSegments.length === 1 ? 'single' : ''}"
-              loading="lazy"
-            />
-          {/each}
+        <div class="flex flex-col items-start gap-1">
+          {#if message.replyTo}
+            {@render replyQuoteBlock()}
+          {/if}
+          <div class="chat-sticker-only-wrap justify-start">
+            {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
+              <img
+                src={seg.url}
+                alt={seg.alt}
+                title={seg.alt}
+                class="chat-sticker-large {stickerSegments.length === 1 ? 'single' : ''}"
+                loading="lazy"
+              />
+            {/each}
+          </div>
         </div>
       {:else}
         <div class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''}">
+          {#if message.replyTo}
+            {@render replyQuoteBlock()}
+          {/if}
           {#if message.content.trim().length > 0}
             <ChatMarkdownContent
               content={message.content}

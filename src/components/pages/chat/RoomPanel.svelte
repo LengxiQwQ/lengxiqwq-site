@@ -1,8 +1,11 @@
 <script lang="ts">
 import type { ChatRoomMeta } from "@/types/chatConfig";
+import ChatAvatar from "./ChatAvatar.svelte";
 import type {
+	ChatMentionCandidate,
 	ChatOnlineMember,
 	ChatSessionUser,
+	ChatUserDetailSeed,
 	ConnectionState,
 } from "./chatTypes";
 
@@ -10,11 +13,13 @@ interface Props {
 	rooms: ChatRoomMeta[];
 	currentRoom: string;
 	onlineMembers: ChatOnlineMember[];
+	mentionMembers?: ChatMentionCandidate[];
 	totalOnlineCount: number;
 	currentUser: ChatSessionUser | null;
+	selfMuted?: boolean;
 	connectionState: ConnectionState;
 	onRoomSelect?: (roomId: string) => void;
-	onMentionUser?: (userName: string) => void;
+	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onOpenProfile?: () => void;
 	onOpenAuth?: () => void;
 	onLogout?: () => void;
@@ -24,27 +29,32 @@ const {
 	rooms = [{ id: "chat", name: "闲聊", subtitle: "随便聊聊日常与折腾" }],
 	currentRoom = "chat",
 	onlineMembers = [],
+	mentionMembers = [],
 	totalOnlineCount = 0,
 	currentUser = null,
+	selfMuted = true,
 	connectionState = "idle",
 	onRoomSelect,
-	onMentionUser,
+	onOpenUserProfile,
 	onOpenProfile,
 	onOpenAuth,
 	onLogout,
 }: Props = $props();
 
-let avatarErrorMap = $state<Record<string, boolean>>({});
-let selfAvatarFailed = $state(false);
-
-$effect(() => {
-	currentUser?.avatar;
-	selfAvatarFailed = false;
-});
-
 const observerCount = $derived(
 	Math.max(0, totalOnlineCount - onlineMembers.length),
 );
+
+const offlineMembers = $derived.by(() => {
+	const onlineKeys = new Set(onlineMembers.map((m) => m.userKey));
+	return mentionMembers
+		.filter((m) => !m.online && !onlineKeys.has(m.userKey))
+		.slice()
+		.sort((a, b) => {
+			if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
+			return (b.lastSeenAt || 0) - (a.lastSeenAt || 0);
+		});
+});
 
 const connLabel = $derived(
 	connectionState === "connected"
@@ -55,6 +65,32 @@ const connLabel = $derived(
 				? "连接中"
 				: "离线",
 );
+
+function resolveMemberRoleBadge(user: {
+	isAdmin: boolean;
+	authType: "waline" | "guest";
+}): { label: string; type: "host" | "accent" | "tag" } {
+	if (user.isAdmin) return { label: "站长", type: "host" };
+	if (user.authType === "waline") return { label: "已认证", type: "accent" };
+	return { label: "访客", type: "tag" };
+}
+
+function isMemberMuted(member: ChatOnlineMember): boolean {
+	if (currentUser && member.userKey === currentUser.userKey) {
+		return selfMuted;
+	}
+	return member.isMuted !== false;
+}
+
+function formatOfflineTime(ts: number): string {
+	if (!ts) return "离线";
+	const diff = Date.now() - ts;
+	if (diff < 60_000) return "刚刚离线";
+	if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前离线`;
+	if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前离线`;
+	const d = new Date(ts);
+	return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} 离线`;
+}
 </script>
 
 <div class="flex flex-col h-full w-full select-none min-h-0">
@@ -93,92 +129,160 @@ const connLabel = $derived(
 
   <div class="chat-divider"></div>
 
-  <!-- 在线成员 -->
-  <div class="chat-section-title flex items-center justify-between pr-3 shrink-0">
-    <span>在线成员</span>
-    <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
-      {onlineMembers.length} 人{observerCount > 0 ? ` (+${observerCount} 旁观)` : ""}
-    </span>
-  </div>
-
-  <div class="flex-1 overflow-y-auto custom-scrollbar px-2.5 py-1 space-y-1 min-h-0">
-    {#if onlineMembers.length === 0}
-      <div class="px-2 py-6 text-center text-xs text-[var(--chat-meta-color)]">
-        {#if connectionState === "connected"}
-          暂无已认证在线成员，发句话或点首歌露个面吧~
-        {:else}
-          正在同步在线成员列表...
-        {/if}
+  <!-- 成员名录：在线成员 + 离线成员 -->
+  <div class="flex-1 overflow-y-auto custom-scrollbar px-2.5 py-1.5 space-y-3 min-h-0">
+    <!-- 在线成员 -->
+    <section>
+      <div class="chat-section-title flex items-center justify-between pr-1">
+        <span>在线成员</span>
+        <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+          {onlineMembers.length} 人{observerCount > 0 ? ` (+${observerCount} 旁观)` : ""}
+        </span>
       </div>
-    {:else}
-      {#each onlineMembers as member (member.userKey)}
-        {@const showImg = Boolean(member.avatar) && !avatarErrorMap[member.userKey]}
-        <div class="chat-user-item group justify-between">
-          <div class="flex items-center gap-2.5 min-w-0">
-            <div class="relative shrink-0">
-              {#if showImg}
-                <img
-                  src={member.avatar}
-                  alt={member.name}
-                  class="chat-avatar-sm"
-                  onerror={() => {
-                    avatarErrorMap = { ...avatarErrorMap, [member.userKey]: true };
-                  }}
-                />
-              {:else}
-                <div class="chat-avatar-sm flex items-center justify-center text-xs font-bold text-[var(--chat-accent-text)]">
-                  {member.name.slice(0, 1)}
-                </div>
-              {/if}
-              <span class="chat-online-dot absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"></span>
-            </div>
 
-            <div class="min-w-0 flex flex-col">
-              <div class="flex items-center gap-1.5 min-w-0">
-                {#if member.url}
-                  <a
-                    href={member.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="truncate font-medium text-[var(--deep-text)] dark:text-white/90 hover:text-[var(--primary)] no-underline"
-                    title={`访问 ${member.name} 的主页`}
-                  >
-                    {member.name}
-                  </a>
-                {:else}
-                  <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/90">
-                    {member.name}
-                  </span>
-                {/if}
-                {#if member.badge}
-                  <span class="chat-role-badge chat-role-badge--{member.badgeType} py-px! px-1! text-[0.5625rem]!">
-                    {member.badge}
-                  </span>
-                {/if}
-              </div>
-              <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
-                {member.authType === "waline" ? "已认证" : "访客"} · {member.status}
-              </span>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            class="opacity-55 group-hover:opacity-100 text-[var(--chat-meta-color)] hover:text-[var(--chat-accent-text)] text-xs font-semibold px-1.5 py-0.5 rounded-md hover:bg-[var(--card-bg)]/60 transition-all border-none bg-transparent cursor-pointer shrink-0"
-            title={`@ ${member.name}`}
-            aria-label={`提及 ${member.name}`}
-            onclick={() => onMentionUser?.(member.name)}
-          >
-            @
-          </button>
+      {#if onlineMembers.length === 0}
+        <div class="px-2 py-4 text-center text-xs text-[var(--chat-meta-color)]">
+          {#if connectionState === "connected"}
+            暂无已登录在线成员，发句话或点首歌露个面吧~
+          {:else}
+            正在同步成员列表...
+          {/if}
         </div>
-      {/each}
+      {:else}
+        <div class="space-y-1 mt-0.5">
+          {#each onlineMembers as member (member.userKey)}
+            {@const roleBadge = resolveMemberRoleBadge(member)}
+            {@const muted = isMemberMuted(member)}
+            <button
+              type="button"
+              class="chat-user-item group justify-between w-full text-left border-none bg-transparent"
+              title={`查看 ${member.name} 的个人资料`}
+              onclick={() =>
+                onOpenUserProfile?.({
+                  userKey: member.userKey,
+                  authType: member.authType,
+                  name: member.name,
+                  avatar: member.avatar,
+                  url: member.url,
+                  badge: roleBadge.label,
+                  badgeType: roleBadge.type,
+                  isAdmin: member.isAdmin,
+                  online: true,
+                  status: member.status,
+                  bio: member.bio,
+                })}
+            >
+              <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                <div class="relative shrink-0">
+                  <ChatAvatar
+                    src={member.avatar}
+                    name={member.name}
+                    size="sm"
+                  />
+                  <span class="chat-online-dot absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"></span>
+                </div>
+
+                <div class="min-w-0 flex flex-col">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/90 group-hover:text-[var(--primary)] transition-colors">
+                      {member.name}
+                    </span>
+                    <span class="chat-role-badge chat-role-badge--{roleBadge.type} py-px! px-1! text-[0.5625rem]!">
+                      {roleBadge.label}
+                    </span>
+                  </div>
+                  <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
+                    {member.authType === "waline" ? "已认证" : "访客"} · {member.status}
+                  </span>
+                </div>
+              </div>
+
+              {#if muted}
+                <span
+                  class="text-[var(--chat-meta-color)] opacity-65 shrink-0 inline-flex items-center justify-center pr-0.5"
+                  title="已静音同步"
+                  aria-label="已静音"
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+                  </svg>
+                </span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <!-- 离线成员（站长置顶，其余按最近离线时间倒序） -->
+    {#if offlineMembers.length > 0}
+      <section class="pt-1 border-t border-[var(--chat-divider-color)]">
+        <div class="chat-section-title flex items-center justify-between pr-1">
+          <span>离线成员</span>
+          <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            {offlineMembers.length} 人
+          </span>
+        </div>
+
+        <div class="space-y-1 mt-0.5">
+          {#each offlineMembers as member (member.userKey)}
+            {@const roleBadge = resolveMemberRoleBadge(member)}
+            <button
+              type="button"
+              class="chat-user-item group justify-between w-full text-left border-none bg-transparent opacity-75 hover:opacity-100"
+              title={`查看 ${member.name} 的个人资料`}
+              onclick={() =>
+                onOpenUserProfile?.({
+                  userKey: member.userKey,
+                  authType: member.authType,
+                  name: member.name,
+                  avatar: member.avatar,
+                  url: member.url,
+                  badge: roleBadge.label,
+                  badgeType: roleBadge.type,
+                  isAdmin: member.isAdmin,
+                  online: false,
+                  status: member.status,
+                  bio: member.bio,
+                })}
+            >
+              <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                <div class="relative shrink-0">
+                  <ChatAvatar
+                    src={member.avatar}
+                    name={member.name}
+                    size="sm"
+                    grayscale={true}
+                    mutedTone={true}
+                  />
+                  <span class="w-2.5 h-2.5 rounded-full bg-neutral-400 dark:bg-neutral-500 absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"></span>
+                </div>
+
+                <div class="min-w-0 flex flex-col">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/85 group-hover:text-[var(--primary)] transition-colors">
+                      {member.name}
+                    </span>
+                    <span class="chat-role-badge chat-role-badge--{roleBadge.type} py-px! px-1! text-[0.5625rem]!">
+                      {roleBadge.label}
+                    </span>
+                  </div>
+                  <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
+                    {member.authType === "waline" ? "已认证" : "访客"} · {formatOfflineTime(member.lastSeenAt)}
+                  </span>
+                </div>
+              </div>
+            </button>
+          {/each}
+        </div>
+      </section>
     {/if}
   </div>
 
   <!-- 底部：当前登录 / 访客身份卡片（点击头像或昵称整块区域打开个人资料弹窗） -->
   <div class="chat-self-footer shrink-0">
     {#if currentUser}
+      {@const selfBadge = resolveMemberRoleBadge(currentUser)}
       <button
         type="button"
         class="flex items-center gap-2.5 flex-1 min-w-0 text-left bg-transparent border-none p-1 -m-1 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
@@ -186,18 +290,11 @@ const connLabel = $derived(
         onclick={() => onOpenProfile?.()}
       >
         <div class="relative shrink-0">
-          {#if currentUser.avatar && !selfAvatarFailed}
-            <img
-              src={currentUser.avatar}
-              alt={currentUser.name}
-              class="chat-avatar"
-              onerror={() => (selfAvatarFailed = true)}
-            />
-          {:else}
-            <div class="chat-avatar flex items-center justify-center text-sm font-bold text-[var(--chat-accent-text)]">
-              {currentUser.name.slice(0, 1)}
-            </div>
-          {/if}
+          <ChatAvatar
+            src={currentUser.avatar}
+            name={currentUser.name}
+            size="md"
+          />
           <span class="chat-online-dot absolute bottom-0 right-0 border-2 border-white/80 dark:border-neutral-900/80"></span>
         </div>
         <div class="flex flex-col min-w-0 flex-1">
@@ -205,11 +302,9 @@ const connLabel = $derived(
             <span class="text-xs font-bold text-[var(--deep-text)] dark:text-white/90 truncate">
               {currentUser.name}
             </span>
-            {#if currentUser.badge}
-              <span class="chat-role-badge chat-role-badge--{currentUser.badgeType}">
-                {currentUser.badge}
-              </span>
-            {/if}
+            <span class="chat-role-badge chat-role-badge--{selfBadge.type}">
+              {selfBadge.label}
+            </span>
           </div>
           <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
             {currentUser.authType === "waline" ? "已认证" : "访客"} · {currentUser.status || "在线"}

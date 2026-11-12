@@ -18,4 +18,8 @@ export interface ChatConfig {
 	 * 是否启用聊天图片上传（复用 Waline R2 /api/upload 接口）
 	 */
 	enableImageUpload: boolean;
+	/**
+	 * PlaylistOut 公开 API 基础地址（可选，默认 https://playlistout-api.lengxiqwq.com）
+	 */
+	playlistOutApiURL?: string;
 }

@@ -1,15 +1,41 @@
 <script lang="ts">
 import { onMount, tick, untrack } from "svelte";
+import ChatAvatar from "./ChatAvatar.svelte";
+import { formatClockSeconds } from "./chatClient";
 import type {
 	ChatSessionUser,
+	ChatUserDetailSeed,
 	MusicHistoryEntry,
+	PlaylistDetail,
+	PlaylistSummary,
+	PlaylistTrackItem,
 	QueueEntry,
 	RoomMusicState,
 } from "./chatTypes";
+import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import type { ChatMusicTrack } from "./musicTypes";
+import {
+	type AmbiguousResolveCandidate,
+	DEFAULT_PLAYLISTOUT_API_URL,
+	deleteSavedPlaylist,
+	fetchPlaylistByUrlFromPlaylistOut,
+	fetchPlaylistDetail,
+	fetchRoomPlaylists,
+	formatPlatformLabel,
+	refreshSavedPlaylist,
+	resolvePlaylistFromPlaylistOut,
+	saveImportedPlaylist,
+	toEnqueueableTrack,
+	type UserPlaylistCandidate,
+	updatePlaylistFlags,
+} from "./playlistClient";
 
 interface Props {
 	roomId: string;
+	chatServerUrl?: string;
+	playlistOutApiUrl?: string;
+	walineToken?: string;
+	playlistRefreshSeq?: number;
 	fallbackTracks?: ChatMusicTrack[];
 	musicState: RoomMusicState | null;
 	currentUser: ChatSessionUser | null;
@@ -26,6 +52,21 @@ interface Props {
 	onTrackEnded: (playUid: string) => void;
 	onReportError: (playUid: string) => void;
 	onRequestAuth?: () => void;
+	onRequestWalineAuth?: () => void;
+	walineLoginWaiting?: boolean;
+	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
+	externalPlaylistRequest?: { playlistId: string; seq: number };
+	onPlaybackStatusChange?: (status: {
+		isListening: boolean;
+		isMuted: boolean;
+		elapsedSec: number;
+		durationSec: number;
+		canDirectSkip: boolean;
+		isSoloCoolingDown: boolean;
+		soloCooldownRemainSec: number;
+		hasVotedSkip: boolean;
+	}) => void;
+	onNotify?: (message: string) => void;
 }
 
 interface LyricLine {
@@ -35,6 +76,10 @@ interface LyricLine {
 
 const {
 	roomId,
+	chatServerUrl = "",
+	playlistOutApiUrl = DEFAULT_PLAYLISTOUT_API_URL,
+	walineToken = "",
+	playlistRefreshSeq = 0,
 	fallbackTracks = [],
 	musicState = null,
 	currentUser = null,
@@ -51,6 +96,12 @@ const {
 	onTrackEnded,
 	onReportError,
 	onRequestAuth,
+	onRequestWalineAuth,
+	walineLoginWaiting = false,
+	onOpenUserProfile,
+	externalPlaylistRequest,
+	onPlaybackStatusChange,
+	onNotify,
 }: Props = $props();
 
 const initVol = untrack(() =>
@@ -58,7 +109,9 @@ const initVol = untrack(() =>
 );
 
 type MusicTab = "player" | "search" | "playlist" | "history";
+type PlaylistSection = "featured" | "mine" | "shared";
 type HistorySortMode = "recent" | "count";
+type PlayerPaneMode = "split" | "lyrics" | "queue";
 
 interface HistoryRequesterOption {
 	key: string;
@@ -77,8 +130,47 @@ let isListening = $state(false);
 let hasJoinedAudio = $state(false);
 let isSyncingAudio = false;
 let internalAudioAction = false;
-let showQueueDrawer = $state(true);
+let playerPaneMode = $state<PlayerPaneMode>("split");
+let lyricsScrolling = $state(false);
+let queueScrolling = $state(false);
+let lyricsScrollHideTimer: number | null = null;
+let queueScrollHideTimer: number | null = null;
+let programmaticLyricScrollUntil = 0;
 let roomElapsed = $state(0);
+
+function triggerLyricsScroll() {
+	lyricsScrolling = true;
+	if (lyricsScrollHideTimer !== null) {
+		window.clearTimeout(lyricsScrollHideTimer);
+	}
+	lyricsScrollHideTimer = window.setTimeout(() => {
+		lyricsScrolling = false;
+		lyricsScrollHideTimer = null;
+	}, 950);
+}
+
+function triggerQueueScroll() {
+	queueScrolling = true;
+	if (queueScrollHideTimer !== null) {
+		window.clearTimeout(queueScrollHideTimer);
+	}
+	queueScrollHideTimer = window.setTimeout(() => {
+		queueScrolling = false;
+		queueScrollHideTimer = null;
+	}, 950);
+}
+
+function cyclePlayerPaneMode() {
+	playerPaneMode =
+		playerPaneMode === "split"
+			? "lyrics"
+			: playerPaneMode === "lyrics"
+				? "queue"
+				: "split";
+	if (playerPaneMode !== "queue" && activeLyricIndex >= 0) {
+		void scrollLyricToCenter(activeLyricIndex, true);
+	}
+}
 let localDuration = $state(0);
 let volume = $state(initVol);
 let coverLoadFailed = $state(false);
@@ -89,6 +181,36 @@ let searchResults = $state<ChatMusicTrack[]>([]);
 let isSearching = $state(false);
 let searchError = $state("");
 let searchTimer: number | null = null;
+
+// 歌单相关状态
+let playlistSection = $state<PlaylistSection>("featured");
+let featuredPlaylists = $state<PlaylistSummary[]>([]);
+let myPlaylists = $state<PlaylistSummary[]>([]);
+let sharedPlaylists = $state<PlaylistSummary[]>([]);
+let isLoadingPlaylists = $state(false);
+let playlistsError = $state("");
+let selectedPlaylist = $state<PlaylistDetail | null>(null);
+let isLoadingPlaylistDetail = $state(false);
+let playlistTrackFilter = $state("");
+let importInput = $state("");
+let isImportingPlaylist = $state(false);
+let importStatusText = $state("");
+let importError = $state("");
+let pendingUserImport = $state<{
+	platform: string;
+	nickname: string;
+	playlists: UserPlaylistCandidate[];
+} | null>(null);
+let pendingAmbiguousImport = $state<{
+	query: string;
+	candidates: AmbiguousResolveCandidate[];
+} | null>(null);
+let isRefreshingPlaylistId = $state("");
+let isUpdatingFlagsId = $state("");
+let confirmDeletePlaylistId = $state("");
+let isDeletingPlaylistId = $state("");
+let confirmDeleteTimer: number | null = null;
+let playlistVisibleLimit = $state(100);
 
 // 歌词状态
 let lyrics = $state<LyricLine[]>([]);
@@ -331,15 +453,15 @@ function canRemoveEntry(entry: QueueEntry): boolean {
 	return currentUser.isAdmin || entry.requesterKey === currentUser.userKey;
 }
 
-function canToggleCatalogTrack(songId: string): boolean {
+function canToggleCatalogTrack(song: ChatMusicTrack): boolean {
 	if (!currentUser) return true; // Clicking prompts auth modal via parent
 	if (currentUser.isAdmin) return true;
-	const existing = queue.find((item) => item.track.id === songId);
+	const existing = findQueuedEntryForSong(song);
 	return !existing || existing.requesterKey === currentUser.userKey;
 }
 
 function switchMusicTab(tab: MusicTab) {
-	if (!currentUser && tab !== "player") {
+	if (!currentUser && tab !== "player" && tab !== "playlist") {
 		onRequestAuth?.();
 		return;
 	}
@@ -347,13 +469,422 @@ function switchMusicTab(tab: MusicTab) {
 }
 
 $effect(() => {
-	if (!currentUser && activeTab !== "player") {
+	if (!currentUser && activeTab !== "player" && activeTab !== "playlist") {
 		activeTab = "player";
 		searchQuery = "";
 		searchResults = [];
 		searchError = "";
 		selectedRequesterKey = "";
 		showRequesterFilter = false;
+	}
+});
+
+const isWalineLoggedIn = $derived(
+	Boolean(currentUser && currentUser.authType === "waline" && walineToken),
+);
+
+function formatPlaylistDate(ts: number): string {
+	if (!ts) return "";
+	const d = new Date(ts);
+	const m = String(d.getMonth() + 1).padStart(2, "0");
+	const day = String(d.getDate()).padStart(2, "0");
+	const hh = String(d.getHours()).padStart(2, "0");
+	const mm = String(d.getMinutes()).padStart(2, "0");
+	return `${m}-${day} ${hh}:${mm}`;
+}
+
+function canManagePlaylist(playlist: PlaylistSummary | null): boolean {
+	if (!playlist || !isWalineLoggedIn || !currentUser) return false;
+	return currentUser.isAdmin || playlist.ownerKey === currentUser.userKey;
+}
+
+async function loadPlaylists(): Promise<void> {
+	if (!chatServerUrl) return;
+	isLoadingPlaylists = true;
+	playlistsError = "";
+	try {
+		const res = await fetchRoomPlaylists(
+			chatServerUrl,
+			roomId,
+			isWalineLoggedIn ? walineToken : "",
+		);
+		featuredPlaylists = res.featured;
+		myPlaylists = res.mine;
+		sharedPlaylists = res.shared;
+		if (selectedPlaylist) {
+			const stillExists = [...res.featured, ...res.mine, ...res.shared].find(
+				(p) => p.id === selectedPlaylist?.id,
+			);
+			if (!stillExists) {
+				selectedPlaylist = null;
+				playlistTrackFilter = "";
+			}
+		}
+	} catch (err) {
+		playlistsError = err instanceof Error ? err.message : "加载歌单列表失败";
+	} finally {
+		isLoadingPlaylists = false;
+	}
+}
+
+let lastExternalPlaylistSeq = 0;
+
+$effect(() => {
+	if (
+		externalPlaylistRequest &&
+		externalPlaylistRequest.seq > 0 &&
+		externalPlaylistRequest.seq !== lastExternalPlaylistSeq
+	) {
+		lastExternalPlaylistSeq = externalPlaylistRequest.seq;
+		activeTab = "playlist";
+		void openPlaylistDetail(externalPlaylistRequest.playlistId);
+	}
+});
+
+function openRequesterProfile(requesterKey: string, requesterName: string) {
+	if (
+		!onOpenUserProfile ||
+		!requesterKey ||
+		requesterKey === "system:fallback"
+	) {
+		return;
+	}
+	onOpenUserProfile({
+		userKey: requesterKey,
+		name: requesterName || "房友",
+	});
+}
+
+async function openPlaylistDetail(playlistId: string): Promise<void> {
+	if (!chatServerUrl) return;
+	isLoadingPlaylistDetail = true;
+	playlistsError = "";
+	confirmDeletePlaylistId = "";
+	try {
+		const detail = await fetchPlaylistDetail(
+			chatServerUrl,
+			roomId,
+			playlistId,
+			isWalineLoggedIn ? walineToken : "",
+		);
+		selectedPlaylist = detail;
+		playlistTrackFilter = "";
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : "加载歌单详情失败";
+		playlistsError = msg;
+		onNotify?.(msg);
+	} finally {
+		isLoadingPlaylistDetail = false;
+	}
+}
+
+async function handleImportSubmit(overrideOptions?: {
+	type?: "playlist" | "user";
+	platform?: string;
+}): Promise<void> {
+	if (!isWalineLoggedIn) {
+		onRequestAuth?.();
+		return;
+	}
+	const raw = importInput.trim();
+	if (!raw) {
+		importError = "请粘贴歌单链接或分享文本";
+		return;
+	}
+	isImportingPlaylist = true;
+	importError = "";
+	importStatusText = "";
+	pendingUserImport = null;
+	pendingAmbiguousImport = null;
+	try {
+		const resolved = await resolvePlaylistFromPlaylistOut(
+			playlistOutApiUrl,
+			raw,
+			overrideOptions,
+		);
+		if (resolved.kind === "ambiguous") {
+			pendingAmbiguousImport = {
+				query: resolved.query,
+				candidates: resolved.candidates,
+			};
+			return;
+		}
+		if (resolved.kind === "user") {
+			pendingUserImport = {
+				platform: resolved.platform,
+				nickname: resolved.nickname,
+				playlists: resolved.playlists,
+			};
+			return;
+		}
+		const saved = await saveImportedPlaylist(
+			chatServerUrl,
+			roomId,
+			walineToken,
+			resolved.payload,
+		);
+		importInput = "";
+		if (resolved.retrievalMessage) {
+			importStatusText = resolved.retrievalMessage;
+		}
+		onNotify?.(
+			saved.updatedExisting
+				? `已同步更新歌单《${saved.playlist.title}》`
+				: `已导入歌单《${saved.playlist.title}》`,
+		);
+		playlistSection = "mine";
+		await loadPlaylists();
+		await openPlaylistDetail(saved.playlist.id);
+	} catch (err) {
+		importError = err instanceof Error ? err.message : "歌单导入失败";
+	} finally {
+		isImportingPlaylist = false;
+	}
+}
+
+async function handleImportUserCandidate(
+	candidate: UserPlaylistCandidate,
+): Promise<void> {
+	if (!isWalineLoggedIn) return;
+	isImportingPlaylist = true;
+	importError = "";
+	importStatusText = "";
+	try {
+		const parsed = await fetchPlaylistByUrlFromPlaylistOut(
+			playlistOutApiUrl,
+			candidate.sourceUrl,
+			candidate.platform,
+		);
+		const saved = await saveImportedPlaylist(
+			chatServerUrl,
+			roomId,
+			walineToken,
+			parsed.payload,
+		);
+		pendingUserImport = null;
+		importInput = "";
+		if (parsed.retrievalMessage) {
+			importStatusText = parsed.retrievalMessage;
+		}
+		onNotify?.(`已导入歌单《${saved.playlist.title}》`);
+		playlistSection = "mine";
+		await loadPlaylists();
+		await openPlaylistDetail(saved.playlist.id);
+	} catch (err) {
+		importError = err instanceof Error ? err.message : "拉取选定歌单失败";
+	} finally {
+		isImportingPlaylist = false;
+	}
+}
+
+async function handleRefreshPlaylist(playlist: PlaylistSummary): Promise<void> {
+	if (!isWalineLoggedIn || isRefreshingPlaylistId) return;
+	isRefreshingPlaylistId = playlist.id;
+	try {
+		const fresh = await fetchPlaylistByUrlFromPlaylistOut(
+			playlistOutApiUrl,
+			playlist.sourceUrl,
+			playlist.platform !== "external" ? playlist.platform : undefined,
+		);
+		const updated = await refreshSavedPlaylist(
+			chatServerUrl,
+			roomId,
+			walineToken,
+			playlist.id,
+			fresh.payload,
+		);
+		onNotify?.(`已刷新《${updated.title}》（共 ${updated.trackCount} 首）`);
+		await loadPlaylists();
+		if (selectedPlaylist?.id === playlist.id) {
+			await openPlaylistDetail(playlist.id);
+		}
+	} catch (err) {
+		onNotify?.(err instanceof Error ? err.message : "刷新歌单失败");
+	} finally {
+		isRefreshingPlaylistId = "";
+	}
+}
+
+async function handleTogglePlaylistFlag(
+	playlist: PlaylistSummary,
+	flag: "isPublic" | "isFeatured" | "isFallback",
+): Promise<void> {
+	if (!walineToken || isUpdatingFlagsId) return;
+	if (flag === "isPublic" && !canManagePlaylist(playlist)) return;
+	if (flag !== "isPublic" && !currentUser?.isAdmin) return;
+	isUpdatingFlagsId = playlist.id;
+	try {
+		const nextFlags =
+			flag === "isPublic"
+				? { isPublic: !playlist.isPublic }
+				: flag === "isFeatured"
+					? {
+							isFeatured: !playlist.isFeatured,
+							isFallback: playlist.isFeatured ? false : playlist.isFallback,
+						}
+					: { isFallback: !playlist.isFallback };
+		const updated = await updatePlaylistFlags(
+			chatServerUrl,
+			roomId,
+			walineToken,
+			playlist.id,
+			nextFlags,
+		);
+		if (selectedPlaylist?.id === updated.id) {
+			selectedPlaylist = {
+				...selectedPlaylist,
+				isPublic: updated.isPublic,
+				isFeatured: updated.isFeatured,
+				isFallback: updated.isFallback,
+				updatedAt: updated.updatedAt,
+			};
+		}
+		if (flag === "isPublic") {
+			onNotify?.(
+				updated.isPublic
+					? `已共享《${updated.title}》到共享歌单`
+					: `已取消共享《${updated.title}》`,
+			);
+		}
+		await loadPlaylists();
+	} catch (err) {
+		onNotify?.(err instanceof Error ? err.message : "更新歌单权限失败");
+	} finally {
+		isUpdatingFlagsId = "";
+	}
+}
+
+async function handleDeletePlaylist(playlist: PlaylistSummary): Promise<void> {
+	if (!isWalineLoggedIn || isDeletingPlaylistId) return;
+	if (confirmDeletePlaylistId !== playlist.id) {
+		confirmDeletePlaylistId = playlist.id;
+		if (confirmDeleteTimer !== null) {
+			window.clearTimeout(confirmDeleteTimer);
+		}
+		confirmDeleteTimer = window.setTimeout(() => {
+			confirmDeletePlaylistId = "";
+			confirmDeleteTimer = null;
+		}, 3500);
+		return;
+	}
+	if (confirmDeleteTimer !== null) {
+		window.clearTimeout(confirmDeleteTimer);
+		confirmDeleteTimer = null;
+	}
+	isDeletingPlaylistId = playlist.id;
+	try {
+		await deleteSavedPlaylist(chatServerUrl, roomId, walineToken, playlist.id);
+		confirmDeletePlaylistId = "";
+		if (selectedPlaylist?.id === playlist.id) {
+			selectedPlaylist = null;
+			playlistTrackFilter = "";
+		}
+		onNotify?.(`已删除歌单《${playlist.title}》`);
+		await loadPlaylists();
+	} catch (err) {
+		onNotify?.(err instanceof Error ? err.message : "删除歌单失败");
+	} finally {
+		isDeletingPlaylistId = "";
+	}
+}
+
+function handleRandomPlayFromPlaylist(detail: PlaylistDetail): void {
+	if (!currentUser) {
+		onRequestAuth?.();
+		return;
+	}
+	const candidates = detail.tracks.filter((item) => {
+		const track = toEnqueueableTrack(item, detail.id);
+		return !isTrackCurrent(track) && !isTrackQueued(track);
+	});
+	const pool = candidates.length > 0 ? candidates : detail.tracks;
+	if (pool.length === 0) return;
+	const chosen = pool[Math.floor(Math.random() * pool.length)];
+	if (!chosen) return;
+	onEnqueueTrack(toEnqueueableTrack(chosen, detail.id));
+}
+
+function normalizeMatchTitle(raw: string): string {
+	return raw.toLowerCase().replace(/[\s\-_·.,'"!?！？，。、()（）]+/g, "");
+}
+
+function isTrackCurrent(song: ChatMusicTrack): boolean {
+	if (!currentPlay) return false;
+	if (currentPlay.track.id === song.id) return true;
+	if (song.provider === "external") {
+		return (
+			normalizeMatchTitle(currentPlay.track.title) ===
+				normalizeMatchTitle(song.title) &&
+			normalizeMatchTitle(currentPlay.track.artist).includes(
+				normalizeMatchTitle(song.artist.split(/[/,&、;；]+/)[0] || ""),
+			)
+		);
+	}
+	return false;
+}
+
+function findQueuedEntryForSong(song: ChatMusicTrack): QueueEntry | undefined {
+	const direct = queue.find((item) => item.track.id === song.id);
+	if (direct) return direct;
+	if (song.provider === "external") {
+		const targetTitle = normalizeMatchTitle(song.title);
+		const targetArtist = normalizeMatchTitle(
+			song.artist.split(/[/,&、;；]+/)[0] || "",
+		);
+		return queue.find(
+			(item) =>
+				normalizeMatchTitle(item.track.title) === targetTitle &&
+				(!targetArtist ||
+					normalizeMatchTitle(item.track.artist).includes(targetArtist)),
+		);
+	}
+	return undefined;
+}
+
+function isTrackQueued(song: ChatMusicTrack): boolean {
+	return Boolean(findQueuedEntryForSong(song));
+}
+
+const filteredPlaylistTracks = $derived.by<PlaylistTrackItem[]>(() => {
+	if (!selectedPlaylist) return [];
+	const q = playlistTrackFilter.trim().toLowerCase();
+	if (!q) return selectedPlaylist.tracks;
+	return selectedPlaylist.tracks.filter(
+		(t) =>
+			t.title.toLowerCase().includes(q) ||
+			t.artist.toLowerCase().includes(q) ||
+			t.album.toLowerCase().includes(q),
+	);
+});
+
+const displayedPlaylistTracks = $derived(
+	filteredPlaylistTracks.slice(0, playlistVisibleLimit),
+);
+const hasMorePlaylistTracks = $derived(
+	filteredPlaylistTracks.length > playlistVisibleLimit,
+);
+
+$effect(() => {
+	selectedPlaylist?.id;
+	playlistTrackFilter;
+	playlistVisibleLimit = 100;
+});
+
+function handlePlaylistScroll(e: Event): void {
+	const el = e.currentTarget as HTMLDivElement | null;
+	if (!el || !hasMorePlaylistTracks) return;
+	if (el.scrollHeight - el.scrollTop - el.clientHeight < 180) {
+		playlistVisibleLimit += 100;
+	}
+}
+
+$effect(() => {
+	roomId;
+	chatServerUrl;
+	walineToken;
+	playlistRefreshSeq;
+	if (activeTab === "playlist") {
+		void loadPlaylists();
 	}
 });
 
@@ -367,12 +898,7 @@ function computeExpectedElapsed(): number {
 	return clamped;
 }
 
-function formatTime(seconds: number): string {
-	if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
-	const mins = Math.floor(seconds / 60);
-	const secs = Math.floor(seconds % 60);
-	return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
-}
+const formatTime = formatClockSeconds;
 
 const TRAILING_PAREN_RE = /^(.*?)\s*[(（](.+?)[)）]\s*$/;
 const HAN_RE = /[\u4e00-\u9fff]/;
@@ -547,6 +1073,7 @@ async function scrollLyricToCenter(index: number, instant = false) {
 		lyricsContainer.clientHeight / 2 +
 		lineRect.height / 2;
 
+	programmaticLyricScrollUntil = Date.now() + 650;
 	lyricsContainer.scrollTo({
 		top: Math.max(0, target),
 		behavior: instant ? "auto" : "smooth",
@@ -742,7 +1269,8 @@ $effect(() => {
 
 	const shouldAutoUnmute = Boolean(
 		pendingAutoUnmuteTrackId &&
-			pendingAutoUnmuteTrackId === active.track.id &&
+			(pendingAutoUnmuteTrackId === active.track.id ||
+				pendingAutoUnmuteTrackId.startsWith("ext:")) &&
 			Date.now() - pendingAutoUnmuteAt < 12_000 &&
 			currentUser &&
 			active.requesterKey === currentUser.userKey,
@@ -812,8 +1340,8 @@ async function runSearch(q: string) {
 }
 
 function handleToggleQueueTrack(song: ChatMusicTrack) {
-	if (currentPlay?.track.id === song.id) return;
-	const existing = queue.find((item) => item.track.id === song.id);
+	if (isTrackCurrent(song)) return;
+	const existing = findQueuedEntryForSong(song);
 	if (existing) {
 		if (!canRemoveEntry(existing)) return;
 		onRemoveQueue(existing.uid);
@@ -877,6 +1405,15 @@ onMount(() => {
 		if (searchTimer !== null) {
 			window.clearTimeout(searchTimer);
 		}
+		if (confirmDeleteTimer !== null) {
+			window.clearTimeout(confirmDeleteTimer);
+		}
+		if (lyricsScrollHideTimer !== null) {
+			window.clearTimeout(lyricsScrollHideTimer);
+		}
+		if (queueScrollHideTimer !== null) {
+			window.clearTimeout(queueScrollHideTimer);
+		}
 		if (audioEl) {
 			internalAudioAction = true;
 			audioEl.pause();
@@ -887,9 +1424,30 @@ onMount(() => {
 	};
 });
 
+export function toggleListenControl(): void {
+	void toggleListen();
+}
+
+export function openPlayerTab(): void {
+	activeTab = "player";
+}
+
 const displayedBrowseTracks = $derived(
 	searchQuery.trim() ? searchResults : fallbackTracks,
 );
+
+$effect(() => {
+	onPlaybackStatusChange?.({
+		isListening,
+		isMuted: !isListening || volume <= 0,
+		elapsedSec: Math.floor(roomElapsed),
+		durationSec: effectiveDuration,
+		canDirectSkip,
+		isSoloCoolingDown,
+		soloCooldownRemainSec,
+		hasVotedSkip,
+	});
+});
 </script>
 
 <aside class="flex flex-col h-full w-full min-h-0 overflow-hidden select-none" aria-label="点歌台">
@@ -962,13 +1520,13 @@ const displayedBrowseTracks = $derived(
     </button>
   </div>
 
-  <!-- 4-Tab 切换栏：正在播放 / 搜索 / 歌单 / 历史 -->
-  <div class="grid grid-cols-4 gap-1 border-b border-[var(--chat-divider-color)] px-2.5 py-1.5 shrink-0" role="tablist" aria-label="点歌台视图切换">
+  <!-- 4-Tab 切换栏：歌词 / 搜索 / 歌单 / 历史 -->
+  <div class="grid grid-cols-4 gap-1 border-b border-[var(--chat-divider-color)] px-2.5 py-1 shrink-0" role="tablist" aria-label="点歌台视图切换">
     <button
       type="button"
       role="tab"
       aria-selected={activeTab === "player"}
-      class="flex items-center justify-center gap-1 py-1.5 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1 py-1 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'player'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
@@ -978,14 +1536,14 @@ const displayedBrowseTracks = $derived(
         <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
         <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
       </svg>
-      <span>播放</span>
+      <span>歌词</span>
     </button>
 
     <button
       type="button"
       role="tab"
       aria-selected={activeTab === "search"}
-      class="flex items-center justify-center gap-1 py-1.5 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1 py-1 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'search'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
@@ -1002,7 +1560,7 @@ const displayedBrowseTracks = $derived(
       type="button"
       role="tab"
       aria-selected={activeTab === "playlist"}
-      class="flex items-center justify-center gap-1 py-1.5 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1 py-1 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'playlist'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
@@ -1020,7 +1578,7 @@ const displayedBrowseTracks = $derived(
       type="button"
       role="tab"
       aria-selected={activeTab === "history"}
-      class="flex items-center justify-center gap-1 py-1.5 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1 py-1 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'history'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
@@ -1035,8 +1593,8 @@ const displayedBrowseTracks = $derived(
   </div>
 
   {#snippet trackRequestRow(song: ChatMusicTrack, subtitle: string, countBadge?: string)}
-    {@const isCurrent = currentPlay?.track.id === song.id}
-    {@const isQueued = queuedTrackIds.has(song.id)}
+    {@const isCurrent = isTrackCurrent(song)}
+    {@const isQueued = isTrackQueued(song)}
     <div class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
         {#if song.cover}
@@ -1078,7 +1636,7 @@ const displayedBrowseTracks = $derived(
             <span class="text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </span>
-      {:else if isQueued && !canToggleCatalogTrack(song.id)}
+      {:else if isQueued && !canToggleCatalogTrack(song)}
         <span
           class="{countBadge ? 'w-9 h-9 flex-col gap-0.5' : 'w-7 h-7'} rounded-lg inline-flex items-center justify-center text-[var(--chat-meta-color)] shrink-0 aspect-square"
           aria-label="已入列"
@@ -1154,9 +1712,20 @@ const displayedBrowseTracks = $derived(
                 {currentPlay ? currentPlay.track.artist : !musicState ? "正在连接电台..." : "暂无点播歌曲"}
               </span>
               {#if currentPlay}
-                <span class="shrink-0 text-[10px] font-medium px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
-                  点歌：{currentPlay.requesterName}
-                </span>
+                {#if currentPlay.requesterKey && currentPlay.requesterKey !== "system:fallback" && onOpenUserProfile}
+                  <button
+                    type="button"
+                    class="shrink-0 text-[10px] font-medium px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)] hover:bg-(--primary)/20 border-none cursor-pointer transition-colors"
+                    title={`查看 ${currentPlay.requesterName} 的个人资料`}
+                    onclick={() => openRequesterProfile(currentPlay.requesterKey, currentPlay.requesterName)}
+                  >
+                    点歌：{currentPlay.requesterName}
+                  </button>
+                {:else}
+                  <span class="shrink-0 text-[10px] font-medium px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                    点歌：{currentPlay.requesterName}
+                  </span>
+                {/if}
               {/if}
             </div>
 
@@ -1214,16 +1783,19 @@ const displayedBrowseTracks = $derived(
           </div>
         </div>
 
-        <!-- 控制栏：左 切歌/切歌倒计时/投票切歌 + 中 收听/静音 + 右 队列抽屉开关 -->
-        <div class="flex items-center justify-between py-1 gap-1.5">
-          <div class="min-w-8 flex items-center justify-start shrink-0">
+        <!-- 控制栏：左 切歌/投票切歌 + 中 收听/静音 + 右 队列抽屉开关 -->
+        <div class="grid grid-cols-[1fr_auto_1fr] items-center py-1 gap-1.5">
+          <div class="flex items-center justify-start min-w-0">
             {#if !currentPlay}
               <button
                 type="button"
                 disabled
                 class="chat-skip-pill opacity-45 cursor-not-allowed!"
               >
-                <span>{isAdmin || isSoloMode ? "切歌" : "投票切歌"}</span>
+                <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                </svg>
+                <span>切歌</span>
               </button>
             {:else if canDirectSkip}
               {@const activeVotes = musicState?.voteCount ?? 0}
@@ -1232,38 +1804,40 @@ const displayedBrowseTracks = $derived(
                 type="button"
                 class="chat-skip-pill whitespace-nowrap {activeVotes > 0 ? 'voted' : ''}"
                 aria-label={activeVotes > 0 ? `已有 ${activeVotes}/${activeThreshold} 人投票切歌，点击立即切歌` : "切歌"}
+                title={activeVotes > 0 ? `已有 ${activeVotes}/${activeThreshold} 人投票切歌，点击立即切歌` : "切歌"}
                 onclick={onSkipTrack}
               >
                 <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
                 </svg>
                 <span>切歌</span>
-                {#if activeVotes > 0}
-                  <span class="tabular-nums">{activeVotes}/{activeThreshold}</span>
-                {/if}
               </button>
             {:else if isSoloCoolingDown}
-              {@const activeVotes = musicState?.voteCount ?? 0}
-              {@const activeThreshold = musicState?.voteThreshold ?? 2}
               <button
                 type="button"
-                class="chat-skip-pill whitespace-nowrap {activeVotes > 0 ? 'voted' : 'opacity-75'}"
+                class="chat-skip-pill whitespace-nowrap opacity-75"
+                aria-label={`切歌冷却 ${soloCooldownRemainSec} 秒`}
+                title={`切歌冷却 ${soloCooldownRemainSec} 秒`}
                 onclick={onSkipTrack}
               >
-                <span>切歌 {soloCooldownRemainSec}s</span>
-                {#if activeVotes > 0}
-                  <span class="tabular-nums">{activeVotes}/{activeThreshold}</span>
-                {/if}
+                <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                </svg>
+                <span class="tabular-nums">{soloCooldownRemainSec}s</span>
               </button>
             {:else}
               <button
                 type="button"
-                class="chat-skip-pill {hasVotedSkip ? 'voted' : ''}"
-                aria-label={hasVotedSkip ? "取消投票" : "投票切歌"}
+                class="chat-skip-pill whitespace-nowrap {hasVotedSkip ? 'voted' : ''}"
+                aria-pressed={hasVotedSkip}
+                aria-label={hasVotedSkip ? "已投票切歌，点击取消" : "投票切歌"}
+                title={hasVotedSkip ? "已发起/投票切歌，点击可取消" : "发起或投票切歌"}
                 onclick={onVoteSkip}
               >
-                <span>{hasVotedSkip ? "已投切歌" : "投票切歌"}</span>
-                <span>{musicState?.voteCount ?? 0}/{musicState?.voteThreshold ?? 2}</span>
+                <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                </svg>
+                <span>{hasVotedSkip ? "已投" : "切歌"}</span>
               </button>
             {/if}
           </div>
@@ -1271,7 +1845,7 @@ const displayedBrowseTracks = $derived(
           <button
             type="button"
             disabled={!currentPlay}
-            class="chat-play-btn {isListening && currentPlay ? 'playing' : ''} shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            class="chat-play-btn {isListening && currentPlay ? 'playing' : ''} justify-self-center shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
             aria-label={isListening ? "停止收听" : "开始收听"}
             onclick={toggleListen}
           >
@@ -1288,81 +1862,111 @@ const displayedBrowseTracks = $derived(
             {/if}
           </button>
 
-          <div class="w-8 flex items-center justify-end shrink-0">
+          <div class="flex items-center justify-end">
             <button
               type="button"
-              class="p-1.5 active:scale-95 transition-colors border-none bg-transparent cursor-pointer {showQueueDrawer ? 'text-(--primary)' : 'text-[var(--chat-meta-color)] hover:text-(--primary)'}"
-              aria-label={showQueueDrawer ? "收起即将播放" : "展开即将播放"}
-              onclick={() => (showQueueDrawer = !showQueueDrawer)}
+              class="p-1.5 active:scale-95 transition-colors border-none bg-transparent cursor-pointer {playerPaneMode !== 'split' ? 'text-(--primary)' : 'text-[var(--chat-meta-color)] hover:text-(--primary)'}"
+              aria-label={playerPaneMode === "split" ? "当前：歌词与列表并列，点击切换纯歌词" : playerPaneMode === "lyrics" ? "当前：纯歌词，点击切换纯播放列表" : "当前：纯播放列表，点击切换并列显示"}
+              onclick={cyclePlayerPaneMode}
             >
-              <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
-              </svg>
+              {#if playerPaneMode === "split"}
+                <!-- 并列视图：上歌词 + 下列表 -->
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="16" rx="2.5" />
+                  <line x1="3" y1="13" x2="21" y2="13" />
+                  <line x1="7" y1="8.5" x2="17" y2="8.5" />
+                  <line x1="7" y1="16.5" x2="15" y2="16.5" />
+                </svg>
+              {:else if playerPaneMode === "lyrics"}
+                <!-- 纯歌词视图 -->
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                  <line x1="4" y1="6" x2="20" y2="6" />
+                  <line x1="7" y1="10.5" x2="17" y2="10.5" />
+                  <line x1="5" y1="15" x2="19" y2="15" />
+                  <line x1="8" y1="19.5" x2="16" y2="19.5" />
+                </svg>
+              {:else}
+                <!-- 纯播放列表视图 -->
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
+                </svg>
+              {/if}
             </button>
           </div>
         </div>
       </div>
 
-      <!-- 歌词滚动 (60%) + 即将播放 (40%) 容器 -->
+      <!-- 歌词滚动 + 即将播放容器（支持 并列 / 纯歌词 / 纯列表 三态切换） -->
       <div class="flex-1 min-h-0 flex flex-col mx-4">
-        <div
-          class="min-h-0 flex flex-col border-t border-[var(--chat-divider-color)]"
-          style={showQueueDrawer ? "flex: 3 1 0%;" : "flex: 1 1 0%;"}
-        >
-          {#if !currentPlay}
-            <div class="flex-1 flex flex-col items-center justify-center gap-2.5 py-4 text-center">
-              <p class="text-xs text-[var(--chat-meta-color)] m-0">
-                {!musicState ? "正在连接房间同步电台..." : "暂无播放歌曲，点一首歌和大家一起听吧~"}
-              </p>
-              {#if musicState}
-                <button
-                  type="button"
-                  class="chat-queue-toggle-btn"
-                  onclick={() => switchMusicTab("search")}
-                >
-                  去点歌
-                </button>
-              {/if}
-            </div>
-          {:else}
-            <div
-              bind:this={lyricsContainer}
-              class="chat-lyrics-scroll relative flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col items-center gap-1 py-12 px-1 text-center"
-              role="listbox"
-              aria-label="歌词"
-              onwheel={() => {
-                lastUserScrollAt = Date.now();
-              }}
-              ontouchstart={() => {
-                lastUserScrollAt = Date.now();
-              }}
-            >
-              {#if lyricsStatus === "loading"}
-                <div class="text-[var(--chat-meta-color)] text-xs py-8">正在载入歌词...</div>
-              {:else if lyrics.length === 0}
-                <div class="text-[var(--chat-meta-color)] text-xs py-8">暂无同步歌词</div>
-              {:else}
-                {#each lyrics as line, idx (`${idx}-${line.time}`)}
-                  {@const isCurrentLine = idx === activeLyricIndex}
-                  <div
-                    data-lyric-idx={idx}
-                    role="option"
-                    aria-selected={isCurrentLine}
-                    class="w-full py-1 transition-all duration-300 leading-snug
-                      {isCurrentLine ? 'text-[var(--chat-accent-text)] font-bold text-base' : 'text-sm text-[var(--chat-meta-color)]'}"
+        {#if playerPaneMode !== "queue"}
+          <div
+            class="min-h-0 flex flex-col border-t border-[var(--chat-divider-color)]"
+            style={playerPaneMode === "split" ? "flex: 56 1 0%;" : "flex: 1 1 0%;"}
+          >
+            {#if !currentPlay}
+              <div class="flex-1 flex flex-col items-center justify-center gap-2.5 py-4 text-center">
+                <p class="text-xs text-[var(--chat-meta-color)] m-0">
+                  {!musicState ? "正在连接房间同步电台..." : "暂无播放歌曲，点一首歌和大家一起听吧~"}
+                </p>
+                {#if musicState}
+                  <button
+                    type="button"
+                    class="chat-queue-toggle-btn"
+                    onclick={() => switchMusicTab("search")}
                   >
-                    {line.text}
-                  </div>
-                {/each}
-              {/if}
-            </div>
-          {/if}
-        </div>
+                    去点歌
+                  </button>
+                {/if}
+              </div>
+            {:else}
+              <div
+                bind:this={lyricsContainer}
+                class="chat-lyrics-scroll relative flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scroll-autohide {lyricsScrolling ? 'is-scrolling' : ''} flex flex-col items-center gap-1 py-12 px-1 text-center"
+                role="listbox"
+                aria-label="歌词"
+                onwheel={() => {
+                  lastUserScrollAt = Date.now();
+                  programmaticLyricScrollUntil = 0;
+                  triggerLyricsScroll();
+                }}
+                ontouchstart={() => {
+                  lastUserScrollAt = Date.now();
+                  programmaticLyricScrollUntil = 0;
+                  triggerLyricsScroll();
+                }}
+                onscroll={() => {
+                  if (Date.now() > programmaticLyricScrollUntil) {
+                    triggerLyricsScroll();
+                  }
+                }}
+              >
+                {#if lyricsStatus === "loading"}
+                  <div class="text-[var(--chat-meta-color)] text-xs py-8">正在载入歌词...</div>
+                {:else if lyrics.length === 0}
+                  <div class="text-[var(--chat-meta-color)] text-xs py-8">暂无同步歌词</div>
+                {:else}
+                  {#each lyrics as line, idx (`${idx}-${line.time}`)}
+                    {@const isCurrentLine = idx === activeLyricIndex}
+                    <div
+                      data-lyric-idx={idx}
+                      role="option"
+                      aria-selected={isCurrentLine}
+                      class="w-full py-1 transition-all duration-300 leading-snug
+                        {isCurrentLine ? 'text-[var(--chat-accent-text)] font-bold text-base' : 'text-sm text-[var(--chat-meta-color)]'}"
+                    >
+                      {line.text}
+                    </div>
+                  {/each}
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
 
-        {#if showQueueDrawer}
+        {#if playerPaneMode !== "lyrics"}
           <div
             class="min-h-0 flex flex-col border-t border-[var(--chat-divider-color)] pt-2 pb-2"
-            style="flex: 2 1 0%;"
+            style={playerPaneMode === "split" ? "flex: 44 1 0%;" : "flex: 1 1 0%;"}
           >
             <div class="flex items-center justify-between mb-1.5 shrink-0">
               <span class="text-xs font-medium text-[var(--chat-meta-color)]">
@@ -1375,7 +1979,10 @@ const displayedBrowseTracks = $derived(
                 暂无待播歌曲
               </div>
             {:else}
-              <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-1">
+              <div
+                class="flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scroll-autohide {queueScrolling ? 'is-scrolling' : ''} space-y-1"
+                onscroll={triggerQueueScroll}
+              >
                 {#each queue as item (item.uid)}
                   <div class="flex items-center gap-2 py-1.5 px-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                     <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
@@ -1390,7 +1997,19 @@ const displayedBrowseTracks = $derived(
                         {item.track.title}
                       </div>
                       <div class="text-[10px] text-[var(--chat-meta-color)] truncate">
-                        {item.track.artist} · 点歌：{item.requesterName}
+                        {item.track.artist} ·
+                        {#if item.requesterKey && onOpenUserProfile}
+                          <button
+                            type="button"
+                            class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[10px] inline"
+                            title={`查看 ${item.requesterName} 的个人资料`}
+                            onclick={() => openRequesterProfile(item.requesterKey, item.requesterName)}
+                          >
+                            点歌：{item.requesterName}
+                          </button>
+                        {:else}
+                          点歌：{item.requesterName}
+                        {/if}
                       </div>
                     </div>
 
@@ -1441,7 +2060,7 @@ const displayedBrowseTracks = $derived(
           type="text"
           bind:value={searchQuery}
           placeholder="搜索歌曲 / 歌手"
-          class="chat-music-search"
+          class="chat-music-search is-focus-reveal"
           onkeydown={(e) => {
             if (e.key === "Enter" && searchQuery.trim()) {
               if (searchTimer !== null) window.clearTimeout(searchTimer);
@@ -1532,7 +2151,19 @@ const displayedBrowseTracks = $derived(
                     {item.track.title}
                   </div>
                   <div class="text-[10px] text-[var(--chat-meta-color)] truncate">
-                    {item.track.artist} · 点歌：{item.requesterName}
+                    {item.track.artist} ·
+                    {#if item.requesterKey && onOpenUserProfile}
+                      <button
+                        type="button"
+                        class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[10px] inline"
+                        title={`查看 ${item.requesterName} 的个人资料`}
+                        onclick={() => openRequesterProfile(item.requesterKey, item.requesterName)}
+                      >
+                        点歌：{item.requesterName}
+                      </button>
+                    {:else}
+                      点歌：{item.requesterName}
+                    {/if}
                   </div>
                 </div>
 
@@ -1570,70 +2201,591 @@ const displayedBrowseTracks = $derived(
       </div>
     </div>
   {:else if activeTab === "playlist"}
-    <!-- Tab 3：歌单（预留接入公共导出歌单与个人歌单） -->
-    <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3 space-y-3">
-      <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/35 p-3.5 space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-1.5 text-xs font-bold text-[var(--deep-text)]">
-            <svg class="w-3.5 h-3.5 text-(--primary) shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M9 18V5l12-2v13" />
-              <circle cx="6" cy="18" r="3" />
-              <circle cx="18" cy="16" r="3" />
-            </svg>
-            <span>房间精选歌单</span>
+    <!-- Tab 3：歌单（精选歌单 / 个人歌单 / 共享歌单） -->
+    {#snippet playlistSummaryCard(pl: PlaylistSummary, showOwner = false)}
+      <div class="flex items-center gap-2.5 p-2 rounded-xl border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 hover:bg-[var(--card-bg)]/75 transition-colors">
+        <button
+          type="button"
+          class="flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-0 cursor-pointer"
+          onclick={() => openPlaylistDetail(pl.id)}
+        >
+          <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+            {#if pl.coverUrl}
+              <img src={pl.coverUrl} alt="" loading="lazy" class="w-full h-full object-cover" />
+            {:else}
+              <span class="text-sm text-(--primary)">♪</span>
+            {/if}
           </div>
-          <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
-            即将接入
-          </span>
-        </div>
-        <p class="text-[11px] leading-relaxed text-[var(--chat-meta-color)] m-0">
-          此处已预留接入 <code class="text-[10px]">playlistout</code> 导出的歌单目录，后续将支持一键浏览站点歌单并将曲目快速加入点播队列。
-        </p>
-      </div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1.5 min-w-0">
+              <span class="text-xs font-bold text-[var(--deep-text)] truncate">{pl.title}</span>
+              {#if pl.isFallback}
+                <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
+                  轮播
+                </span>
+              {:else if pl.isFeatured}
+                <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                  精选
+                </span>
+              {/if}
+              {#if pl.isPublic && !showOwner}
+                <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-emerald-500/14 text-emerald-600 dark:text-emerald-400">
+                  已共享
+                </span>
+              {/if}
+            </div>
+            <div class="text-[10px] text-[var(--chat-meta-color)] truncate mt-0.5 flex items-center gap-1">
+              <span>{formatPlatformLabel(pl.platform)} · {pl.trackCount} 首</span>
+              {#if showOwner && pl.ownerName}
+                <span>·</span>
+                <span class="inline-flex items-center gap-1 min-w-0">
+                  {#if pl.ownerAvatar}
+                    <img src={pl.ownerAvatar} alt="" class="w-3 h-3 rounded-full object-cover shrink-0" />
+                  {/if}
+                  <span class="truncate">分享：{pl.ownerName}</span>
+                </span>
+              {:else if pl.updatedAt}
+                <span>· {formatPlaylistDate(pl.updatedAt)}</span>
+              {/if}
+            </div>
+          </div>
+        </button>
 
-      <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/35 p-3.5 space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-1.5 text-xs font-bold text-[var(--deep-text)]">
-            <svg class="w-3.5 h-3.5 text-(--primary) shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-              <circle cx="12" cy="7" r="4" />
+        {#if canManagePlaylist(pl)}
+          <button
+            type="button"
+            disabled={isRefreshingPlaylistId === pl.id}
+            class="chat-queue-icon-btn w-7! h-7! shrink-0 aspect-square"
+            aria-label={`刷新 ${pl.title}`}
+            title="重新拉取最新歌单"
+            onclick={() => handleRefreshPlaylist(pl)}
+          >
+            <svg class="w-3.5 h-3.5 {isRefreshingPlaylistId === pl.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
             </svg>
-            <span>我的个人歌单</span>
-          </div>
-          <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-[var(--card-bg)]/70 border border-[var(--chat-divider-color)] text-[var(--chat-meta-color)]">
-            预留功能
-          </span>
+          </button>
+        {/if}
+      </div>
+    {/snippet}
+
+    {#snippet importPlaylistCard()}
+      <div class="rounded-xl border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 p-3 space-y-2">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs font-bold text-[var(--deep-text)]">导入外部歌单</span>
+          <a
+            href="https://playlistout.lengxiqwq.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-[10px] text-[var(--chat-meta-color)] hover:text-(--primary) no-underline transition-colors"
+          >
+            Powered by Playlist Out
+          </a>
         </div>
-        <p class="text-[11px] leading-relaxed text-[var(--chat-meta-color)] m-0">
-          {#if currentUser?.authType === "waline"}
-            当前已登录「{currentUser.name}」，后续可在此配置并管理属于你自己的个人点歌歌单。
-          {:else}
-            后续每位登录用户均可建立并同步自己的个人歌单，随时在聊天室里快速点播。
-          {/if}
-        </p>
-        {#if (!currentUser || currentUser.authType === "guest") && onRequestAuth}
-          <div class="pt-1">
-            <button
-              type="button"
-              class="chat-queue-toggle-btn"
-              onclick={onRequestAuth}
-            >
-              登录账号
-            </button>
+
+        <form
+          class="flex items-center gap-1.5"
+          onsubmit={(e) => {
+            e.preventDefault();
+            void handleImportSubmit();
+          }}
+        >
+          <input
+            type="text"
+            class="chat-playlist-input flex-1 min-w-0"
+            placeholder="粘贴歌单链接"
+            aria-label="外部歌单链接"
+            disabled={isImportingPlaylist}
+            bind:value={importInput}
+          />
+          <button
+            type="submit"
+            disabled={isImportingPlaylist || !importInput.trim()}
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-(--primary) text-white border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            {isImportingPlaylist ? "解析中" : "导入"}
+          </button>
+        </form>
+
+        {#if importError}
+          <p class="text-[11px] text-red-500 m-0">{importError}</p>
+        {/if}
+        {#if importStatusText}
+          <p class="text-[11px] text-[var(--chat-meta-color)] m-0">{importStatusText}</p>
+        {/if}
+
+        {#if pendingAmbiguousImport}
+          <div class="pt-1 space-y-1.5 border-t border-[var(--chat-divider-color)]">
+            <div class="text-[11px] font-medium text-[var(--deep-text)]">
+              检测到多个可能匹配的平台，请选择：
+            </div>
+            <div class="space-y-1 max-h-40 overflow-y-auto custom-scrollbar">
+              {#each pendingAmbiguousImport.candidates as cand (`${cand.platform}-${cand.kind}-${cand.id}`)}
+                <button
+                  type="button"
+                  disabled={isImportingPlaylist}
+                  class="w-full flex items-center justify-between gap-2 p-2 rounded-lg border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/60 hover:bg-(--primary)/10 text-left cursor-pointer"
+                  onclick={() =>
+                    handleImportSubmit({
+                      type: cand.kind,
+                      platform: cand.platform,
+                    })}
+                >
+                  <div class="min-w-0 flex-1">
+                    <div class="text-xs font-semibold text-[var(--deep-text)] truncate">{cand.title}</div>
+                    <div class="text-[10px] text-[var(--chat-meta-color)] truncate">
+                      {formatPlatformLabel(cand.platform)}{cand.subtitle ? ` · ${cand.subtitle}` : ""}
+                    </div>
+                  </div>
+                  <span class="text-[10px] font-semibold text-[var(--chat-accent-text)] shrink-0">选择</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if pendingUserImport}
+          <div class="pt-1 space-y-1.5 border-t border-[var(--chat-divider-color)]">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-[11px] font-medium text-[var(--deep-text)] truncate">
+                {pendingUserImport.nickname} 的公开歌单（点选导入）
+              </span>
+              <button
+                type="button"
+                class="text-[10px] text-[var(--chat-meta-color)] bg-transparent border-none cursor-pointer p-0"
+                onclick={() => (pendingUserImport = null)}
+              >
+                收起
+              </button>
+            </div>
+            <div class="space-y-1 max-h-44 overflow-y-auto custom-scrollbar">
+              {#each pendingUserImport.playlists as item (item.id || item.sourceUrl)}
+                <button
+                  type="button"
+                  disabled={isImportingPlaylist}
+                  class="w-full flex items-center justify-between gap-2 p-1.5 rounded-lg border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/60 hover:bg-(--primary)/10 text-left cursor-pointer"
+                  onclick={() => handleImportUserCandidate(item)}
+                >
+                  <div class="min-w-0 flex-1">
+                    <div class="text-xs font-medium text-[var(--deep-text)] truncate">{item.name}</div>
+                    <div class="text-[10px] text-[var(--chat-meta-color)]">{item.trackCount} 首</div>
+                  </div>
+                  <span class="text-[10px] font-semibold text-[var(--chat-accent-text)] shrink-0">+ 导入</span>
+                </button>
+              {/each}
+            </div>
           </div>
         {/if}
       </div>
+    {/snippet}
 
-      <div class="pt-1 flex justify-center">
-        <button
-          type="button"
-          class="chat-queue-toggle-btn"
-          onclick={() => switchMusicTab("search")}
+    {#if selectedPlaylist}
+      <!-- 歌单详情视图 -->
+      <div class="flex-1 min-h-0 flex flex-col">
+        <div class="px-3 pt-2.5 pb-2 border-b border-[var(--chat-divider-color)] space-y-2 shrink-0">
+          <!-- 第 1 行：返回按钮 + 歌单内搜索框 -->
+          <div class="flex items-center gap-1.5">
+            <button
+              type="button"
+              class="chat-queue-icon-btn w-7! h-7! shrink-0"
+              aria-label="返回歌单列表"
+              onclick={() => {
+                selectedPlaylist = null;
+                playlistTrackFilter = "";
+                confirmDeletePlaylistId = "";
+              }}
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+
+            <div class="relative flex-1 min-w-0">
+              <svg class="w-3.5 h-3.5 text-[var(--chat-meta-color)] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                class="chat-music-search is-immersive py-1.5! pl-8! pr-7! text-xs!"
+                placeholder="搜歌名或歌手"
+                aria-label="歌单内搜索"
+                bind:value={playlistTrackFilter}
+              />
+              {#if playlistTrackFilter.trim().length > 0}
+                <button
+                  type="button"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
+                  aria-label="清除筛选"
+                  onclick={() => (playlistTrackFilter = "")}
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          <!-- 第 2 行：封面图齐整靠左 + 歌单信息 -->
+          <div class="flex items-center gap-2.5">
+            <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+              {#if selectedPlaylist.coverUrl}
+                <img src={selectedPlaylist.coverUrl} alt="" class="w-full h-full object-cover" />
+              {:else}
+                <span class="text-xs text-(--primary)">♪</span>
+              {/if}
+            </div>
+
+            <div class="min-w-0 flex-1">
+              <div class="text-xs font-bold text-[var(--deep-text)] truncate">
+                {selectedPlaylist.title}
+              </div>
+              <div class="text-[10px] text-[var(--chat-meta-color)] truncate mt-0.5 flex items-center gap-1">
+                <span>{formatPlatformLabel(selectedPlaylist.platform)} · {selectedPlaylist.tracks.length} 首</span>
+                {#if selectedPlaylist.ownerName}
+                  <span>·</span>
+                  {#if onOpenUserProfile && selectedPlaylist.ownerKey}
+                    <button
+                      type="button"
+                      class="bg-transparent border-none p-0 text-[10px] text-[var(--chat-accent-text)] hover:underline cursor-pointer truncate"
+                      onclick={() =>
+                        selectedPlaylist &&
+                        openRequesterProfile(
+                          selectedPlaylist.ownerKey,
+                          selectedPlaylist.ownerName,
+                        )}
+                    >
+                      分享者：{selectedPlaylist.ownerName}
+                    </button>
+                  {:else}
+                    <span class="truncate">分享者：{selectedPlaylist.ownerName}</span>
+                  {/if}
+                {/if}
+                {#if selectedPlaylist.retrievalMode === "preview"}
+                  <span>· 仅预览</span>
+                {/if}
+              </div>
+            </div>
+          </div>
+
+          <!-- 第 3 行：纯图标工具栏（同步时间收入刷新按钮悬浮提示，避免窄栏文字拥挤） -->
+          <div class="flex items-center justify-end">
+            <div class="flex items-center gap-1.5 shrink-0">
+              <div class="chat-playlist-action-wrap">
+                <button
+                  type="button"
+                  disabled={selectedPlaylist.tracks.length === 0}
+                  class="chat-playlist-icon-btn"
+                  aria-label="随机点一首"
+                  onclick={() => selectedPlaylist && handleRandomPlayFromPlaylist(selectedPlaylist)}
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="16 3 21 3 21 8" />
+                    <line x1="4" y1="20" x2="21" y2="3" />
+                    <polyline points="21 16 21 21 16 21" />
+                    <line x1="15" y1="15" x2="21" y2="21" />
+                    <line x1="4" y1="4" x2="9" y2="9" />
+                  </svg>
+                </button>
+                <span class="chat-playlist-tooltip {!canManagePlaylist(selectedPlaylist) ? 'align-right' : ''}" role="tooltip">
+                  随机点一首
+                </span>
+              </div>
+
+              {#if canManagePlaylist(selectedPlaylist)}
+                <div class="chat-playlist-action-wrap">
+                  <button
+                    type="button"
+                    disabled={isUpdatingFlagsId === selectedPlaylist.id}
+                    class="chat-playlist-icon-btn {selectedPlaylist.isPublic ? 'is-active' : ''}"
+                    aria-label={selectedPlaylist.isPublic ? "取消共享歌单" : "共享给房间成员"}
+                    onclick={() => selectedPlaylist && handleTogglePlaylistFlag(selectedPlaylist, "isPublic")}
+                  >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <circle cx="18" cy="5" r="3" />
+                      <circle cx="6" cy="12" r="3" />
+                      <circle cx="18" cy="19" r="3" />
+                      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                    </svg>
+                  </button>
+                  <span class="chat-playlist-tooltip" role="tooltip">
+                    {selectedPlaylist.isPublic ? "已共享（点击取消）" : "共享给房间成员"}
+                  </span>
+                </div>
+
+                <div class="chat-playlist-action-wrap">
+                  <button
+                    type="button"
+                    disabled={isRefreshingPlaylistId === selectedPlaylist.id}
+                    class="chat-playlist-icon-btn"
+                    aria-label={selectedPlaylist.updatedAt ? `刷新同步歌单（上次同步于 ${formatPlaylistDate(selectedPlaylist.updatedAt)}）` : "刷新同步歌单"}
+                    onclick={() => selectedPlaylist && handleRefreshPlaylist(selectedPlaylist)}
+                  >
+                    <svg class="w-3.5 h-3.5 {isRefreshingPlaylistId === selectedPlaylist.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polyline points="23 4 23 10 17 10" />
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                    </svg>
+                  </button>
+                  <span class="chat-playlist-tooltip {!currentUser?.isAdmin ? 'align-right' : ''}" role="tooltip">
+                    {#if isRefreshingPlaylistId === selectedPlaylist.id}
+                      正在同步...
+                    {:else if selectedPlaylist.updatedAt}
+                      上次同步于 {formatPlaylistDate(selectedPlaylist.updatedAt)}
+                    {:else}
+                      刷新同步歌单
+                    {/if}
+                  </span>
+                </div>
+
+                {#if currentUser?.isAdmin}
+                  <div class="chat-playlist-action-wrap">
+                    <button
+                      type="button"
+                      disabled={isUpdatingFlagsId === selectedPlaylist.id}
+                      class="chat-playlist-icon-btn {selectedPlaylist.isFeatured ? 'is-active' : ''}"
+                      aria-label={selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}
+                      onclick={() => selectedPlaylist && handleTogglePlaylistFlag(selectedPlaylist, "isFeatured")}
+                    >
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill={selectedPlaylist.isFeatured ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </button>
+                    <span class="chat-playlist-tooltip" role="tooltip">
+                      {selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}
+                    </span>
+                  </div>
+
+                  <div class="chat-playlist-action-wrap">
+                    <button
+                      type="button"
+                      disabled={isUpdatingFlagsId === selectedPlaylist.id}
+                      class="chat-playlist-icon-btn {selectedPlaylist.isFallback ? 'is-active' : ''}"
+                      aria-label={selectedPlaylist.isFallback ? "取消冷场轮播" : "设为冷场轮播"}
+                      onclick={() => selectedPlaylist && handleTogglePlaylistFlag(selectedPlaylist, "isFallback")}
+                    >
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="2" />
+                        <path d="M16.24 7.76a6 6 0 0 1 0 8.49" />
+                        <path d="M7.76 16.24a6 6 0 0 1 0-8.49" />
+                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                        <path d="M4.93 19.07a10 10 0 0 1 0-14.14" />
+                      </svg>
+                    </button>
+                    <span class="chat-playlist-tooltip" role="tooltip">
+                      {selectedPlaylist.isFallback ? "取消冷场轮播" : "设为冷场轮播"}
+                    </span>
+                  </div>
+                {/if}
+
+                <div class="chat-playlist-action-wrap">
+                  <button
+                    type="button"
+                    disabled={isDeletingPlaylistId === selectedPlaylist.id}
+                    class="chat-playlist-icon-btn {confirmDeletePlaylistId === selectedPlaylist.id ? 'is-danger-confirm' : 'is-danger'}"
+                    aria-label={confirmDeletePlaylistId === selectedPlaylist.id ? "再次点击确认删除" : "删除歌单"}
+                    onclick={() => selectedPlaylist && handleDeletePlaylist(selectedPlaylist)}
+                  >
+                    {#if confirmDeletePlaylistId === selectedPlaylist.id}
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    {:else}
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    {/if}
+                  </button>
+                  <span class="chat-playlist-tooltip align-right" role="tooltip">
+                    {#if isDeletingPlaylistId === selectedPlaylist.id}
+                      正在删除...
+                    {:else if confirmDeletePlaylistId === selectedPlaylist.id}
+                      再次点击确认删除
+                    {:else}
+                      删除歌单
+                    {/if}
+                  </span>
+                </div>
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        <div
+          class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-1.5"
+          onscroll={handlePlaylistScroll}
         >
-          去点歌
-        </button>
+          {#if isLoadingPlaylistDetail}
+            <div class="text-center py-6 text-xs text-[var(--chat-meta-color)]">
+              正在加载歌单曲目...
+            </div>
+          {:else if filteredPlaylistTracks.length === 0}
+            <div class="text-center py-6 text-xs text-[var(--chat-meta-color)]">
+              {playlistTrackFilter.trim() ? "没有匹配的歌曲" : "歌单暂无曲目"}
+            </div>
+          {:else}
+            <div class="space-y-0.5">
+              {#each displayedPlaylistTracks as item (`${selectedPlaylist.id}-${item.position}`)}
+                {@const track = toEnqueueableTrack(item, selectedPlaylist.id)}
+                {@const subtitle = `${item.artist}${item.durationSec ? ` · ${formatTime(item.durationSec)}` : ""}`}
+                {@render trackRequestRow(track, subtitle)}
+              {/each}
+            </div>
+            {#if hasMorePlaylistTracks}
+              <div class="py-2 flex justify-center">
+                <button
+                  type="button"
+                  class="chat-queue-toggle-btn"
+                  onclick={() => (playlistVisibleLimit += 100)}
+                >
+                  加载更多（剩余 {filteredPlaylistTracks.length - displayedPlaylistTracks.length} 首）
+                </button>
+              </div>
+            {/if}
+          {/if}
+        </div>
       </div>
-    </div>
+    {:else}
+      <!-- 歌单目录视图：精选歌单 / 个人歌单 / 共享歌单 3 列并齐 -->
+      <div class="px-3 pt-2.5 pb-1.5 shrink-0">
+        <div class="grid grid-cols-3 gap-1 rounded-xl bg-[var(--card-bg)]/55 p-0.5 border border-[var(--chat-divider-color)]" role="tablist" aria-label="歌单分类">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={playlistSection === "featured"}
+            class="py-1 px-1 text-[11px] font-semibold rounded-lg border-none cursor-pointer transition-colors whitespace-nowrap truncate
+              {playlistSection === 'featured'
+                ? 'bg-(--primary) text-white shadow-xs'
+                : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
+            onclick={() => (playlistSection = "featured")}
+          >
+            精选歌单{featuredPlaylists.length > 0 ? ` ${featuredPlaylists.length}` : ""}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={playlistSection === "mine"}
+            class="py-1 px-1 text-[11px] font-semibold rounded-lg border-none cursor-pointer transition-colors whitespace-nowrap truncate
+              {playlistSection === 'mine'
+                ? 'bg-(--primary) text-white shadow-xs'
+                : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
+            onclick={() => (playlistSection = "mine")}
+          >
+            个人歌单{isWalineLoggedIn && myPlaylists.length > 0 ? ` ${myPlaylists.length}` : ""}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={playlistSection === "shared"}
+            class="py-1 px-1 text-[11px] font-semibold rounded-lg border-none cursor-pointer transition-colors whitespace-nowrap truncate
+              {playlistSection === 'shared'
+                ? 'bg-(--primary) text-white shadow-xs'
+                : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
+            onclick={() => (playlistSection = "shared")}
+          >
+            共享歌单{sharedPlaylists.length > 0 ? ` ${sharedPlaylists.length}` : ""}
+          </button>
+        </div>
+      </div>
+
+      <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 pb-3 pt-1 space-y-2.5">
+        {#if playlistsError}
+          <div class="text-xs text-red-500 px-1">{playlistsError}</div>
+        {/if}
+
+        {#if playlistSection === "featured"}
+          {#if isLoadingPlaylists && featuredPlaylists.length === 0}
+            <div class="text-center py-6 text-xs text-[var(--chat-meta-color)]">
+              加载中...
+            </div>
+          {:else if featuredPlaylists.length === 0}
+            <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-4 text-[11px] text-[var(--chat-meta-color)] text-center">
+              站长暂未公开精选歌单
+            </div>
+          {:else}
+            <div class="space-y-1.5">
+              {#each featuredPlaylists as pl (pl.id)}
+                {@render playlistSummaryCard(pl, Boolean(pl.ownerName))}
+              {/each}
+            </div>
+          {/if}
+        {:else if playlistSection === "mine"}
+          {#if !isWalineLoggedIn}
+            <div class="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3 space-y-2">
+              {#if currentUser?.authType === "guest"}
+                <div class="flex items-center gap-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <span>当前为访客身份，无法使用个人歌单</span>
+                </div>
+                <p class="text-[11px] leading-relaxed text-[var(--deep-text)] m-0">
+                  你目前仅填写了访客昵称和邮箱，必须使用 <strong class="font-bold">Waline 账号</strong>登录后，才可导入、管理并共享你的个人歌单（访客可浏览精选与共享歌单）。
+                </p>
+              {:else}
+                <div class="flex items-center gap-1.5 text-[11px] font-bold text-[var(--deep-text)]">
+                  <svg class="w-3.5 h-3.5 text-(--primary) shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                  <span>需要 Waline 登录</span>
+                </div>
+                <p class="text-[11px] leading-relaxed text-[var(--chat-meta-color)] m-0">
+                  必须使用 <strong class="font-bold text-[var(--deep-text)]">Waline 账号</strong>登录后，才可导入并保存自己的歌单（临时访客身份暂不支持）。
+                </p>
+              {/if}
+              {#if onRequestWalineAuth || onRequestAuth}
+                <div class="pt-0.5">
+                  <button
+                    type="button"
+                    disabled={walineLoginWaiting}
+                    class="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-(--primary) text-white border-none cursor-pointer hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
+                    onclick={() => (onRequestWalineAuth ?? onRequestAuth)?.()}
+                  >
+                    {walineLoginWaiting ? "等待 Waline 完成登录..." : "使用 Waline 账号登录"}
+                  </button>
+                </div>
+              {/if}
+            </div>
+          {:else if myPlaylists.length === 0}
+            <!-- 未导入任何歌单时，导入框放在最上方 -->
+            {@render importPlaylistCard()}
+            <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-3 text-[11px] text-[var(--chat-meta-color)] text-center">
+              还没有导入个人歌单，在上方粘贴歌单链接试试吧
+            </div>
+          {:else}
+            <!-- 已导入歌单后，歌单列表在上，导入框默认放在最底部 -->
+            <div class="space-y-1.5">
+              {#each myPlaylists as pl (pl.id)}
+                {@render playlistSummaryCard(pl, false)}
+              {/each}
+            </div>
+            {@render importPlaylistCard()}
+          {/if}
+        {:else}
+          {#if isLoadingPlaylists && sharedPlaylists.length === 0}
+            <div class="text-center py-6 text-xs text-[var(--chat-meta-color)]">
+              加载中...
+            </div>
+          {:else if sharedPlaylists.length === 0}
+            <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-4 text-[11px] text-[var(--chat-meta-color)] text-center">
+              暂无人共享歌单，登录后可在「个人歌单」中点开歌单并点击共享按钮
+            </div>
+          {:else}
+            <div class="space-y-1.5">
+              {#each sharedPlaylists as pl (pl.id)}
+                {@render playlistSummaryCard(pl, true)}
+              {/each}
+            </div>
+          {/if}
+        {/if}
+      </div>
+    {/if}
   {:else}
     <!-- Tab 4：点歌历史记录（支持 按时间 / 按次数 两种排序与按点歌人筛选，紧凑两行展示） -->
     <div class="px-3 pt-2.5 pb-1.5 flex items-center justify-between gap-1.5 shrink-0 relative">
@@ -1704,13 +2856,11 @@ const displayedBrowseTracks = $derived(
                   }}
                 >
                   <span class="flex items-center gap-1.5 min-w-0 flex-1">
-                    {#if person.avatar}
-                      <img src={person.avatar} alt="" class="w-4 h-4 rounded-full object-cover shrink-0" />
-                    {:else}
-                      <span class="w-4 h-4 rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)] text-[9px] font-bold inline-flex items-center justify-center shrink-0">
-                        {person.name.slice(0, 1)}
-                      </span>
-                    {/if}
+                    <ChatAvatar
+                      src={person.avatar}
+                      name={person.name}
+                      size="2xs"
+                    />
                     <span class="truncate">{person.name}</span>
                     {#if person.isMe}
                       <span class="shrink-0 text-[9px] px-1 py-px rounded bg-(--primary)/15 text-[var(--chat-accent-text)]">我</span>
@@ -1766,5 +2916,25 @@ const displayedBrowseTracks = $derived(
         </div>
       {/if}
     </div>
+  {/if}
+
+  {#if activeTab !== "player" && currentPlay}
+    <MiniPlayerBar
+      currentPlay={currentPlay}
+      isListening={isListening}
+      elapsedSec={roomElapsed}
+      durationSec={effectiveDuration}
+      canDirectSkip={canDirectSkip}
+      isSoloCoolingDown={isSoloCoolingDown}
+      soloCooldownRemainSec={soloCooldownRemainSec}
+      hasVotedSkip={hasVotedSkip}
+      voteCount={musicState?.voteCount ?? 0}
+      voteThreshold={musicState?.voteThreshold ?? 2}
+      variant="panel"
+      onOpenLyrics={() => switchMusicTab("player")}
+      onToggleListen={() => void toggleListen()}
+      onSkipTrack={onSkipTrack}
+      onVoteSkip={onVoteSkip}
+    />
   {/if}
 </aside>

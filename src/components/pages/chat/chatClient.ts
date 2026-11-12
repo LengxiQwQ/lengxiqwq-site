@@ -3,6 +3,8 @@ import type {
 	ChatMessageRecord,
 	ChatOnlineMember,
 	ChatSessionUser,
+	ChatUserDetailProfile,
+	ChatUserTracksPage,
 	RoomMusicState,
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
@@ -53,12 +55,21 @@ export type ServerPacket =
 			hasMoreHistory: boolean;
 			jumpTarget?: boolean;
 	  }
-	| { type: "chat:deleted"; roomId: string; msgUid: string }
+	| { type: "chat:deleted"; roomId: string; msgUid: string; recalled?: boolean }
+	| { type: "chat:recalled"; roomId: string; msgUid: string }
 	| ({ type: "music:state"; roomId: string } & RoomMusicState)
+	| { type: "playlist:updated"; roomId: string }
 	| { type: "error"; code?: string; message: string };
 
 export function normalizeServerUrl(raw?: string): string {
 	return (raw || "").trim().replace(/\/+$/, "");
+}
+
+export function formatClockSeconds(seconds: number): string {
+	if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+	const mins = Math.floor(seconds / 60);
+	const secs = Math.floor(seconds % 60);
+	return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
 }
 
 export function buildWsUrl(
@@ -586,6 +597,82 @@ export async function uploadChatImage(
 	return data.data.url;
 }
 
+export function getAvatarInitials(name?: string, fallback = "?"): string {
+	const cleaned = (name || "").replace(/\s+/g, "").trim();
+	if (!cleaned) return fallback;
+	return Array.from(cleaned).slice(0, 2).join("");
+}
+
+function rewriteDefaultAvatarQuery(rawUrl: string): string {
+	const trimmed = rawUrl.trim();
+	if (
+		!trimmed.startsWith("http://") &&
+		!trimmed.startsWith("https://") &&
+		!trimmed.startsWith("/")
+	) {
+		return "";
+	}
+	try {
+		const origin =
+			typeof window !== "undefined"
+				? window.location.origin
+				: "https://example.invalid";
+		const parsed = new URL(trimmed, origin);
+		const proxiedTarget = parsed.searchParams.get("url");
+		if (proxiedTarget) {
+			const rewrittenInner = rewriteDefaultAvatarQuery(proxiedTarget);
+			if (rewrittenInner && rewrittenInner !== proxiedTarget) {
+				parsed.searchParams.set("url", rewrittenInner);
+				return trimmed.startsWith("/")
+					? `${parsed.pathname}${parsed.search}${parsed.hash}`
+					: parsed.toString();
+			}
+			return trimmed;
+		}
+
+		const isAvatarService =
+			parsed.hostname.includes("cravatar") ||
+			parsed.hostname.includes("gravatar") ||
+			parsed.hostname.includes("libravatar") ||
+			parsed.hostname.includes("weavatar") ||
+			parsed.pathname.includes("/avatar/");
+		if (isAvatarService) {
+			const dParam = (parsed.searchParams.get("d") || "").toLowerCase();
+			const defaultParam = (
+				parsed.searchParams.get("default") || ""
+			).toLowerCase();
+			if (
+				dParam === "mp" ||
+				dParam === "mm" ||
+				dParam === "mystery" ||
+				(!dParam && !defaultParam)
+			) {
+				parsed.searchParams.set("d", "404");
+				return parsed.toString();
+			}
+			if (
+				defaultParam === "mp" ||
+				defaultParam === "mm" ||
+				defaultParam === "mystery"
+			) {
+				parsed.searchParams.set("default", "404");
+				return parsed.toString();
+			}
+		}
+		return trimmed;
+	} catch {
+		return trimmed.replace(
+			/([?&](?:d|default)=)(?:mp|mm|mystery)(?=&|$)/gi,
+			"$1404",
+		);
+	}
+}
+
+export function resolveChatAvatarUrl(raw?: string): string {
+	if (!raw) return "";
+	return rewriteDefaultAvatarQuery(raw);
+}
+
 export function previewAvatarFromEmail(email: string): string {
 	const trimmed = email.trim().toLowerCase();
 	const qqMatch = trimmed.match(/^([1-9]\d{4,10})@qq\.com$/);
@@ -593,4 +680,67 @@ export function previewAvatarFromEmail(email: string): string {
 		return `https://q1.qlogo.cn/g?b=qq&nk=${qqMatch[1]}&s=100`;
 	}
 	return "";
+}
+
+export async function fetchUserDetailProfile(
+	chatServerUrl: string,
+	roomId: string,
+	userKey: string,
+	tracksLimit = 50,
+	walineToken = "",
+): Promise<ChatUserDetailProfile | null> {
+	const base = normalizeServerUrl(chatServerUrl);
+	const cleanKey = userKey.trim();
+	if (!base || !cleanKey) return null;
+	try {
+		const headers: Record<string, string> = {};
+		if (walineToken.trim()) {
+			headers.Authorization = `Bearer ${walineToken.trim()}`;
+		}
+		const resp = await fetch(
+			`${base}/api/rooms/member?room=${encodeURIComponent(roomId)}&userKey=${encodeURIComponent(cleanKey)}&tracksLimit=${encodeURIComponent(String(tracksLimit))}`,
+			{ headers },
+		);
+		if (!resp.ok) return null;
+		const data = (await resp.json()) as {
+			ok?: boolean;
+			profile?: ChatUserDetailProfile;
+		};
+		if (!data.ok || !data.profile) return null;
+		return data.profile;
+	} catch {
+		return null;
+	}
+}
+
+export async function fetchUserDetailTracks(
+	chatServerUrl: string,
+	roomId: string,
+	userKey: string,
+	beforeId: number,
+	limit = 50,
+): Promise<ChatUserTracksPage | null> {
+	const base = normalizeServerUrl(chatServerUrl);
+	const cleanKey = userKey.trim();
+	if (!base || !cleanKey) return null;
+	try {
+		const resp = await fetch(
+			`${base}/api/rooms/member/tracks?room=${encodeURIComponent(roomId)}&userKey=${encodeURIComponent(cleanKey)}&limit=${encodeURIComponent(String(limit))}&beforeId=${encodeURIComponent(String(beforeId))}`,
+		);
+		if (!resp.ok) return null;
+		const data = (await resp.json()) as {
+			ok?: boolean;
+			items?: ChatUserTracksPage["items"];
+			hasMore?: boolean;
+			nextBeforeId?: number;
+		};
+		if (!data.ok || !Array.isArray(data.items)) return null;
+		return {
+			items: data.items,
+			hasMore: Boolean(data.hasMore),
+			nextBeforeId: Number(data.nextBeforeId || 0),
+		};
+	} catch {
+		return null;
+	}
 }

@@ -59,6 +59,9 @@ function finishProgressBar(): void {
 
 const CHAT_FIXED_WALLPAPER = "/wallpapers/desktop/wuthering-waves-encore.webp";
 let chatSavedBlogWallpaperSrc = "";
+let lastRouteIsChatPage =
+	typeof document !== "undefined" &&
+	document.documentElement.hasAttribute("data-chat-page");
 
 function switchChatRouteWallpaper(isChatPage: boolean): void {
 	if (typeof window === "undefined") return;
@@ -287,12 +290,14 @@ function cleanupChatWallpaperTransition(): void {
  */
 function transitionChatPageWithWallpaper(visitToUrl?: string): void {
 	const root = document.documentElement;
-	const wasChatPage = root.hasAttribute("data-chat-page");
+	const wasChatPage = lastRouteIsChatPage;
 	const isChatPage = Boolean(document.getElementById("chat-page"));
+	lastRouteIsChatPage = isChatPage;
 	const targetUrl = visitToUrl || window.location.pathname;
 	const targetIsHome = !isChatPage && pathsEqual(targetUrl, url("/"));
 
 	if (wasChatPage === isChatPage) {
+		document.body.classList.toggle("is-home", targetIsHome);
 		syncChatPageRuntimeState(isChatPage);
 		return;
 	}

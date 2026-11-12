@@ -552,6 +552,19 @@ const wallpaperPosition = state.isFullscreenMode
                 var onBreakpointChange = function () {
                     var s = getVisibleSlides();
                     if (!s.length) return;
+                    if (document.documentElement.hasAttribute('data-chat-page') && window.__currentWallpaperSrc) {
+                        var chatVisIdx = findSlideIndexBySrc(s, window.__currentWallpaperSrc);
+                        if (chatVisIdx >= 0) {
+                            activateSpecificSlide(s[chatVisIdx], true, false);
+                            return;
+                        }
+                        var chatAllSlides = container.querySelectorAll('.slide-item');
+                        var chatAnyIdx = findSlideIndexBySrc(chatAllSlides, window.__currentWallpaperSrc);
+                        if (chatAnyIdx >= 0) {
+                            activateSpecificSlide(chatAllSlides[chatAnyIdx], true, true);
+                            return;
+                        }
+                    }
                     var hasActive = false;
                     for (var i = 0; i < s.length; i++) {
                         if (s[i].classList.contains('active')) { hasActive = true; break; }
@@ -570,7 +583,10 @@ const wallpaperPosition = state.isFullscreenMode
             if (isCarouselEnabled()) {
                 var schedulePrefetch = function () {
                     var idle = window.requestIdleCallback || function (cb) { return setTimeout(cb, 1500); };
-                    idle(function () { materializeAhead(getVisibleSlides(), startIdx); });
+                    idle(function () {
+                        var vis = getVisibleSlides();
+                        materializeAhead(vis, getCurrentIndex(vis));
+                    });
                 };
                 if (document.readyState === 'complete') schedulePrefetch();
                 else window.addEventListener('load', schedulePrefetch, { once: true });
