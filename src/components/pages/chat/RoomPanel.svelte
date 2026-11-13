@@ -91,6 +91,16 @@ function resolveMemberRoleBadge(user: {
 	return { label: "访客", type: "tag" };
 }
 
+const roomNameById = $derived(
+	new Map(rooms.map((room) => [room.id, room.name] as const)),
+);
+
+/** 在线成员的副标题：状态 · 当前所在房间 */
+function formatOnlineLine(member: ChatOnlineMember): string {
+	const roomName = member.roomId ? roomNameById.get(member.roomId) : "";
+	return roomName ? `${member.status} · ${roomName}` : member.status;
+}
+
 function isMemberMuted(member: ChatOnlineMember): boolean {
 	if (currentUser && member.userKey === currentUser.userKey) {
 		return selfMuted;
@@ -222,7 +232,7 @@ function formatOfflineTime(ts: number): string {
                     </span>
                   </div>
                   <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
-                    {member.status}
+                    {formatOnlineLine(member)}
                   </span>
                 </div>
               </div>

@@ -205,7 +205,7 @@ app.get("/api/presence", async (c) => {
 		const stub = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName(room));
 		const response = await stub.fetch(`https://room.internal/presence-snapshot?room=${encodeURIComponent(room)}`);
 		if (!response.ok) throw new Error("Presence unavailable");
-		return response.json() as Promise<{ members: Array<{ userKey: string; isAdmin: boolean; name: string }>; observerCount: number }>;
+		return response.json() as Promise<{ members: Array<{ userKey: string; isAdmin: boolean; name: string; roomId?: string }>; observerCount: number }>;
 	}));
 	const members = new Map<string, (typeof snapshots)[number]["members"][number]>();
 	let observerCount = 0;

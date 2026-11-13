@@ -28,6 +28,8 @@ export interface ChatProfileDraft {
 }
 
 export interface ChatOnlineMember extends ChatSessionUser {
+	/** 该成员当前所在的聊天房间 id（全局在线时用于展示“在哪个房间”） */
+	roomId?: string;
 	status: string;
 	bio?: string;
 	isMuted?: boolean;

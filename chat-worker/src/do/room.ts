@@ -149,6 +149,7 @@ export interface CurrentPlayback {
 
 export interface OnlineMember {
 	userKey: string;
+	roomId?: string;
 	authType: "waline" | "guest";
 	name: string;
 	avatar: string;
@@ -902,67 +903,114 @@ export class RoomDO extends DurableObject<Env> {
 				.filter((row) => row.room_id === roomId)
 				.map((row) => String(row.playlist_id))[0] || null;
 		const available = new Set(data.playlists.map((p) => String(p.id)));
+		const fallbackPlaylist =
+			data.playlists.find((p) => String(p.id) === fallbackId) ?? null;
+		// 只同步“本房间相关的增量”：精选勾选（几行）+ 轮播歌单本身（播放与投票要用）。
+		// 不再把整个歌单库复制进每个房间，避免每次改动都产生上千行写入。
+		const featuredSig = [...featuredIds]
+			.filter((id) => available.has(id))
+			.sort()
+			.join(",");
+		const fallbackSig = fallbackPlaylist
+			? `${fallbackId}:${fallbackPlaylist.updated_at ?? 0}:${fallbackPlaylist.track_count ?? 0}`
+			: "";
+		const featuredChanged =
+			this.getStateValue<string>("library_featured_sig") !== featuredSig;
+		const fallbackChanged =
+			this.getStateValue<string>("library_fallback_sig") !== fallbackSig;
+		if (!featuredChanged && !fallbackChanged) {
+			return Response.json({ ok: true, skipped: true });
+		}
+
 		let fallbackCleared = false;
 		this.ctx.storage.transactionSync(() => {
-			const previousFallback = this.ctx.storage.sql
-				.exec<{ id: string }>(
-					"SELECT id FROM user_playlists WHERE is_fallback = 1 ORDER BY updated_at DESC LIMIT 1",
-				)
-				.toArray()[0]?.id;
-			fallbackCleared = Boolean(previousFallback) && !fallbackId;
-			this.ctx.storage.sql.exec("DELETE FROM user_playlist_tracks");
-			this.ctx.storage.sql.exec("DELETE FROM user_playlists");
-			this.ctx.storage.sql.exec("DELETE FROM room_featured");
-			for (const p of data.playlists) {
-				const playlistId = String(p.id);
+			if (featuredChanged) {
 				this.ctx.storage.sql.exec(
-					`INSERT INTO user_playlists (id, owner_key, owner_name, title, platform, source_url, cover_url, creator, track_count, retrieval_mode, is_public, is_featured, is_fallback, created_at, updated_at)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					playlistId,
-					p.owner_key,
-					p.owner_name,
-					p.title,
-					p.platform,
-					p.source_url,
-					p.cover_url,
-					p.creator,
-					p.track_count,
-					p.retrieval_mode,
-					p.is_public,
-					featuredIds.has(playlistId) ? 1 : 0,
-					playlistId === fallbackId ? 1 : 0,
-					p.created_at,
-					p.updated_at,
-				);
-			}
-			for (const t of data.tracks) {
-				if (!available.has(String(t.playlist_id))) continue;
-				this.ctx.storage.sql.exec(
-					`INSERT INTO user_playlist_tracks (playlist_id, position, source_platform, source_track_id, title, artist, album, cover, duration_sec, source_url, matched_track_json)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					t.playlist_id,
-					t.position,
-					t.source_platform,
-					t.source_track_id,
-					t.title,
-					t.artist,
-					t.album,
-					t.cover,
-					t.duration_sec,
-					t.source_url,
-					t.matched_track_json,
-				);
-			}
-			for (const id of featuredIds) {
-				if (!available.has(id)) continue;
-				this.ctx.storage.sql.exec(
-					"INSERT OR IGNORE INTO room_featured (room_id, playlist_id, position, added_at) VALUES (?, ?, 0, ?)",
+					"DELETE FROM room_featured WHERE room_id = ?",
 					roomId,
-					id,
-					Date.now(),
 				);
+				for (const id of featuredIds) {
+					if (!available.has(id)) continue;
+					this.ctx.storage.sql.exec(
+						"INSERT OR IGNORE INTO room_featured (room_id, playlist_id, position, added_at) VALUES (?, ?, 0, ?)",
+						roomId,
+						id,
+						Date.now(),
+					);
+				}
+			}
+
+			if (fallbackChanged) {
+				const previousFallback = this.ctx.storage.sql
+					.exec<{ id: string }>(
+						"SELECT id FROM user_playlists WHERE is_fallback = 1 ORDER BY updated_at DESC LIMIT 1",
+					)
+					.toArray()[0]?.id;
+				fallbackCleared = Boolean(previousFallback) && !fallbackId;
+				this.ctx.storage.sql.exec("DELETE FROM user_playlist_tracks");
+				this.ctx.storage.sql.exec("DELETE FROM user_playlists");
+				this.ctx.storage.sql.exec(
+					"DELETE FROM room_fallback WHERE room_id = ?",
+					roomId,
+				);
+				if (fallbackPlaylist) {
+					const playlistId = String(fallbackPlaylist.id);
+					this.ctx.storage.sql.exec(
+						`INSERT INTO user_playlists (id, owner_key, owner_name, title, platform, source_url, cover_url, creator, track_count, retrieval_mode, is_public, is_featured, is_fallback, created_at, updated_at)
+						 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+						playlistId,
+						fallbackPlaylist.owner_key,
+						fallbackPlaylist.owner_name,
+						fallbackPlaylist.title,
+						fallbackPlaylist.platform,
+						fallbackPlaylist.source_url,
+						fallbackPlaylist.cover_url,
+						fallbackPlaylist.creator,
+						fallbackPlaylist.track_count,
+						fallbackPlaylist.retrieval_mode,
+						fallbackPlaylist.is_public,
+						featuredIds.has(playlistId) ? 1 : 0,
+						1,
+						fallbackPlaylist.created_at,
+						fallbackPlaylist.updated_at,
+					);
+					for (const t of data.tracks) {
+						if (String(t.playlist_id) !== playlistId) continue;
+						this.ctx.storage.sql.exec(
+							`INSERT INTO user_playlist_tracks (playlist_id, position, source_platform, source_track_id, title, artist, album, cover, duration_sec, source_url, matched_track_json)
+							 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+							t.playlist_id,
+							t.position,
+							t.source_platform,
+							t.source_track_id,
+							t.title,
+							t.artist,
+							t.album,
+							t.cover,
+							t.duration_sec,
+							t.source_url,
+							t.matched_track_json,
+						);
+					}
+					this.ctx.storage.sql.exec(
+						`INSERT INTO room_fallback (room_id, playlist_id, updated_at)
+						 VALUES (?, ?, ?)
+						 ON CONFLICT(room_id) DO UPDATE SET
+							playlist_id = excluded.playlist_id,
+							updated_at = excluded.updated_at`,
+						roomId,
+						playlistId,
+						Date.now(),
+					);
+				}
 			}
 		});
+		if (featuredChanged) {
+			this.setStateValue("library_featured_sig", featuredSig);
+		}
+		if (fallbackChanged) {
+			this.setStateValue("library_fallback_sig", fallbackSig);
+		}
 		if (fallbackCleared) {
 			const current = this.getCurrentPlayback();
 			if (current?.isFallback) {
@@ -2568,6 +2616,7 @@ export class RoomDO extends DurableObject<Env> {
 	} {
 		const sockets = this.ctx.getWebSockets();
 		const membersMap = new Map<string, OnlineMember>();
+		const roomId = this.getRoomId();
 		let observerCount = 0;
 
 		for (const ws of sockets) {
@@ -2585,6 +2634,7 @@ export class RoomDO extends DurableObject<Env> {
 				const socketMuted = att.isMuted !== false;
 				membersMap.set(att.user.userKey, {
 					userKey: att.user.userKey,
+					roomId,
 					authType: att.user.authType,
 					name: att.user.name,
 					avatar: att.user.avatar,

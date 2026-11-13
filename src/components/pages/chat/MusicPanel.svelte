@@ -193,9 +193,19 @@ let searchTimer: number | null = null;
 
 // 歌单相关状态
 let featuredCollapsed = $state(false);
+let myCollapsed = $state(false);
+let membersCollapsed = $state(false);
 let featuredPlaylists = $state<PlaylistSummary[]>([]);
 let myPlaylists = $state<PlaylistSummary[]>([]);
 let membersPlaylists = $state<PlaylistSummary[]>([]);
+
+const memberAvatarByKey = $derived.by(() => {
+	const map = new Map<string, string>();
+	for (const member of mentionMembers) {
+		if (member.avatar) map.set(member.userKey, member.avatar);
+	}
+	return map;
+});
 
 const memberPlaylistGroups = $derived.by(() => {
 	const groups = new Map<
@@ -218,7 +228,7 @@ const memberPlaylistGroups = $derived.by(() => {
 			groups.set(key, {
 				ownerKey: key,
 				ownerName: pl.ownerName || "房友",
-				ownerAvatar: pl.ownerAvatar || "",
+				ownerAvatar: pl.ownerAvatar || memberAvatarByKey.get(key) || "",
 				updatedAt: pl.updatedAt || 0,
 				playlists: [pl],
 			});
@@ -598,6 +608,13 @@ function formatPlaylistDate(ts: number): string {
 function canManagePlaylist(playlist: PlaylistSummary | null): boolean {
 	if (!playlist || !isWalineLoggedIn || !currentUser) return false;
 	return currentUser.isAdmin || playlist.ownerKey === currentUser.userKey;
+}
+
+/** 只有歌单主人能删除；站长操作成员歌单时也不给删除入口，避免误删他人歌单 */
+function isOwnPlaylist(playlist: PlaylistSummary | null): boolean {
+	return Boolean(
+		playlist && currentUser && playlist.ownerKey === currentUser.userKey,
+	);
 }
 
 function resolveSafeExternalUrl(raw?: string): string {
@@ -2899,8 +2916,8 @@ $effect(() => {
             </div>
           </div>
 
-          <!-- 第 3 行：纯图标工具栏（同步时间收入刷新按钮悬浮提示，避免窄栏文字拥挤） -->
-          <div class="flex items-center justify-end">
+          <!-- 第 3 行：纯图标工具栏（左对齐，与上方歌单信息同一起点；同步时间收入刷新按钮悬浮提示，避免窄栏文字拥挤） -->
+          <div class="flex items-center justify-start">
             <div class="flex items-center gap-1.5 shrink-0">
               <div class="chat-playlist-action-wrap">
                 <button
@@ -2918,7 +2935,7 @@ $effect(() => {
                     <line x1="4" y1="4" x2="9" y2="9" />
                   </svg>
                 </button>
-                <span class="chat-playlist-tooltip {!canManagePlaylist(selectedPlaylist) && !safeSourceUrl ? 'align-right' : ''}" role="tooltip">
+                <span class="chat-playlist-tooltip align-left" role="tooltip">
                   随机点一首
                 </span>
               </div>
@@ -3009,35 +3026,40 @@ $effect(() => {
                   </div>
                 {/if}
 
-                <div class="chat-playlist-action-wrap">
-                  <button
-                    type="button"
-                    disabled={isDeletingPlaylistId === selectedPlaylist.id}
-                    class="chat-playlist-icon-btn {confirmDeletePlaylistId === selectedPlaylist.id ? 'is-danger-confirm' : 'is-danger'}"
-                    aria-label={confirmDeletePlaylistId === selectedPlaylist.id ? "再次点击确认删除" : "删除歌单"}
-                    onclick={() => selectedPlaylist && handleDeletePlaylist(selectedPlaylist)}
-                  >
-                    {#if confirmDeletePlaylistId === selectedPlaylist.id}
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    {:else}
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                      </svg>
-                    {/if}
-                  </button>
-                  <span class="chat-playlist-tooltip align-right" role="tooltip">
-                    {#if isDeletingPlaylistId === selectedPlaylist.id}
-                      正在删除...
-                    {:else if confirmDeletePlaylistId === selectedPlaylist.id}
-                      再次点击确认删除
-                    {:else}
-                      删除歌单
-                    {/if}
-                  </span>
-                </div>
+                {#if isOwnPlaylist(selectedPlaylist)}
+                  <div class="chat-playlist-action-wrap">
+                    <button
+                      type="button"
+                      disabled={isDeletingPlaylistId === selectedPlaylist.id}
+                      class="chat-playlist-icon-btn {confirmDeletePlaylistId === selectedPlaylist.id ? 'is-danger-confirm' : 'is-danger'}"
+                      aria-label={confirmDeletePlaylistId === selectedPlaylist.id ? "再次点击确认删除" : "删除歌单"}
+                      onclick={() => selectedPlaylist && handleDeletePlaylist(selectedPlaylist)}
+                    >
+                      {#if confirmDeletePlaylistId === selectedPlaylist.id}
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      {:else}
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                      {/if}
+                    </button>
+                    <span
+                      class="chat-playlist-tooltip align-right {confirmDeletePlaylistId === selectedPlaylist.id ? 'is-armed' : ''}"
+                      role="tooltip"
+                    >
+                      {#if isDeletingPlaylistId === selectedPlaylist.id}
+                        正在删除...
+                      {:else if confirmDeletePlaylistId === selectedPlaylist.id}
+                        再次点击确认删除
+                      {:else}
+                        删除歌单
+                      {/if}
+                    </span>
+                  </div>
+                {/if}
               {/if}
             </div>
           </div>
@@ -3079,7 +3101,7 @@ $effect(() => {
       </div>
     {:else}
       <!-- 歌单目录视图：精选歌单 / 我的歌单 / 成员歌单 三段纵向排列 -->
-      <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 pb-4 pt-2 space-y-3">
+      <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scrollbar-stable px-3 pb-4 pt-2 space-y-3">
         {#if playlistsError}
           <div class="text-xs text-red-500 px-1">{playlistsError}</div>
         {/if}
@@ -3130,13 +3152,23 @@ $effect(() => {
 
         <!-- 段落 2：我的歌单（导入入口常驻在列表上方） -->
         <section class="space-y-1.5">
-          <div class="flex items-center gap-1.5">
-            <span class="text-[11px] font-bold text-[var(--deep-text)]">我的歌单</span>
-            {#if isWalineLoggedIn && myPlaylists.length > 0}
-              <span class="text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{myPlaylists.length}</span>
-            {/if}
-          </div>
-
+          <button
+            type="button"
+            class="w-full flex items-center justify-between gap-2 bg-transparent border-none p-0 cursor-pointer text-left"
+            aria-expanded={!myCollapsed}
+            onclick={() => (myCollapsed = !myCollapsed)}
+          >
+            <span class="flex items-center gap-1.5 min-w-0">
+              <span class="text-[11px] font-bold text-[var(--deep-text)]">我的歌单</span>
+              {#if isWalineLoggedIn && myPlaylists.length > 0}
+                <span class="text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{myPlaylists.length}</span>
+              {/if}
+            </span>
+            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--chat-meta-color)] transition-transform {myCollapsed ? '-rotate-90' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {#if !myCollapsed}
           {#if !isWalineLoggedIn}
             <div class="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3 space-y-2">
               {#if currentUser?.authType === "guest"}
@@ -3190,17 +3222,28 @@ $effect(() => {
               </div>
             {/if}
           {/if}
+          {/if}
         </section>
 
-        <!-- 段落 3：成员歌单（按成员分组） -->
-        <section class="space-y-1.5">
-          <div class="flex items-center gap-1.5">
-            <span class="text-[11px] font-bold text-[var(--deep-text)]">成员歌单</span>
-            {#if membersPlaylists.length > 0}
-              <span class="text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{membersPlaylists.length}</span>
-            {/if}
-          </div>
-
+        <!-- 段落 3：成员歌单（按成员分组，扁平列表） -->
+        <section class="space-y-2">
+          <button
+            type="button"
+            class="w-full flex items-center justify-between gap-2 bg-transparent border-none p-0 cursor-pointer text-left"
+            aria-expanded={!membersCollapsed}
+            onclick={() => (membersCollapsed = !membersCollapsed)}
+          >
+            <span class="flex items-center gap-1.5 min-w-0">
+              <span class="text-[11px] font-bold text-[var(--deep-text)]">成员歌单</span>
+              {#if membersPlaylists.length > 0}
+                <span class="text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{membersPlaylists.length}</span>
+              {/if}
+            </span>
+            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--chat-meta-color)] transition-transform {membersCollapsed ? '-rotate-90' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          {#if !membersCollapsed}
           {#if isLoadingPlaylists && membersPlaylists.length === 0}
             <div class="text-center py-4 text-xs text-[var(--chat-meta-color)]">加载中...</div>
           {:else if memberPlaylistGroups.length === 0}
@@ -3208,20 +3251,65 @@ $effect(() => {
               还没有其他成员上传歌单
             </div>
           {:else}
-            <div class="space-y-2">
-              {#each memberPlaylistGroups as group (group.ownerKey)}
-                <div class="rounded-xl border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/35 p-1.5 space-y-1">
-                  <div class="flex items-center gap-1.5 px-1 pt-0.5">
-                    <ChatAvatar src={group.ownerAvatar} name={group.ownerName} size="2xs" />
-                    <span class="text-[11px] font-semibold text-[var(--deep-text)] truncate flex-1">{group.ownerName}</span>
-                    <span class="text-[10px] text-[var(--chat-meta-color)] tabular-nums">{group.playlists.length}</span>
+            <div>
+              {#each memberPlaylistGroups as group, groupIndex (group.ownerKey)}
+                <div class={groupIndex > 0 ? "mt-2.5 pt-2.5 border-t border-[var(--chat-divider-color)]" : ""}>
+                  <div class="flex items-center gap-2 px-1 pb-1">
+                    <button
+                      type="button"
+                      class="flex items-center gap-1.5 min-w-0 flex-1 bg-transparent border-none p-0 cursor-pointer text-left transition-opacity hover:opacity-80"
+                      aria-label={`查看 ${group.ownerName} 的个人资料`}
+                      title={`查看 ${group.ownerName} 的个人资料`}
+                      onclick={() => openRequesterProfile(group.ownerKey, group.ownerName)}
+                    >
+                      <ChatAvatar src={group.ownerAvatar} name={group.ownerName} size="2xs" />
+                      <span class="text-[11px] font-semibold text-[var(--deep-text)] truncate">{group.ownerName}</span>
+                    </button>
+                    <span class="text-[10px] text-[var(--chat-meta-color)] tabular-nums shrink-0">{group.playlists.length} 张</span>
                   </div>
                   {#each group.playlists as pl (pl.id)}
-                    {@render playlistSummaryCard(pl, false)}
+                    <button
+                      type="button"
+                      class="w-full flex items-center gap-2.5 px-1.5 py-1.5 rounded-lg text-left bg-transparent border-none cursor-pointer transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                      onmouseenter={() => schedulePlaylistDetailPrefetch(pl.id)}
+                      onmouseleave={cancelPlaylistDetailPrefetch}
+                      onfocus={() => schedulePlaylistDetailPrefetch(pl.id)}
+                      onblur={cancelPlaylistDetailPrefetch}
+                      onclick={() => openPlaylistDetail(pl.id)}
+                    >
+                      <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+                        {#if pl.coverUrl}
+                          <img src={pl.coverUrl} alt="" loading="lazy" class="w-full h-full object-cover" />
+                        {:else}
+                          <span class="text-xs text-(--primary)">♪</span>
+                        {/if}
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-1.5 min-w-0">
+                          <span class="text-xs font-medium text-[var(--deep-text)] truncate">{pl.title}</span>
+                          {#if pl.isFallback}
+                            <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
+                              轮播
+                            </span>
+                          {:else if pl.isFeatured}
+                            <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                              精选
+                            </span>
+                          {/if}
+                        </div>
+                        <div class="text-[10px] text-[var(--chat-meta-color)] truncate mt-0.5">
+                          {formatPlatformLabel(pl.platform)} · {pl.trackCount} 首
+                        </div>
+                      </div>
+                      <svg class="w-3.5 h-3.5 shrink-0 text-[var(--chat-meta-color)] opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                    </button>
                   {/each}
                 </div>
               {/each}
             </div>
+          {/if}
           {/if}
         </section>
       </div>

@@ -85,6 +85,7 @@ const mentionMembers = $derived.by<ChatMentionCandidate[]>(() => {
 		merged.set(member.userKey, {
 			...previous,
 			...member,
+			avatar: member.avatar || previous?.avatar || "",
 			bio: member.bio || previous?.bio,
 			status: member.status || previous?.status,
 			online: member.online || onlineKeys.has(member.userKey),
