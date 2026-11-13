@@ -1254,7 +1254,7 @@ export class RoomDO extends DurableObject<Env> {
 	): {
 		featured: PlaylistSummary[];
 		mine: PlaylistSummary[];
-		shared: PlaylistSummary[];
+		members: PlaylistSummary[];
 		details?: Record<string, PlaylistDetail>;
 	} {
 		const featuredIds = this.getFeaturedPlaylistIds(featuredRoom);
@@ -1271,15 +1271,19 @@ export class RoomDO extends DurableObject<Env> {
 			featuredIds,
 			fallbackId,
 		);
-		const shared = this.applyRoomFlags(
-			this.queryPlaylistSummaries(
-				"WHERE p.is_public = 1 ORDER BY p.updated_at DESC",
-			),
+		// 歌单全部默认公开：成员歌单 = 歌单库里其他人的全部歌单
+		const members = this.applyRoomFlags(
+			user?.authType === "waline"
+				? this.queryPlaylistSummaries(
+						"WHERE p.owner_key != ? ORDER BY p.updated_at DESC",
+						user.userKey,
+					)
+				: this.queryPlaylistSummaries("ORDER BY p.updated_at DESC"),
 			featuredIds,
 			fallbackId,
 		);
 		if (user?.authType !== "waline") {
-			return { featured, mine: [], shared };
+			return { featured, mine: [], members };
 		}
 
 		const mine = this.applyRoomFlags(
@@ -1295,13 +1299,13 @@ export class RoomDO extends DurableObject<Env> {
 			return {
 				featured,
 				mine,
-				shared,
+				members,
 			};
 		}
 
 		const MAX_BUNDLED_TRACKS = 1500;
 		const summaryById = new Map<string, PlaylistSummary>();
-		for (const item of [...featured, ...mine, ...shared]) {
+		for (const item of [...featured, ...mine, ...members]) {
 			if (!summaryById.has(item.id)) {
 				summaryById.set(item.id, item);
 			}
@@ -1363,14 +1367,14 @@ export class RoomDO extends DurableObject<Env> {
 		return {
 			featured,
 			mine,
-			shared,
+			members,
 			details,
 		};
 	}
 
 	private getPlaylistDetailForUser(
 		playlistId: string,
-		user: VerifiedUser | null,
+		_user: VerifiedUser | null,
 		featuredRoom = "chat",
 	):
 		| { ok: true; playlist: PlaylistDetail }
@@ -1389,13 +1393,7 @@ export class RoomDO extends DurableObject<Env> {
 		);
 		summary.isFallback = false;
 
-		const isOwner = Boolean(
-			user && user.authType === "waline" && summary.ownerKey === user.userKey,
-		);
-		const isAdmin = Boolean(user?.isAdmin);
-		if (!summary.isFeatured && !summary.isPublic && !isOwner && !isAdmin) {
-			return { ok: false, status: 403, error: "无权查看该私人歌单" };
-		}
+		// 歌单可见性对所有访问者开放；“共享”只决定是否出现在点歌台的共享列表里。
 
 		const trackRows = this.ctx.storage.sql
 			.exec<{
@@ -5022,12 +5020,6 @@ export class RoomDO extends DurableObject<Env> {
 		}
 		if (url.pathname === "/member-playlists" && url.hostname === "room.internal") {
 			const userKey = url.searchParams.get("userKey") || "";
-			const viewer = this.parseForwardedUser(request);
-			const privateAccess = Boolean(
-				viewer &&
-					(viewer.isAdmin ||
-						(viewer.authType === "waline" && viewer.userKey === userKey)),
-			);
 			const featuredIds = this.getFeaturedPlaylistIds(featuredRoom);
 			const rows = this.ctx.storage.sql.exec<{
 				id: string;
@@ -5041,20 +5033,13 @@ export class RoomDO extends DurableObject<Env> {
 				userKey,
 			).toArray();
 			return Response.json({
-				playlists: rows
-					.filter(
-						(p) =>
-							privateAccess ||
-							p.is_public === 1 ||
-							featuredIds.has(p.id),
-					)
-					.slice(0, 8)
-					.map((p) => ({
+				playlists: rows.slice(0, 8).map((p) => ({
 						id: p.id,
 						title: p.title,
 						platform: p.platform,
 						coverUrl: p.cover_url,
 						trackCount: p.track_count,
+						isPublic: p.is_public === 1,
 						isFeatured: featuredIds.has(p.id),
 					})),
 			});

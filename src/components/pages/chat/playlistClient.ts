@@ -361,7 +361,7 @@ export async function fetchRoomPlaylists(
 	options?: { includeTracks?: boolean },
 ): Promise<PlaylistsResponse> {
 	const base = normalizeServerUrl(chatServerUrl);
-	if (!base) return { featured: [], mine: [], shared: [] };
+	if (!base) return { featured: [], mine: [], members: [] };
 	const includeTracks = Boolean(options?.includeTracks);
 	const resp = await fetch(
 		`${base}/api/playlists?room=${encodeURIComponent(roomId)}${includeTracks ? "&includeTracks=1" : ""}`,
@@ -374,7 +374,7 @@ export async function fetchRoomPlaylists(
 		ok?: boolean;
 		featured?: PlaylistSummary[];
 		mine?: PlaylistSummary[];
-		shared?: PlaylistSummary[];
+		members?: PlaylistSummary[];
 		details?: Record<string, PlaylistDetail>;
 		error?: string;
 	} | null;
@@ -387,7 +387,7 @@ export async function fetchRoomPlaylists(
 	return {
 		featured: Array.isArray(json.featured) ? json.featured : [],
 		mine: Array.isArray(json.mine) ? json.mine : [],
-		shared: Array.isArray(json.shared) ? json.shared : [],
+		members: Array.isArray(json.members) ? json.members : [],
 		details:
 			json.details && typeof json.details === "object"
 				? json.details

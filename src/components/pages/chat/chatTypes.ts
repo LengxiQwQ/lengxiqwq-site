@@ -260,7 +260,7 @@ export interface PlaylistDetail extends PlaylistSummary {
 export interface PlaylistsResponse {
 	featured: PlaylistSummary[];
 	mine: PlaylistSummary[];
-	shared: PlaylistSummary[];
+	members: PlaylistSummary[];
 	details?: Record<string, PlaylistDetail>;
 }
 
