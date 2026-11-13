@@ -61,7 +61,7 @@ export class QQMusicProvider implements MusicProvider {
 		limit: number,
 	): Promise<StandardTrack[]> {
 		try {
-			const url = `https://c.y.qq.com/soso/fcgi-bin/client_search_cp?p=1&n=${limit}&w=${encodeURIComponent(keyword)}&format=json`;
+			const url = `https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp?p=1&n=${limit}&w=${encodeURIComponent(keyword)}&format=json`;
 			const resp = await fetch(url, {
 				headers: QQ_HEADERS,
 				signal: AbortSignal.timeout(6000),
