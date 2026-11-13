@@ -162,7 +162,7 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
 ---
 
 <!doctype html>
-<html lang={siteLang} class="bg-(--page-bg) text-[14px] md:text-[16px]" data-wallpaper-mode={backgroundWallpaper.mode} data-fullscreen-layout={fullscreenLayout} data-has-wallpaper={hasWallpaper ? "" : undefined} data-tag-style={siteConfig.tagStyle ?? "pill"} data-category-style={siteConfig.categoryStyle ?? "rectangle"}>
+<html lang={siteLang} class="bg-(--page-bg) text-[14px] md:text-[16px]" data-wallpaper-mode={backgroundWallpaper.mode} data-fullscreen-layout={fullscreenLayout} data-has-wallpaper={hasWallpaper ? "" : undefined} data-tag-style={siteConfig.tagStyle ?? "pill"} data-category-style={siteConfig.categoryStyle ?? "rectangle"} style={`--hue:${configHue}`}>
   <head>
     <meta charset="UTF-8" />
     <meta name="color-scheme" content="light dark" />
@@ -582,7 +582,10 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
     </script>
     <style
       define:vars={{
-        hue: configHue,
+        // 注意：不要把 hue 放进 define:vars。Astro 会把这批变量以内联样式挂到
+        // <html>/<body> 等元素上（dev 下 body 也会被挂上），body 的 --hue 会遮蔽
+        // 运行时 setProperty 到 <html> 的主题色，导致直接用 var(--hue) 的元素
+        //（例如分类徽章背景）停留在配置默认色相。--hue 由上方内联脚本统一写入 <html>。
         configHue,
         "page-width": `${siteConfig.pageWidth ?? PAGE_WIDTH}rem`,
         "navbar-panel-blur": `${navbarPanelBlur}px`,
