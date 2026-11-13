@@ -45,6 +45,22 @@ const observerCount = $derived(
 	Math.max(0, totalOnlineCount - onlineMembers.length),
 );
 
+/** 未登录旁观者没有真实身份，按人数渲染匿名占位行 */
+const observerSlots = $derived(
+	Array.from({ length: observerCount }, (_, index) => index),
+);
+
+/** 互联房间（跨站联邦聊天）的房间 id */
+const INTERCONNECT_ROOM_IDS = new Set(["interconnect"]);
+
+const interconnectRooms = $derived(
+	rooms.filter((room) => INTERCONNECT_ROOM_IDS.has(room.id)),
+);
+
+const siteRooms = $derived(
+	rooms.filter((room) => !INTERCONNECT_ROOM_IDS.has(room.id)),
+);
+
 const offlineMembers = $derived.by(() => {
 	const onlineKeys = new Set(onlineMembers.map((m) => m.userKey));
 	return mentionMembers
@@ -71,7 +87,7 @@ function resolveMemberRoleBadge(user: {
 	authType: "waline" | "guest";
 }): { label: string; type: "host" | "accent" | "tag" } {
 	if (user.isAdmin) return { label: "站长", type: "host" };
-	if (user.authType === "waline") return { label: "已认证", type: "accent" };
+	if (user.authType === "waline") return { label: "认证", type: "accent" };
 	return { label: "访客", type: "tag" };
 }
 
@@ -107,25 +123,39 @@ function formatOfflineTime(ts: number): string {
     </span>
   </div>
 
-  <!-- 房间列表（单房间闲聊聚焦，未来扩展多房间电台互不串台） -->
+  <!-- 房间列表：按来源分组（互联房间 / 本站房间） -->
   <div class="p-2.5 shrink-0">
-    <div class="chat-section-title">主题房间</div>
-    <div class="flex flex-col gap-1 mt-0.5">
-      {#each rooms as room (room.id)}
-        <button
-          type="button"
-          class="chat-room-item {currentRoom === room.id ? 'active' : ''} text-left w-full border-none"
-          onclick={() => onRoomSelect?.(room.id)}
-        >
-          <span class="font-mono text-sm font-bold opacity-60 w-4 text-center ml-1">#</span>
-          <span class="flex-1 truncate">{room.name}</span>
-          {#if currentRoom === room.id}
-            <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">{totalOnlineCount}</span>
-          {/if}
-        </button>
-      {/each}
-    </div>
+    {#if interconnectRooms.length > 0}
+      <div class="chat-section-title">互联房间</div>
+      <div class="flex flex-col gap-1 mt-0.5">
+        {#each interconnectRooms as room (room.id)}
+          {@render roomItem(room)}
+        {/each}
+      </div>
+    {/if}
+    {#if siteRooms.length > 0}
+      <div class="chat-section-title {interconnectRooms.length > 0 ? 'mt-1.5' : ''}">本站</div>
+      <div class="flex flex-col gap-1 mt-0.5">
+        {#each siteRooms as room (room.id)}
+          {@render roomItem(room)}
+        {/each}
+      </div>
+    {/if}
   </div>
+
+  {#snippet roomItem(room: ChatRoomMeta)}
+    <button
+      type="button"
+      class="chat-room-item {currentRoom === room.id ? 'active' : ''} text-left w-full border-none"
+      onclick={() => onRoomSelect?.(room.id)}
+    >
+      <span class="font-mono text-sm font-bold opacity-60 w-4 text-center ml-1">#</span>
+      <span class="flex-1 truncate">{room.name}</span>
+      {#if currentRoom === room.id}
+        <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">{totalOnlineCount}</span>
+      {/if}
+    </button>
+  {/snippet}
 
   <div class="chat-divider"></div>
 
@@ -136,11 +166,11 @@ function formatOfflineTime(ts: number): string {
       <div class="chat-section-title flex items-center justify-between pr-1">
         <span>在线成员</span>
         <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
-          {onlineMembers.length} 人{observerCount > 0 ? ` (+${observerCount} 旁观)` : ""}
+          {onlineMembers.length + observerCount} 人
         </span>
       </div>
 
-      {#if onlineMembers.length === 0}
+      {#if onlineMembers.length + observerCount === 0}
         <div class="px-2 py-4 text-center text-xs text-[var(--chat-meta-color)]">
           {#if connectionState === "connected"}
             暂无已登录在线成员，发句话或点首歌露个面吧~
@@ -209,6 +239,30 @@ function formatOfflineTime(ts: number): string {
                 </span>
               {/if}
             </button>
+          {/each}
+
+          {#each observerSlots as slotIndex (slotIndex)}
+            <div class="chat-user-item justify-between w-full" title="未登录的旁观者">
+              <div class="flex items-center gap-2.5 min-w-0 flex-1">
+                <div class="relative shrink-0">
+                  <div class="chat-avatar-sm flex items-center justify-center bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)]">
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0 2c-4.42 0-8 2.24-8 5v1h16v-1c0-2.76-3.58-5-8-5Z" />
+                    </svg>
+                  </div>
+                  <span class="chat-online-dot absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"></span>
+                </div>
+
+                <div class="min-w-0 flex flex-col">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="truncate font-medium text-[var(--chat-meta-color)]">旁观</span>
+                  </div>
+                  <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
+                    只读旁观中
+                  </span>
+                </div>
+              </div>
+            </div>
           {/each}
         </div>
       {/if}

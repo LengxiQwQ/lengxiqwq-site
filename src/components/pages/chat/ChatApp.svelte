@@ -128,7 +128,6 @@ let isSkippingTrack = $state(false);
 let skipPendingTimer: number | null = null;
 let clockOffsetMs = $state(0);
 let noticeText = $state("");
-let interconnected = $state(false);
 let targetMessageUid = $state("");
 let walineToken = $state("");
 let playlistRefreshSeq = $state(0);
@@ -362,12 +361,11 @@ function sendPacket(packet: Record<string, unknown>): boolean {
 
 function getFixedRoleBadge(user: ChatSessionUser): string {
 	if (user.isAdmin) return "站长";
-	return user.authType === "waline" ? "已认证" : "访客";
+	return user.authType === "waline" ? "认证" : "访客";
 }
 
 function connectRoom(roomId: string) {
 	if (isUnmounted) return;
-	interconnected = false;
 	if (reconnectTimer !== null) {
 		window.clearTimeout(reconnectTimer);
 		reconnectTimer = null;
@@ -439,7 +437,6 @@ function connectRoom(roomId: string) {
 
 		switch (packet.type) {
 			case "room:init": {
-				interconnected = packet.interconnected === true;
 				currentUser = packet.self;
 				messages = mergeRoomMessages(
 					packet.messages,
@@ -1241,7 +1238,6 @@ onMount(() => {
           mentionEvent={mentionEvent}
           showSettings={showSettings}
           noticeText={noticeText}
-          {interconnected}
           onToggleSettings={() => (showSettings = !showSettings)}
           onSendMessage={handleSendMessage}
           onRecallMessage={handleRecallMessage}

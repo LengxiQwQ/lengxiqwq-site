@@ -32,6 +32,7 @@ const RESERVED_BADGES = new Set([
 	"官方",
 	"系统",
 	"已认证",
+	"认证",
 	"访客",
 	"admin",
 	"host",
@@ -156,7 +157,7 @@ export function resolveRoleBadge(
 		return { badge: "站长", badgeType: "host" };
 	}
 	if (authType === "waline") {
-		return { badge: "已认证", badgeType: "accent" };
+		return { badge: "认证", badgeType: "accent" };
 	}
 	return { badge: "访客", badgeType: "tag" };
 }

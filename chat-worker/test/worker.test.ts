@@ -131,6 +131,10 @@ describe("Auth & anti-impersonation", () => {
 			badge: "",
 			badgeType: "tag",
 		});
+		expect(sanitizePublicBadge("认证", false)).toEqual({
+			badge: "",
+			badgeType: "tag",
+		});
 		expect(sanitizePublicBadge("访客", false)).toEqual({
 			badge: "",
 			badgeType: "tag",
@@ -140,7 +144,7 @@ describe("Auth & anti-impersonation", () => {
 			badgeType: "host",
 		});
 		expect(resolveRoleBadge("waline", false)).toEqual({
-			badge: "已认证",
+			badge: "认证",
 			badgeType: "accent",
 		});
 		expect(resolveRoleBadge("guest", false)).toEqual({

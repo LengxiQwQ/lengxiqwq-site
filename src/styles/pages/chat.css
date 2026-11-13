@@ -424,19 +424,15 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	flex-shrink: 0;
 }
 
-.chat-role-badge--host {
-	background: color-mix(in oklch, var(--primary) 16%, transparent);
-	color: var(--chat-accent-text);
-	border: 1px solid color-mix(in oklch, var(--primary) 28%, transparent);
-}
-
+/* 站长与认证用户统一金色胶囊，靠文字区分，不再用主题色 */
+.chat-role-badge--host,
 .chat-role-badge--accent {
 	background: oklch(0.78 0.12 85 / 0.16);
 	color: oklch(0.48 0.12 75);
 	border: 1px solid oklch(0.72 0.12 80 / 0.26);
 }
 
-html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-role-badge--accent {
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page :is(.chat-role-badge--host, .chat-role-badge--accent) {
 	background: oklch(0.78 0.12 85 / 0.18);
 	color: oklch(0.86 0.11 85);
 	border-color: oklch(0.78 0.12 85 / 0.28);
@@ -1062,12 +1058,18 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 .chat-mini-player {
 	position: relative;
 	flex-shrink: 0;
-	border-top: 1px solid var(--chat-divider-color);
+	border-bottom: 1px solid var(--chat-divider-color);
 	background: color-mix(in oklch, var(--card-bg) 52%, transparent);
 	padding: 0.45rem 0.625rem;
 	display: flex;
 	align-items: center;
 	gap: 0.5rem;
+}
+
+/* 顶置迷你播放条：进度线贴在条底，与下方内容形成分隔 */
+.chat-mini-player .chat-mini-progress-bar {
+	top: auto;
+	bottom: 0;
 }
 
 html[data-wallpaper-mode="none"] .chat-mini-player {
@@ -2337,6 +2339,9 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	width: min(17rem, calc(100% - 1.5rem));
 	max-height: 14rem;
 	overflow-y: auto;
+	/* 弹窗朝输入框上方展开：倒序排列，让优先级最高的成员（在线、最新在线）贴着输入框排在最下方 */
+	display: flex;
+	flex-direction: column-reverse;
 	padding: 0.35rem;
 	border-radius: 0.75rem;
 	background: rgba(255, 255, 255, 0.88);

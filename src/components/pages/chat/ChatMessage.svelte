@@ -82,7 +82,7 @@ const replyPreviewText = $derived.by(() => {
 const roleBadge = $derived.by(() => {
 	if (message.isAdmin) return { label: "站长", type: "host" as const };
 	if (message.userKey.startsWith("waline:")) {
-		return { label: "已认证", type: "accent" as const };
+		return { label: "认证", type: "accent" as const };
 	}
 	if (message.userKey.startsWith("guest:")) {
 		return { label: "访客", type: "tag" as const };

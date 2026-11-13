@@ -51,7 +51,6 @@ interface Props {
 	mentionEvent?: { name: string; userKey?: string; seq: number };
 	showSettings?: boolean;
 	noticeText?: string;
-	interconnected?: boolean;
 	onToggleSettings?: () => void;
 	onSendMessage: (
 		content: string,
@@ -99,7 +98,6 @@ const {
 	mentionEvent,
 	showSettings = false,
 	noticeText = "",
-	interconnected = false,
 	onToggleSettings,
 	onSendMessage,
 	onRecallMessage,
@@ -1120,12 +1118,13 @@ function handleSend() {
 function handleKeydown(e: KeyboardEvent) {
 	if (mentionMenuOpen && filteredMentionCandidates.length > 0) {
 		const count = filteredMentionCandidates.length;
-		if (e.key === "ArrowDown") {
+		// 弹窗用 column-reverse 渲染：数组第 0 项在最下面（贴输入框），所以“向上”= 索引 +1
+		if (e.key === "ArrowUp") {
 			e.preventDefault();
 			mentionActiveIndex = (mentionActiveIndex + 1) % count;
 			return;
 		}
-		if (e.key === "ArrowUp") {
+		if (e.key === "ArrowDown") {
 			e.preventDefault();
 			mentionActiveIndex = (mentionActiveIndex - 1 + count) % count;
 			return;
@@ -1311,12 +1310,6 @@ function removePendingImage(index: number) {
       </button>
     </div>
   </div>
-
-  {#if interconnected}
-    <div class="mx-4 mt-2 px-3 py-1.5 rounded-xl text-xs bg-(--primary)/14 text-[var(--chat-accent-text)] shrink-0">
-      已与听雨茶室等站点互联
-    </div>
-  {/if}
 
   <!-- 提示条 -->
   {#if noticeText}
@@ -1652,7 +1645,7 @@ function removePendingImage(index: number) {
             {@const personBadgeLabel = person.isAdmin
               ? "站长"
               : person.authType === "waline"
-                ? "已认证"
+                ? "认证"
                 : "访客"}
             {@const personBadgeType = person.isAdmin
               ? "host"
@@ -1722,12 +1715,6 @@ function removePendingImage(index: number) {
             ×
           </button>
         </div>
-      {/if}
-
-      {#if interconnected}
-        <p class="px-3 pt-2 text-xs text-[var(--chat-meta-color)]">
-          发言时，昵称、头像、正文和图片会同步到互联聊天室。
-        </p>
       {/if}
 
       <!-- 待发送图片预览条 -->

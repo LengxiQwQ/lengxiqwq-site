@@ -46,7 +46,7 @@ const roleBadge = $derived.by(() => {
 	}
 	if (currentUser.authType === "waline") {
 		return {
-			label: "已认证",
+			label: "认证",
 			type: "accent" as const,
 			hint: "Waline 登录固定头衔",
 		};

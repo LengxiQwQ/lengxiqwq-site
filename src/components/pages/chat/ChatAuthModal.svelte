@@ -291,7 +291,7 @@ async function handleSplitGuestEnter() {
         </div>
 
         <p class="text-[11px] text-(--deep-text)/80 leading-relaxed m-0">
-          使用博客评论区账号一键授权登录，即可拥有 <strong class="font-semibold text-(--chat-accent-text)">已认证</strong> 标识，并解锁导入/共享个人歌单与离线 @ 邮件提醒。
+          使用博客评论区账号一键授权登录，即可拥有 <strong class="font-semibold text-(--chat-accent-text)">认证</strong> 标识，并解锁导入/共享个人歌单与离线 @ 邮件提醒。
         </p>
 
         <button

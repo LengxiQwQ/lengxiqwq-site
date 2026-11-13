@@ -103,7 +103,7 @@ const fallbackData = $derived.by<{
 			seed.isAdmin ??
 			latestMsg?.isAdmin,
 	);
-	const badge = isAdmin ? "站长" : authType === "waline" ? "已认证" : "访客";
+	const badge = isAdmin ? "站长" : authType === "waline" ? "认证" : "访客";
 	const badgeType = isAdmin ? "host" : authType === "waline" ? "accent" : "tag";
 
 	const userLogs = musicHistoryLogs.filter(
