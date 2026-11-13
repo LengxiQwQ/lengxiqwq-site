@@ -72,6 +72,9 @@ let localVisibleLimit = $state(TRACK_PAGE_SIZE);
 let trackTab = $state<"recent" | "top">("recent");
 let bodyContainerEl: HTMLDivElement | null = $state(null);
 let lockedMinHeight = $state(0);
+const matrixUserId = $derived(
+	seed?.userKey.startsWith("matrix:") ? seed.userKey.slice("matrix:".length) : "",
+);
 
 const fallbackData = $derived.by<{
 	profile: ChatUserDetailProfile;
@@ -256,6 +259,7 @@ $effect(() => {
 
 	remoteProfile = null;
 	if (
+		matrixUserId ||
 		currentSeed.userKey.startsWith("name:") ||
 		currentSeed.userKey === "system:fallback"
 	) {
@@ -444,11 +448,11 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
 </script>
 
 <ChatModal
-  open={open && Boolean(profile)}
+  open={open && Boolean(profile || matrixUserId)}
   title="成员名片"
-  ariaLabel={profile ? `${profile.name} 的个人资料` : "成员名片"}
-  size="lg"
-  fillHeightOnDesktop={true}
+  ariaLabel={seed ? `${seed.name} 的个人资料` : "成员名片"}
+  size={matrixUserId ? "sm" : "lg"}
+  fillHeightOnDesktop={!matrixUserId}
   {lockedMinHeight}
   {onClose}
 >
@@ -458,7 +462,34 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
     {/if}
   {/snippet}
 
-  {#if profile}
+  {#if matrixUserId && seed}
+    <div class="p-4 space-y-3">
+      <div class="flex items-center gap-3">
+        <ChatAvatar src={seed.avatar} name={seed.name} size="lg" />
+        <div class="min-w-0">
+          <div class="text-sm font-bold text-[var(--deep-text)] break-words">{seed.name}</div>
+          <span class="chat-role-badge chat-role-badge--tag">互联茶友</span>
+        </div>
+      </div>
+      <div class="text-xs text-[var(--chat-meta-color)] break-all">
+        Matrix 发件账号
+        <a
+          href={`https://matrix.to/#/${encodeURIComponent(matrixUserId)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="block text-[var(--chat-accent-text)]"
+        >{matrixUserId}</a>
+      </div>
+      {#if seed.url}
+        <a
+          href={seed.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="block text-xs text-[var(--chat-accent-text)] break-all"
+        >访问个人网站 ↗</a>
+      {/if}
+    </div>
+  {:else if profile}
     <!-- 主体：手机端单流平滑滚动，平板/桌面端 42%:58% 左右双栏独立滚动且高度随内容自适应 -->
     <div
       bind:this={bodyContainerEl}
