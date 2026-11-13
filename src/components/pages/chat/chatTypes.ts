@@ -260,6 +260,7 @@ export interface PlaylistsResponse {
 	featured: PlaylistSummary[];
 	mine: PlaylistSummary[];
 	shared: PlaylistSummary[];
+	details?: Record<string, PlaylistDetail>;
 }
 
 export interface PlaylistImportTrackInput {

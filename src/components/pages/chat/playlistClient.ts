@@ -358,11 +358,13 @@ export async function fetchRoomPlaylists(
 	chatServerUrl: string,
 	roomId: string,
 	walineToken?: string,
+	options?: { includeTracks?: boolean },
 ): Promise<PlaylistsResponse> {
 	const base = normalizeServerUrl(chatServerUrl);
 	if (!base) return { featured: [], mine: [], shared: [] };
+	const includeTracks = Boolean(options?.includeTracks);
 	const resp = await fetch(
-		`${base}/api/playlists?room=${encodeURIComponent(roomId)}`,
+		`${base}/api/playlists?room=${encodeURIComponent(roomId)}${includeTracks ? "&includeTracks=1" : ""}`,
 		{
 			method: "GET",
 			headers: buildAuthHeaders(walineToken),
@@ -373,6 +375,7 @@ export async function fetchRoomPlaylists(
 		featured?: PlaylistSummary[];
 		mine?: PlaylistSummary[];
 		shared?: PlaylistSummary[];
+		details?: Record<string, PlaylistDetail>;
 		error?: string;
 	} | null;
 	if (!resp.ok || !json?.ok) {
@@ -385,6 +388,10 @@ export async function fetchRoomPlaylists(
 		featured: Array.isArray(json.featured) ? json.featured : [],
 		mine: Array.isArray(json.mine) ? json.mine : [],
 		shared: Array.isArray(json.shared) ? json.shared : [],
+		details:
+			json.details && typeof json.details === "object"
+				? json.details
+				: undefined,
 	};
 }
 

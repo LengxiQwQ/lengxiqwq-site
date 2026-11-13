@@ -585,14 +585,16 @@ function resolveSafeExternalUrl(raw?: string): string {
 	return "";
 }
 
-const PLAYLIST_CACHE_TTL_MS = 10 * 60 * 1000;
-const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
+const PLAYLIST_CACHE_TTL_MS = 5 * 60 * 1000;
+const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
 let lastLoadedPlaylistKey = "";
 let lastLoadedPlaylistAt = 0;
 const playlistDetailCache = new Map<
 	string,
 	{ detail: PlaylistDetail; fetchedAt: number }
 >();
+const pendingPlaylistDetails = new Map<string, Promise<PlaylistDetail>>();
+let playlistHoverTimer: number | null = null;
 const searchResultCache = new Map<
 	string,
 	{ tracks: ChatMusicTrack[]; fetchedAt: number }
@@ -626,12 +628,23 @@ async function loadPlaylists(force = false): Promise<void> {
 	isLoadingPlaylists = true;
 	playlistsError = "";
 	try {
-		const res = await fetchRoomPlaylists(chatServerUrl, roomId, authSeg);
+		const res = await fetchRoomPlaylists(chatServerUrl, roomId, authSeg, {
+			includeTracks: isWalineLoggedIn,
+		});
 		featuredPlaylists = res.featured;
 		myPlaylists = res.mine;
 		sharedPlaylists = res.shared;
+		const now = Date.now();
+		if (res.details) {
+			for (const [pid, detail] of Object.entries(res.details)) {
+				playlistDetailCache.set(`${roomId}|${authSeg}|${pid}`, {
+					detail,
+					fetchedAt: now,
+				});
+			}
+		}
 		lastLoadedPlaylistKey = cacheKey;
-		lastLoadedPlaylistAt = Date.now();
+		lastLoadedPlaylistAt = now;
 		if (selectedPlaylist) {
 			const stillExists = [...res.featured, ...res.mine, ...res.shared].find(
 				(p) => p.id === selectedPlaylist?.id,
@@ -680,11 +693,68 @@ function openRequesterProfile(requesterKey: string, requesterName: string) {
 	});
 }
 
+async function getOrFetchPlaylistDetail(
+	playlistId: string,
+	authSeg: string,
+	force = false,
+): Promise<PlaylistDetail> {
+	const detailKey = `${roomId}|${authSeg}|${playlistId}`;
+	if (!force) {
+		const cached = playlistDetailCache.get(detailKey);
+		if (cached && Date.now() - cached.fetchedAt < PLAYLIST_CACHE_TTL_MS) {
+			return cached.detail;
+		}
+		const pending = pendingPlaylistDetails.get(detailKey);
+		if (pending) return pending;
+	}
+
+	const task = fetchPlaylistDetail(
+		chatServerUrl,
+		roomId,
+		playlistId,
+		authSeg,
+	).then((detail) => {
+		playlistDetailCache.set(detailKey, { detail, fetchedAt: Date.now() });
+		return detail;
+	});
+	pendingPlaylistDetails.set(detailKey, task);
+	try {
+		return await task;
+	} finally {
+		if (pendingPlaylistDetails.get(detailKey) === task) {
+			pendingPlaylistDetails.delete(detailKey);
+		}
+	}
+}
+
+function cancelPlaylistDetailPrefetch(): void {
+	if (playlistHoverTimer !== null) {
+		window.clearTimeout(playlistHoverTimer);
+		playlistHoverTimer = null;
+	}
+}
+
+function schedulePlaylistDetailPrefetch(playlistId: string): void {
+	if (!chatServerUrl || !playlistId) return;
+	cancelPlaylistDetailPrefetch();
+	const authSeg = isWalineLoggedIn ? walineToken : "";
+	const detailKey = `${roomId}|${authSeg}|${playlistId}`;
+	const cached = playlistDetailCache.get(detailKey);
+	if (cached && Date.now() - cached.fetchedAt < PLAYLIST_CACHE_TTL_MS) return;
+	if (pendingPlaylistDetails.has(detailKey)) return;
+
+	playlistHoverTimer = window.setTimeout(() => {
+		playlistHoverTimer = null;
+		void getOrFetchPlaylistDetail(playlistId, authSeg).catch(() => {});
+	}, 180);
+}
+
 async function openPlaylistDetail(
 	playlistId: string,
 	force = false,
 ): Promise<void> {
 	if (!chatServerUrl) return;
+	cancelPlaylistDetailPrefetch();
 	const authSeg = isWalineLoggedIn ? walineToken : "";
 	const detailKey = `${roomId}|${authSeg}|${playlistId}`;
 	if (!force) {
@@ -701,13 +771,7 @@ async function openPlaylistDetail(
 	playlistsError = "";
 	confirmDeletePlaylistId = "";
 	try {
-		const detail = await fetchPlaylistDetail(
-			chatServerUrl,
-			roomId,
-			playlistId,
-			authSeg,
-		);
-		playlistDetailCache.set(detailKey, { detail, fetchedAt: Date.now() });
+		const detail = await getOrFetchPlaylistDetail(playlistId, authSeg, force);
 		selectedPlaylist = detail;
 		playlistTrackFilter = "";
 	} catch (err) {
@@ -1821,6 +1885,8 @@ $effect(() => {
         {activeTab === 'playlist'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
+      onmouseenter={() => void loadPlaylists()}
+      onfocus={() => void loadPlaylists()}
       onclick={() => switchMusicTab("playlist")}
     >
       <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2513,6 +2579,10 @@ $effect(() => {
         <button
           type="button"
           class="flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-0 cursor-pointer"
+          onmouseenter={() => schedulePlaylistDetailPrefetch(pl.id)}
+          onmouseleave={cancelPlaylistDetailPrefetch}
+          onfocus={() => schedulePlaylistDetailPrefetch(pl.id)}
+          onblur={cancelPlaylistDetailPrefetch}
           onclick={() => openPlaylistDetail(pl.id)}
         >
           <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
