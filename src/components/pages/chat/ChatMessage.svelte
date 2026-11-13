@@ -158,11 +158,12 @@ function handleOpenProfileForReplyTo() {
 }
 
 function handleAvatarClick() {
-	if (message.source === "matrix") return;
 	if (onOpenUserProfile && message.userKey) {
 		onOpenUserProfile({
 			userKey: message.userKey,
-			authType: message.userKey.startsWith("waline:") ? "waline" : "guest",
+			authType: message.source === "matrix"
+				? undefined
+				: message.userKey.startsWith("waline:") ? "waline" : "guest",
 			name: message.name,
 			avatar: message.avatar,
 			url: message.url,
@@ -356,24 +357,20 @@ function handleAvatarClick() {
   </div>
 {:else}
   <div data-msg-uid={message.msgUid} class="flex items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}">
-    {#if message.source === "matrix"}
-      <ChatAvatar src={message.avatar} name={message.name} size="md" />
-    {:else}
-      <button
-        type="button"
-        class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
-        title={`查看 ${message.name} 的个人资料`}
-        onclick={handleAvatarClick}
-      >
-        <ChatAvatar
-          src={message.avatar}
-          name={message.name}
-          fallback="?"
-          alt={message.name}
-          size="md"
-        />
-      </button>
-    {/if}
+    <button
+      type="button"
+      class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
+      title={`查看 ${message.name} 的个人资料`}
+      onclick={handleAvatarClick}
+    >
+      <ChatAvatar
+        src={message.avatar}
+        name={message.name}
+        fallback="?"
+        alt={message.name}
+        size="md"
+      />
+    </button>
 
     <div class="flex flex-col items-start max-w-[74%] min-w-0">
       {#if message.name || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
@@ -451,9 +448,7 @@ function handleAvatarClick() {
           {#if message.replyTo}
             {@render replyQuoteBlock()}
           {/if}
-          {#if message.source === "matrix" && message.content.trim()}
-            <p class="whitespace-pre-wrap break-words">{message.content}</p>
-          {:else if message.content.trim().length > 0}
+          {#if message.content.trim().length > 0}
             <ChatMarkdownContent
               content={message.content}
               stickerMap={stickerMap}
