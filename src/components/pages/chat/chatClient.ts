@@ -21,6 +21,7 @@ export interface StoredGuestMeta {
 
 export interface RoomInitPacket {
 	type: "room:init";
+	interconnected?: boolean;
 	roomId: string;
 	self: ChatSessionUser | null;
 	mergedGuestHistory?: boolean;
@@ -58,7 +59,7 @@ export type ServerPacket =
 			observerCount: number;
 			totalCount: number;
 	  }
-	| { type: "chat:message"; roomId: string; message: ChatMessageRecord }
+	| { type: "chat:message" | "chat:updated"; roomId: string; message: ChatMessageRecord }
 	| {
 			type: "chat:history_batch";
 			roomId: string;

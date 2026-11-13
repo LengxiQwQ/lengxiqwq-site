@@ -50,6 +50,7 @@ interface Props {
 	mentionEvent?: { name: string; userKey?: string; seq: number };
 	showSettings?: boolean;
 	noticeText?: string;
+	interconnected?: boolean;
 	onToggleSettings?: () => void;
 	onSendMessage: (
 		content: string,
@@ -96,6 +97,7 @@ const {
 	mentionEvent,
 	showSettings = false,
 	noticeText = "",
+	interconnected = false,
 	onToggleSettings,
 	onSendMessage,
 	onRecallMessage,
@@ -1308,6 +1310,12 @@ function removePendingImage(index: number) {
     </div>
   </div>
 
+  {#if interconnected}
+    <div class="mx-4 mt-2 px-3 py-1.5 rounded-xl text-xs bg-(--primary)/14 text-[var(--chat-accent-text)] shrink-0">
+      已与听雨茶室等站点互联
+    </div>
+  {/if}
+
   <!-- 提示条 -->
   {#if noticeText}
     <div class="mx-4 mt-2 px-3 py-1.5 rounded-xl text-xs bg-(--primary)/14 border border-(--primary)/25 text-[var(--chat-accent-text)] flex items-center justify-between gap-2 shrink-0">
@@ -1712,6 +1720,12 @@ function removePendingImage(index: number) {
             ×
           </button>
         </div>
+      {/if}
+
+      {#if interconnected}
+        <p class="px-3 pt-2 text-xs text-[var(--chat-meta-color)]">
+          发言时，昵称、头像、正文和图片会同步到互联聊天室。
+        </p>
       {/if}
 
       <!-- 待发送图片预览条 -->

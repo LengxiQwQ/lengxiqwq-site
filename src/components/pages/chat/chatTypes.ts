@@ -141,6 +141,7 @@ export interface ChatReplyRef {
 }
 
 export interface ChatMessageRecord {
+	source?: "matrix";
 	id: number;
 	msgUid: string;
 	kind: "user" | "system";

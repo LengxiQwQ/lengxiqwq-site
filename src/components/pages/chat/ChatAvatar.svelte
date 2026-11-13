@@ -79,6 +79,8 @@ const fallbackTextColorClass = $derived(
 {#if showImage}
   <img
     src={resolvedSrc}
+    loading="lazy"
+    referrerpolicy="no-referrer"
     alt={alt || name}
     class="{boxClass} object-cover shrink-0 {grayscale ? 'grayscale-[35%]' : ''} {extraClass}"
     onerror={() => (imgError = true)}

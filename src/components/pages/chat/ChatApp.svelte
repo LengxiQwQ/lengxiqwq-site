@@ -80,6 +80,7 @@ let isSkippingTrack = $state(false);
 let skipPendingTimer: number | null = null;
 let clockOffsetMs = $state(0);
 let noticeText = $state("");
+let interconnected = $state(false);
 let targetMessageUid = $state("");
 let walineToken = $state("");
 let playlistRefreshSeq = $state(0);
@@ -282,6 +283,7 @@ function getFixedRoleBadge(user: ChatSessionUser): string {
 
 function connectRoom(roomId: string) {
 	if (isUnmounted) return;
+	interconnected = false;
 	if (reconnectTimer !== null) {
 		window.clearTimeout(reconnectTimer);
 		reconnectTimer = null;
@@ -354,6 +356,7 @@ function connectRoom(roomId: string) {
 
 		switch (packet.type) {
 			case "room:init": {
+				interconnected = packet.interconnected === true;
 				currentUser = packet.self;
 				messages = packet.messages;
 				hasMoreHistory = Boolean(packet.hasMoreHistory);
@@ -559,6 +562,23 @@ function connectRoom(roomId: string) {
 						}
 					}
 				}
+				break;
+			}
+			case "chat:updated": {
+				if (packet.roomId !== currentRoom) break;
+				const updated = packet.message;
+				messages = messages.map((message) => {
+					if (message.msgUid === updated.msgUid) return updated;
+					if (message.replyTo?.msgUid !== updated.msgUid) return message;
+					return {
+						...message,
+						replyTo: {
+							...message.replyTo,
+							content: updated.content.replace(/\s+/g, " ").trim().slice(0, 120),
+							hasImage: updated.attachments.length > 0,
+						},
+					};
+				});
 				break;
 			}
 			case "chat:deleted":
@@ -1037,6 +1057,7 @@ onMount(() => {
           mentionEvent={mentionEvent}
           showSettings={showSettings}
           noticeText={noticeText}
+          {interconnected}
           onToggleSettings={() => (showSettings = !showSettings)}
           onSendMessage={handleSendMessage}
           onRecallMessage={handleRecallMessage}

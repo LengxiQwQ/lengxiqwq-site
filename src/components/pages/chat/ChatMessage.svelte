@@ -51,6 +51,7 @@ const stickerSegments = $derived(
 	segments.filter((seg) => seg.kind === "sticker"),
 );
 const isStickerOnly = $derived(
+	message.source !== "matrix" &&
 	message.attachments.length === 0 &&
 		stickerSegments.some((seg) => seg.category === "sticker") &&
 		segments.every(
@@ -157,6 +158,7 @@ function handleOpenProfileForReplyTo() {
 }
 
 function handleAvatarClick() {
+	if (message.source === "matrix") return;
 	if (onOpenUserProfile && message.userKey) {
 		onOpenUserProfile({
 			userKey: message.userKey,
@@ -333,6 +335,7 @@ function handleAvatarClick() {
                 >
                   <img
                     src={att.url}
+                    loading="lazy"
                     alt="聊天图片"
                     decoding="async"
                     class="chat-msg-image"
@@ -353,20 +356,24 @@ function handleAvatarClick() {
   </div>
 {:else}
   <div data-msg-uid={message.msgUid} class="flex items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}">
-    <button
-      type="button"
-      class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
-      title={`查看 ${message.name} 的个人资料`}
-      onclick={handleAvatarClick}
-    >
-      <ChatAvatar
-        src={message.avatar}
-        name={message.name}
-        fallback="?"
-        alt={message.name}
-        size="md"
-      />
-    </button>
+    {#if message.source === "matrix"}
+      <ChatAvatar src={message.avatar} name={message.name} size="md" />
+    {:else}
+      <button
+        type="button"
+        class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
+        title={`查看 ${message.name} 的个人资料`}
+        onclick={handleAvatarClick}
+      >
+        <ChatAvatar
+          src={message.avatar}
+          name={message.name}
+          fallback="?"
+          alt={message.name}
+          size="md"
+        />
+      </button>
+    {/if}
 
     <div class="flex flex-col items-start max-w-[74%] min-w-0">
       {#if message.name || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
@@ -444,7 +451,9 @@ function handleAvatarClick() {
           {#if message.replyTo}
             {@render replyQuoteBlock()}
           {/if}
-          {#if message.content.trim().length > 0}
+          {#if message.source === "matrix" && message.content.trim()}
+            <p class="whitespace-pre-wrap break-words">{message.content}</p>
+          {:else if message.content.trim().length > 0}
             <ChatMarkdownContent
               content={message.content}
               stickerMap={stickerMap}
@@ -467,6 +476,7 @@ function handleAvatarClick() {
                 >
                   <img
                     src={att.url}
+                    loading="lazy"
                     alt="聊天图片"
                     decoding="async"
                     class="chat-msg-image"
