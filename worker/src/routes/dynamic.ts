@@ -67,6 +67,10 @@ dynamic.get("/list", async (c) => {
 
 		const items = (results || []).map(mapRecordToItem);
 
+		c.header(
+			"Cache-Control",
+			"public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+		);
 		return c.json({
 			code: 200,
 			data: {

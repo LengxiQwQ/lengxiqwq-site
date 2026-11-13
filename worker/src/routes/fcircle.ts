@@ -489,6 +489,10 @@ fcircle.get("/posts", async (c) => {
 	const totalPages = Math.ceil(total / limit) || 1;
 	const hasMore = page < totalPages;
 
+	c.header(
+		"Cache-Control",
+		"public, max-age=120, s-maxage=600, stale-while-revalidate=1800",
+	);
 	return c.json({
 		code: 200,
 		data: {
@@ -518,6 +522,10 @@ fcircle.get("/stats", async (c) => {
 		stats = getMockFcircleStats();
 	}
 
+	c.header(
+		"Cache-Control",
+		"public, max-age=180, s-maxage=600, stale-while-revalidate=1800",
+	);
 	return c.json({
 		code: 200,
 		data: stats,

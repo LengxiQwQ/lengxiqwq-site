@@ -135,6 +135,12 @@ stats.get("/realtime", async (c) => {
 	const cacheKey = "stats:realtime";
 	const forceRefresh =
 		c.req.query("refresh") === "1" || c.req.query("refresh") === "true";
+	c.header(
+		"Cache-Control",
+		forceRefresh
+			? "private, no-cache"
+			: "public, max-age=10, s-maxage=15, stale-while-revalidate=30",
+	);
 
 	// 1. 读取 KV 缓存
 	if (!forceRefresh) {
@@ -245,6 +251,12 @@ stats.get("/summary", async (c) => {
 	const cacheKey = "stats:summary";
 	const forceRefresh =
 		c.req.query("refresh") === "1" || c.req.query("refresh") === "true";
+	c.header(
+		"Cache-Control",
+		forceRefresh
+			? "private, no-cache"
+			: "public, max-age=300, s-maxage=1800, stale-while-revalidate=3600",
+	);
 
 	// 1. 读取 KV 缓存
 	if (!forceRefresh) {
@@ -439,6 +451,12 @@ stats.get("/insights", async (c) => {
 	const cacheKey = "stats:insights";
 	const forceRefresh =
 		c.req.query("refresh") === "1" || c.req.query("refresh") === "true";
+	c.header(
+		"Cache-Control",
+		forceRefresh
+			? "private, no-cache"
+			: "public, max-age=600, s-maxage=3600, stale-while-revalidate=7200",
+	);
 
 	// 1. 读取 KV 缓存
 	if (!forceRefresh) {
