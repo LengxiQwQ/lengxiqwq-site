@@ -60,6 +60,7 @@ const {
 }: Props = $props();
 
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
+const LAST_ROOM_STORAGE_KEY = "lengxi_chat_last_room";
 
 let activeTab = $state<"room" | "chat" | "music">("chat");
 let currentRoom = $state(rooms[0]?.id || "chat");
@@ -209,6 +210,41 @@ function persistUserLastSeen(roomId: string, userKey: string, ts: number) {
 		if (ts > prev) {
 			localStorage.setItem(key, String(ts));
 		}
+	} catch {
+		// Ignore
+	}
+}
+
+function readStoredRoom(): string {
+	if (typeof localStorage === "undefined") return "";
+	try {
+		return localStorage.getItem(LAST_ROOM_STORAGE_KEY)?.trim() || "";
+	} catch {
+		return "";
+	}
+}
+
+function persistStoredRoom(roomId: string) {
+	if (typeof localStorage === "undefined" || !roomId) return;
+	try {
+		localStorage.setItem(LAST_ROOM_STORAGE_KEY, roomId);
+	} catch {
+		// Ignore
+	}
+}
+
+// 切换房间后同步 URL 上的 room 参数，避免刷新时被旧参数带回上一个房间
+function syncRoomUrl(roomId: string) {
+	if (typeof window === "undefined" || !roomId) return;
+	try {
+		const url = new URL(window.location.href);
+		if (url.searchParams.get("room") === roomId) return;
+		url.searchParams.set("room", roomId);
+		window.history.replaceState(
+			null,
+			"",
+			`${url.pathname}${url.search}${url.hash}`,
+		);
 	} catch {
 		// Ignore
 	}
@@ -758,6 +794,8 @@ function handleRoomSelect(roomId: string) {
 	}
 	roomMessageCache.set(currentRoom, messages);
 	currentRoom = roomId;
+	persistStoredRoom(roomId);
+	syncRoomUrl(roomId);
 	messages = roomMessageCache.get(roomId) ?? [];
 	hasMoreHistory = false;
 	isLoadingHistory = false;
@@ -1079,9 +1117,13 @@ onMount(() => {
 
 	const urlParams = new URLSearchParams(window.location.search);
 	const paramRoom = urlParams.get("room")?.trim().toLowerCase() || "";
+	const storedRoom = readStoredRoom();
 	if (paramRoom && rooms.some((r) => r.id === paramRoom)) {
 		currentRoom = paramRoom;
+	} else if (storedRoom && rooms.some((r) => r.id === storedRoom)) {
+		currentRoom = storedRoom;
 	}
+	persistStoredRoom(currentRoom);
 	const paramMsg = urlParams.get("msg")?.trim() || "";
 	if (paramMsg) {
 		targetMessageUid = paramMsg;
