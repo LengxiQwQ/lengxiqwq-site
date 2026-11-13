@@ -39,6 +39,11 @@ interface Props {
 }
 
 const TRACK_PAGE_SIZE = 50;
+const USER_DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
+const userDetailCache = new Map<
+	string,
+	{ profile: ChatUserDetailProfile; fetchedAt: number }
+>();
 
 const {
 	open,
@@ -258,6 +263,37 @@ $effect(() => {
 		return;
 	}
 
+	const detailCacheKey = `${roomId}:${currentSeed.userKey}`;
+	const cachedEntry = userDetailCache.get(detailCacheKey);
+	if (
+		cachedEntry &&
+		Date.now() - cachedEntry.fetchedAt < USER_DETAIL_CACHE_TTL_MS
+	) {
+		const liveOnline = onlineMembers.find(
+			(m) => m.userKey === currentSeed.userKey,
+		);
+		const mergedProfile: ChatUserDetailProfile = liveOnline
+			? {
+					...cachedEntry.profile,
+					name: liveOnline.name || cachedEntry.profile.name,
+					avatar: liveOnline.avatar || cachedEntry.profile.avatar,
+					url: liveOnline.url ?? cachedEntry.profile.url,
+					status: liveOnline.status || cachedEntry.profile.status,
+					bio: liveOnline.bio ?? cachedEntry.profile.bio,
+					online: true,
+				}
+			: {
+					...cachedEntry.profile,
+					online: Boolean(liveOnline ?? currentSeed.online),
+				};
+		remoteProfile = mergedProfile;
+		remoteTracks = mergedProfile.recentTracks ?? [];
+		remoteHasMore = Boolean(mergedProfile.tracksHasMore);
+		remoteNextBeforeId = Number(mergedProfile.tracksNextBeforeId || 0);
+		isLoading = false;
+		return;
+	}
+
 	let cancelled = false;
 	isLoading = true;
 	void fetchUserDetailProfile(
@@ -270,6 +306,10 @@ $effect(() => {
 		if (cancelled) return;
 		isLoading = false;
 		if (res) {
+			userDetailCache.set(detailCacheKey, {
+				profile: res,
+				fetchedAt: Date.now(),
+			});
 			remoteProfile = res;
 			remoteTracks = res.recentTracks ?? [];
 			remoteHasMore = Boolean(res.tracksHasMore);

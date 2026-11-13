@@ -585,19 +585,53 @@ function resolveSafeExternalUrl(raw?: string): string {
 	return "";
 }
 
-async function loadPlaylists(): Promise<void> {
+const PLAYLIST_CACHE_TTL_MS = 10 * 60 * 1000;
+const SEARCH_CACHE_TTL_MS = 10 * 60 * 1000;
+let lastLoadedPlaylistKey = "";
+let lastLoadedPlaylistAt = 0;
+const playlistDetailCache = new Map<
+	string,
+	{ detail: PlaylistDetail; fetchedAt: number }
+>();
+const searchResultCache = new Map<
+	string,
+	{ tracks: ChatMusicTrack[]; fetchedAt: number }
+>();
+
+function invalidatePlaylistCaches(playlistId?: string): void {
+	lastLoadedPlaylistKey = "";
+	lastLoadedPlaylistAt = 0;
+	if (playlistId) {
+		for (const key of playlistDetailCache.keys()) {
+			if (key.endsWith(`|${playlistId}`)) {
+				playlistDetailCache.delete(key);
+			}
+		}
+	} else {
+		playlistDetailCache.clear();
+	}
+}
+
+async function loadPlaylists(force = false): Promise<void> {
 	if (!chatServerUrl) return;
+	const authSeg = isWalineLoggedIn ? walineToken : "";
+	const cacheKey = `${roomId}|${authSeg}|${playlistRefreshSeq}`;
+	if (
+		!force &&
+		lastLoadedPlaylistKey === cacheKey &&
+		Date.now() - lastLoadedPlaylistAt < PLAYLIST_CACHE_TTL_MS
+	) {
+		return;
+	}
 	isLoadingPlaylists = true;
 	playlistsError = "";
 	try {
-		const res = await fetchRoomPlaylists(
-			chatServerUrl,
-			roomId,
-			isWalineLoggedIn ? walineToken : "",
-		);
+		const res = await fetchRoomPlaylists(chatServerUrl, roomId, authSeg);
 		featuredPlaylists = res.featured;
 		myPlaylists = res.mine;
 		sharedPlaylists = res.shared;
+		lastLoadedPlaylistKey = cacheKey;
+		lastLoadedPlaylistAt = Date.now();
 		if (selectedPlaylist) {
 			const stillExists = [...res.featured, ...res.mine, ...res.shared].find(
 				(p) => p.id === selectedPlaylist?.id,
@@ -646,8 +680,23 @@ function openRequesterProfile(requesterKey: string, requesterName: string) {
 	});
 }
 
-async function openPlaylistDetail(playlistId: string): Promise<void> {
+async function openPlaylistDetail(
+	playlistId: string,
+	force = false,
+): Promise<void> {
 	if (!chatServerUrl) return;
+	const authSeg = isWalineLoggedIn ? walineToken : "";
+	const detailKey = `${roomId}|${authSeg}|${playlistId}`;
+	if (!force) {
+		const cached = playlistDetailCache.get(detailKey);
+		if (cached && Date.now() - cached.fetchedAt < PLAYLIST_CACHE_TTL_MS) {
+			selectedPlaylist = cached.detail;
+			playlistTrackFilter = "";
+			confirmDeletePlaylistId = "";
+			playlistsError = "";
+			return;
+		}
+	}
 	isLoadingPlaylistDetail = true;
 	playlistsError = "";
 	confirmDeletePlaylistId = "";
@@ -656,8 +705,9 @@ async function openPlaylistDetail(playlistId: string): Promise<void> {
 			chatServerUrl,
 			roomId,
 			playlistId,
-			isWalineLoggedIn ? walineToken : "",
+			authSeg,
 		);
+		playlistDetailCache.set(detailKey, { detail, fetchedAt: Date.now() });
 		selectedPlaylist = detail;
 		playlistTrackFilter = "";
 	} catch (err) {
@@ -724,8 +774,9 @@ async function handleImportSubmit(overrideOptions?: {
 				: `已导入歌单《${saved.playlist.title}》`,
 		);
 		playlistSection = "mine";
-		await loadPlaylists();
-		await openPlaylistDetail(saved.playlist.id);
+		invalidatePlaylistCaches(saved.playlist.id);
+		await loadPlaylists(true);
+		await openPlaylistDetail(saved.playlist.id, true);
 	} catch (err) {
 		importError = err instanceof Error ? err.message : "歌单导入失败";
 	} finally {
@@ -759,8 +810,9 @@ async function handleImportUserCandidate(
 		}
 		onNotify?.(`已导入歌单《${saved.playlist.title}》`);
 		playlistSection = "mine";
-		await loadPlaylists();
-		await openPlaylistDetail(saved.playlist.id);
+		invalidatePlaylistCaches(saved.playlist.id);
+		await loadPlaylists(true);
+		await openPlaylistDetail(saved.playlist.id, true);
 	} catch (err) {
 		importError = err instanceof Error ? err.message : "拉取选定歌单失败";
 	} finally {
@@ -785,9 +837,10 @@ async function handleRefreshPlaylist(playlist: PlaylistSummary): Promise<void> {
 			fresh.payload,
 		);
 		onNotify?.(`已刷新《${updated.title}》（共 ${updated.trackCount} 首）`);
-		await loadPlaylists();
+		invalidatePlaylistCaches(playlist.id);
+		await loadPlaylists(true);
 		if (selectedPlaylist?.id === playlist.id) {
-			await openPlaylistDetail(playlist.id);
+			await openPlaylistDetail(playlist.id, true);
 		}
 	} catch (err) {
 		onNotify?.(err instanceof Error ? err.message : "刷新歌单失败");
@@ -837,7 +890,8 @@ async function handleTogglePlaylistFlag(
 					: `已取消共享《${updated.title}》`,
 			);
 		}
-		await loadPlaylists();
+		invalidatePlaylistCaches(playlist.id);
+		await loadPlaylists(true);
 	} catch (err) {
 		onNotify?.(err instanceof Error ? err.message : "更新歌单权限失败");
 	} finally {
@@ -871,7 +925,8 @@ async function handleDeletePlaylist(playlist: PlaylistSummary): Promise<void> {
 			playlistTrackFilter = "";
 		}
 		onNotify?.(`已删除歌单《${playlist.title}》`);
-		await loadPlaylists();
+		invalidatePlaylistCaches(playlist.id);
+		await loadPlaylists(true);
 	} catch (err) {
 		onNotify?.(err instanceof Error ? err.message : "删除歌单失败");
 	} finally {
@@ -971,11 +1026,17 @@ function handlePlaylistScroll(e: Event): void {
 	}
 }
 
+let lastObservedRefreshSeq = 0;
+
 $effect(() => {
 	roomId;
 	chatServerUrl;
 	walineToken;
-	playlistRefreshSeq;
+	const seq = playlistRefreshSeq;
+	if (seq !== lastObservedRefreshSeq) {
+		lastObservedRefreshSeq = seq;
+		playlistDetailCache.clear();
+	}
 	if (activeTab === "playlist") {
 		void loadPlaylists();
 	}
@@ -1311,12 +1372,19 @@ async function startOrResumeAudio() {
 	hasJoinedAudio = true;
 	isListening = true;
 
+	// 等待 Svelte 把 streamUrl 绑定到 <audio src> 上再起播，避免静音阶段预加载浪费请求
+	await tick();
+	if (!audioEl || currentPlay?.uid !== targetUid) return;
+
 	registerMediaSessionHandlers();
 	updateMediaSessionMetadata();
 
 	internalAudioAction = true;
 	audioEl.muted = false;
 	audioEl.volume = volume;
+	if (audioEl.readyState === 0) {
+		audioEl.load();
+	}
 	window.setTimeout(() => {
 		internalAudioAction = false;
 	}, 50);
@@ -1479,16 +1547,29 @@ $effect(() => {
 		return;
 	}
 
+	const cacheKey = q.toLowerCase();
+	const cached = searchResultCache.get(cacheKey);
+	if (cached && Date.now() - cached.fetchedAt < SEARCH_CACHE_TTL_MS) {
+		searchResults = cached.tracks;
+		isSearching = false;
+		searchError = "";
+		return;
+	}
+
 	isSearching = true;
 	searchError = "";
 	searchTimer = window.setTimeout(() => {
 		void runSearch(q);
-	}, 420);
+	}, 700);
 });
 
 async function runSearch(q: string) {
 	try {
 		const tracks = await onSearchOnline(q);
+		searchResultCache.set(q.toLowerCase(), {
+			tracks,
+			fetchedAt: Date.now(),
+		});
 		if (searchQuery.trim() === q) {
 			searchResults = tracks;
 			searchError = "";
@@ -1622,7 +1703,7 @@ $effect(() => {
 <aside class="flex flex-col h-full w-full min-h-0 overflow-hidden select-none" aria-label="点歌台">
   <audio
     bind:this={audioEl}
-    src={currentPlay?.track.streamUrl || ""}
+    src={isListening && currentPlay?.track.streamUrl ? currentPlay.track.streamUrl : undefined}
     preload="metadata"
     muted={!isListening}
     onloadedmetadata={syncDurationFromAudio}

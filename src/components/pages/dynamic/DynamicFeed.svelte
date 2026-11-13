@@ -3,6 +3,7 @@ import { onMount, tick } from "svelte";
 import ClientPagination from "@/components/common/ClientPagination.svelte";
 import { getWorkerApiUrl } from "@/utils/api-config";
 import { formatTimezoneOffset } from "@/utils/date-utils";
+import { prefetchWalineDynamicCommentCounts } from "@/utils/dynamic-comments-adapter";
 import { fetchMemos } from "@/utils/memos-adapter";
 import { url } from "@/utils/url-utils";
 import { fetchWorkerDynamics } from "@/utils/worker-dynamic-adapter";
@@ -264,6 +265,20 @@ function createItem(entry: DynamicData) {
 async function renderItems(items: DynamicData[]) {
 	await tick();
 	if (!list || !template) return;
+	if (showComments) {
+		const tplComments = template.content.querySelector<HTMLElement>(
+			"dynamic-inline-comments",
+		);
+		if (
+			tplComments?.dataset.commentType === "waline" &&
+			tplComments.dataset.serverUrl
+		) {
+			void prefetchWalineDynamicCommentCounts(
+				tplComments.dataset.serverUrl,
+				items.map((entry) => `/dynamic/${entry.id}`),
+			);
+		}
+	}
 	list.replaceChildren();
 	for (const entry of items) {
 		const item = createItem(entry);

@@ -112,6 +112,12 @@ function extractImages(
 	return images;
 }
 
+const WORKER_DYNAMIC_CACHE_TTL_MS = 3 * 60 * 1000;
+const workerDynamicCache = new Map<
+	string,
+	{ items: DynamicData[]; expiresAt: number }
+>();
+
 /**
  * 从 Worker D1 拉取动态说说列表并转为前台标准结构
  * @param baseUrl 可选自定义 API 基础路径，默认自动探测 Worker API 地址
@@ -120,6 +126,11 @@ export async function fetchWorkerDynamics(
 	baseUrl?: string,
 ): Promise<DynamicData[]> {
 	const base = baseUrl || getWorkerApiUrl();
+	const cached = workerDynamicCache.get(base);
+	if (cached && cached.expiresAt > Date.now()) {
+		return cached.items;
+	}
+
 	const apiUrl = `${base}/api/dynamic/list?limit=100`;
 
 	try {
@@ -156,7 +167,7 @@ export async function fetchWorkerDynamics(
 			return [];
 		}
 
-		return resData.data.items.map((item) => {
+		const items = resData.data.items.map((item) => {
 			const html = workerMarked.parse(item.content || "") as string;
 			const searchText = extractPlainText(item.content || "").toLowerCase();
 			const images = extractImages(item.content || "", item.images || []);
@@ -171,6 +182,11 @@ export async function fetchWorkerDynamics(
 				location: item.location || undefined,
 			};
 		});
+		workerDynamicCache.set(base, {
+			items,
+			expiresAt: Date.now() + WORKER_DYNAMIC_CACHE_TTL_MS,
+		});
+		return items;
 	} catch (error) {
 		console.warn(
 			"[worker-dynamic-adapter] Network or parse failure, graceful fallback:",

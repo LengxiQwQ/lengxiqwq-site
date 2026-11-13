@@ -97,6 +97,12 @@ export function cleanCommentContent(raw: string): string {
 	return text;
 }
 
+const RECENT_COMMENTS_CACHE_TTL_MS = 5 * 60 * 1000;
+const recentCommentsCache = new Map<
+	string,
+	{ entries: RecentCommentEntry[]; expiresAt: number }
+>();
+
 /**
  * 聚合拉取全站最新的评论列表
  * 默认排除站长/博主本人的评论，只展示访客留言
@@ -109,6 +115,12 @@ export async function fetchRecentComments(
 ): Promise<RecentCommentEntry[]> {
 	if (!config?.type || config.type === "none") {
 		return [];
+	}
+
+	const cacheKey = `${config.type}:${limit}:${excludeAdmin}:${authorName || ""}`;
+	const cached = recentCommentsCache.get(cacheKey);
+	if (cached && cached.expiresAt > Date.now()) {
+		return cached.entries;
 	}
 
 	// 1. Waline 评论系统适配
@@ -153,7 +165,12 @@ export async function fetchRecentComments(
 			? mapped.filter((item) => !item.isAdmin)
 			: mapped;
 
-		return filtered.slice(0, limit);
+		const result = filtered.slice(0, limit);
+		recentCommentsCache.set(cacheKey, {
+			entries: result,
+			expiresAt: Date.now() + RECENT_COMMENTS_CACHE_TTL_MS,
+		});
+		return result;
 	}
 
 	// 2. Twikoo 评论系统适配

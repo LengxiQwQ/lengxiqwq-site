@@ -19,6 +19,94 @@ export interface DynamicCommentsResult {
 	comments: DynamicCommentItem[];
 }
 
+const DYNAMIC_COMMENTS_CACHE_TTL_MS = 5 * 60 * 1000;
+const dynamicCommentsCache = new Map<
+	string,
+	{ result: DynamicCommentsResult; expiresAt: number }
+>();
+let pendingBatchCountPromise: Promise<void> | null = null;
+
+function normalizeCommentPath(rawPath: string): string {
+	return rawPath.endsWith("/") && rawPath.length > 1
+		? rawPath.slice(0, -1)
+		: rawPath;
+}
+
+function getDynamicCacheKey(
+	type: string,
+	serverUrl: string,
+	normalizedPath: string,
+): string {
+	return `${type}:${serverUrl.replace(/\/+$/, "")}:${normalizedPath}`;
+}
+
+/**
+ * 批量预检一组动态的 Waline 评论数：
+ * 仅发 1 次请求，将评论数为 0 的动态直接写入缓存，避免每张卡片单独请求评论列表
+ */
+export async function prefetchWalineDynamicCommentCounts(
+	serverUrl: string,
+	rawPaths: string[],
+): Promise<void> {
+	const baseUrl = serverUrl.replace(/\/+$/, "");
+	if (!baseUrl || rawPaths.length === 0) return;
+
+	const now = Date.now();
+	const uncachedPaths: string[] = [];
+	const seen = new Set<string>();
+	for (const raw of rawPaths) {
+		const normalized = normalizeCommentPath(raw);
+		if (!normalized || seen.has(normalized)) continue;
+		seen.add(normalized);
+		const cached = dynamicCommentsCache.get(
+			getDynamicCacheKey("waline", baseUrl, normalized),
+		);
+		if (!cached || cached.expiresAt <= now) {
+			uncachedPaths.push(normalized);
+		}
+	}
+	if (uncachedPaths.length === 0) return;
+
+	const task = (async () => {
+		const CHUNK_SIZE = 30;
+		for (let i = 0; i < uncachedPaths.length; i += CHUNK_SIZE) {
+			const chunk = uncachedPaths.slice(i, i + CHUNK_SIZE);
+			const params = chunk
+				.map((p) => `path=${encodeURIComponent(p)}`)
+				.join("&");
+			const url = `${baseUrl}/api/comment?type=count&${params}`;
+			try {
+				const res = await fetchWithDedup<{ errno?: number; data?: number[] }>(
+					url,
+				);
+				if (res && Array.isArray(res.data)) {
+					const expiresAt = Date.now() + DYNAMIC_COMMENTS_CACHE_TTL_MS;
+					for (let j = 0; j < chunk.length; j++) {
+						if (res.data[j] === 0) {
+							dynamicCommentsCache.set(
+								getDynamicCacheKey("waline", baseUrl, chunk[j]),
+								{
+									result: { totalCount: 0, comments: [] },
+									expiresAt,
+								},
+							);
+						}
+					}
+				}
+			} catch {
+				// Ignore prefetch failures; individual cards fall back gracefully
+			}
+		}
+	})();
+
+	pendingBatchCountPromise = task.finally(() => {
+		if (pendingBatchCountPromise === task) {
+			pendingBatchCountPromise = null;
+		}
+	});
+	return pendingBatchCountPromise;
+}
+
 interface WalineRawChildComment {
 	objectId?: number | string;
 	id?: number | string;
@@ -92,10 +180,17 @@ export async function fetchDynamicComments(
 	}
 
 	// 统一去掉末尾斜杠，与 Waline / Twikoo / Artalk 注册路径对齐
-	const normalizedPath =
-		rawPath.endsWith("/") && rawPath.length > 1
-			? rawPath.slice(0, -1)
-			: rawPath;
+	const normalizedPath = normalizeCommentPath(rawPath);
+	const cacheKey = getDynamicCacheKey(type, serverUrl, normalizedPath);
+
+	if (pendingBatchCountPromise) {
+		await pendingBatchCountPromise.catch(() => {});
+	}
+
+	const cached = dynamicCommentsCache.get(cacheKey);
+	if (cached && cached.expiresAt > Date.now()) {
+		return cached.result;
+	}
 
 	// 1. Waline
 	if (type === "waline") {
@@ -103,26 +198,15 @@ export async function fetchDynamicComments(
 		const commentsUrl = `${baseUrl}/api/comment?path=${encodeURIComponent(
 			normalizedPath,
 		)}&pageSize=${pageSize}&page=1`;
-		const countUrl = `${baseUrl}/api/comment?type=count&path=${encodeURIComponent(
-			normalizedPath,
-		)}`;
 
 		try {
-			const [commentsRes, countRes] = await Promise.all([
-				fetchWithDedup<{
-					errno?: number;
-					data?: { data?: WalineRawComment[]; count?: number };
-				}>(commentsUrl).catch(() => null),
-				fetchWithDedup<{ errno?: number; data?: number[] }>(countUrl).catch(
-					() => null,
-				),
-			]);
+			const commentsRes = await fetchWithDedup<{
+				errno?: number;
+				data?: { data?: WalineRawComment[]; count?: number };
+			}>(commentsUrl);
 
 			const rawList = commentsRes?.data?.data || [];
-			const exactTotal =
-				Array.isArray(countRes?.data) && typeof countRes.data[0] === "number"
-					? countRes.data[0]
-					: commentsRes?.data?.count || 0;
+			const exactTotal = commentsRes?.data?.count || 0;
 
 			const comments: DynamicCommentItem[] = [];
 
@@ -184,10 +268,15 @@ export async function fetchDynamicComments(
 				}
 			}
 
-			return {
+			const result: DynamicCommentsResult = {
 				totalCount: Math.max(exactTotal, comments.length),
 				comments,
 			};
+			dynamicCommentsCache.set(cacheKey, {
+				result,
+				expiresAt: Date.now() + DYNAMIC_COMMENTS_CACHE_TTL_MS,
+			});
+			return result;
 		} catch (e) {
 			console.warn("[Dynamic Comments] Failed to fetch Waline comments:", e);
 		}
