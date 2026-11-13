@@ -1,0 +1,25 @@
+{
+	"name": "lengxiqwq-chat-worker",
+	"version": "1.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Cloudflare Workers + SQLite Durable Objects backend for lengxiqwq-site chatroom & synchronized radio",
+	"scripts": {
+		"dev": "wrangler dev",
+		"deploy": "wrangler deploy",
+		"type-check": "tsc --noEmit",
+		"test": "vitest run",
+		"lint": "biome check ./src ./test"
+	},
+	"dependencies": {
+		"hono": "^4.12.9"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.16",
+		"@cloudflare/workers-types": "^4.20260702.1",
+		"@types/node": "^26.6.6",
+		"typescript": "^5.9.3",
+		"vitest": "^4.1.0",
+		"wrangler": "^4.127.1"
+	}
+}

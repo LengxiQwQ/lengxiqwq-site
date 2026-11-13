@@ -66,6 +66,8 @@ let currentRoom = $state(rooms[0]?.id || "chat");
 let connectionState = $state<ConnectionState>("idle");
 let currentUser = $state<ChatSessionUser | null>(null);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
+let roomOnlineMembers = $state<ChatOnlineMember[]>([]);
+let hasGlobalPresence = false;
 let mentionMembers = $state<ChatMentionCandidate[]>([]);
 let totalOnlineCount = $state(0);
 let messages = $state<ChatMessageRecord[]>([]);
@@ -379,9 +381,13 @@ function connectRoom(roomId: string) {
 					);
 				}
 
-				onlineMembers = packet.members;
+				roomOnlineMembers = packet.members;
+				if (!hasGlobalPresence) {
+					onlineMembers = packet.members;
+					totalOnlineCount = packet.totalCount;
+				}
+				void refreshGlobalPresence();
 				mentionMembers = packet.mentionMembers ?? [];
-				totalOnlineCount = packet.totalCount;
 				musicState = packet.music;
 				clearSkipPending();
 				clockOffsetMs = packet.music.serverTime - Date.now();
@@ -533,11 +539,15 @@ function connectRoom(roomId: string) {
 			}
 			case "presence:update": {
 				if (packet.roomId === currentRoom) {
-					onlineMembers = packet.members;
+					roomOnlineMembers = packet.members;
+					if (!hasGlobalPresence) {
+						onlineMembers = packet.members;
+						totalOnlineCount = packet.totalCount;
+					}
+					void refreshGlobalPresence();
 					if (packet.mentionMembers) {
 						mentionMembers = packet.mentionMembers;
 					}
-					totalOnlineCount = packet.totalCount;
 				}
 				break;
 			}
@@ -693,7 +703,7 @@ function handleRoomSelect(roomId: string) {
 	serverUnreadCount = 0;
 	serverUnreadUserCount = 0;
 	lastMarkedServerReadAt = 0;
-	onlineMembers = [];
+	roomOnlineMembers = [];
 	musicState = null;
 	clearSkipPending();
 	reconnectAttempt = 0;
@@ -941,6 +951,22 @@ function handleEnqueueTrack(track: ChatMusicTrack) {
 	});
 }
 
+async function refreshGlobalPresence() {
+	if (!normalizedChatServer) return;
+	try {
+		const response = await fetch(`${normalizedChatServer}/api/presence`, { cache: "no-store" });
+		if (!response.ok) return;
+		const data = await response.json() as { members: ChatOnlineMember[]; totalCount: number };
+		if (!isUnmounted && Array.isArray(data.members)) {
+			hasGlobalPresence = true;
+			onlineMembers = data.members;
+			totalOnlineCount = data.totalCount;
+		}
+	} catch {
+		// Keep the most recent snapshot until the next refresh.
+	}
+}
+
 onMount(() => {
 	isUnmounted = false;
 	baseDocumentTitle = document.title;
@@ -961,6 +987,11 @@ onMount(() => {
 		stickerPacks = packs;
 	});
 	connectRoom(currentRoom);
+	void refreshGlobalPresence();
+	const presenceTimer = window.setInterval(refreshGlobalPresence, 5000);
+	const playlistTimer = window.setInterval(() => {
+		playlistRefreshSeq += 1;
+	}, 30000);
 
 	const handleVisibility = () => {
 		if (document.visibilityState === "visible") {
@@ -978,6 +1009,8 @@ onMount(() => {
 
 	return () => {
 		isUnmounted = true;
+		window.clearInterval(presenceTimer);
+		window.clearInterval(playlistTimer);
 		document.removeEventListener("visibilitychange", handleVisibility);
 		cancelWalinePopup?.();
 		if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
@@ -1031,6 +1064,7 @@ onMount(() => {
           unreadJumpSeq={unreadJumpSeq}
           currentUser={currentUser}
           onlineMembers={onlineMembers}
+          roomOnlineMembers={roomOnlineMembers}
           mentionMembers={mentionMembers}
           isChatTabActive={activeTab === "chat"}
           targetMessageUid={targetMessageUid}
@@ -1076,6 +1110,7 @@ onMount(() => {
     </div>
 
     <div class="chat-panel chat-panel-right {activeTab === 'music' ? 'mobile-active' : ''}">
+      {#key currentRoom}
       <MusicPanel
         bind:this={musicPanelRef}
         roomId={currentRoom}
@@ -1087,8 +1122,8 @@ onMount(() => {
         fallbackTracks={musicTracks}
         musicState={musicState}
         currentUser={currentUser}
-        onlineMemberCount={onlineMembers.length}
-        onlineMembers={onlineMembers}
+        onlineMemberCount={roomOnlineMembers.length}
+        onlineMembers={roomOnlineMembers}
         mentionMembers={mentionMembers}
         clockOffsetMs={clockOffsetMs}
         initialVolume={initialMusicVolume}
@@ -1125,6 +1160,7 @@ onMount(() => {
         onRequestWalineAuth={handleDirectWalineLogin}
         walineLoginWaiting={walineLoginWaiting}
       />
+      {/key}
     </div>
   </div>
 

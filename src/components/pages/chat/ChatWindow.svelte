@@ -33,6 +33,7 @@ interface Props {
 	unreadJumpSeq?: number;
 	currentUser: ChatSessionUser | null;
 	onlineMembers?: ChatOnlineMember[];
+	roomOnlineMembers?: ChatOnlineMember[];
 	mentionMembers?: ChatMentionCandidate[];
 	isChatTabActive?: boolean;
 	targetMessageUid?: string;
@@ -80,6 +81,7 @@ const {
 	unreadJumpSeq = 0,
 	currentUser = null,
 	onlineMembers = [],
+	roomOnlineMembers = [],
 	mentionMembers = [],
 	isChatTabActive = true,
 	targetMessageUid = "",
@@ -167,14 +169,14 @@ const skipVoteBanner = $derived.by(() => {
 	const hasVotedSkip = Boolean(
 		currentUser && current.skipVotes.includes(currentUser.userKey),
 	);
-	const otherUnmutedCount = onlineMembers.filter(
+	const otherUnmutedCount = roomOnlineMembers.filter(
 		(m) =>
 			(!currentUser || m.userKey !== currentUser.userKey) &&
 			m.isMuted === false,
 	).length;
 	const canSkipAloneOrMuted =
 		Boolean(currentUser) &&
-		onlineMembers.length >= 2 &&
+		roomOnlineMembers.length >= 2 &&
 		otherUnmutedCount === 0;
 
 	return {
