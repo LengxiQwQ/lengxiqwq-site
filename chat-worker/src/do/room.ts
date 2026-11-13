@@ -36,6 +36,7 @@ import {
 	MatrixBridge,
 	stickerTokenFromUrl,
 } from "./matrix-bridge.js";
+import { LIBRARY_ROOM_ID, parseDefaultRooms } from "./room-ids.js";
 import {
 	pickEarliestPositiveTimestamp,
 	pickLatestPositiveTimestamp,
@@ -580,6 +581,21 @@ export class RoomDO extends DurableObject<Env> {
 				matched_track_json TEXT NOT NULL DEFAULT ''
 			);
 			CREATE INDEX IF NOT EXISTS idx_user_playlist_tracks_pid ON user_playlist_tracks (playlist_id, position ASC);
+
+			CREATE TABLE IF NOT EXISTS room_featured (
+				room_id TEXT NOT NULL,
+				playlist_id TEXT NOT NULL,
+				position INTEGER NOT NULL DEFAULT 0,
+				added_at INTEGER NOT NULL DEFAULT 0,
+				PRIMARY KEY (room_id, playlist_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_room_featured_room ON room_featured (room_id, position ASC);
+
+			CREATE TABLE IF NOT EXISTS room_fallback (
+				room_id TEXT PRIMARY KEY,
+				playlist_id TEXT NOT NULL,
+				updated_at INTEGER NOT NULL DEFAULT 0
+			);
 		`);
 	}
 
@@ -651,6 +667,473 @@ export class RoomDO extends DurableObject<Env> {
 	private hasAnyFallbackSource(): boolean {
 		return (
 			this.hasFallbackPlaylistTracks() || this.getFallbackTracks().length > 0
+		);
+	}
+
+	private getFeaturedPlaylistIds(roomId: string): Set<string> {
+		const rows = this.ctx.storage.sql
+			.exec<{ playlist_id: string }>(
+				"SELECT playlist_id FROM room_featured WHERE room_id = ?",
+				roomId,
+			)
+			.toArray();
+		return new Set(rows.map((row) => row.playlist_id));
+	}
+
+	private getRoomFallbackId(roomId: string): string | null {
+		const row = this.ctx.storage.sql
+			.exec<{ playlist_id: string }>(
+				"SELECT playlist_id FROM room_fallback WHERE room_id = ? LIMIT 1",
+				roomId,
+			)
+			.toArray()[0];
+		return row?.playlist_id ?? null;
+	}
+
+	private applyRoomFlags(
+		list: PlaylistSummary[],
+		featuredIds: Set<string>,
+		fallbackId: string | null,
+	): PlaylistSummary[] {
+		return list.map((item) => ({
+			...item,
+			isFeatured: featuredIds.has(item.id),
+			isFallback: item.id === fallbackId,
+		}));
+	}
+
+	private libraryMigrationPromise: Promise<Response> | null = null;
+
+	private migrateSharedLibrary(): Promise<Response> {
+		if (!this.libraryMigrationPromise) {
+			this.libraryMigrationPromise = this.runSharedLibraryMigration().finally(
+				() => {
+					this.libraryMigrationPromise = null;
+				},
+			);
+		}
+		return this.libraryMigrationPromise;
+	}
+
+	private async runSharedLibraryMigration(): Promise<Response> {
+		if (this.getStateValue<boolean>("library_migrated_v2")) {
+			return Response.json({ ok: true, migrated: false });
+		}
+		const rooms = parseDefaultRooms(this.env.DEFAULT_ROOMS);
+		const featuredIds = new Set<string>();
+		let sharedFallbackId: string | null = null;
+		for (const source of rooms) {
+			const stub = this.env.CHAT_ROOMS.get(
+				this.env.CHAT_ROOMS.idFromName(source),
+			);
+			const response = await stub.fetch(
+				`https://room.internal/playlist-export?room=${source}`,
+			);
+			if (!response.ok) {
+				return new Response("Playlist library migration failed", {
+					status: 503,
+				});
+			}
+			const data = (await response.json()) as {
+				playlists: Record<string, any>[];
+				tracks: Record<string, any>[];
+			};
+			this.ctx.storage.transactionSync(() => {
+				for (const p of data.playlists) {
+					this.mergeExportedPlaylist(p, data.tracks);
+				}
+			});
+			// 迁移前精选与轮播是所有房间共用的一份，这里还原成“每个房间都保留一份”。
+			for (const p of data.playlists) {
+				if (p.is_featured === 1) {
+					featuredIds.add(String(p.id));
+				}
+				if (p.is_fallback === 1 && !sharedFallbackId) {
+					sharedFallbackId = String(p.id);
+				}
+			}
+		}
+		this.ctx.storage.transactionSync(() => {
+			const now = Date.now();
+			const available = new Set(
+				this.ctx.storage.sql
+					.exec<{ id: string }>("SELECT id FROM user_playlists")
+					.toArray()
+					.map((row) => row.id),
+			);
+			for (const roomId of rooms) {
+				for (const playlistId of featuredIds) {
+					if (!available.has(playlistId)) continue;
+					this.ctx.storage.sql.exec(
+						`INSERT OR IGNORE INTO room_featured (room_id, playlist_id, position, added_at)
+						 VALUES (?, ?, 0, ?)`,
+						roomId,
+						playlistId,
+						now,
+					);
+				}
+				if (sharedFallbackId && available.has(sharedFallbackId)) {
+					this.ctx.storage.sql.exec(
+						`INSERT INTO room_fallback (room_id, playlist_id, updated_at)
+						 VALUES (?, ?, ?)
+						 ON CONFLICT(room_id) DO UPDATE SET
+							playlist_id = excluded.playlist_id,
+							updated_at = excluded.updated_at`,
+						roomId,
+						sharedFallbackId,
+						now,
+					);
+				}
+			}
+			// 清理合并去重时被替换掉的歌单 id，避免房间精选指向已不存在的歌单。
+			this.ctx.storage.sql.exec(
+				"DELETE FROM room_featured WHERE playlist_id NOT IN (SELECT id FROM user_playlists)",
+			);
+			this.ctx.storage.sql.exec(
+				"DELETE FROM room_fallback WHERE playlist_id NOT IN (SELECT id FROM user_playlists)",
+			);
+			this.setStateValue("library_migrated_v2", true);
+		});
+		return Response.json({ ok: true, migrated: true });
+	}
+
+	private mergeExportedPlaylist(
+		p: Record<string, any>,
+		allTracks: Record<string, any>[],
+	): void {
+		const existing = this.ctx.storage.sql
+			.exec<{ id: string; updated_at: number }>(
+				"SELECT id, updated_at FROM user_playlists WHERE owner_key = ? AND source_url = ? LIMIT 1",
+				p.owner_key,
+				p.source_url,
+			)
+			.toArray()[0];
+		if (existing && existing.updated_at >= p.updated_at) return;
+		if (existing) {
+			this.ctx.storage.sql.exec(
+				"DELETE FROM user_playlist_tracks WHERE playlist_id = ?",
+				existing.id,
+			);
+			this.ctx.storage.sql.exec(
+				"DELETE FROM room_featured WHERE playlist_id = ?",
+				existing.id,
+			);
+			this.ctx.storage.sql.exec(
+				"DELETE FROM user_playlists WHERE id = ?",
+				existing.id,
+			);
+		}
+		this.ctx.storage.sql.exec(
+			`INSERT INTO user_playlists (id, owner_key, owner_name, title, platform, source_url, cover_url, creator, track_count, retrieval_mode, is_public, is_featured, is_fallback, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+			p.id,
+			p.owner_key,
+			p.owner_name,
+			p.title,
+			p.platform,
+			p.source_url,
+			p.cover_url,
+			p.creator,
+			p.track_count,
+			p.retrieval_mode,
+			p.is_public,
+			p.is_featured,
+			p.created_at,
+			p.updated_at,
+		);
+		for (const t of allTracks) {
+			if (t.playlist_id !== p.id) continue;
+			this.ctx.storage.sql.exec(
+				`INSERT INTO user_playlist_tracks (playlist_id, position, source_platform, source_track_id, title, artist, album, cover, duration_sec, source_url, matched_track_json)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				t.playlist_id,
+				t.position,
+				t.source_platform,
+				t.source_track_id,
+				t.title,
+				t.artist,
+				t.album,
+				t.cover,
+				t.duration_sec,
+				t.source_url,
+				t.matched_track_json,
+			);
+		}
+	}
+
+	private mirrorSyncSkipped = false;
+
+	private async syncPlaylistMirrorFromLibrary(): Promise<Response> {
+		const stub = this.env.CHAT_ROOMS.get(
+			this.env.CHAT_ROOMS.idFromName(LIBRARY_ROOM_ID),
+		);
+		this.mirrorSyncSkipped = false;
+		const statusResp = await stub.fetch(
+			"https://room.internal/library-status?room=library",
+		);
+		const status = statusResp.ok
+			? ((await statusResp.json()) as { migrated?: boolean })
+			: { migrated: false };
+		if (status.migrated !== true) {
+			// 歌单库还没初始化完成时不要清空本房镜像。
+			this.mirrorSyncSkipped = true;
+			return Response.json({ ok: true, skipped: true });
+		}
+		const response = await stub.fetch(
+			"https://room.internal/playlist-export?room=library",
+		);
+		if (!response.ok) {
+			return new Response("Playlist library sync failed", { status: 503 });
+		}
+		const data = (await response.json()) as {
+			playlists: Record<string, any>[];
+			tracks: Record<string, any>[];
+			featured?: Array<{ room_id: string; playlist_id: string }>;
+			fallbacks?: Array<{ room_id: string; playlist_id: string }>;
+		};
+		const roomId = this.getRoomId();
+		const featuredIds = new Set(
+			(data.featured || [])
+				.filter((row) => row.room_id === roomId)
+				.map((row) => String(row.playlist_id)),
+		);
+		const fallbackId =
+			(data.fallbacks || [])
+				.filter((row) => row.room_id === roomId)
+				.map((row) => String(row.playlist_id))[0] || null;
+		const available = new Set(data.playlists.map((p) => String(p.id)));
+		let fallbackCleared = false;
+		this.ctx.storage.transactionSync(() => {
+			const previousFallback = this.ctx.storage.sql
+				.exec<{ id: string }>(
+					"SELECT id FROM user_playlists WHERE is_fallback = 1 ORDER BY updated_at DESC LIMIT 1",
+				)
+				.toArray()[0]?.id;
+			fallbackCleared = Boolean(previousFallback) && !fallbackId;
+			this.ctx.storage.sql.exec("DELETE FROM user_playlist_tracks");
+			this.ctx.storage.sql.exec("DELETE FROM user_playlists");
+			this.ctx.storage.sql.exec("DELETE FROM room_featured");
+			for (const p of data.playlists) {
+				const playlistId = String(p.id);
+				this.ctx.storage.sql.exec(
+					`INSERT INTO user_playlists (id, owner_key, owner_name, title, platform, source_url, cover_url, creator, track_count, retrieval_mode, is_public, is_featured, is_fallback, created_at, updated_at)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					playlistId,
+					p.owner_key,
+					p.owner_name,
+					p.title,
+					p.platform,
+					p.source_url,
+					p.cover_url,
+					p.creator,
+					p.track_count,
+					p.retrieval_mode,
+					p.is_public,
+					featuredIds.has(playlistId) ? 1 : 0,
+					playlistId === fallbackId ? 1 : 0,
+					p.created_at,
+					p.updated_at,
+				);
+			}
+			for (const t of data.tracks) {
+				if (!available.has(String(t.playlist_id))) continue;
+				this.ctx.storage.sql.exec(
+					`INSERT INTO user_playlist_tracks (playlist_id, position, source_platform, source_track_id, title, artist, album, cover, duration_sec, source_url, matched_track_json)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					t.playlist_id,
+					t.position,
+					t.source_platform,
+					t.source_track_id,
+					t.title,
+					t.artist,
+					t.album,
+					t.cover,
+					t.duration_sec,
+					t.source_url,
+					t.matched_track_json,
+				);
+			}
+			for (const id of featuredIds) {
+				if (!available.has(id)) continue;
+				this.ctx.storage.sql.exec(
+					"INSERT OR IGNORE INTO room_featured (room_id, playlist_id, position, added_at) VALUES (?, ?, 0, ?)",
+					roomId,
+					id,
+					Date.now(),
+				);
+			}
+		});
+		if (fallbackCleared) {
+			const current = this.getCurrentPlayback();
+			if (current?.isFallback) {
+				this.setStateValue("current_playback", null);
+				await this.syncNextAlarm();
+				this.broadcastMusic();
+			}
+		}
+		return Response.json({ ok: true });
+	}
+
+	private applySyncedMember(raw: Record<string, unknown>): void {
+		const readString = (value: unknown): string =>
+			typeof value === "string" ? value : "";
+		const userKey = readString(raw.userKey);
+		if (!userKey) return;
+		const now = Date.now();
+		const isAdmin = raw.isAdmin === true ? 1 : 0;
+		const lastSeenAt =
+			typeof raw.lastSeenAt === "number" && raw.lastSeenAt > 0
+				? raw.lastSeenAt
+				: now;
+		const firstSeenAt =
+			typeof raw.firstSeenAt === "number" && raw.firstSeenAt > 0
+				? raw.firstSeenAt
+				: lastSeenAt;
+		this.ctx.storage.sql.exec(
+			`INSERT INTO room_members (
+				user_key, auth_type, name, email, avatar, url, badge, badge_type,
+				is_admin, notify_email, last_seen_at, first_seen_at, bio, status,
+				custom_name, custom_avatar, custom_url, has_custom_url
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(user_key) DO UPDATE SET
+				auth_type = excluded.auth_type,
+				name = excluded.name,
+				email = CASE WHEN excluded.email != '' THEN excluded.email ELSE room_members.email END,
+				avatar = excluded.avatar,
+				url = excluded.url,
+				badge = excluded.badge,
+				badge_type = excluded.badge_type,
+				is_admin = excluded.is_admin,
+				bio = excluded.bio,
+				status = excluded.status,
+				first_seen_at = MIN(room_members.first_seen_at, excluded.first_seen_at),
+				last_seen_at = MAX(room_members.last_seen_at, excluded.last_seen_at),
+				custom_name = excluded.custom_name,
+				custom_avatar = excluded.custom_avatar,
+				custom_url = excluded.custom_url,
+				has_custom_url = excluded.has_custom_url`,
+			userKey,
+			readString(raw.authType) || "guest",
+			readString(raw.name),
+			readString(raw.email),
+			readString(raw.avatar),
+			readString(raw.url),
+			readString(raw.badge),
+			readString(raw.badgeType),
+			isAdmin,
+			1,
+			lastSeenAt,
+			firstSeenAt,
+			readString(raw.bio),
+			readString(raw.status) || "在线",
+			readString(raw.customName),
+			readString(raw.customAvatar),
+			readString(raw.customUrl),
+			raw.hasCustomUrl === true ? 1 : 0,
+		);
+		for (const socket of this.ctx.getWebSockets()) {
+			const attachment = socket.deserializeAttachment() as WsAttachment | null;
+			if (!attachment?.user || attachment.user.userKey !== userKey) continue;
+			attachment.user = {
+				...attachment.user,
+				name: readString(raw.name) || attachment.user.name,
+				avatar: readString(raw.avatar),
+				url: readString(raw.url),
+				badge: readString(raw.badge) || attachment.user.badge,
+				badgeType: (readString(raw.badgeType) ||
+					attachment.user.badgeType) as typeof attachment.user.badgeType,
+				status: readString(raw.status) || attachment.user.status,
+				bio: readString(raw.bio),
+			};
+			socket.serializeAttachment(attachment);
+		}
+		this.broadcastPresence();
+	}
+
+	private getGlobalMemberDirectoryRows(): Array<Record<string, unknown>> {
+		const rows = this.ctx.storage.sql
+			.exec<{
+				user_key: string;
+				auth_type: string;
+				name: string;
+				avatar: string;
+				url: string;
+				badge: string;
+				badge_type: string;
+				is_admin: number;
+				bio: string;
+				status: string;
+				last_seen_at: number;
+			}>(
+				`SELECT user_key, auth_type, name, avatar, url, badge, badge_type,
+				        is_admin, bio, status, last_seen_at
+				 FROM room_members
+				 WHERE name != ''`,
+			)
+			.toArray();
+		return rows.map((row) => ({
+			userKey: row.user_key,
+			authType: row.auth_type,
+			name: row.name,
+			avatar: row.avatar || "",
+			url: row.url || "",
+			badge: row.badge || "",
+			badgeType: row.badge_type || "",
+			isAdmin: row.is_admin === 1,
+			bio: row.bio || "",
+			status: row.status || "",
+			lastSeenAt: row.last_seen_at || 0,
+		}));
+	}
+
+	private async fanoutMemberProfile(userKey: string): Promise<void> {
+		const row = this.ctx.storage.sql
+			.exec<Record<string, any>>(
+				"SELECT * FROM room_members WHERE user_key = ? LIMIT 1",
+				userKey,
+			)
+			.toArray()[0];
+		if (!row) return;
+		const currentRoom = this.getRoomId();
+		const rooms = parseDefaultRooms(this.env.DEFAULT_ROOMS).filter(
+			(room) => room !== currentRoom,
+		);
+		const payload = JSON.stringify({
+			member: {
+				userKey: row.user_key,
+				authType: row.auth_type,
+				name: row.name,
+				email: row.email,
+				avatar: row.avatar,
+				url: row.url,
+				badge: row.badge,
+				badgeType: row.badge_type,
+				isAdmin: row.is_admin === 1,
+				bio: row.bio,
+				status: row.status,
+				lastSeenAt: row.last_seen_at,
+				firstSeenAt: row.first_seen_at,
+				customName: row.custom_name,
+				customAvatar: row.custom_avatar,
+				customUrl: row.custom_url,
+				hasCustomUrl: row.has_custom_url === 1,
+			},
+		});
+		await Promise.all(
+			rooms.map(async (room) => {
+				try {
+					const stub = this.env.CHAT_ROOMS.get(
+						this.env.CHAT_ROOMS.idFromName(room),
+					);
+					await stub.fetch(`https://room.internal/member-sync?room=${room}`, {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: payload,
+					});
+				} catch {
+					// 跨房同步失败不阻塞当前房间的资料更新
+				}
+			}),
 		);
 	}
 
@@ -767,25 +1250,45 @@ export class RoomDO extends DurableObject<Env> {
 	private listPlaylistsForUser(
 		user: VerifiedUser | null,
 		includeTracks = false,
+		featuredRoom = "chat",
 	): {
 		featured: PlaylistSummary[];
 		mine: PlaylistSummary[];
 		shared: PlaylistSummary[];
 		details?: Record<string, PlaylistDetail>;
 	} {
-		const featured = this.queryPlaylistSummaries(
-			"WHERE p.is_featured = 1 ORDER BY p.is_fallback DESC, p.updated_at DESC",
+		const featuredIds = this.getFeaturedPlaylistIds(featuredRoom);
+		const fallbackId = this.getRoomFallbackId(featuredRoom);
+		const featured = this.applyRoomFlags(
+			this.queryPlaylistSummaries(
+				`WHERE EXISTS (
+					SELECT 1 FROM room_featured rf
+					WHERE rf.room_id = ? AND rf.playlist_id = p.id
+				)
+				ORDER BY p.updated_at DESC`,
+				featuredRoom,
+			),
+			featuredIds,
+			fallbackId,
 		);
-		const shared = this.queryPlaylistSummaries(
-			"WHERE p.is_public = 1 ORDER BY p.updated_at DESC",
+		const shared = this.applyRoomFlags(
+			this.queryPlaylistSummaries(
+				"WHERE p.is_public = 1 ORDER BY p.updated_at DESC",
+			),
+			featuredIds,
+			fallbackId,
 		);
 		if (user?.authType !== "waline") {
 			return { featured, mine: [], shared };
 		}
 
-		const mine = this.queryPlaylistSummaries(
-			"WHERE p.owner_key = ? ORDER BY p.updated_at DESC",
-			user.userKey,
+		const mine = this.applyRoomFlags(
+			this.queryPlaylistSummaries(
+				"WHERE p.owner_key = ? ORDER BY p.updated_at DESC",
+				user.userKey,
+			),
+			featuredIds,
+			fallbackId,
 		);
 
 		if (!includeTracks) {
@@ -868,6 +1371,7 @@ export class RoomDO extends DurableObject<Env> {
 	private getPlaylistDetailForUser(
 		playlistId: string,
 		user: VerifiedUser | null,
+		featuredRoom = "chat",
 	):
 		| { ok: true; playlist: PlaylistDetail }
 		| { ok: false; status: number; error: string } {
@@ -879,6 +1383,11 @@ export class RoomDO extends DurableObject<Env> {
 		if (!summary) {
 			return { ok: false, status: 404, error: "歌单不存在或已被删除" };
 		}
+
+		summary.isFeatured = this.getFeaturedPlaylistIds(featuredRoom).has(
+			playlistId,
+		);
+		summary.isFallback = false;
 
 		const isOwner = Boolean(
 			user && user.authType === "waline" && summary.ownerKey === user.userKey,
@@ -1145,6 +1654,7 @@ export class RoomDO extends DurableObject<Env> {
 		user: VerifiedUser,
 		playlistId: string,
 		flags: { isPublic?: boolean; isFeatured?: boolean; isFallback?: boolean },
+		featuredRoom = "chat",
 	):
 		| { ok: true; playlist: PlaylistSummary }
 		| { ok: false; status: number; error: string } {
@@ -1206,36 +1716,88 @@ export class RoomDO extends DurableObject<Env> {
 			}
 		}
 
+		const fallbackRow = this.ctx.storage.sql
+			.exec<{ playlist_id: string }>(
+				"SELECT playlist_id FROM room_fallback WHERE room_id = ? LIMIT 1",
+				featuredRoom,
+			)
+			.toArray()[0];
 		let nextFeatured =
 			typeof flags.isFeatured === "boolean"
 				? flags.isFeatured
-				: row.is_featured === 1;
-		const nextFallback =
+				: this.getFeaturedPlaylistIds(featuredRoom).has(playlistId);
+		let nextFallback =
 			typeof flags.isFallback === "boolean"
 				? flags.isFallback
-				: row.is_fallback === 1;
+				: fallbackRow?.playlist_id === playlistId;
 
-		if (nextFallback) {
-			nextFeatured = true;
+		if (nextFallback) nextFeatured = true;
+		// 取消精选时同时取消轮播，避免轮播歌单不在本房精选中。
+		if (!nextFeatured) nextFallback = false;
+
+		this.ctx.storage.transactionSync(() => {
 			this.ctx.storage.sql.exec(
-				"UPDATE user_playlists SET is_fallback = 0 WHERE id != ?",
+				"UPDATE user_playlists SET is_public = ?, is_featured = ?, is_fallback = ?, updated_at = ? WHERE id = ?",
+				nextPublic ? 1 : 0,
+				nextFeatured ? 1 : 0,
+				nextFallback ? 1 : 0,
+				Date.now(),
 				playlistId,
 			);
-		}
-
-		this.ctx.storage.sql.exec(
-			"UPDATE user_playlists SET is_public = ?, is_featured = ?, is_fallback = ?, updated_at = ? WHERE id = ?",
-			nextPublic ? 1 : 0,
-			nextFeatured ? 1 : 0,
-			nextFallback ? 1 : 0,
-			Date.now(),
-			playlistId,
-		);
+			if (nextFeatured) {
+				this.ctx.storage.sql.exec(
+					`INSERT INTO room_featured (room_id, playlist_id, position, added_at)
+					 VALUES (
+						?,
+						?,
+						(SELECT COALESCE(MAX(position), 0) + 1 FROM room_featured WHERE room_id = ?),
+						?
+					 )
+					 ON CONFLICT(room_id, playlist_id) DO NOTHING`,
+					featuredRoom,
+					playlistId,
+					featuredRoom,
+					Date.now(),
+				);
+			} else {
+				this.ctx.storage.sql.exec(
+					"DELETE FROM room_featured WHERE room_id = ? AND playlist_id = ?",
+					featuredRoom,
+					playlistId,
+				);
+			}
+			if (nextFallback) {
+				this.ctx.storage.sql.exec(
+					`INSERT INTO room_fallback (room_id, playlist_id, updated_at)
+					 VALUES (?, ?, ?)
+					 ON CONFLICT(room_id) DO UPDATE SET
+						playlist_id = excluded.playlist_id,
+						updated_at = excluded.updated_at`,
+					featuredRoom,
+					playlistId,
+					Date.now(),
+				);
+			} else {
+				this.ctx.storage.sql.exec(
+					"DELETE FROM room_fallback WHERE room_id = ? AND playlist_id = ?",
+					featuredRoom,
+					playlistId,
+				);
+			}
+			this.ctx.storage.sql.exec(
+				"UPDATE user_playlists SET is_fallback = 0 WHERE is_fallback = 1 AND id != ?",
+				playlistId,
+			);
+		});
 
 		const updated = this.queryPlaylistSummaries(
 			"WHERE p.id = ? LIMIT 1",
 			playlistId,
 		)[0];
+		if (updated) {
+			updated.isFeatured = nextFeatured;
+			updated.isFallback = nextFallback;
+		}
 
 		this.broadcast({
 			type: "playlist:updated",
@@ -1270,6 +1832,14 @@ export class RoomDO extends DurableObject<Env> {
 			return { ok: false, status: 403, error: "无权删除该歌单" };
 		}
 
+		this.ctx.storage.sql.exec(
+			"DELETE FROM room_featured WHERE playlist_id = ?",
+			playlistId,
+		);
+		this.ctx.storage.sql.exec(
+			"DELETE FROM room_fallback WHERE playlist_id = ?",
+			playlistId,
+		);
 		this.ctx.storage.sql.exec(
 			"DELETE FROM user_playlist_tracks WHERE playlist_id = ?",
 			playlistId,
@@ -2806,6 +3376,7 @@ export class RoomDO extends DurableObject<Env> {
 	private deleteMemberByUserKey(
 		targetUserKey: string,
 		broadcastLive = true,
+		fanout = true,
 	): { ok: boolean; deleted: boolean } {
 		const cleanKey = targetUserKey.trim();
 		if (!cleanKey) return { ok: false, deleted: false };
@@ -2841,7 +3412,34 @@ export class RoomDO extends DurableObject<Env> {
 			}
 			this.broadcastPresence();
 		}
+		if (fanout) void this.fanoutMemberDeletion(cleanKey);
 		return { ok: true, deleted: true };
+	}
+
+	private async fanoutMemberDeletion(userKey: string): Promise<void> {
+		const currentRoom = this.getRoomId();
+		const rooms = parseDefaultRooms(this.env.DEFAULT_ROOMS).filter(
+			(room) => room !== currentRoom,
+		);
+		await Promise.all(
+			rooms.map(async (room) => {
+				try {
+					const stub = this.env.CHAT_ROOMS.get(
+						this.env.CHAT_ROOMS.idFromName(room),
+					);
+					await stub.fetch(
+						`https://room.internal/member-deleted?room=${encodeURIComponent(room)}`,
+						{
+							method: "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify({ userKey }),
+						},
+					);
+				} catch {
+					// 单个房间同步失败不影响本房删除
+				}
+			}),
+		);
 	}
 
 	private reconcileLegacyGuestMerges(): void {
@@ -4009,6 +4607,11 @@ export class RoomDO extends DurableObject<Env> {
 	override async fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		const roomId = (url.searchParams.get("room") || "chat").trim().toLowerCase();
+		const featuredRoom = (
+			url.searchParams.get("featuredRoom") || roomId
+		)
+			.trim()
+			.toLowerCase();
 		if (
 			request.method === "GET" &&
 			url.hostname === "room.internal" &&
@@ -4034,10 +4637,22 @@ export class RoomDO extends DurableObject<Env> {
 		this.runStartupMergesIfNeeded();
 
 		// Internal migration endpoints are reachable only through a Durable Object binding.
+		if (url.hostname === "room.internal" && url.pathname === "/library-status") {
+			return Response.json({
+				migrated: this.getStateValue<boolean>("library_migrated_v2") === true,
+			});
+		}
+
 		if (url.hostname === "room.internal" && url.pathname === "/playlist-export") {
 			return Response.json({
 				playlists: this.ctx.storage.sql.exec("SELECT * FROM user_playlists").toArray(),
 				tracks: this.ctx.storage.sql.exec("SELECT * FROM user_playlist_tracks").toArray(),
+				featured: this.ctx.storage.sql
+					.exec("SELECT room_id, playlist_id, position FROM room_featured ORDER BY room_id, position ASC")
+					.toArray(),
+				fallbacks: this.ctx.storage.sql
+					.exec("SELECT room_id, playlist_id FROM room_fallback")
+					.toArray(),
 			});
 		}
 		if (url.hostname === "room.internal" && url.pathname === "/fallback-selection" && request.method === "GET") {
@@ -4088,6 +4703,80 @@ export class RoomDO extends DurableObject<Env> {
 			}
 			return Response.json({ ok: true });
 		}
+		if (url.hostname === "room.internal" && url.pathname === "/library-migrate") {
+			return this.migrateSharedLibrary();
+		}
+		if (
+			url.hostname === "room.internal" &&
+			url.pathname === "/member-sync" &&
+			request.method === "POST"
+		) {
+			let payload: { member?: Record<string, unknown> } = {};
+			try {
+				payload = (await request.json()) as {
+					member?: Record<string, unknown>;
+				};
+			} catch {
+				return Response.json(
+					{ ok: false, error: "请求体格式错误" },
+					{ status: 400 },
+				);
+			}
+			if (payload.member) this.applySyncedMember(payload.member);
+			return Response.json({ ok: true });
+		}
+		if (
+			url.hostname === "room.internal" &&
+			url.pathname === "/member-deleted" &&
+			request.method === "POST"
+		) {
+			let payload: { userKey?: string } = {};
+			try {
+				payload = (await request.json()) as { userKey?: string };
+			} catch {
+				return Response.json({ ok: false }, { status: 400 });
+			}
+			if (payload.userKey) {
+				this.deleteMemberByUserKey(payload.userKey, true, false);
+			}
+			return Response.json({ ok: true });
+		}
+		if (
+			url.hostname === "room.internal" &&
+			url.pathname === "/member-directory"
+		) {
+			return Response.json({
+				members: this.getGlobalMemberDirectoryRows(),
+			});
+		}
+		if (
+			url.hostname === "room.internal" &&
+			url.pathname === "/playlist-changed" &&
+			request.method === "POST"
+		) {
+			const syncResult = await this.syncPlaylistMirrorFromLibrary();
+			if (!syncResult.ok) return syncResult;
+			this.broadcast({ type: "playlist:updated", roomId: this.getRoomId() });
+			return Response.json({ ok: true });
+		}
+		if (
+			url.hostname === "room.internal" &&
+			url.pathname === "/sync-library" &&
+			request.method === "POST"
+		) {
+			return this.syncPlaylistMirrorFromLibrary();
+		}
+
+		// 房间首次被访问时把歌单镜像同步到独立歌单库的最新状态。
+		if (
+			this.getRoomId() !== LIBRARY_ROOM_ID &&
+			!this.getStateValue<boolean>("library_mirror_synced_v2")
+		) {
+			const sync = await this.syncPlaylistMirrorFromLibrary();
+			if (sync.ok && !this.mirrorSyncSkipped) {
+				this.setStateValue("library_mirror_synced_v2", true);
+			}
+		}
 
 		const skipPlaybackBoot =
 			request.method === "GET" &&
@@ -4107,7 +4796,7 @@ export class RoomDO extends DurableObject<Env> {
 		if (url.pathname === "/playlists" && request.method === "GET") {
 			const user = this.parseForwardedUser(request);
 			const includeTracks = url.searchParams.get("includeTracks") === "1";
-			const data = this.listPlaylistsForUser(user, includeTracks);
+			const data = this.listPlaylistsForUser(user, includeTracks, featuredRoom);
 			return Response.json({ ok: true, ...data });
 		}
 
@@ -4120,7 +4809,11 @@ export class RoomDO extends DurableObject<Env> {
 				);
 			}
 			const user = this.parseForwardedUser(request);
-			const result = this.getPlaylistDetailForUser(playlistId, user);
+			const result = this.getPlaylistDetailForUser(
+				playlistId,
+				user,
+				featuredRoom,
+			);
 			if (!result.ok) {
 				return Response.json(
 					{ ok: false, error: result.error },
@@ -4252,14 +4945,19 @@ export class RoomDO extends DurableObject<Env> {
 					{ status: 400 },
 				);
 			}
-			const result = this.updatePlaylistFlagsForUser(user, playlistId, {
-				isPublic:
-					typeof body.isPublic === "boolean" ? body.isPublic : undefined,
-				isFeatured:
-					typeof body.isFeatured === "boolean" ? body.isFeatured : undefined,
-				isFallback:
-					typeof body.isFallback === "boolean" ? body.isFallback : undefined,
-			});
+			const result = this.updatePlaylistFlagsForUser(
+				user,
+				playlistId,
+				{
+					isPublic:
+						typeof body.isPublic === "boolean" ? body.isPublic : undefined,
+					isFeatured:
+						typeof body.isFeatured === "boolean" ? body.isFeatured : undefined,
+					isFallback:
+						typeof body.isFallback === "boolean" ? body.isFallback : undefined,
+				},
+				featuredRoom,
+			);
 			if (!result.ok) {
 				return Response.json(
 					{ ok: false, error: result.error },
@@ -4325,11 +5023,41 @@ export class RoomDO extends DurableObject<Env> {
 		if (url.pathname === "/member-playlists" && url.hostname === "room.internal") {
 			const userKey = url.searchParams.get("userKey") || "";
 			const viewer = this.parseForwardedUser(request);
-			const privateAccess = Boolean(viewer && (viewer.isAdmin || (viewer.authType === "waline" && viewer.userKey === userKey)));
-			const rows = this.ctx.storage.sql.exec<{ id: string; title: string; platform: string; cover_url: string; track_count: number }>(
-				`SELECT id, title, platform, cover_url, track_count FROM user_playlists WHERE owner_key = ? ${privateAccess ? "" : "AND (is_public = 1 OR is_featured = 1)"} ORDER BY is_featured DESC, is_public DESC, updated_at DESC LIMIT 8`, userKey,
+			const privateAccess = Boolean(
+				viewer &&
+					(viewer.isAdmin ||
+						(viewer.authType === "waline" && viewer.userKey === userKey)),
+			);
+			const featuredIds = this.getFeaturedPlaylistIds(featuredRoom);
+			const rows = this.ctx.storage.sql.exec<{
+				id: string;
+				title: string;
+				platform: string;
+				cover_url: string;
+				track_count: number;
+				is_public: number;
+			}>(
+				"SELECT id, title, platform, cover_url, track_count, is_public FROM user_playlists WHERE owner_key = ? ORDER BY updated_at DESC LIMIT 40",
+				userKey,
 			).toArray();
-			return Response.json({ playlists: rows.map((p) => ({ id: p.id, title: p.title, platform: p.platform, coverUrl: p.cover_url, trackCount: p.track_count })) });
+			return Response.json({
+				playlists: rows
+					.filter(
+						(p) =>
+							privateAccess ||
+							p.is_public === 1 ||
+							featuredIds.has(p.id),
+					)
+					.slice(0, 8)
+					.map((p) => ({
+						id: p.id,
+						title: p.title,
+						platform: p.platform,
+						coverUrl: p.cover_url,
+						trackCount: p.track_count,
+						isFeatured: featuredIds.has(p.id),
+					})),
+			});
 		}
 
 		if (url.pathname === "/member-profile") {
@@ -4958,6 +5686,7 @@ export class RoomDO extends DurableObject<Env> {
 
 				this.send(ws, { type: "auth:result", user: updatedUser });
 				this.broadcastPresence();
+				void this.fanoutMemberProfile(updatedUser.userKey);
 				return;
 			}
 

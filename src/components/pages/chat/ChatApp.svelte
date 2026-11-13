@@ -68,9 +68,54 @@ let currentUser = $state<ChatSessionUser | null>(null);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
 let roomOnlineMembers = $state<ChatOnlineMember[]>([]);
 let hasGlobalPresence = false;
-let mentionMembers = $state<ChatMentionCandidate[]>([]);
+let roomMentionMembers = $state<ChatMentionCandidate[]>([]);
+let globalMemberDirectory = $state<ChatMentionCandidate[]>([]);
+const mentionMembers = $derived.by<ChatMentionCandidate[]>(() => {
+	const onlineKeys = new Set(onlineMembers.map((member) => member.userKey));
+	const merged = new Map<string, ChatMentionCandidate>();
+	for (const member of globalMemberDirectory) {
+		merged.set(member.userKey, {
+			...member,
+			online: onlineKeys.has(member.userKey),
+		});
+	}
+	for (const member of roomMentionMembers) {
+		const previous = merged.get(member.userKey);
+		merged.set(member.userKey, {
+			...previous,
+			...member,
+			bio: member.bio || previous?.bio,
+			status: member.status || previous?.status,
+			online: member.online || onlineKeys.has(member.userKey),
+		});
+	}
+	return [...merged.values()].sort(
+		(a, b) =>
+			Number(b.online) - Number(a.online) ||
+			Number(b.isAdmin) - Number(a.isAdmin) ||
+			(b.lastSeenAt || 0) - (a.lastSeenAt || 0),
+	);
+});
 let totalOnlineCount = $state(0);
 let messages = $state<ChatMessageRecord[]>([]);
+const roomMessageCache = new Map<string, ChatMessageRecord[]>();
+
+function mergeRoomMessages(
+	serverMessages: ChatMessageRecord[],
+	cachedMessages: ChatMessageRecord[],
+	hasMoreHistory: boolean,
+): ChatMessageRecord[] {
+	if (!hasMoreHistory || cachedMessages.length === 0) return serverMessages;
+	const seen = new Set(serverMessages.map((message) => message.msgUid));
+	const oldest = serverMessages[0]?.createdAt ?? Number.MAX_SAFE_INTEGER;
+	const older = cachedMessages.filter(
+		(message) => !seen.has(message.msgUid) && message.createdAt < oldest,
+	);
+	if (older.length === 0) return serverMessages;
+	return [...older, ...serverMessages].sort(
+		(a, b) => a.createdAt - b.createdAt,
+	);
+}
 let hasMoreHistory = $state(false);
 let isLoadingHistory = $state(false);
 let sessionUnreadSince = $state(0);
@@ -200,6 +245,7 @@ let mentionSeq = 0;
 let externalPlaylistSeq = 0;
 let baseDocumentTitle = "";
 let ws: WebSocket | null = null;
+let pendingCloseSocket: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 let noticeTimer: number | null = null;
 let cancelWalinePopup: (() => void) | null = null;
@@ -291,16 +337,14 @@ function connectRoom(roomId: string) {
 		reconnectTimer = null;
 	}
 	if (ws) {
-		const prev = ws;
+		// 先保留旧连接，等新房间握手成功后再断开，避免切换瞬间从在线列表里消失。
+		closePendingSocket();
+		pendingCloseSocket = ws;
 		ws = null;
-		try {
-			prev.close(1000, "switch");
-		} catch {
-			// Ignore
-		}
 	}
 
 	if (!normalizedChatServer) {
+		closePendingSocket();
 		connectionState = "offline";
 		showNotice("聊天室后端地址尚未配置（请在内容仓配置 chatConfig.serverURL）");
 		return;
@@ -325,6 +369,7 @@ function connectRoom(roomId: string) {
 		if (ws !== socket) return;
 		connectionState = "connected";
 		reconnectAttempt = 0;
+		closePendingSocket();
 
 		const currentSig = currentAuth
 			? `${currentAuth.kind}:${currentAuth.token}`
@@ -360,7 +405,11 @@ function connectRoom(roomId: string) {
 			case "room:init": {
 				interconnected = packet.interconnected === true;
 				currentUser = packet.self;
-				messages = packet.messages;
+				messages = mergeRoomMessages(
+					packet.messages,
+					roomMessageCache.get(packet.roomId) ?? [],
+					Boolean(packet.hasMoreHistory),
+				);
 				hasMoreHistory = Boolean(packet.hasMoreHistory);
 				isLoadingHistory = false;
 				const userKey = packet.self?.userKey || "guest";
@@ -387,7 +436,7 @@ function connectRoom(roomId: string) {
 					totalOnlineCount = packet.totalCount;
 				}
 				void refreshGlobalPresence();
-				mentionMembers = packet.mentionMembers ?? [];
+				roomMentionMembers = packet.mentionMembers ?? [];
 				musicState = packet.music;
 				clearSkipPending();
 				clockOffsetMs = packet.music.serverTime - Date.now();
@@ -546,7 +595,7 @@ function connectRoom(roomId: string) {
 					}
 					void refreshGlobalPresence();
 					if (packet.mentionMembers) {
-						mentionMembers = packet.mentionMembers;
+						roomMentionMembers = packet.mentionMembers;
 					}
 				}
 				break;
@@ -675,6 +724,7 @@ function connectRoom(roomId: string) {
 
 	socket.addEventListener("close", () => {
 		if (ws !== socket || isUnmounted) return;
+		closePendingSocket();
 		ws = null;
 		clearSkipPending();
 		connectionState = "reconnecting";
@@ -690,13 +740,25 @@ function connectRoom(roomId: string) {
 	});
 }
 
+function closePendingSocket() {
+	const stale = pendingCloseSocket;
+	pendingCloseSocket = null;
+	if (!stale) return;
+	try {
+		stale.close(1000, "switch");
+	} catch {
+		// Ignore
+	}
+}
+
 function handleRoomSelect(roomId: string) {
 	if (roomId === currentRoom) {
 		if (activeTab === "room") activeTab = "chat";
 		return;
 	}
+	roomMessageCache.set(currentRoom, messages);
 	currentRoom = roomId;
-	messages = [];
+	messages = roomMessageCache.get(roomId) ?? [];
 	hasMoreHistory = false;
 	isLoadingHistory = false;
 	sessionUnreadSince = 0;
@@ -967,6 +1029,48 @@ async function refreshGlobalPresence() {
 	}
 }
 
+async function refreshMemberDirectory() {
+	if (!normalizedChatServer) return;
+	try {
+		const response = await fetch(`${normalizedChatServer}/api/members`, {
+			cache: "no-store",
+		});
+		if (!response.ok) return;
+		const data = (await response.json()) as {
+			members: Array<{
+				userKey: string;
+				authType: "waline" | "guest";
+				name: string;
+				avatar: string;
+				url: string;
+				badge: string;
+				badgeType: ChatMentionCandidate["badgeType"];
+				isAdmin: boolean;
+				bio: string;
+				status: string;
+				lastSeenAt: number;
+			}>;
+		};
+		if (isUnmounted || !Array.isArray(data.members)) return;
+		globalMemberDirectory = data.members.map((member) => ({
+			userKey: member.userKey,
+			authType: member.authType,
+			name: member.name,
+			avatar: member.avatar || "",
+			url: member.url || "",
+			badge: member.badge || "",
+			badgeType: member.badgeType,
+			isAdmin: Boolean(member.isAdmin),
+			online: false,
+			status: member.status || "",
+			bio: member.bio || "",
+			lastSeenAt: member.lastSeenAt || 0,
+		}));
+	} catch {
+		// 名录拉取失败时保留上一份数据
+	}
+}
+
 onMount(() => {
 	isUnmounted = false;
 	baseDocumentTitle = document.title;
@@ -988,7 +1092,9 @@ onMount(() => {
 	});
 	connectRoom(currentRoom);
 	void refreshGlobalPresence();
+	void refreshMemberDirectory();
 	const presenceTimer = window.setInterval(refreshGlobalPresence, 5000);
+	const memberTimer = window.setInterval(refreshMemberDirectory, 60000);
 	const playlistTimer = window.setInterval(() => {
 		playlistRefreshSeq += 1;
 	}, 30000);
@@ -1010,12 +1116,14 @@ onMount(() => {
 	return () => {
 		isUnmounted = true;
 		window.clearInterval(presenceTimer);
+		window.clearInterval(memberTimer);
 		window.clearInterval(playlistTimer);
 		document.removeEventListener("visibilitychange", handleVisibility);
 		cancelWalinePopup?.();
 		if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 		if (skipPendingTimer !== null) window.clearTimeout(skipPendingTimer);
+		closePendingSocket();
 		if (ws) {
 			try {
 				ws.close(1000, "unmount");

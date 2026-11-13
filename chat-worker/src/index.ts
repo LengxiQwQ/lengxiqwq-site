@@ -8,6 +8,7 @@ import {
 } from "./auth/verify.js";
 import { INTERCONNECT_ROOM } from "./do/matrix-bridge.js";
 import { RoomDO } from "./do/room.js";
+import { isValidRoomId, LIBRARY_ROOM_ID } from "./do/room-ids.js";
 import type { Env } from "./env.js";
 import { createMusicRegistry } from "./music/registry.js";
 import { verifyStreamProxyToken } from "./music/stream-signer.js";
@@ -52,7 +53,7 @@ app.get("/ws", async (c) => {
 	}
 
 	const roomId = (c.req.query("room") || "chat").trim().toLowerCase();
-	if (!/^[a-z0-9_-]{1,24}$/.test(roomId)) {
+	if (!isValidRoomId(roomId)) {
 		return c.json({ ok: false, error: "Invalid room id" }, 400);
 	}
 
@@ -215,6 +216,57 @@ app.get("/api/presence", async (c) => {
 	return c.json({ members: [...members.values()].sort((a, b) => Number(b.isAdmin) - Number(a.isAdmin) || a.name.localeCompare(b.name, "zh-CN")), observerCount, totalCount: members.size + observerCount });
 });
 
+type MemberDirectoryRow = {
+	userKey: string;
+	authType: string;
+	name: string;
+	avatar: string;
+	url: string;
+	badge: string;
+	badgeType: string;
+	isAdmin: boolean;
+	bio: string;
+	status: string;
+	lastSeenAt: number;
+};
+
+app.get("/api/members", async (c) => {
+	const rooms = getRoomIdsForAuthCheck(c.env);
+	const directories = await Promise.all(
+		rooms.map(async (room) => {
+			const stub = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName(room));
+			try {
+				const response = await stub.fetch(
+					`https://room.internal/member-directory?room=${encodeURIComponent(room)}`,
+				);
+				if (!response.ok) return [] as MemberDirectoryRow[];
+				const data = (await response.json()) as {
+					members: MemberDirectoryRow[];
+				};
+				return data.members;
+			} catch {
+				return [] as MemberDirectoryRow[];
+			}
+		}),
+	);
+	const merged = new Map<string, MemberDirectoryRow>();
+	for (const members of directories) {
+		for (const member of members) {
+			const previous = merged.get(member.userKey);
+			if (!previous || (member.lastSeenAt || 0) > (previous.lastSeenAt || 0)) {
+				merged.set(member.userKey, member);
+			}
+		}
+	}
+	const list = [...merged.values()].sort(
+		(a, b) =>
+			Number(b.isAdmin) - Number(a.isAdmin) ||
+			(b.lastSeenAt || 0) - (a.lastSeenAt || 0) ||
+			a.name.localeCompare(b.name, "zh-CN"),
+	);
+	return c.json({ ok: true, members: list });
+});
+
 app.get("/api/rooms/member", async (c) => {
 	const roomId = (c.req.query("room") || "chat").trim().toLowerCase();
 	if (!/^[a-z0-9_-]{1,24}$/.test(roomId)) {
@@ -225,14 +277,7 @@ app.get("/api/rooms/member", async (c) => {
 		return c.json({ ok: false, error: "缺少 userKey" }, 400);
 	}
 
-	const stub = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName(roomId));
-	const targetUrl = new URL("https://room.internal/member-profile");
-	targetUrl.searchParams.set("room", roomId);
-	targetUrl.searchParams.set("userKey", userKey);
 	const tracksLimit = c.req.query("tracksLimit");
-	if (tracksLimit) {
-		targetUrl.searchParams.set("tracksLimit", tracksLimit);
-	}
 	const authHeader = c.req.header("Authorization") || "";
 	const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
 	const token = bearerMatch ? bearerMatch[1].trim() : "";
@@ -243,20 +288,68 @@ app.get("/api/rooms/member", async (c) => {
 			headers.set("X-Chat-User", JSON.stringify(viewer));
 		}
 	}
-	const resp = await stub.fetch(targetUrl.toString(), { headers });
-	const data = await resp.json() as { ok: boolean; profile?: { playlists: unknown[] } };
-	if (resp.ok && data.profile) {
-		const shared = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName("chat"));
-		const migrated = await shared.fetch("https://room.internal/playlist-migrate?room=chat");
-		if (!migrated.ok) return c.json({ ok: false, error: "歌单合并失败，请稍后重试" }, 503);
-		const playlistUrl = new URL("https://room.internal/member-playlists?room=chat");
-		playlistUrl.searchParams.set("userKey", userKey);
-		const playlistResponse = await shared.fetch(playlistUrl.toString(), { headers });
-		if (!playlistResponse.ok) return c.json({ ok: false, error: "加载歌单失败" }, 503);
-		const sharedData = await playlistResponse.json() as { playlists: unknown[] };
-		data.profile.playlists = sharedData.playlists;
+
+	// 成员资料在各房间各有一份副本，当前房间查不到时依次回退到其它房间。
+	const candidates = [
+		roomId,
+		...getRoomIdsForAuthCheck(c.env, roomId).filter((id) => id !== roomId),
+	];
+	let data: { ok: boolean; profile?: { playlists: unknown[] } } | null = null;
+	let status = 404;
+	for (const candidate of candidates) {
+		const stub = c.env.CHAT_ROOMS.get(
+			c.env.CHAT_ROOMS.idFromName(candidate),
+		);
+		const targetUrl = new URL("https://room.internal/member-profile");
+		targetUrl.searchParams.set("room", candidate);
+		targetUrl.searchParams.set("userKey", userKey);
+		if (tracksLimit) {
+			targetUrl.searchParams.set("tracksLimit", tracksLimit);
+		}
+		const resp = await stub.fetch(targetUrl.toString(), { headers });
+		const payload = (await resp.json()) as {
+			ok: boolean;
+			profile?: { playlists: unknown[] };
+		};
+		if (resp.ok && payload.profile) {
+			data = payload;
+			status = resp.status;
+			break;
+		}
+		if (!data) {
+			data = payload;
+			status = resp.status;
+		}
 	}
-	return c.json(data, resp.status as 200 | 400 | 404 | 500);
+	if (!data?.profile) {
+		return c.json(
+			data ?? { ok: false, error: "成员不存在" },
+			status as 200 | 400 | 404 | 500,
+		);
+	}
+
+	const library = c.env.CHAT_ROOMS.get(
+		c.env.CHAT_ROOMS.idFromName(LIBRARY_ROOM_ID),
+	);
+	const migration = await library.fetch(
+		"https://room.internal/library-migrate?room=library",
+	);
+	if (migration.ok) {
+		const playlistUrl = new URL("https://room.internal/member-playlists");
+		playlistUrl.searchParams.set("room", LIBRARY_ROOM_ID);
+		playlistUrl.searchParams.set("featuredRoom", roomId);
+		playlistUrl.searchParams.set("userKey", userKey);
+		const playlistResponse = await library.fetch(playlistUrl.toString(), {
+			headers,
+		});
+		if (playlistResponse.ok) {
+			const sharedData = (await playlistResponse.json()) as {
+				playlists: unknown[];
+			};
+			data.profile.playlists = sharedData.playlists;
+		}
+	}
+	return c.json(data, status as 200 | 400 | 404 | 500);
 });
 
 app.get("/api/rooms/member/tracks", async (c) => {
@@ -318,7 +411,7 @@ function getRoomIdsForAuthCheck(env: Env, preferredRoom?: string): string[] {
 	const seen = new Set<string>();
 	const pushIfValid = (raw: string | undefined) => {
 		const id = (raw || "").trim().toLowerCase();
-		if (!id || !/^[a-z0-9_-]{1,24}$/.test(id) || seen.has(id)) return;
+		if (!id || !isValidRoomId(id) || seen.has(id)) return;
 		seen.add(id);
 		out.push(id);
 	};
@@ -426,13 +519,36 @@ app.post("/api/auth/waline-verify", async (c) => {
 	return c.json({ ok: true, user });
 });
 
+async function notifyPlaylistRooms(
+	env: Env,
+	roomIds: string[],
+): Promise<void> {
+	const seen = new Set<string>();
+	await Promise.all(
+		roomIds.map(async (roomId) => {
+			const id = (roomId || "").trim().toLowerCase();
+			if (!id || seen.has(id) || !isValidRoomId(id)) return;
+			seen.add(id);
+			const stub = env.CHAT_ROOMS.get(env.CHAT_ROOMS.idFromName(id));
+			try {
+				await stub.fetch(
+					`https://room.internal/playlist-changed?room=${encodeURIComponent(id)}`,
+					{ method: "POST" },
+				);
+			} catch {
+				// 单个房间同步失败不影响歌单写入结果
+			}
+		}),
+	);
+}
+
 async function forwardRoomPlaylistRequest(
 	c: Context<{ Bindings: Env }>,
 	doPath: string,
 	options: { requireAuth: boolean; method: "GET" | "POST" },
 ): Promise<Response> {
 	const roomId = (c.req.query("room") || "chat").trim().toLowerCase();
-	if (!/^[a-z0-9_-]{1,24}$/.test(roomId)) {
+	if (!isValidRoomId(roomId)) {
 		return c.json({ ok: false, error: "Invalid room id" }, 400);
 	}
 
@@ -449,8 +565,19 @@ async function forwardRoomPlaylistRequest(
 		return c.json({ ok: false, error: "请先登录账号后再操作歌单" }, 401);
 	}
 
+	const library = c.env.CHAT_ROOMS.get(
+		c.env.CHAT_ROOMS.idFromName(LIBRARY_ROOM_ID),
+	);
+	const migration = await library.fetch(
+		"https://room.internal/library-migrate?room=library",
+	);
+	if (!migration.ok) {
+		return c.json({ ok: false, error: "歌单库初始化失败，请稍后重试" }, 503);
+	}
+
 	const targetUrl = new URL(`https://room.internal${doPath}`);
-	targetUrl.searchParams.set("room", "chat");
+	targetUrl.searchParams.set("room", LIBRARY_ROOM_ID);
+	targetUrl.searchParams.set("featuredRoom", roomId);
 	const idParam = c.req.query("id");
 	if (idParam) {
 		targetUrl.searchParams.set("id", idParam);
@@ -468,84 +595,26 @@ async function forwardRoomPlaylistRequest(
 		headers.set("Content-Type", "application/json");
 	}
 
-	const stub = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName("chat"));
-	const migration = await stub.fetch("https://room.internal/playlist-migrate?room=chat");
-	if (!migration.ok) return c.json({ ok: false, error: "歌单合并失败，请稍后重试" }, 503);
-	let bodyText = options.method === "POST" ? await c.req.text() : undefined;
-	let fallbackChange: { id: string; enabled: boolean } | undefined;
-	if (roomId !== "chat" && doPath === "/playlists/flags" && bodyText) {
-		let body: { playlistId?: unknown; isFallback?: unknown; isFeatured?: unknown };
-		try { body = JSON.parse(bodyText); } catch { return c.json({ ok: false, error: "请求体格式错误" }, 400); }
-		if (typeof body.isFallback === "boolean") {
-			if (!user?.isAdmin) return c.json({ ok: false, error: "仅站长可设置轮播歌单" }, 403);
-			if (typeof body.playlistId !== "string") return c.json({ ok: false, error: "缺少歌单 ID" }, 400);
-			fallbackChange = { id: body.playlistId, enabled: body.isFallback };
-			delete body.isFallback;
-			if (fallbackChange.enabled) body.isFeatured = true;
-			bodyText = JSON.stringify(body);
-		}
-	}
-	const doResp = await stub.fetch(targetUrl.toString(), {
+	const bodyText = options.method === "POST" ? await c.req.text() : undefined;
+	const doResp = await library.fetch(targetUrl.toString(), {
 		method: options.method,
 		headers,
 		body: bodyText,
 	});
-	const result = await doResp.json() as Record<string, any>;
-	if (doResp.ok && roomId === "chat" && options.method === "POST") {
-		const exportResponse = await stub.fetch("https://room.internal/playlist-export?room=chat");
-		if (!exportResponse.ok) return c.json({ ok: false, error: "读取共享歌单失败" }, 503);
-		const exported = await exportResponse.json() as { playlists: Record<string, any>[]; tracks: Record<string, any>[] };
-		const otherRooms = (c.env.DEFAULT_ROOMS || "chat").split(",").map((r) => r.trim().toLowerCase()).filter((r) => r !== "chat" && /^[a-z0-9_-]{1,24}$/.test(r));
-		for (const otherId of otherRooms) {
-			const other = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName(otherId));
-			const selectionResponse = await other.fetch(`https://room.internal/fallback-selection?room=${encodeURIComponent(otherId)}`);
-			if (!selectionResponse.ok) return c.json({ ok: false, error: "读取房间轮播歌单失败" }, 503);
-			const { selected } = await selectionResponse.json() as { selected: { owner_key: string; source_url: string } | null };
-			if (!selected) continue;
-			const chosen = exported.playlists.find((p) => p.owner_key === selected.owner_key && p.source_url === selected.source_url);
-			const sync = await other.fetch(`https://room.internal/fallback-selection?room=${encodeURIComponent(otherId)}`, {
-				method: "POST", headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ playlist: chosen ?? null, tracks: chosen ? exported.tracks.filter((t) => t.playlist_id === chosen.id) : [] }),
-			});
-			if (!sync.ok) return c.json({ ok: false, error: "同步房间轮播歌单失败" }, 503);
-		}
+	const result = (await doResp.json()) as Record<string, any>;
+
+	if (doResp.ok && options.method === "POST") {
+		await notifyPlaylistRooms(c.env, getRoomIdsForAuthCheck(c.env, roomId));
 	}
-	if (doResp.ok && roomId !== "chat") {
-		const room = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName(roomId));
-		const selectionResponse = await room.fetch(`https://room.internal/fallback-selection?room=${encodeURIComponent(roomId)}`);
-		if (!selectionResponse.ok) return c.json({ ok: false, error: "读取房间轮播歌单失败" }, 503);
-		const { selected } = await selectionResponse.json() as { selected: { id: string; owner_key: string; source_url: string; updated_at: number } | null };
-		const exportResponse = await stub.fetch("https://room.internal/playlist-export?room=chat");
-		if (!exportResponse.ok) return c.json({ ok: false, error: "读取共享歌单失败" }, 503);
-		const exported = await exportResponse.json() as { playlists: Record<string, any>[]; tracks: Record<string, any>[] };
-		const targeted = fallbackChange ? exported.playlists.find((p) => p.id === fallbackChange?.id) : undefined;
-		let chosen = fallbackChange?.enabled ? targeted : exported.playlists.find((p) => p.owner_key === selected?.owner_key && p.source_url === selected?.source_url);
-		if (fallbackChange && !fallbackChange.enabled && targeted && targeted.owner_key === selected?.owner_key && targeted.source_url === selected?.source_url) chosen = undefined;
-		if (options.method === "POST" || (selected && (!chosen || selected.id !== chosen.id || selected.updated_at !== chosen.updated_at))) {
-			const sync = await room.fetch(`https://room.internal/fallback-selection?room=${encodeURIComponent(roomId)}`, {
-				method: "POST", headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ playlist: chosen ?? null, tracks: chosen ? exported.tracks.filter((t) => t.playlist_id === chosen?.id) : [] }),
-			});
-			if (!sync.ok) return c.json({ ok: false, error: "更新房间轮播歌单失败" }, 503);
-		}
-		const markFallback = (value: unknown): void => {
-			if (!value || typeof value !== "object") return;
-			if (Array.isArray(value)) { for (const item of value) markFallback(item); return; }
-			const record = value as Record<string, unknown>;
-			if ("isFallback" in record) record.isFallback = Boolean(chosen && record.id === chosen.id);
-			for (const child of Object.values(record)) markFallback(child);
-		};
-		markFallback(result);
-	}
+
 	const respHeaders: Record<string, string> = {
 		"Content-Type": "application/json; charset=utf-8",
+		"Cache-Control": "no-store",
 	};
-	respHeaders["Cache-Control"] = "no-store";
-	const out = new Response(JSON.stringify(result), {
+	return new Response(JSON.stringify(result), {
 		status: doResp.status,
 		headers: respHeaders,
 	});
-	return out;
 }
 
 app.get("/api/playlists", (c) =>
