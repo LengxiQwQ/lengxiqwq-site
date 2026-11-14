@@ -33,6 +33,7 @@ export interface RoomInitPacket {
 	unreadCount?: number;
 	unreadUserCount?: number;
 	members: ChatOnlineMember[];
+	observers?: ChatOnlineMember[];
 	mentionMembers?: ChatMentionCandidate[];
 	observerCount: number;
 	totalCount: number;
@@ -64,6 +65,7 @@ export type ServerPacket =
 			type: "presence:update";
 			roomId: string;
 			members: ChatOnlineMember[];
+			observers?: ChatOnlineMember[];
 			mentionMembers?: ChatMentionCandidate[];
 			observerCount: number;
 			totalCount: number;
@@ -99,6 +101,22 @@ export function formatClockSeconds(seconds: number): string {
 	return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
 }
 
+const VISITOR_ID_STORAGE_KEY = "lengxi_chat_visitor_id";
+
+export function getOrCreateVisitorId(): string {
+	if (typeof localStorage === "undefined") return "";
+	try {
+		let vid = localStorage.getItem(VISITOR_ID_STORAGE_KEY)?.trim() || "";
+		if (!vid) {
+			vid = `v_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+			localStorage.setItem(VISITOR_ID_STORAGE_KEY, vid);
+		}
+		return vid;
+	} catch {
+		return "";
+	}
+}
+
 export function buildWsUrl(
 	serverUrl: string,
 	roomId: string,
@@ -113,6 +131,11 @@ export function buildWsUrl(
 	if (auth?.token) {
 		params.set("authKind", auth.kind);
 		params.set("token", auth.token);
+	} else {
+		const vid = getOrCreateVisitorId();
+		if (vid) {
+			params.set("visitorId", vid);
+		}
 	}
 	if (lastReadAt > 0) {
 		params.set("lastReadAt", String(Math.floor(lastReadAt)));

@@ -110,6 +110,45 @@ const isExternalUser = $derived.by(() => {
 	return false;
 });
 
+const isSpectator = $derived.by(() => {
+	if (!seed?.userKey) return false;
+	return (
+		seed.userKey.startsWith("spectator") ||
+		seed.userKey.startsWith("observer") ||
+		seed.userKey.startsWith("spec_") ||
+		seed.badge === "旁观" ||
+		seed.badge === "历史访客"
+	);
+});
+
+function formatConnectedDuration(ts?: number): string {
+	if (!ts) return "刚刚进入";
+	const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+	if (diffSec < 60) return `已停留 ${diffSec} 秒`;
+	const diffMin = Math.floor(diffSec / 60);
+	if (diffMin < 60) return `已在线 ${diffMin} 分钟`;
+	const diffHour = Math.floor(diffMin / 60);
+	return `已在线 ${diffHour} 小时 ${diffMin % 60} 分钟`;
+}
+
+function formatSecondsDuration(sec?: number): string {
+	if (!sec || sec < 0) return "0 秒";
+	if (sec < 60) return `${sec} 秒`;
+	if (sec < 3600) return `${Math.floor(sec / 60)} 分钟 ${sec % 60} 秒`;
+	return `${Math.floor(sec / 3600)} 小时 ${Math.floor((sec % 3600) / 60)} 分钟`;
+}
+
+function formatFullDate(ts?: number): string {
+	if (!ts) return "未知时间";
+	const d = new Date(ts);
+	const yyyy = d.getFullYear();
+	const mm = String(d.getMonth() + 1).padStart(2, "0");
+	const dd = String(d.getDate()).padStart(2, "0");
+	const hh = String(d.getHours()).padStart(2, "0");
+	const min = String(d.getMinutes()).padStart(2, "0");
+	return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
+}
+
 const fallbackData = $derived.by<{
 	profile: ChatUserDetailProfile;
 	allTracks: ChatUserRequestedTrackItem[];
@@ -118,6 +157,30 @@ const fallbackData = $derived.by<{
 	recentMessages: ChatUserRecentMessage[];
 } | null>(() => {
 	if (!seed) return null;
+	if (isSpectator) {
+		const isOnline = seed.online !== false;
+		const spectatorProfile: ChatUserDetailProfile = {
+			userKey: seed.userKey,
+			name: seed.name || (isOnline ? "旁观者" : "历史访客"),
+			avatar: seed.avatar || "",
+			authType: "guest",
+			badge: isOnline ? "旁观" : "历史访客",
+			badgeType: "tag",
+			status: seed.status || (isOnline ? "只读旁观" : "已离线"),
+			bio: seed.bio || (isOnline ? "正在只读浏览聊天室" : "曾访问聊天室"),
+			location: seed.location || "",
+			online: isOnline,
+			isFocused: isOnline ? seed.isFocused !== false : false,
+			lastSeenAt: seed.disconnectedAt || seed.connectedAt || Date.now(),
+		};
+		return {
+			profile: spectatorProfile,
+			allTracks: [],
+			topTracks: [],
+			topArtists: [],
+			recentMessages: [],
+		};
+	}
 	const onlineMatch = onlineMembers.find((m) => m.userKey === seed.userKey);
 	const isSelf = Boolean(
 		currentUser?.userKey &&
@@ -407,6 +470,7 @@ $effect(() => {
 	if (
 		matrixUserId ||
 		isExternalUser ||
+		isSpectator ||
 		currentSeed.userKey.startsWith("matrix:") ||
 		currentSeed.userKey.startsWith("@") ||
 		currentSeed.userKey.startsWith("name:") ||
@@ -615,11 +679,11 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
 </script>
 
 <ChatModal
-  open={open && Boolean(profile || matrixUserId || isExternalUser)}
+  open={open && Boolean(profile || matrixUserId || isExternalUser || isSpectator)}
   title="成员名片"
   ariaLabel={seed ? `${seed.name} 的个人资料` : "成员名片"}
-  size={matrixUserId || isExternalUser ? "md" : "lg"}
-  fillHeightOnDesktop={!(matrixUserId || isExternalUser)}
+  size={matrixUserId || isExternalUser || isSpectator ? "md" : "lg"}
+  fillHeightOnDesktop={!(matrixUserId || isExternalUser || isSpectator)}
   {lockedMinHeight}
   {onClose}
 >
@@ -825,6 +889,229 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             {/each}
           </div>
         {/if}
+      </div>
+    </div>
+  {:else if isSpectator && seed}
+    {@const isOnline = seed.online !== false}
+    {@const roomTitle = seed.roomId === "interconnect" ? "互联茶室" : seed.roomId === "chat" ? "闲聊" : (seed.roomId ? `#${seed.roomId}` : "当前房间")}
+    {@const isFocused = isOnline && seed.isFocused !== false}
+    {@const visits = seed.totalVisits || seed.visitCount || 1}
+    {@const isReturning = visits > 1}
+
+    <div class="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-4 space-y-3 min-h-0">
+      <!-- 1. 顶部身份卡片 -->
+      <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-2.5">
+        <div class="flex items-center gap-3">
+          <div class="relative shrink-0">
+            <div class="w-12 h-12 rounded-full {isOnline ? 'bg-(--primary)/15 text-[var(--chat-accent-text)]' : 'bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)] opacity-75'} flex items-center justify-center font-bold text-lg shadow-xs">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </div>
+            {#if isOnline}
+              <span
+                class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
+              ></span>
+            {:else}
+              <span
+                class="w-2.5 h-2.5 rounded-full bg-neutral-400 absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
+              ></span>
+            {/if}
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-base font-bold text-[var(--deep-text)] dark:text-white/90 break-words">
+                {seed.name || (isOnline ? "旁观者" : "历史访客")}
+              </span>
+              <span class="chat-role-badge chat-role-badge--tag">{isOnline ? "👁️ 旁观访客" : "🕒 历史访客"}</span>
+              {#if isReturning}
+                <span class="chat-role-badge chat-role-badge--accent">常客 · 第 {visits} 次来访</span>
+              {/if}
+            </div>
+            <div class="flex items-center gap-1.5 text-xs text-[var(--chat-meta-color)] mt-0.5 flex-wrap">
+              {#if isOnline}
+                <span>当前在线</span>
+                <span>·</span>
+                <span>{isReturning ? `第 ${visits} 次来访` : "初次到访"}</span>
+                <span>·</span>
+                <span>{isFocused ? "窗口活跃浏览中" : "切至后台"}</span>
+              {:else}
+                <span>已离线离开</span>
+                <span>·</span>
+                <span>{isReturning ? `累计来访 ${visits} 次` : "初次到访"}</span>
+                {#if seed.durationFormatted}
+                  <span>·</span>
+                  <span>本次停留 {seed.durationFormatted}</span>
+                {/if}
+                {#if seed.disconnectedAt}
+                  <span>·</span>
+                  <span>{formatLastSeen(seed.disconnectedAt)}</span>
+                {/if}
+              {/if}
+            </div>
+          </div>
+
+          <!-- @提及 快捷按钮（未登录置灰禁用） -->
+          <button
+            type="button"
+            disabled
+            class="px-2.5 py-1.5 text-xs text-[var(--chat-meta-color)] bg-black/5 dark:bg-white/5 rounded-lg shrink-0 flex items-center gap-1 cursor-not-allowed opacity-50 border-none select-none"
+            aria-label="旁观者未登录，暂不支持提及"
+          >
+            <span class="font-bold opacity-60">@</span>
+            <span>未登录无法提及</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 2. 基本信息网格卡片 -->
+      <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-2">
+        <div class="text-xs font-semibold text-[var(--chat-meta-color)] flex items-center gap-1.5">
+          <span>📋</span>
+          <span>{isOnline ? "访客在线与来访信息" : "历史访问足迹"}</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <!-- 所在/游历房间 -->
+          <div class="bg-black/3 dark:bg-white/5 p-2.5 rounded-lg flex flex-col justify-between">
+            <span class="text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center gap-1">
+              <span>📍</span>
+              <span>{isOnline ? "当前所在房间" : "离开前所在房间"}</span>
+            </span>
+            <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-1 truncate">
+              {roomTitle}
+            </span>
+          </div>
+
+          <!-- IP 属地 -->
+          <div class="bg-black/3 dark:bg-white/5 p-2.5 rounded-lg flex flex-col justify-between">
+            <span class="text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center gap-1">
+              <span>🌏</span>
+              <span>IP 归属地</span>
+            </span>
+            <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-1 truncate">
+              {seed.location || "未知归属地"}
+            </span>
+          </div>
+
+          <!-- 操作系统 -->
+          <div class="bg-black/3 dark:bg-white/5 p-2.5 rounded-lg flex flex-col justify-between">
+            <span class="text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center gap-1">
+              <span>💻</span>
+              <span>操作系统</span>
+            </span>
+            <span class="font-bold text-xs text-[var(--deep-text)] dark:text-white/90 mt-1 truncate">
+              {seed.device || "未知系统"}
+            </span>
+          </div>
+
+          <!-- 来访频次与次数 -->
+          <div class="bg-black/3 dark:bg-white/5 p-2.5 rounded-lg flex flex-col justify-between">
+            <span class="text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center gap-1">
+              <span>🔢</span>
+              <span>来访频次</span>
+            </span>
+            <span class="font-bold text-xs {isReturning ? 'text-(--primary)' : 'text-[var(--deep-text)] dark:text-white/90'} mt-1 truncate">
+              {isReturning ? `累计来访 ${visits} 次` : "初次到访 (第 1 次)"}
+            </span>
+          </div>
+
+          <!-- 本次停留时长 -->
+          <div class="bg-black/3 dark:bg-white/5 p-2.5 rounded-lg flex flex-col justify-between">
+            <span class="text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center gap-1">
+              <span>⏱️</span>
+              <span>{isOnline ? "本次在线时长" : "本次停留时长"}</span>
+            </span>
+            <span class="font-bold text-xs text-[var(--deep-text)] dark:text-white/90 mt-1 truncate">
+              {#if isOnline}
+                {seed.connectedAt ? formatConnectedDuration(seed.connectedAt) : "刚刚进入"}
+              {:else}
+                {seed.durationFormatted || (seed.connectedAt ? formatConnectedDuration(seed.connectedAt) : "未知")}
+              {/if}
+            </span>
+          </div>
+
+          <!-- 累计在站时长 -->
+          <div class="bg-black/3 dark:bg-white/5 p-2.5 rounded-lg flex flex-col justify-between">
+            <span class="text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center gap-1">
+              <span>⏳</span>
+              <span>累计停留时长</span>
+            </span>
+            <span class="font-bold text-xs text-[var(--deep-text)] dark:text-white/90 mt-1 truncate">
+              {seed.totalDurationFormatted || (seed.totalDurationSec ? formatSecondsDuration(seed.totalDurationSec) : (seed.durationFormatted || (seed.connectedAt ? formatConnectedDuration(seed.connectedAt) : "本次即首次")))}
+            </span>
+          </div>
+
+          <!-- 首次到访时间 -->
+          <div class="bg-black/3 dark:bg-white/5 p-2.5 rounded-lg flex flex-col justify-between">
+            <span class="text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center gap-1">
+              <span>📅</span>
+              <span>首次到访</span>
+            </span>
+            <span class="font-bold text-xs text-[var(--deep-text)] dark:text-white/90 mt-1 truncate">
+              {seed.firstSeenAt ? formatFullDate(seed.firstSeenAt) : "本次会话"}
+            </span>
+          </div>
+
+          <!-- 点歌台广播收听状态 -->
+          <div class="bg-black/3 dark:bg-white/5 p-2.5 rounded-lg flex flex-col justify-between">
+            <span class="text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center gap-1">
+              <span>🎵</span>
+              <span>点歌台收听</span>
+            </span>
+            <span class="font-bold text-xs {seed.isMuted === false ? 'text-emerald-600 dark:text-emerald-400' : 'text-[var(--chat-meta-color)]'} mt-1 truncate">
+              {#if isOnline}
+                {seed.isMuted === false ? "正在收听广播" : "已静音"}
+              {:else}
+                {seed.isMuted === false ? "曾收听广播" : "未收听广播"}
+              {/if}
+            </span>
+          </div>
+
+          <!-- 浏览/连接状态 -->
+          <div class="bg-black/3 dark:bg-white/5 p-2.5 rounded-lg flex flex-col justify-between col-span-2 sm:col-span-1">
+            <span class="text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center gap-1">
+              <span>👀</span>
+              <span>{isOnline ? "浏览状态" : "连接状态"}</span>
+            </span>
+            {#if isOnline}
+              <span class="font-bold text-xs {isFocused ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-500'} mt-1 truncate">
+                {isFocused ? "窗口活跃" : "离开 (后台)"}
+              </span>
+            {:else}
+              <span class="font-bold text-xs text-[var(--chat-meta-color)] mt-1 truncate">
+                已离线断开
+              </span>
+            {/if}
+          </div>
+        </div>
+
+        {#if seed.roomsVisited && seed.roomsVisited.length > 0}
+          <div class="mt-2.5 pt-2 border-t border-[var(--chat-divider-color)]/60 text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center justify-between gap-2">
+            <span class="shrink-0">游历房间:</span>
+            <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/80">
+              {seed.roomsVisited.map((r) => (r === "interconnect" ? "互联茶室" : r === "chat" ? "闲聊" : r)).join("、")}
+            </span>
+          </div>
+        {/if}
+      </div>
+
+      <!-- 3. 权限与状态说明 -->
+      <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-1.5 text-xs text-[var(--chat-meta-color)] leading-relaxed">
+        <div class="font-semibold text-[var(--deep-text)] dark:text-white/90 flex items-center gap-1.5">
+          <span>💡</span>
+          <span>{isOnline ? "访客权限与来访记录" : "历史访客记录说明"}</span>
+        </div>
+        <p class="m-0 text-[11px] opacity-85">
+          {#if isReturning}
+            该访客为多次回访常客（已累计来访 {visits} 次，累计驻留 {seed.totalDurationFormatted || (seed.totalDurationSec ? formatSecondsDuration(seed.totalDurationSec) : '一段时间')}）。系统已持续关联其设备标识与访问足迹。
+          {:else}
+            {isOnline
+              ? "该访客当前处于初次只读旁观状态，拥有聊天室消息实时查阅与点歌台广播同步收听权限。在聊天输入框登录或登记昵称后，即可参与发言和点歌互动。"
+              : "该记录为访客离线前自动留存的访问足迹。系统已持久化归档其驻留时长、IP 归属地与游历房间，供回溯查阅。"}
+          {/if}
+        </p>
       </div>
     </div>
   {:else if profile}

@@ -81,13 +81,12 @@ const skipTooltipText = $derived.by(() => {
     aria-label={`查看 ${currentPlay.track.title} 歌词与播放详情`}
     onclick={onOpenLyrics}
   >
-    <div class="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-white/70 dark:border-neutral-700/80 bg-(--primary)/12 flex items-center justify-center shadow-xs">
+    <div class="w-8.5 h-8.5 rounded-lg overflow-hidden shrink-0 border border-black/5 dark:border-white/10 bg-(--primary)/12 flex items-center justify-center shadow-xs">
       {#if currentPlay.track.cover && !coverFailed}
         <img
           src={currentPlay.track.cover}
           alt=""
-          class="w-full h-full object-cover chat-spin-slow"
-          style={isListening ? "" : "animation-play-state: paused;"}
+          class="w-full h-full object-cover"
           onerror={() => (coverFailed = true)}
         />
       {:else}

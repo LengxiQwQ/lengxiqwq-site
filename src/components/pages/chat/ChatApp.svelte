@@ -15,6 +15,7 @@ import {
 	normalizeServerUrl,
 	openWalineLoginPopup,
 	readStoredWalineToken,
+	resolveChatAvatarUrl,
 	resolveInitialAuth,
 	type ServerPacket,
 	saveMemberBadges,
@@ -27,6 +28,7 @@ import type {
 	ChatOnlineMember,
 	ChatProfileDraft,
 	ChatSessionUser,
+	ChatSpectatorRecord,
 	ChatUserDetailSeed,
 	ConnectionState,
 	ImageAttachment,
@@ -70,12 +72,116 @@ const {
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
 const LAST_ROOM_STORAGE_KEY = "lengxi_chat_last_room";
 
+const DEFAULT_LEFT_WIDTH = 335;
+const DEFAULT_RIGHT_WIDTH = 380;
+const MIN_LEFT_WIDTH = 280;
+const MAX_LEFT_WIDTH = 480;
+const MIN_RIGHT_WIDTH = 340;
+const MAX_RIGHT_WIDTH = 540;
+const MIN_CENTER_WIDTH = 480;
+
+const LEFT_WIDTH_KEY = "lengxi_chat_left_panel_width";
+const RIGHT_WIDTH_KEY = "lengxi_chat_right_panel_width";
+
+let leftPanelWidth = $state(DEFAULT_LEFT_WIDTH);
+let rightPanelWidth = $state(DEFAULT_RIGHT_WIDTH);
+let isDraggingResizer = $state<"left" | "right" | null>(null);
+let stageContainerEl = $state<HTMLElement | null>(null);
+
+function handleStartResizeLeft(event: PointerEvent) {
+	if (typeof window === "undefined" || window.innerWidth < 768) return;
+	event.preventDefault();
+	isDraggingResizer = "left";
+	document.body.classList.add("is-resizing-chat");
+
+	const onPointerMove = (e: PointerEvent) => {
+		if (!stageContainerEl) return;
+		const rect = stageContainerEl.getBoundingClientRect();
+		const stageWidth = rect.width;
+		let targetWidth = e.clientX - rect.left;
+		targetWidth = Math.max(MIN_LEFT_WIDTH, Math.min(MAX_LEFT_WIDTH, targetWidth));
+		if (stageWidth - targetWidth - rightPanelWidth < MIN_CENTER_WIDTH) {
+			targetWidth = Math.max(MIN_LEFT_WIDTH, stageWidth - rightPanelWidth - MIN_CENTER_WIDTH);
+		}
+		leftPanelWidth = Math.round(targetWidth);
+	};
+
+	const onPointerUp = () => {
+		isDraggingResizer = null;
+		document.body.classList.remove("is-resizing-chat");
+		window.removeEventListener("pointermove", onPointerMove);
+		window.removeEventListener("pointerup", onPointerUp);
+		try {
+			localStorage.setItem(LEFT_WIDTH_KEY, String(leftPanelWidth));
+		} catch {
+			// Ignore
+		}
+	};
+
+	window.addEventListener("pointermove", onPointerMove);
+	window.addEventListener("pointerup", onPointerUp);
+}
+
+function handleStartResizeRight(event: PointerEvent) {
+	if (typeof window === "undefined" || window.innerWidth < 768) return;
+	event.preventDefault();
+	isDraggingResizer = "right";
+	document.body.classList.add("is-resizing-chat");
+
+	const onPointerMove = (e: PointerEvent) => {
+		if (!stageContainerEl) return;
+		const rect = stageContainerEl.getBoundingClientRect();
+		const stageWidth = rect.width;
+		let targetWidth = rect.right - e.clientX;
+		targetWidth = Math.max(MIN_RIGHT_WIDTH, Math.min(MAX_RIGHT_WIDTH, targetWidth));
+		if (stageWidth - leftPanelWidth - targetWidth < MIN_CENTER_WIDTH) {
+			targetWidth = Math.max(MIN_RIGHT_WIDTH, stageWidth - leftPanelWidth - MIN_CENTER_WIDTH);
+		}
+		rightPanelWidth = Math.round(targetWidth);
+	};
+
+	const onPointerUp = () => {
+		isDraggingResizer = null;
+		document.body.classList.remove("is-resizing-chat");
+		window.removeEventListener("pointermove", onPointerMove);
+		window.removeEventListener("pointerup", onPointerUp);
+		try {
+			localStorage.setItem(RIGHT_WIDTH_KEY, String(rightPanelWidth));
+		} catch {
+			// Ignore
+		}
+	};
+
+	window.addEventListener("pointermove", onPointerMove);
+	window.addEventListener("pointerup", onPointerUp);
+}
+
+function handleResetLeftWidth() {
+	leftPanelWidth = DEFAULT_LEFT_WIDTH;
+	try {
+		localStorage.removeItem(LEFT_WIDTH_KEY);
+	} catch {
+		// Ignore
+	}
+}
+
+function handleResetRightWidth() {
+	rightPanelWidth = DEFAULT_RIGHT_WIDTH;
+	try {
+		localStorage.removeItem(RIGHT_WIDTH_KEY);
+	} catch {
+		// Ignore
+	}
+}
+
 let activeTab = $state<"room" | "chat" | "music">("chat");
 let currentRoom = $state(rooms[0]?.id || "chat");
 let connectionState = $state<ConnectionState>("idle");
 let isWindowFocused = $state(true);
 let currentUser = $state<ChatSessionUser | null>(null);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
+let observers = $state<ChatOnlineMember[]>([]);
+let spectatorHistory = $state<ChatSpectatorRecord[]>([]);
 let roomOnlineMembers = $state<ChatOnlineMember[]>([]);
 let hasGlobalPresence = false;
 let roomMentionMembers = $state<ChatMentionCandidate[]>([]);
@@ -188,14 +294,19 @@ let isListeningIntent = $state(initialListenIntent);
 let memoryVolume = $state(initialMusicVolume);
 let hasAppMounted = false;
 
+const NOTIFICATION_STORAGE_KEY = "fireflyChatDesktopNotification";
+let desktopNotificationEnabled = $state(false);
+let desktopNotificationPermission = $state<NotificationPermission>("default");
+let roomUnreadCounts = $state<Record<string, number>>({});
+
 let lastMarkedServerReadAt = 0;
 let lastReportedAudioKey = "";
 const socketHandshakeAuth = new WeakMap<WebSocket, string>();
 
 $effect(() => {
-	const userKey = currentUser?.userKey || "";
+	const userKey = currentUser?.userKey || "spectator";
 	const muted = mobilePlaybackStatus.isMuted;
-	if (connectionState !== "connected" || !userKey) {
+	if (connectionState !== "connected") {
 		lastReportedAudioKey = "";
 		return;
 	}
@@ -209,8 +320,8 @@ $effect(() => {
 
 let lastReportedFocusKey = "";
 $effect(() => {
-	const userKey = currentUser?.userKey || "";
-	if (connectionState !== "connected" || !userKey) {
+	const userKey = currentUser?.userKey || "spectator";
+	if (connectionState !== "connected") {
 		lastReportedFocusKey = "";
 		return;
 	}
@@ -428,6 +539,113 @@ function showNotice(msg: string) {
 	}, 3600);
 }
 
+async function handleToggleDesktopNotification() {
+	if (typeof window === "undefined" || !("Notification" in window)) {
+		showNotice("当前浏览器不支持桌面系统通知");
+		return;
+	}
+
+	desktopNotificationPermission = Notification.permission;
+
+	if (Notification.permission === "denied") {
+		showNotice("系统通知权限已被浏览器拒绝，请在浏览器地址栏的网站设置中允许通知权限");
+		return;
+	}
+
+	if (Notification.permission === "default") {
+		try {
+			const perm = await Notification.requestPermission();
+			desktopNotificationPermission = perm;
+			if (perm === "granted") {
+				desktopNotificationEnabled = true;
+				try {
+					localStorage.setItem(NOTIFICATION_STORAGE_KEY, "true");
+				} catch {}
+				showNotice("已开启聊天室桌面通知");
+			} else {
+				desktopNotificationEnabled = false;
+				showNotice("未授予通知权限，可在浏览器设置中随时开启");
+			}
+		} catch {
+			showNotice("请求通知权限失败");
+		}
+		return;
+	}
+
+	if (desktopNotificationEnabled) {
+		desktopNotificationEnabled = false;
+		try {
+			localStorage.setItem(NOTIFICATION_STORAGE_KEY, "false");
+		} catch {}
+		showNotice("已关闭系统桌面通知");
+	} else {
+		desktopNotificationEnabled = true;
+		try {
+			localStorage.setItem(NOTIFICATION_STORAGE_KEY, "true");
+		} catch {}
+		showNotice("已开启系统桌面通知");
+	}
+}
+
+function triggerDesktopNotification(roomId: string, message: ChatMessageRecord) {
+	if (!desktopNotificationEnabled) return;
+	if (typeof window === "undefined" || !("Notification" in window)) return;
+	if (Notification.permission !== "granted") return;
+
+	if (currentUser && message.userKey === currentUser.userKey) return;
+	if (message.kind !== "user") return;
+
+	const isCurrent = roomId === currentRoom;
+	if (isCurrent && !document.hidden && isWindowFocused) {
+		return;
+	}
+
+	const roomMeta = rooms.find((r) => r.id === roomId);
+	const roomTitle = roomMeta?.name ? `#${roomMeta.name}` : `#${roomId}`;
+	const senderName = message.userName || "未知用户";
+	const title = `${roomTitle} · ${senderName}`;
+
+	let body = (message.content || "")
+		.replace(/!\[([^\]]*)\]\([^)]*\)/g, "[图片]")
+		.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+		.replace(/[`#*_~]/g, "")
+		.trim();
+
+	if (message.attachments && message.attachments.length > 0) {
+		body = body ? `${body} [图片]` : "[图片]";
+	}
+	if (message.poll) {
+		body = `[发起投票] ${message.poll.question || body}`;
+	}
+	if (!body) {
+		body = "[新消息]";
+	}
+	if (body.length > 100) {
+		body = `${body.slice(0, 97)}...`;
+	}
+
+	const avatarUrl = resolveChatAvatarUrl(message.userAvatar);
+	const icon = avatarUrl || "/favicon.ico";
+
+	try {
+		const notification = new Notification(title, {
+			body,
+			icon,
+			tag: `chat-msg-${roomId}-${message.msgUid}`,
+		});
+
+		notification.onclick = () => {
+			window.focus();
+			if (currentRoom !== roomId) {
+				handleRoomSelect(roomId);
+			}
+			notification.close();
+		};
+	} catch (e) {
+		console.warn("[ChatApp] notification error:", e);
+	}
+}
+
 function sendPacket(packet: Record<string, unknown>): boolean {
 	if (!ws || ws.readyState !== WebSocket.OPEN) {
 		showNotice("正在重新连接聊天室，请稍候...");
@@ -545,6 +763,7 @@ function connectRoom(roomId: string) {
 					(m) => !m.roomId || m.roomId === packet.roomId,
 				);
 				onlineMembers = packet.members;
+				observers = packet.observers ?? [];
 				if (typeof packet.totalCount === "number" && packet.totalCount > 0) {
 					totalOnlineCount = packet.totalCount;
 				}
@@ -741,6 +960,9 @@ function connectRoom(roomId: string) {
 						(m) => !m.roomId || m.roomId === currentRoom,
 					);
 					onlineMembers = packet.members;
+					if (packet.observers) {
+						observers = packet.observers;
+					}
 					if (
 						typeof packet.totalCount === "number" &&
 						packet.totalCount > 0
@@ -760,7 +982,8 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "chat:message": {
-				if (packet.roomId === currentRoom) {
+				const isCurrent = packet.roomId === currentRoom;
+				if (isCurrent) {
 					if (!messages.some((m) => m.msgUid === packet.message.msgUid)) {
 						messages = [...messages, packet.message];
 						if (
@@ -779,7 +1002,17 @@ function connectRoom(roomId: string) {
 							document.title = `[有人@你] ${baseDocumentTitle}`;
 						}
 					}
+				} else {
+					const cached = roomMessageCache.get(packet.roomId);
+					if (cached && !cached.some((m) => m.msgUid === packet.message.msgUid)) {
+						roomMessageCache.set(packet.roomId, [...cached, packet.message]);
+					}
+					roomUnreadCounts = {
+						...roomUnreadCounts,
+						[packet.roomId]: (roomUnreadCounts[packet.roomId] || 0) + 1,
+					};
 				}
+				triggerDesktopNotification(packet.roomId, packet.message);
 				break;
 			}
 			case "chat:updated": {
@@ -986,6 +1219,10 @@ function closePendingSocket() {
 function handleRoomSelect(roomId: string) {
 	showInterconnect = false;
 	showSettings = false;
+	roomUnreadCounts = {
+		...roomUnreadCounts,
+		[roomId]: 0,
+	};
 	if (roomId === currentRoom) {
 		if (activeTab === "room") activeTab = "chat";
 		return;
@@ -1402,6 +1639,7 @@ async function refreshGlobalPresence() {
 		if (!response.ok) return;
 		const data = (await response.json()) as {
 			members: ChatOnlineMember[];
+			observers?: ChatObserverItem[];
 			totalCount: number;
 		};
 		if (!isUnmounted && Array.isArray(data.members)) {
@@ -1413,6 +1651,9 @@ async function refreshGlobalPresence() {
 				}
 				return m;
 			});
+			if (Array.isArray(data.observers)) {
+				observers = data.observers;
+			}
 			totalOnlineCount = data.totalCount;
 		}
 	} catch {
@@ -1463,16 +1704,62 @@ async function refreshMemberDirectory() {
 	}
 }
 
+async function refreshSpectatorHistory() {
+	if (!normalizedChatServer || isUnmounted) return;
+	try {
+		const separator = normalizedChatServer.includes("?") ? "&" : "?";
+		const response = await fetch(
+			`${normalizedChatServer}/api/spectators/history${separator}limit=30&_t=${Date.now()}`,
+			{ cache: "no-store" },
+		);
+		if (!response.ok) return;
+		const data = (await response.json()) as {
+			ok: boolean;
+			records: ChatSpectatorRecord[];
+		};
+		if (!isUnmounted && Array.isArray(data.records)) {
+			spectatorHistory = data.records;
+		}
+	} catch {
+		// 历史旁观记录拉取失败保留上一份数据
+	}
+}
+
 onMount(() => {
 	isUnmounted = false;
 	baseDocumentTitle = document.title;
 	currentAuth = resolveInitialAuth();
 	walineToken = currentAuth?.kind === "waline" ? currentAuth.token : "";
 
+	try {
+		const savedLeft = Number(localStorage.getItem(LEFT_WIDTH_KEY));
+		if (savedLeft >= MIN_LEFT_WIDTH && savedLeft <= MAX_LEFT_WIDTH) {
+			leftPanelWidth = savedLeft;
+		}
+		const savedRight = Number(localStorage.getItem(RIGHT_WIDTH_KEY));
+		if (savedRight >= MIN_RIGHT_WIDTH && savedRight <= MAX_RIGHT_WIDTH) {
+			rightPanelWidth = savedRight;
+		}
+	} catch {
+		// Ignore
+	}
+
 	if (readStoredListenIntent()) {
 		isListeningIntent = true;
 	}
 	hasAppMounted = true;
+
+	if (typeof window !== "undefined" && "Notification" in window) {
+		desktopNotificationPermission = Notification.permission;
+		const storedPref = localStorage.getItem(NOTIFICATION_STORAGE_KEY);
+		if (storedPref === "true" && Notification.permission === "granted") {
+			desktopNotificationEnabled = true;
+		} else if (storedPref === "false") {
+			desktopNotificationEnabled = false;
+		} else if (Notification.permission === "granted") {
+			desktopNotificationEnabled = true;
+		}
+	}
 
 	const urlParams = new URLSearchParams(window.location.search);
 	const paramRoom = urlParams.get("room")?.trim().toLowerCase() || "";
@@ -1494,6 +1781,7 @@ onMount(() => {
 	connectRoom(currentRoom);
 	void refreshGlobalPresence();
 	void refreshMemberDirectory();
+	void refreshSpectatorHistory();
 
 	const presenceTimer = window.setInterval(() => {
 		if (!document.hidden) {
@@ -1503,6 +1791,7 @@ onMount(() => {
 	const memberTimer = window.setInterval(() => {
 		if (!document.hidden) {
 			void refreshMemberDirectory();
+			void refreshSpectatorHistory();
 		}
 	}, 15000);
 
@@ -1513,23 +1802,26 @@ onMount(() => {
 		}
 	}, 30000);
 
-	const updateFocusState = () => {
-		if (document.hidden) {
-			isWindowFocused = false;
-			return;
-		}
-		isWindowFocused =
-			typeof document.hasFocus === "function" ? document.hasFocus() : true;
+	const handleWindowFocus = () => {
+		isWindowFocused = true;
+	};
+
+	const handleWindowBlur = () => {
+		isWindowFocused = false;
 	};
 
 	const handleVisibility = () => {
-		updateFocusState();
-		if (document.visibilityState === "visible") {
+		if (document.hidden) {
+			isWindowFocused = false;
+		} else {
+			isWindowFocused =
+				typeof document.hasFocus === "function" ? document.hasFocus() : true;
 			if (baseDocumentTitle && document.title !== baseDocumentTitle) {
 				document.title = baseDocumentTitle;
 			}
 			void refreshGlobalPresence();
 			void refreshMemberDirectory();
+			void refreshSpectatorHistory();
 			if (ws && ws.readyState === WebSocket.OPEN) {
 				ws.send(JSON.stringify({ type: "ping" }));
 			} else if (!ws && !isUnmounted) {
@@ -1538,17 +1830,20 @@ onMount(() => {
 		}
 	};
 	document.addEventListener("visibilitychange", handleVisibility);
-	window.addEventListener("focus", updateFocusState);
-	window.addEventListener("blur", updateFocusState);
+	window.addEventListener("focus", handleWindowFocus);
+	window.addEventListener("blur", handleWindowBlur);
 
 	return () => {
 		isUnmounted = true;
+		if (typeof document !== "undefined") {
+			document.body.classList.remove("is-resizing-chat");
+		}
 		window.clearInterval(presenceTimer);
 		window.clearInterval(memberTimer);
 		window.clearInterval(playlistTimer);
 		document.removeEventListener("visibilitychange", handleVisibility);
-		window.removeEventListener("focus", updateFocusState);
-		window.removeEventListener("blur", updateFocusState);
+		window.removeEventListener("focus", handleWindowFocus);
+		window.removeEventListener("blur", handleWindowBlur);
 		cancelWalinePopup?.();
 		if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
@@ -1566,13 +1861,19 @@ onMount(() => {
 });
 </script>
 
-<div class="flex flex-col h-full w-full min-h-0">
-  <div class="chat-mobile-stage flex flex-1 min-h-0 gap-3 md:gap-4">
+<div class="flex flex-col h-full w-full min-h-0 {isDraggingResizer ? 'select-none pointer-events-none' : ''}">
+  <div
+    bind:this={stageContainerEl}
+    class="chat-mobile-stage flex flex-1 min-h-0 gap-0"
+    style="--chat-left-panel-width: {leftPanelWidth}px; --chat-right-panel-width: {rightPanelWidth}px;"
+  >
     <div class="chat-panel chat-panel-left {activeTab === 'room' ? 'mobile-active' : ''}">
       <RoomPanel
         rooms={rooms}
         currentRoom={currentRoom}
         onlineMembers={onlineMembers}
+        observers={observers}
+        spectatorHistory={spectatorHistory}
         mentionMembers={mentionMembers}
         totalOnlineCount={totalOnlineCount}
         totalChatterCount={totalChatterCount}
@@ -1581,12 +1882,29 @@ onMount(() => {
         connectionState={connectionState}
         isWindowFocused={isWindowFocused}
         interconnectSites={interconnectSites}
+        desktopNotificationEnabled={desktopNotificationEnabled}
+        desktopNotificationPermission={desktopNotificationPermission}
+        roomUnreadCounts={roomUnreadCounts}
         onRoomSelect={handleRoomSelect}
         onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
         onOpenAuth={() => (showAuthModal = true)}
         onLogout={handleLogout}
+        onToggleDesktopNotification={handleToggleDesktopNotification}
       />
+    </div>
+
+    <!-- 左侧可拖拽分割条 -->
+    <div
+      role="separator"
+      tabindex="0"
+      aria-orientation="vertical"
+      aria-label="拖拽调整左侧边栏宽度，双击恢复默认"
+      class="chat-resizer chat-resizer-left {isDraggingResizer === 'left' ? 'is-active' : ''}"
+      onpointerdown={handleStartResizeLeft}
+      ondblclick={handleResetLeftWidth}
+    >
+      <div class="chat-resizer-handle" aria-hidden="true"></div>
     </div>
 
     <div class="chat-panel-center relative flex flex-col min-w-0 min-h-0 {activeTab === 'chat' ? 'mobile-active' : ''}">
@@ -1606,6 +1924,7 @@ onMount(() => {
           currentUser={currentUser}
           onlineMembers={onlineMembers}
           roomOnlineMembers={roomOnlineMembers}
+          observers={observers}
           mentionMembers={mentionMembers}
           isChatTabActive={activeTab === "chat"}
           targetMessageUid={targetMessageUid}
@@ -1678,6 +1997,19 @@ onMount(() => {
       />
     </div>
 
+    <!-- 右侧可拖拽分割条 -->
+    <div
+      role="separator"
+      tabindex="0"
+      aria-orientation="vertical"
+      aria-label="拖拽调整右侧边栏宽度，双击恢复默认"
+      class="chat-resizer chat-resizer-right {isDraggingResizer === 'right' ? 'is-active' : ''}"
+      onpointerdown={handleStartResizeRight}
+      ondblclick={handleResetRightWidth}
+    >
+      <div class="chat-resizer-handle" aria-hidden="true"></div>
+    </div>
+
     <div class="chat-panel chat-panel-right {activeTab === 'music' ? 'mobile-active' : ''}">
       {#key currentRoom}
       <MusicPanel
@@ -1693,6 +2025,7 @@ onMount(() => {
         currentUser={currentUser}
         onlineMemberCount={roomOnlineMembers.length}
         onlineMembers={roomOnlineMembers}
+        observers={observers}
         mentionMembers={mentionMembers}
         clockOffsetMs={clockOffsetMs}
         initialVolume={memoryVolume}

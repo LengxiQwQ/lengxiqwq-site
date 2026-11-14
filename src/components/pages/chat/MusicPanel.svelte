@@ -45,6 +45,7 @@ interface Props {
 	currentUser: ChatSessionUser | null;
 	onlineMemberCount: number;
 	onlineMembers?: ChatOnlineMember[];
+	observers?: ChatOnlineMember[];
 	mentionMembers?: ChatMentionCandidate[];
 	clockOffsetMs: number;
 	initialVolume?: number;
@@ -95,6 +96,7 @@ const {
 	currentUser = null,
 	onlineMemberCount = 0,
 	onlineMembers = [],
+	observers = [],
 	mentionMembers = [],
 	clockOffsetMs = 0,
 	initialVolume = 1,
@@ -566,9 +568,9 @@ const isOwnRequest = $derived(
 			currentPlay.requesterKey === currentUser.userKey,
 	),
 );
-// 当前在线且未静音的听歌人数（仅计在线且 isMuted === false 的人数）
+// 当前在线且未静音的听歌人数（包含登录成员与旁观者中 isMuted === false 的人数）
 const activeListeningCount = $derived(
-	onlineMembers.filter((m) => m.isMuted === false).length,
+	[...onlineMembers, ...observers].filter((m) => m.isMuted === false).length,
 );
 // 能否直接切歌：
 // 1. 冷场轮播歌单：所有人随便切
@@ -2649,7 +2651,7 @@ $effect(() => {
             </div>
 
             {#if queue.length === 0}
-              <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 py-2">
+              <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 pt-2 pb-7">
                 {#if currentPlay?.isFallback}
                   <span class="text-xs font-medium text-[var(--deep-text)]">
                     正在冷场轮播

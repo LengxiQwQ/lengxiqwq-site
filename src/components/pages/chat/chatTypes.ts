@@ -75,9 +75,16 @@ export interface ChatOnlineMember extends ChatSessionUser {
 	status: string;
 	bio?: string;
 	location?: string;
+	device?: string;
+	connectedAt?: number;
 	isMuted?: boolean;
 	/** 浏览器/窗口是否处于焦点中（离开焦点或切出页面时为 false） */
 	isFocused?: boolean;
+	visitCount?: number;
+	firstSeenAt?: number;
+	totalDurationSec?: number;
+	totalDurationFormatted?: string;
+	isReturning?: boolean;
 }
 
 export interface ChatUserDetailSeed {
@@ -94,6 +101,19 @@ export interface ChatUserDetailSeed {
 	status?: string;
 	bio?: string;
 	location?: string;
+	roomId?: string;
+	device?: string;
+	connectedAt?: number;
+	isFocused?: boolean;
+	isMuted?: boolean;
+	disconnectedAt?: number;
+	durationFormatted?: string;
+	roomsVisited?: string[];
+	visitCount?: number;
+	totalVisits?: number;
+	firstSeenAt?: number;
+	totalDurationSec?: number;
+	totalDurationFormatted?: string;
 }
 
 export interface ChatUserRequestedTrackItem {
@@ -361,4 +381,26 @@ export interface PlaylistImportPayload {
 	creator: string;
 	retrievalMode: "full" | "preview";
 	tracks: PlaylistImportTrackInput[];
+}
+
+export interface ChatSpectatorRecord {
+	id: string;
+	visitorKey?: string;
+	ip?: string;
+	location?: string;
+	os?: string;
+	connectedAt: number;
+	connectedTime?: string;
+	disconnectedAt?: number;
+	durationSec: number;
+	durationFormatted: string;
+	visitCount?: number;
+	totalVisits?: number;
+	firstSeenAt?: number;
+	totalDurationSec?: number;
+	totalDurationFormatted?: string;
+	roomsVisited?: string[];
+	lastRoom?: string;
+	listenedMusic?: boolean;
+	userAgent?: string;
 }

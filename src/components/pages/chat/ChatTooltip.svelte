@@ -8,8 +8,8 @@ interface Props {
 	disabled?: boolean;
 	class?: string;
 	tooltipClass?: string;
-	children: Snippet;
-	content?: Snippet;
+	children?: Snippet;
+	content?: Snippet | string;
 }
 
 const {
@@ -37,11 +37,15 @@ const positionClass = $derived(
 </script>
 
 <div class="chat-tooltip-wrap {className}">
-  {@render children()}
+  {#if children}
+    {@render children()}
+  {/if}
   {#if !disabled && (text || content)}
     <span class="chat-tooltip {alignClass} {positionClass} {tooltipClass}" role="tooltip">
-      {#if content}
+      {#if typeof content === "function"}
         {@render content()}
+      {:else if content}
+        {content}
       {:else}
         {text}
       {/if}

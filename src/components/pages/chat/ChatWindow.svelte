@@ -36,6 +36,7 @@ interface Props {
 	currentUser: ChatSessionUser | null;
 	onlineMembers?: ChatOnlineMember[];
 	roomOnlineMembers?: ChatOnlineMember[];
+	observers?: ChatOnlineMember[];
 	mentionMembers?: ChatMentionCandidate[];
 	isChatTabActive?: boolean;
 	targetMessageUid?: string;
@@ -104,6 +105,7 @@ const {
 	currentUser = null,
 	onlineMembers = [],
 	roomOnlineMembers = [],
+	observers = [],
 	mentionMembers = [],
 	isChatTabActive = true,
 	targetMessageUid = "",
@@ -248,12 +250,18 @@ let unreadMentionUids = $state<string[]>([]);
 let alertBannerUid = $state<string | null>(null);
 let highlightedMsgUid = $state("");
 
-let showAllLoaded = $state(false);
 let unreadBarDismissed = $state(false);
 let isUnreadDividerInView = $state(false);
 let highlightUnreadDivider = $state(false);
 let showScrollBottomBtn = $state(false);
 let newMessagesWhileScrolled = $state(0);
+let maxKnownCreatedAt = 0;
+let historyScrollAnchor: {
+	firstMsgUid: string;
+	prevScrollHeight: number;
+	prevScrollTop: number;
+} | null = null;
+let topSentinelEl: HTMLDivElement | null = $state(null);
 
 const skipVoteBanner = $derived.by(() => {
 	const current = musicState?.current ?? null;
@@ -277,9 +285,13 @@ const skipVoteBanner = $derived.by(() => {
 	const hasVotedSkip = Boolean(
 		currentUser && current.skipVotes.includes(currentUser.userKey),
 	);
-	const activeListeningCount = roomOnlineMembers.filter(
-		(m) => m.isMuted === false,
-	).length;
+	const currentRoomObservers = observers.filter(
+		(obs) => !obs.roomId || obs.roomId === roomId,
+	);
+	const activeListeningCount = [
+		...roomOnlineMembers,
+		...currentRoomObservers,
+	].filter((m) => m.isMuted === false).length;
 	const canDirectSkip =
 		Boolean(currentUser) &&
 		(isAdmin ||
@@ -298,7 +310,6 @@ const skipVoteBanner = $derived.by(() => {
 	};
 });
 
-const VISIBLE_FOLD_LIMIT = 40;
 const RECALL_WINDOW_MS = 5 * 60_000;
 const SHOW_MUSIC_NOTICES_KEY = "lengxi_chat_show_music_notices";
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
@@ -374,17 +385,7 @@ const visibleMessages = $derived(
 		: messages.filter((msg) => !isMusicNoticeMessage(msg)),
 );
 
-const isLocalFolded = $derived(
-	!showAllLoaded && visibleMessages.length > VISIBLE_FOLD_LIMIT,
-);
-
-const renderedMessages = $derived(
-	isLocalFolded ? visibleMessages.slice(-VISIBLE_FOLD_LIMIT) : visibleMessages,
-);
-
-const localFoldedCount = $derived(
-	visibleMessages.length - renderedMessages.length,
-);
+const renderedMessages = $derived(visibleMessages);
 
 const hasUnloadedUnread = $derived(
 	Boolean(
@@ -482,6 +483,30 @@ function isMentionedToMe(msg: ChatMessageRecord): boolean {
 	return Boolean(
 		myName && msg.mentions.some((m) => m.trim().toLowerCase() === myName),
 	);
+}
+
+function isReplyToMe(msg: ChatMessageRecord): boolean {
+	if (
+		!currentUser ||
+		msg.kind !== "user" ||
+		msg.userKey === currentUser.userKey
+	) {
+		return false;
+	}
+	if (!msg.replyTo) return false;
+	return Boolean(
+		msg.replyTo.userKey &&
+			(msg.replyTo.userKey === currentUser.userKey ||
+				(currentUser.isAdmin &&
+					(msg.replyTo.userKey === "waline:1" ||
+						msg.replyTo.userKey === "@lengxiqwq:matrix.lengxiqwq.com" ||
+						msg.replyTo.userKey ===
+							"matrix:@lengxiqwq:matrix.lengxiqwq.com"))),
+	);
+}
+
+function isDirectToMe(msg: ChatMessageRecord): boolean {
+	return isMentionedToMe(msg) || isReplyToMe(msg);
 }
 
 const mentionsToMe = $derived(messages.filter(isMentionedToMe));
@@ -672,6 +697,11 @@ function handleMessageScroll() {
 			messages[messages.length - 1].createdAt,
 		);
 	}
+
+	// 向上滚动到接近顶部时自动触发加载更早历史消息
+	if (messageContainer.scrollTop <= 150 && hasMoreHistory && !isLoadingHistory) {
+		triggerAutoLoadOlderHistory();
+	}
 }
 
 async function scrollToBottom(smooth = false) {
@@ -707,7 +737,6 @@ async function scrollToBottom(smooth = false) {
 async function jumpToMessage(msgUid: string) {
 	showMentionHistory = false;
 	isStickyAtBottom = false;
-	showAllLoaded = true;
 	const targetMsg = messages.find((m) => m.msgUid === msgUid);
 	if (currentUser && targetMsg) {
 		writeLastSeenAt(roomId, currentUser.userKey, targetMsg.createdAt);
@@ -737,7 +766,6 @@ async function jumpToMessage(msgUid: string) {
 
 async function scrollToUnreadDivider() {
 	isStickyAtBottom = false;
-	showAllLoaded = true;
 	await tick();
 	const dividerEl = messageContainer?.querySelector<HTMLElement>(
 		"[data-unread-divider]",
@@ -763,7 +791,6 @@ async function scrollToUnreadDivider() {
 function handleJumpToUnread() {
 	isStickyAtBottom = false;
 	if (hasUnloadedUnread) {
-		showAllLoaded = true;
 		onLoadHistory?.(sessionUnreadSince, true);
 		return;
 	}
@@ -777,24 +804,16 @@ function dismissUnreadBar() {
 	}
 }
 
-async function handleExpandOlderMessages() {
+function triggerAutoLoadOlderHistory() {
+	if (!hasMoreHistory || isLoadingHistory || !messageContainer) return;
 	isStickyAtBottom = false;
-	const prevHeight = messageContainer?.scrollHeight ?? 0;
-	const prevTop = messageContainer?.scrollTop ?? 0;
-	if (isLocalFolded) {
-		showAllLoaded = true;
-		await tick();
-		if (messageContainer) {
-			messageContainer.scrollTop =
-				prevTop + (messageContainer.scrollHeight - prevHeight);
-			lastScrollHeight = messageContainer.scrollHeight;
-			lastClientHeight = messageContainer.clientHeight;
-		}
-		return;
-	}
-	if (hasMoreHistory && !isLoadingHistory) {
-		onLoadHistory?.();
-	}
+	const firstUid = messages[0]?.msgUid || "";
+	historyScrollAnchor = {
+		firstMsgUid: firstUid,
+		prevScrollHeight: messageContainer.scrollHeight,
+		prevScrollTop: messageContainer.scrollTop,
+	};
+	onLoadHistory?.();
 }
 
 function dismissAlertBanner() {
@@ -939,12 +958,12 @@ $effect(() => {
 		unreadMentionUids = [];
 		alertBannerUid = null;
 		replyingTo = null;
-		showAllLoaded = false;
 		unreadBarDismissed = false;
 		isUnreadDividerInView = false;
 		highlightUnreadDivider = false;
 		showScrollBottomBtn = false;
 		newMessagesWhileScrolled = 0;
+		maxKnownCreatedAt = 0;
 		lastRenderedVisibleLen = visLen;
 		if (!targetMessageUid) {
 			void scrollToBottom();
@@ -955,16 +974,19 @@ $effect(() => {
 	if (msgs.length > 0 && hydratedRoomKey !== roomHydrationTag) {
 		hydratedRoomKey = roomHydrationTag;
 		seenMessageUids = new Set(msgs.map((m) => m.msgUid));
-		const latestCreatedAt = msgs[msgs.length - 1]?.createdAt ?? 0;
+		maxKnownCreatedAt = msgs.reduce((max, m) => Math.max(max, m.createdAt), 0);
+		const latestCreatedAt = maxKnownCreatedAt;
 
 		if (userKey) {
 			const savedLastSeen = readLastSeenAt(currentRoomId, userKey);
-			if (savedLastSeen > 0) {
-				// 仅当离开聊天室期间有人 @自己 且未读时弹出横幅提醒
+			// 优先采用服务端已读与本地已读的较新时间戳
+			const baselineSeen = Math.max(sessionUnreadSince, savedLastSeen);
+			if (baselineSeen > 0) {
+				// 仅当离线期间确实有未读且有人 @自己 或 回复自己 时，才在初次进入时弹出横幅
 				const missedMentions = msgs.filter(
 					(m) =>
-						isMentionedToMe(m) &&
-						m.createdAt > savedLastSeen &&
+						isDirectToMe(m) &&
+						m.createdAt > baselineSeen &&
 						m.msgUid !== targetMessageUid,
 				);
 				if (missedMentions.length > 0) {
@@ -981,38 +1003,96 @@ $effect(() => {
 			void scrollToBottom();
 		}
 	} else if (hydratedRoomKey === roomHydrationTag) {
-		const newlyArrived = msgs.filter((m) => !seenMessageUids.has(m.msgUid));
-		for (const m of newlyArrived) {
-			seenMessageUids.add(m.msgUid);
-			if (isMentionedToMe(m)) {
-				// 已经在聊天室里看着底部最新消息时，不弹窗横幅；只有不在当前视图/切出标签页/翻上去读历史时才弹横幅
-				const inChatNow = isChatPaneFocused() && isStickyAtBottom;
-				if (!inChatNow) {
-					unreadMentionUids = [...unreadMentionUids, m.msgUid];
-					alertBannerUid = m.msgUid;
-				} else if (userKey) {
-					writeLastSeenAt(currentRoomId, userKey, m.createdAt);
+		// 严密区分：历史向上插入批次 vs 底部实时推送的新消息
+		const olderBatch: ChatMessageRecord[] = [];
+		const liveIncoming: ChatMessageRecord[] = [];
+
+		for (const m of msgs) {
+			if (!seenMessageUids.has(m.msgUid)) {
+				seenMessageUids.add(m.msgUid);
+				if (m.createdAt > maxKnownCreatedAt) {
+					liveIncoming.push(m);
+				} else {
+					olderBatch.push(m);
 				}
-			} else if (userKey && isChatPaneFocused() && isStickyAtBottom) {
-				writeLastSeenAt(currentRoomId, userKey, m.createdAt);
 			}
 		}
 
-		if (visLen !== lastRenderedVisibleLen) {
-			const addedCount = Math.max(0, visLen - lastRenderedVisibleLen);
-			lastRenderedVisibleLen = visLen;
+		// 1. 向上翻看历史加载出的消息批次：
+		// 彻底杜绝历史消息误弹横幅、误增未读计数！
+		if (olderBatch.length > 0) {
+			if (historyScrollAnchor && messageContainer) {
+				const anchor = historyScrollAnchor;
+				historyScrollAnchor = null;
+				void tick().then(() => {
+					if (!messageContainer) return;
+					const newScrollHeight = messageContainer.scrollHeight;
+					const delta = newScrollHeight - anchor.prevScrollHeight;
+					messageContainer.scrollTop = anchor.prevScrollTop + delta;
+					lastScrollHeight = messageContainer.scrollHeight;
+					lastClientHeight = messageContainer.clientHeight;
+				});
+			}
+		}
+
+		// 2. 真正的新到达消息（底部实时推送）：
+		if (liveIncoming.length > 0) {
+			for (const m of liveIncoming) {
+				if (m.createdAt > maxKnownCreatedAt) {
+					maxKnownCreatedAt = m.createdAt;
+				}
+				if (isDirectToMe(m)) {
+					const inChatNow = isChatPaneFocused() && isStickyAtBottom;
+					if (!inChatNow) {
+						unreadMentionUids = [...unreadMentionUids, m.msgUid];
+						alertBannerUid = m.msgUid;
+					} else if (userKey) {
+						writeLastSeenAt(currentRoomId, userKey, m.createdAt);
+					}
+				} else if (userKey && isChatPaneFocused() && isStickyAtBottom) {
+					writeLastSeenAt(currentRoomId, userKey, m.createdAt);
+				}
+			}
+
 			if (isStickyAtBottom && !targetMessageUid) {
 				void scrollToBottom();
-			} else if (!isStickyAtBottom && addedCount > 0) {
-				newMessagesWhileScrolled += addedCount;
+			} else if (!isStickyAtBottom) {
+				newMessagesWhileScrolled += liveIncoming.length;
 				showScrollBottomBtn = getScrollGap() > 180;
 			}
 		}
+
+		lastRenderedVisibleLen = visLen;
 	}
 
 	if (replyingTo && !msgs.some((m) => m.msgUid === replyingTo?.msgUid)) {
 		replyingTo = null;
 	}
+});
+
+$effect(() => {
+	const el = topSentinelEl;
+	const container = messageContainer;
+	if (
+		!el ||
+		!container ||
+		!hasMoreHistory ||
+		typeof IntersectionObserver === "undefined"
+	) {
+		return;
+	}
+	const observer = new IntersectionObserver(
+		(entries) => {
+			for (const entry of entries) {
+				if (entry.isIntersecting && hasMoreHistory && !isLoadingHistory) {
+					triggerAutoLoadOlderHistory();
+				}
+			}
+		},
+		{ root: container, rootMargin: "200px 0px 0px 0px" },
+	);
+	observer.observe(el);
+	return () => observer.disconnect();
 });
 
 $effect(() => {
@@ -1055,12 +1135,10 @@ $effect(() => {
 $effect(() => {
 	const container = messageContainer;
 	const markerUid = firstUnreadMsgUid;
-	const _foldState = showAllLoaded;
 	if (
 		!container ||
 		!markerUid ||
 		hasUnloadedUnread ||
-		isLocalFolded ||
 		typeof IntersectionObserver === "undefined"
 	) {
 		isUnreadDividerInView = false;
@@ -1590,7 +1668,10 @@ function removePendingImage(index: number) {
           <span class="chat-switch-thumb"></span>
         </span>
       </button>
-      <ChatTooltip text={isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount} 人在线 · 累计 ${totalChatterCount} 人聊过天` : `${onlineCount} 人在线`}>
+      <ChatTooltip
+        position="bottom"
+        text={isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount} 人在线 · 累计 ${totalChatterCount} 人聊过天` : `${onlineCount} 人在线`}
+      >
         <div
           class="text-xs text-[var(--deep-text)] dark:text-white/85 px-2.5 py-1 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] flex items-center gap-1.5"
         >
@@ -1753,7 +1834,7 @@ function removePendingImage(index: number) {
             >
               <span class="w-2 h-2 rounded-full bg-[var(--primary)] shrink-0 animate-pulse"></span>
               <span class="font-bold text-[var(--chat-accent-text)] shrink-0">
-                {activeAlertMessage.name} @了你
+                {activeAlertMessage.name} {isReplyToMe(activeAlertMessage) ? "回复了你" : "@了你"}
               </span>
               <span class="truncate text-[var(--deep-text)] dark:text-white/85">
                 {activeAlertMessage.content || "[图片消息]"}
@@ -1786,15 +1867,15 @@ function removePendingImage(index: number) {
                 <polyline points="17 18 12 13 7 18" />
               </svg>
               <span class="font-semibold text-[var(--deep-text)] dark:text-white/90 truncate">
-                上次 {formatUnreadTime(sessionUnreadSince)} 后有 {unreadBadgeCount} 条未读消息
+                离开期间有 {unreadBadgeCount} 条未读消息 ({formatUnreadTime(sessionUnreadSince)})
               </span>
               <span class="chat-mention-jump-pill shrink-0">
                 {#if isLoadingHistory}
-                  正在展开...
-                {:else if hasUnloadedUnread || isLocalFolded}
-                  展开并定位 ↑
+                  正在加载历史...
+                {:else if hasUnloadedUnread}
+                  查看历史消息 ({unreadBadgeCount}条) ↑
                 {:else}
-                  回到上次阅读 ↑
+                  回到上次阅读位置 ↑
                 {/if}
               </span>
             </button>
@@ -1817,22 +1898,32 @@ function removePendingImage(index: number) {
       class="flex-1 overflow-y-auto custom-scrollbar px-4 md:px-5 py-4 min-h-0"
     >
       <div bind:this={messageContentEl} class="min-h-full flex flex-col gap-3">
-        {#if isLocalFolded || hasMoreHistory}
-          <div class="flex justify-center pb-1">
-            <button
-              type="button"
-              disabled={isLoadingHistory}
-              class="chat-history-expand-btn"
-              onclick={() => void handleExpandOlderMessages()}
-            >
-              {#if isLoadingHistory}
-                正在加载更早的消息...
-              {:else if isLocalFolded}
-                还有 {localFoldedCount} 条较早消息已折叠 · 点击展开
-              {:else}
-                ↑ 加载更早的历史消息
-              {/if}
-            </button>
+        {#if hasMoreHistory}
+          <div class="flex justify-center py-1.5" bind:this={topSentinelEl}>
+            {#if isLoadingHistory}
+              <div class="flex items-center gap-2 text-xs text-[var(--chat-meta-color)] font-medium py-1 px-3 rounded-full bg-black/5 dark:bg-white/5 animate-pulse">
+                <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                </svg>
+                <span>正在加载更早的消息...</span>
+              </div>
+            {:else}
+              <button
+                type="button"
+                class="chat-history-expand-btn text-xs py-1 px-3 rounded-full opacity-75 hover:opacity-100 transition-opacity"
+                onclick={() => triggerAutoLoadOlderHistory()}
+                title="向上滚动自动加载，或点击手动加载"
+              >
+                ↑ 向上滚动加载更早历史
+              </button>
+            {/if}
+          </div>
+        {:else if messages.length > 0}
+          <div class="flex items-center justify-center gap-2 py-3 text-[11px] text-[var(--chat-meta-color)] select-none opacity-60">
+            <span class="w-8 h-px bg-current opacity-30"></span>
+            <span>已经到达消息的最开端</span>
+            <span class="w-8 h-px bg-current opacity-30"></span>
           </div>
         {/if}
 
@@ -2177,7 +2268,7 @@ function removePendingImage(index: number) {
 
       <!-- 待发送附件预览条 -->
       {#if pendingImages.length > 0 || isUploadingImage || isUploadingMedia || uploadError}
-        <div class="px-3 pt-2.5 pb-1 flex flex-wrap items-center gap-2 border-b border-black/5 dark:border-white/10">
+        <div class="chat-attachment-bar flex flex-wrap items-center gap-2 border-b border-black/5 dark:border-white/10">
           {#each pendingImages as att, idx (att.url)}
             {#if att.type === "image"}
               <div class="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--chat-divider-color)] bg-black/10 shrink-0">
@@ -2228,7 +2319,7 @@ function removePendingImage(index: number) {
       <textarea
         bind:this={inputEl}
         class="chat-input-box custom-scrollbar"
-        rows="2"
+        rows="3"
         placeholder={currentUser
           ? `以 ${currentUser.name} 的身份在 #${roomName} 说点什么...`
           : `在 #${roomName} 中说点什么（发送前需先登录）...`}
@@ -2254,7 +2345,7 @@ function removePendingImage(index: number) {
       ></textarea>
 
       <!-- 单行底栏：左 表情/传图 + 右 快捷提示/发送按钮 -->
-      <div class="px-2.5 pb-2 pt-1 flex items-center justify-between gap-2">
+      <div class="chat-input-toolbar flex items-center justify-between gap-2">
         <div class="flex items-center gap-1 shrink-0">
           <!-- 颜文字 / QQ / 贴纸统一选择器按钮 -->
           <ChatTooltip text="表情与贴纸" align="left">
