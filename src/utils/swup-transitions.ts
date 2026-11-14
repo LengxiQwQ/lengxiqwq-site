@@ -128,29 +128,9 @@ function syncChatPageRuntimeState(isChatPage: boolean): void {
 		const raw = localStorage.getItem("fireflyChatAppearance");
 		if (!raw) return;
 		const prefs = JSON.parse(raw) as {
-			bgBlur?: unknown;
-			bgDim?: unknown;
-			panelBlur?: unknown;
-			panelOpacity?: unknown;
-			panelRadius?: unknown;
 			chatScheme?: unknown;
 			chatHue?: unknown;
 		};
-		if (typeof prefs.bgBlur === "number") {
-			root.style.setProperty("--chat-bg-blur", `${prefs.bgBlur}px`);
-		}
-		if (typeof prefs.bgDim === "number") {
-			root.style.setProperty("--chat-bg-dim", String(prefs.bgDim / 100));
-		}
-		if (typeof prefs.panelBlur === "number") {
-			root.style.setProperty("--chat-panel-blur", `${prefs.panelBlur}px`);
-		}
-		if (typeof prefs.panelOpacity === "number") {
-			root.style.setProperty("--chat-panel-opacity", `${prefs.panelOpacity}%`);
-		}
-		if (typeof prefs.panelRadius === "number") {
-			root.style.setProperty("--chat-panel-radius", `${prefs.panelRadius}px`);
-		}
 		if (prefs.chatScheme === "light" || prefs.chatScheme === "dark") {
 			root.setAttribute("data-chat-scheme", prefs.chatScheme);
 		}

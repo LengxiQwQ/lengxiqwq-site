@@ -75,11 +75,9 @@ function isExternalMember(member: { userKey?: string; badge?: string }): boolean
 	);
 }
 
-/** 互联茶室模式：本站在线成员 */
+/** 互联茶室模式：本站在线成员（全站通用） */
 const siteOnlineMembers = $derived(
-	onlineMembers.filter(
-		(m) => !isExternalMember(m) && (!m.roomId || m.roomId === currentRoom),
-	),
+	onlineMembers.filter((m) => !isExternalMember(m)),
 );
 
 /** 互联茶室模式：其他网站/外部在线成员 */
@@ -87,11 +85,9 @@ const externalOnlineMembers = $derived(
 	onlineMembers.filter((m) => isExternalMember(m)),
 );
 
-/** 本站普通房间模式：纯净本站在线成员（彻底排除外部互联成员） */
+/** 本站普通房间模式：纯净本站在线成员（彻底排除外部互联成员，包含全站在线成员） */
 const normalOnlineMembers = $derived(
-	onlineMembers.filter(
-		(m) => !isExternalMember(m) && (!m.roomId || m.roomId === currentRoom),
-	),
+	onlineMembers.filter((m) => !isExternalMember(m)),
 );
 
 const interconnectRooms = $derived(
