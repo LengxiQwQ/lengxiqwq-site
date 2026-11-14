@@ -65,7 +65,14 @@ const isCurrentInterconnect = $derived(INTERCONNECT_ROOM_IDS.has(currentRoom));
 function isExternalMember(member: { userKey?: string; badge?: string }): boolean {
 	if (!member) return false;
 	const key = member.userKey || "";
-	return key.startsWith("matrix:") || member.badge === "互联茶友";
+	return (
+		key.startsWith("matrix:") ||
+		(key.startsWith("@") && key.includes(":")) ||
+		member.badge === "互联茶友" ||
+		member.badge === "Detached" ||
+		member.badge === "听雨" ||
+		member.badge === "GBK"
+	);
 }
 
 /** 互联茶室模式：本站在线成员 */

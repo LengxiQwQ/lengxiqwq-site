@@ -83,9 +83,32 @@ let localVisibleLimit = $state(TRACK_PAGE_SIZE);
 let trackTab = $state<"recent" | "top">("recent");
 let bodyContainerEl: HTMLDivElement | null = $state(null);
 let lockedMinHeight = $state(0);
-const matrixUserId = $derived(
-	seed?.userKey.startsWith("matrix:") ? seed.userKey.slice("matrix:".length) : "",
-);
+const matrixUserId = $derived.by(() => {
+	if (!seed?.userKey) return "";
+	if (seed.userKey.startsWith("matrix:")) {
+		return seed.userKey.slice("matrix:".length);
+	}
+	if (seed.userKey.startsWith("@") && seed.userKey.includes(":")) {
+		return seed.userKey;
+	}
+	return "";
+});
+
+const isExternalUser = $derived.by(() => {
+	if (matrixUserId) return true;
+	if (!seed?.userKey) return false;
+	const key = seed.userKey;
+	if (key.startsWith("matrix:") || (key.startsWith("@") && key.includes(":"))) return true;
+	if (
+		seed.badge === "互联茶友" ||
+		seed.badge === "Detached" ||
+		seed.badge === "听雨" ||
+		seed.badge === "GBK"
+	) {
+		return true;
+	}
+	return false;
+});
 
 const fallbackData = $derived.by<{
 	profile: ChatUserDetailProfile;
@@ -96,7 +119,14 @@ const fallbackData = $derived.by<{
 } | null>(() => {
 	if (!seed) return null;
 	const onlineMatch = onlineMembers.find((m) => m.userKey === seed.userKey);
-	const isSelf = currentUser?.userKey === seed.userKey;
+	const isSelf = Boolean(
+		currentUser?.userKey &&
+			currentUser.userKey === seed.userKey &&
+			!isExternalUser &&
+			!matrixUserId &&
+			!seed.userKey.startsWith("matrix:") &&
+			!seed.userKey.startsWith("@"),
+	);
 	const selfUser = isSelf ? currentUser : null;
 	const userMessages = messages.filter(
 		(m) => m.kind === "user" && m.userKey === seed.userKey,
@@ -114,8 +144,12 @@ const fallbackData = $derived.by<{
 			seed.isAdmin ??
 			latestMsg?.isAdmin,
 	);
-	const badge = isAdmin ? "站长" : authType === "waline" ? "认证" : "访客";
-	const badgeType = isAdmin ? "host" : authType === "waline" ? "accent" : "tag";
+	const badge = isAdmin
+		? "站长"
+		: (seed.badge || onlineMatch?.badge || (authType === "waline" ? "认证" : "访客"));
+	const badgeType = isAdmin
+		? "host"
+		: (seed.badgeType || onlineMatch?.badgeType || (authType === "waline" ? "accent" : "tag"));
 
 	const userLogs = musicHistoryLogs.filter(
 		(l) => l.requesterKey === seed.userKey,
@@ -243,7 +277,16 @@ const effectiveCustomBadges = $derived.by<ChatCustomBadge[]>(() => {
 });
 
 async function handleSaveBadges() {
-	if (!profile || !currentUser?.isAdmin) return;
+	if (
+		!profile ||
+		!currentUser?.isAdmin ||
+		isExternalUser ||
+		matrixUserId ||
+		profile.userKey.startsWith("matrix:") ||
+		profile.userKey.startsWith("@")
+	) {
+		return;
+	}
 	const sanitized: ChatCustomBadge[] = managedBadges
 		.map((b) => ({
 			text: (b.text || "").trim().slice(0, 8),
@@ -302,7 +345,15 @@ function handleRemoveBadge(index: number) {
 }
 
 const isSelf = $derived(
-	Boolean(currentUser && profile && currentUser.userKey === profile.userKey),
+	Boolean(
+		currentUser &&
+			profile &&
+			currentUser.userKey === profile.userKey &&
+			!isExternalUser &&
+			!matrixUserId &&
+			!profile.userKey.startsWith("matrix:") &&
+			!profile.userKey.startsWith("@"),
+	),
 );
 const displayedTracks = $derived.by<ChatUserRequestedTrackItem[]>(() => {
 	if (remoteProfile) return remoteTracks;
@@ -354,6 +405,9 @@ $effect(() => {
 	remoteProfile = null;
 	if (
 		matrixUserId ||
+		isExternalUser ||
+		currentSeed.userKey.startsWith("matrix:") ||
+		currentSeed.userKey.startsWith("@") ||
 		currentSeed.userKey.startsWith("name:") ||
 		currentSeed.userKey === "system:fallback"
 	) {
@@ -550,11 +604,11 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
 </script>
 
 <ChatModal
-  open={open && Boolean(profile || matrixUserId)}
+  open={open && Boolean(profile || matrixUserId || isExternalUser)}
   title="成员名片"
   ariaLabel={seed ? `${seed.name} 的个人资料` : "成员名片"}
-  size={matrixUserId ? "md" : "lg"}
-  fillHeightOnDesktop={!matrixUserId}
+  size={matrixUserId || isExternalUser ? "md" : "lg"}
+  fillHeightOnDesktop={!(matrixUserId || isExternalUser)}
   {lockedMinHeight}
   {onClose}
 >
@@ -564,7 +618,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
     {/if}
   {/snippet}
 
-  {#if matrixUserId && seed}
+  {#if (matrixUserId || isExternalUser) && seed}
     {@const origin = resolveExternalOrigin({ name: seed.name, userKey: seed.userKey }, interconnectSites)}
     {@const cleanName = origin.cleanName || seed.name}
     {@const matchedSite = origin.site}
@@ -703,13 +757,13 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           <div class="flex items-center justify-between gap-2">
             <span class="shrink-0">Matrix 账号:</span>
             <a
-              href={`https://matrix.to/#/${encodeURIComponent(matrixUserId)}`}
+              href={`https://matrix.to/#/${encodeURIComponent(matrixUserId || seed.userKey)}`}
               target="_blank"
               rel="noopener noreferrer"
               class="text-[var(--chat-accent-text)] hover:underline truncate"
-              title={matrixUserId}
+              title={matrixUserId || seed.userKey}
             >
-              {matrixUserId}
+              {matrixUserId || seed.userKey}
             </a>
           </div>
           {#if origin.host}
@@ -871,7 +925,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               编辑我的资料
             </button>
           {:else}
-            {@const isExternalProfile = Boolean(profile.userKey?.startsWith("matrix:") || profile.badge === "互联茶友")}
+            {@const isExternalProfile = Boolean(isExternalUser || matrixUserId || profile.userKey?.startsWith("matrix:") || profile.userKey?.startsWith("@") || profile.badge === "互联茶友")}
             <button
               type="button"
               disabled={isExternalProfile}
@@ -892,8 +946,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           {/if}
         </div>
 
-        <!-- 站长专属：身份头衔管理 -->
-        {#if currentUser?.isAdmin && profile}
+        <!-- 站长专属：身份头衔管理（严格隔离：绝不允许设置站外/互联用户） -->
+        {#if currentUser?.isAdmin && profile && !isExternalUser && !matrixUserId && !profile.userKey.startsWith("matrix:") && !profile.userKey.startsWith("@")}
           <div class="rounded-xl bg-(--btn-regular-bg) p-3 space-y-2.5 border border-amber-500/25 dark:border-amber-400/25">
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-1.5 min-w-0">

@@ -93,7 +93,11 @@ const isExternal = $derived(
 		!isFromOurServer &&
 		(message.source === "matrix" ||
 			message.userKey.startsWith("matrix:") ||
-			message.badge === "互联茶友"),
+			(message.userKey.startsWith("@") && message.userKey.includes(":")) ||
+			message.badge === "互联茶友" ||
+			message.badge === "Detached" ||
+			message.badge === "听雨" ||
+			message.badge === "GBK"),
 );
 
 const externalOrigin = $derived.by(() => {
@@ -207,7 +211,7 @@ function handleAvatarClick() {
 	if (onOpenUserProfile && message.userKey) {
 		onOpenUserProfile({
 			userKey: message.userKey,
-			authType: message.source === "matrix"
+			authType: (isExternal || message.source === "matrix" || message.userKey.startsWith("matrix:") || message.userKey.startsWith("@"))
 				? undefined
 				: message.userKey.startsWith("waline:") ? "waline" : "guest",
 			name: message.name,

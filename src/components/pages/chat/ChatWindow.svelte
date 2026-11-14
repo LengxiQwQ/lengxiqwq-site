@@ -405,12 +405,30 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 	for (const m of mentionMembers) {
 		if (!m.userKey || m.userKey === currentUser?.userKey) continue;
 		// 站外跨 Matrix 成员暂不支持提及，排除出 @ 自动补全
-		if (m.userKey.startsWith("matrix:")) continue;
+		if (
+			m.userKey.startsWith("matrix:") ||
+			(m.userKey.startsWith("@") && m.userKey.includes(":")) ||
+			m.badge === "互联茶友" ||
+			m.badge === "Detached" ||
+			m.badge === "听雨" ||
+			m.badge === "GBK"
+		) {
+			continue;
+		}
 		map.set(m.userKey, m);
 	}
 	for (const m of onlineMembers) {
 		if (!m.userKey || m.userKey === currentUser?.userKey) continue;
-		if (m.userKey.startsWith("matrix:")) continue;
+		if (
+			m.userKey.startsWith("matrix:") ||
+			(m.userKey.startsWith("@") && m.userKey.includes(":")) ||
+			m.badge === "互联茶友" ||
+			m.badge === "Detached" ||
+			m.badge === "听雨" ||
+			m.badge === "GBK"
+		) {
+			continue;
+		}
 		const prev = map.get(m.userKey);
 		map.set(m.userKey, {
 			userKey: m.userKey,
