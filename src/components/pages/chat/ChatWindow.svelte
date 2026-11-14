@@ -1569,7 +1569,7 @@ function removePendingImage(index: number) {
                   (isSelf && serverNow - msg.createdAt <= RECALL_WINDOW_MS)),
             )}
             {@const canDelete = Boolean(
-              currentUser && msg.kind === "user" && isAdmin,
+              currentUser && msg.kind === "user" && isAdmin && roomId !== "interconnect",
             )}
             <ChatMessage
               message={msg}

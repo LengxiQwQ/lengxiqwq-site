@@ -17,6 +17,7 @@
 - **本地 dev**：由用户自己在终端跑 `pnpm dev`（http://localhost:4321）。Agent 不启动、不重启、不终止它。
 - **不要擅自 build**：样式、数值、文案、排版改动靠 HMR 即时生效；全量构建只在用户明确要求时执行。
 - **不要擅自提交**：只有用户说“做完了”或“提交推送”才允许 `git commit` / `git push`。
+- **VPS 与聊天室**：VPS 运行独立聊天网关与 Matrix 联邦，SSH 连接 `root@43.134.93.105`（私钥 `$HOME\.ssh\id_ed25519_antigravity`），详见第 8.5 节。
 
 ---
 
@@ -199,6 +200,68 @@ lengxiqwq-site/
 - 文章 schema：主仓 `src/content.config.ts`；文章数据：内容仓 `content/posts/`。
 - 友链抓取核心：主仓 `scripts/check-friends-reciprocal.ts`；友链名单：内容仓 `config/friendsConfig.ts`。
 - 评论前端配置：内容仓 `config/commentConfig.ts`；Waline 后端：内容仓 `waline/`。
+
+---
+
+## 8.5. VPS 基础设施与聊天室系统运维速查（新会话指南）
+
+> **一句话定位**：网站主体是纯静态博客（部署在 GitHub Pages），动态互动核心（实时双房间聊天室、点歌台、音频流代理、Matrix 跨站互联）部署在独立腾讯云 VPS。
+
+### A. 怎么连接 VPS（SSH 速查）
+
+- **IP / 端口 / 用户**：`43.134.93.105`，端口 `22`，用户 `root`
+- **SSH 私钥路径**：`$HOME\.ssh\id_ed25519_antigravity`
+- **连接命令模板**（Windows PowerShell 下**务必加 `-n`**，避免子进程等待标准输入挂起）：
+  ```powershell
+  ssh -n -i $HOME\.ssh\id_ed25519_antigravity -o BatchMode=yes -o StrictHostKeyChecking=no root@43.134.93.105 "<命令>"
+  ```
+
+### B. 项目整体是怎么运作的（架构与协作流）
+
+1. **主代码仓** (`d:\Projects\lengxiqwq-site`)：负责页面 UI、组件交互（Astro/Svelte）、样式（Tailwind 4）与构建脚本，代码开源。
+2. **私有内容仓** (`d:\Projects\lengxiqwq-site-content`)：负责文章正文、动态、相册、个人专属配置与私密数据，不对外开源。
+3. **CI/CD 自动化**：用户修改内容仓或主仓推送后，GitHub Actions 自动拉取内容仓物化到主仓，全量构建静态 HTML/JS 并部署到 GitHub Pages（`https://lengxiqwq.com`）。
+4. **边缘网关 Worker** (`worker/`)：Cloudflare Worker 提供说说、朋友圈抓取、媒体直传等轻量无状态 API。
+
+### C. 聊天室系统是怎么运作的（拓扑与数据流）
+
+```text
+用户浏览器前端 (src/components/pages/chat/)
+    │  WSS: wss://chat-server.lengxiqwq.com/ws
+    ▼
+[VPS 外部入口] Caddy (Docker 容器, 自动管理 HTTPS 证书)
+    │  反向代理至 127.0.0.1:3001
+    ▼
+[核心网关进程] Node 22 (PM2 守护: chat-server, 入口: /opt/chat-server/server.mjs)
+    ├── 房间 1: #闲聊 (chat) ── 本地纯站内私密聊天，不上 Matrix
+    ├── 房间 2: #互联茶室 (interconnect) ── 接入 Matrix 跨站联邦大厅
+    │       │
+    │       ▼ (内部 HTTP: 127.0.0.1:6167)
+    │   [Matrix 2.0 服务端] Tuwunel (Docker 容器, 域名 matrix.lengxiqwq.com)
+    │       │
+    │       ▼ (Matrix 联邦协议 Federation)
+    │   跨站互联大厅 (#lobby:detached.online, 与听雨茶室、GBK、Detached 同步)
+    │
+    ├── [点歌台与音频流] (/opt/chat-server/src/music/)
+    │       QQ 音乐 320k 直链解析 + /api/music/stream 签名流代理 (支持 HTTP 206 断点续传)
+    │       外部歌单曲目（如网易云来源）通过 resolvePlaylistTrack 自动同名同歌手跨平台匹配
+    │
+    └── [数据持久化] (/opt/chat-server/data/)
+            ├── messages_chat.json & messages_interconnect.json (消息库，原子写入)
+            ├── members.json (成员名录与自定义头像/资料持久化)
+            ├── music_history.json & music_request_logs.json (点歌历史榜单与流水)
+            └── playlists.json & playlist_details.json (歌单与曲目缓存)
+```
+
+### D. VPS 常用运维与自检命令
+
+| 操作需求 | 对应执行命令 |
+| :--- | :--- |
+| 查看聊天网关状态与内存 | `ssh -n ... "pm2 status chat-server"` |
+| 查看最新实时日志 | `ssh -n ... "pm2 logs chat-server --lines 50 --nostream"` |
+| 重启聊天服务（热更新代码后） | `ssh -n ... "pm2 restart chat-server"` |
+| 查看 Docker 容器（Caddy/Tuwunel） | `ssh -n ... "docker ps"` |
+| 查看持久化数据目录 | `ssh -n ... "ls -la /opt/chat-server/data"` |
 
 ---
 
