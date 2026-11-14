@@ -70,6 +70,61 @@ const {
 }: Props = $props();
 
 let showQuickReaction = $state(false);
+let showMoreMenu = $state(false);
+let copySuccess = $state(false);
+let reactionEl = $state<HTMLElement | null>(null);
+let moreMenuEl = $state<HTMLElement | null>(null);
+
+const hasMoreActions = $derived(
+	Boolean(
+		(message.content && message.content.trim()) ||
+			(onEdit && canEdit && !message.replyTo?.isRecalled) ||
+			(isAdmin && onPin) ||
+			(canRecall && onRecall) ||
+			(canDelete && onDelete),
+	),
+);
+
+async function handleCopy() {
+	if (!message.content) return;
+	try {
+		await navigator.clipboard.writeText(message.content);
+		copySuccess = true;
+		setTimeout(() => {
+			copySuccess = false;
+			showMoreMenu = false;
+		}, 800);
+	} catch {
+		showMoreMenu = false;
+	}
+}
+
+$effect(() => {
+	if (!showQuickReaction && !showMoreMenu) return;
+	function handleOutside(e: PointerEvent) {
+		const target = e.target as Node | null;
+		if (
+			showQuickReaction &&
+			reactionEl &&
+			target &&
+			!reactionEl.contains(target)
+		) {
+			showQuickReaction = false;
+		}
+		if (
+			showMoreMenu &&
+			moreMenuEl &&
+			target &&
+			!moreMenuEl.contains(target)
+		) {
+			showMoreMenu = false;
+		}
+	}
+	window.addEventListener("pointerdown", handleOutside, { capture: true });
+	return () => {
+		window.removeEventListener("pointerdown", handleOutside, { capture: true });
+	};
+});
 let activeAudioUrl = $state<string | null>(null);
 let audioPlayer = $state<HTMLAudioElement | null>(null);
 
@@ -333,6 +388,188 @@ function formatReactionTooltip(users: string[]): string {
   {/if}
 {/snippet}
 
+{#snippet renderFloatingActions(isSelfMsg: boolean)}
+  {#if onReaction || onReply || hasMoreActions}
+    <div
+      class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction || showMoreMenu ? 'is-active' : ''}"
+      role="toolbar"
+      aria-label="消息快捷操作"
+    >
+      <!-- 快捷表情反应（Telegram 风格 SmilePlus 图标） -->
+      {#if onReaction}
+        <div class="relative inline-flex items-center" bind:this={reactionEl}>
+          <button
+            type="button"
+            class="chat-action-icon-btn {showQuickReaction ? 'active' : ''}"
+            aria-label="添加表情反应"
+            title="表情回应"
+            onclick={(e) => {
+              e.stopPropagation();
+              showQuickReaction = !showQuickReaction;
+              showMoreMenu = false;
+            }}
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 11v1a10 10 0 1 1-9-10" />
+              <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+              <line x1="9" y1="9" x2="9.01" y2="9" />
+              <line x1="15" y1="9" x2="15.01" y2="9" />
+              <path d="M16 5h6" />
+              <path d="M19 2v6" />
+            </svg>
+          </button>
+
+          {#if showQuickReaction}
+            <div class="chat-quick-reactions-popover {isSelfMsg ? 'self-popover' : 'other-popover'}">
+              {#each ["👍", "❤️", "😂", "🎉", "🔥", "👀"] as em (em)}
+                <button
+                  type="button"
+                  class="chat-quick-reaction-btn"
+                  onclick={() => {
+                    onReaction?.(message.msgUid, em);
+                    showQuickReaction = false;
+                  }}
+                >
+                  {em}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- 快捷回复 -->
+      {#if onReply}
+        <button
+          type="button"
+          class="chat-action-icon-btn"
+          aria-label="回复消息"
+          title="回复"
+          onclick={(e) => {
+            e.stopPropagation();
+            onReply?.(message);
+          }}
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="9 17 4 12 9 7" />
+            <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+          </svg>
+        </button>
+      {/if}
+
+      <!-- 更多操作下拉菜单（···） -->
+      {#if hasMoreActions}
+        <div class="relative inline-flex items-center" bind:this={moreMenuEl}>
+          <button
+            type="button"
+            class="chat-action-icon-btn {showMoreMenu ? 'active' : ''}"
+            aria-label="更多操作"
+            title="更多"
+            onclick={(e) => {
+              e.stopPropagation();
+              showMoreMenu = !showMoreMenu;
+              showQuickReaction = false;
+            }}
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="1.5" />
+              <circle cx="12" cy="12" r="1.5" />
+              <circle cx="19" cy="12" r="1.5" />
+            </svg>
+          </button>
+
+          {#if showMoreMenu}
+            <div class="chat-msg-menu-popover {isSelfMsg ? 'self-menu' : 'other-menu'}">
+              {#if message.content && message.content.trim()}
+                <button
+                  type="button"
+                  class="chat-msg-menu-item"
+                  onclick={handleCopy}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                  </svg>
+                  <span>{copySuccess ? "已复制 ✓" : "复制内容"}</span>
+                </button>
+              {/if}
+
+              {#if onEdit && canEdit && !message.replyTo?.isRecalled}
+                <button
+                  type="button"
+                  class="chat-msg-menu-item"
+                  onclick={() => {
+                    showMoreMenu = false;
+                    onEdit?.(message);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                  </svg>
+                  <span>编辑消息</span>
+                </button>
+              {/if}
+
+              {#if isAdmin && onPin}
+                <button
+                  type="button"
+                  class="chat-msg-menu-item"
+                  onclick={() => {
+                    showMoreMenu = false;
+                    onPin?.(message.msgUid, isPinned);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="17" x2="12" y2="22" />
+                    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+                  </svg>
+                  <span>{isPinned ? "取消置顶" : "置顶消息"}</span>
+                </button>
+              {/if}
+
+              {#if canRecall && onRecall}
+                <button
+                  type="button"
+                  class="chat-msg-menu-item"
+                  onclick={() => {
+                    showMoreMenu = false;
+                    onRecall?.(message.msgUid);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                  <span>撤回消息</span>
+                </button>
+              {/if}
+
+              {#if canDelete && onDelete}
+                <div class="chat-msg-menu-divider"></div>
+                <button
+                  type="button"
+                  class="chat-msg-menu-item danger"
+                  onclick={() => {
+                    showMoreMenu = false;
+                    onDelete?.(message.msgUid);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 6h18" />
+                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                  </svg>
+                  <span>删除消息</span>
+                </button>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
 {#snippet renderReactions(alignEnd: boolean)}
   {@const reactionEntries = Object.entries(message.reactions || {}).filter(([_, users]) => Array.isArray(users) && users.length > 0)}
   {#if reactionEntries.length > 0}
@@ -528,89 +765,8 @@ function formatReactionTooltip(users: string[]): string {
     </button>
 
     <div class="flex flex-col items-end max-w-[74%] min-w-0">
-      {#if senderDisplayName || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete) || onReaction || onEdit || (isAdmin && onPin)}
+      {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0)}
         <div class="flex items-center justify-end gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
-          {#if onReaction}
-            <div
-              class="relative inline-flex items-center"
-              tabindex="-1"
-              onfocusout={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget)) {
-                  showQuickReaction = false;
-                }
-              }}
-            >
-              <button
-                type="button"
-                class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
-                aria-label="添加表情反应"
-                onclick={() => showQuickReaction = !showQuickReaction}
-              >
-                😊
-              </button>
-              {#if showQuickReaction}
-                <div class="absolute bottom-full right-0 mb-1 z-30 chat-quick-reactions">
-                  {#each ["👍", "❤️", "😂", "🎉", "🔥", "👀"] as em (em)}
-                    <button
-                      type="button"
-                      class="chat-quick-reaction-btn"
-                      onclick={() => {
-                        onReaction?.(message.msgUid, em);
-                        showQuickReaction = false;
-                      }}
-                    >
-                      {em}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          {/if}
-          {#if onEdit && canEdit && !message.replyTo?.isRecalled}
-            <button
-              type="button"
-              class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
-              onclick={() => onEdit?.(message)}
-            >
-              编辑
-            </button>
-          {/if}
-          {#if isAdmin && onPin}
-            <button
-              type="button"
-              class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
-              onclick={() => onPin?.(message.msgUid, isPinned)}
-            >
-              {isPinned ? "取消置顶" : "置顶"}
-            </button>
-          {/if}
-          {#if canDelete && onDelete}
-            <button
-              type="button"
-              class="chat-msg-action-btn hover:text-red-500"
-              onclick={() => onDelete?.(message.msgUid)}
-            >
-              删除
-            </button>
-          {/if}
-          {#if canRecall && onRecall}
-            <button
-              type="button"
-              class="chat-msg-action-btn hover:text-[var(--primary)]"
-              onclick={() => onRecall?.(message.msgUid)}
-            >
-              撤回
-            </button>
-          {/if}
-          {#if onReply}
-            <button
-              type="button"
-              class="chat-msg-action-btn hover:text-[var(--primary)]"
-              onclick={() => onReply?.(message)}
-            >
-              回复
-            </button>
-          {/if}
           {#if roleBadge}
             <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
           {/if}
@@ -625,42 +781,46 @@ function formatReactionTooltip(users: string[]): string {
         </div>
       {/if}
 
-      {#if isStickerOnly}
-        <div class="flex flex-col items-end gap-1">
-          {#if message.replyTo}
-            {@render replyQuoteBlock()}
-          {/if}
-          <div class="chat-sticker-only-wrap justify-end">
-            {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
-              <img
-                src={seg.url}
-                alt={seg.alt}
-                decoding="async"
-                class={seg.category === "sticker"
-                  ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
-                  : `chat-sticker chat-sticker--${seg.category}`}
-              />
-            {/each}
-          </div>
-        </div>
-      {:else}
-        <div class="chat-bubble chat-bubble-self">
-          {#if message.replyTo}
-            {@render replyQuoteBlock()}
-          {/if}
-          {#if message.content.trim().length > 0}
-            <ChatMarkdownContent
-              content={message.content}
-              stickerMap={stickerMap}
-              mentions={message.mentions}
-              currentUserName={currentUserName}
-            />
-          {/if}
+      <div class="relative max-w-full">
+        {@render renderFloatingActions(true)}
 
-          {@render renderAttachmentsBlock()}
-          {@render renderPollBlock()}
-        </div>
-      {/if}
+        {#if isStickerOnly}
+          <div class="flex flex-col items-end gap-1">
+            {#if message.replyTo}
+              {@render replyQuoteBlock()}
+            {/if}
+            <div class="chat-sticker-only-wrap justify-end">
+              {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
+                <img
+                  src={seg.url}
+                  alt={seg.alt}
+                  decoding="async"
+                  class={seg.category === "sticker"
+                    ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
+                    : `chat-sticker chat-sticker--${seg.category}`}
+                />
+              {/each}
+            </div>
+          </div>
+        {:else}
+          <div class="chat-bubble chat-bubble-self">
+            {#if message.replyTo}
+              {@render replyQuoteBlock()}
+            {/if}
+            {#if message.content.trim().length > 0}
+              <ChatMarkdownContent
+                content={message.content}
+                stickerMap={stickerMap}
+                mentions={message.mentions}
+                currentUserName={currentUserName}
+              />
+            {/if}
+
+            {@render renderAttachmentsBlock()}
+            {@render renderPollBlock()}
+          </div>
+        {/if}
+      </div>
 
       {@render renderReactions(true)}
 
@@ -693,7 +853,7 @@ function formatReactionTooltip(users: string[]): string {
     </button>
 
     <div class="flex flex-col items-start max-w-[74%] min-w-0">
-      {#if senderDisplayName || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete) || onReaction || (isAdmin && onPin)}
+      {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0) || isMentionedMe}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if effectiveSenderUrl}
             <a
@@ -718,117 +878,49 @@ function formatReactionTooltip(users: string[]): string {
           {#if isMentionedMe}
             <span class="chat-mentioned-tag">@了你</span>
           {/if}
-          {#if onReaction}
-            <div
-              class="relative inline-flex items-center"
-              tabindex="-1"
-              onfocusout={(e) => {
-                if (!e.currentTarget.contains(e.relatedTarget)) {
-                  showQuickReaction = false;
-                }
-              }}
-            >
-              <button
-                type="button"
-                class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
-                aria-label="添加表情反应"
-                onclick={() => showQuickReaction = !showQuickReaction}
-              >
-                😊
-              </button>
-              {#if showQuickReaction}
-                <div class="absolute bottom-full left-0 mb-1 z-30 chat-quick-reactions">
-                  {#each ["👍", "❤️", "😂", "🎉", "🔥", "👀"] as em (em)}
-                    <button
-                      type="button"
-                      class="chat-quick-reaction-btn"
-                      onclick={() => {
-                        onReaction?.(message.msgUid, em);
-                        showQuickReaction = false;
-                      }}
-                    >
-                      {em}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
+        </div>
+      {/if}
+
+      <div class="relative max-w-full">
+        {@render renderFloatingActions(false)}
+
+        {#if isStickerOnly}
+          <div class="flex flex-col items-start gap-1">
+            {#if message.replyTo}
+              {@render replyQuoteBlock()}
+            {/if}
+            <div class="chat-sticker-only-wrap justify-start">
+              {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
+                <img
+                  src={seg.url}
+                  alt={seg.alt}
+                  decoding="async"
+                  class={seg.category === "sticker"
+                    ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
+                    : `chat-sticker chat-sticker--${seg.category}`}
+                />
+              {/each}
             </div>
-          {/if}
-          {#if onReply}
-            <button
-              type="button"
-              class="chat-msg-action-btn hover:text-[var(--primary)]"
-              onclick={() => onReply?.(message)}
-            >
-              回复
-            </button>
-          {/if}
-          {#if isAdmin && onPin}
-            <button
-              type="button"
-              class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
-              onclick={() => onPin?.(message.msgUid, isPinned)}
-            >
-              {isPinned ? "取消置顶" : "置顶"}
-            </button>
-          {/if}
-          {#if canRecall && onRecall}
-            <button
-              type="button"
-              class="chat-msg-action-btn hover:text-[var(--primary)]"
-              onclick={() => onRecall?.(message.msgUid)}
-            >
-              撤回
-            </button>
-          {/if}
-          {#if canDelete && onDelete}
-            <button
-              type="button"
-              class="chat-msg-action-btn hover:text-red-500"
-              onclick={() => onDelete?.(message.msgUid)}
-            >
-              删除
-            </button>
-          {/if}
-        </div>
-      {/if}
-
-      {#if isStickerOnly}
-        <div class="flex flex-col items-start gap-1">
-          {#if message.replyTo}
-            {@render replyQuoteBlock()}
-          {/if}
-          <div class="chat-sticker-only-wrap justify-start">
-            {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
-              <img
-                src={seg.url}
-                alt={seg.alt}
-                decoding="async"
-                class={seg.category === "sticker"
-                  ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
-                  : `chat-sticker chat-sticker--${seg.category}`}
-              />
-            {/each}
           </div>
-        </div>
-      {:else}
-        <div class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''}">
-          {#if message.replyTo}
-            {@render replyQuoteBlock()}
-          {/if}
-          {#if message.content.trim().length > 0}
-            <ChatMarkdownContent
-              content={message.content}
-              stickerMap={stickerMap}
-              mentions={message.mentions}
-              currentUserName={currentUserName}
-            />
-          {/if}
+        {:else}
+          <div class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''}">
+            {#if message.replyTo}
+              {@render replyQuoteBlock()}
+            {/if}
+            {#if message.content.trim().length > 0}
+              <ChatMarkdownContent
+                content={message.content}
+                stickerMap={stickerMap}
+                mentions={message.mentions}
+                currentUserName={currentUserName}
+              />
+            {/if}
 
-          {@render renderAttachmentsBlock()}
-          {@render renderPollBlock()}
-        </div>
-      {/if}
+            {@render renderAttachmentsBlock()}
+            {@render renderPollBlock()}
+          </div>
+        {/if}
+      </div>
 
       {@render renderReactions(false)}
 

@@ -2241,7 +2241,7 @@ function removePendingImage(index: number) {
       <div class="px-2.5 pb-2 pt-1 flex items-center justify-between gap-2">
         <div class="flex items-center gap-1 shrink-0">
           <!-- 颜文字 / QQ / 贴纸统一选择器按钮 -->
-          <ChatTooltip text="表情与贴纸">
+          <ChatTooltip text="表情与贴纸" align="left">
             <button
               type="button"
               class="chat-tool-btn {activePopover === 'emoji' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : ''}"
@@ -2304,7 +2304,6 @@ function removePendingImage(index: number) {
           <input
             bind:this={mediaFileInputEl}
             type="file"
-            accept="audio/*,video/*,.pdf,.zip,.tar,.gz,.7z,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md"
             multiple
             class="hidden"
             onchange={(e) => {
@@ -2313,11 +2312,11 @@ function removePendingImage(index: number) {
               }
             }}
           />
-          <ChatTooltip text="发送文件或音视频">
+          <ChatTooltip text="发送附件">
             <button
               type="button"
               class="chat-tool-btn"
-              aria-label="发送文件或音视频"
+              aria-label="发送附件"
               disabled={isUploadingImage || isUploadingMedia}
               onclick={() => {
                 if (!currentUser) {

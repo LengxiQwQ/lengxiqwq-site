@@ -198,8 +198,8 @@ $effect(() => {
 	return () => clearInterval(timer);
 });
 
-function formatOfflineTime(ts: number): string {
-	if (!ts) return "离线";
+function formatOfflineTime(ts?: number): string {
+	if (!ts || !Number.isFinite(ts) || ts <= 0) return "离线";
 	const diff = Math.max(0, now - ts);
 	if (diff < 60_000) return "刚刚离线";
 	if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前离线`;
