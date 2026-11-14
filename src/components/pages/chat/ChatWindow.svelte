@@ -1,6 +1,7 @@
 <script lang="ts">
 import { onMount, tick } from "svelte";
 import { KAOMOJI_PRESETS } from "@/constants/kaomoji";
+import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import { uploadChatImage } from "./chatClient";
@@ -52,6 +53,7 @@ interface Props {
 	showSettings?: boolean;
 	showInterconnect?: boolean;
 	isInterconnectRoom?: boolean;
+	interconnectSites?: InterconnectSite[];
 	totalChatterCount?: number;
 	noticeText?: string;
 	onToggleSettings?: () => void;
@@ -103,6 +105,7 @@ const {
 	showSettings = false,
 	showInterconnect = false,
 	isInterconnectRoom = false,
+	interconnectSites = [],
 	totalChatterCount = 0,
 	noticeText = "",
 	onToggleSettings,
@@ -401,10 +404,13 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 	const map = new Map<string, ChatMentionCandidate>();
 	for (const m of mentionMembers) {
 		if (!m.userKey || m.userKey === currentUser?.userKey) continue;
+		// 站外跨 Matrix 成员暂不支持提及，排除出 @ 自动补全
+		if (m.userKey.startsWith("matrix:")) continue;
 		map.set(m.userKey, m);
 	}
 	for (const m of onlineMembers) {
 		if (!m.userKey || m.userKey === currentUser?.userKey) continue;
+		if (m.userKey.startsWith("matrix:")) continue;
 		const prev = map.get(m.userKey);
 		map.set(m.userKey, {
 			userKey: m.userKey,
@@ -1546,6 +1552,7 @@ function removePendingImage(index: number) {
               canRecall={canRecall}
               canDelete={canDelete}
               stickerMap={stickerMap}
+              interconnectSites={interconnectSites}
               onRecall={onRecallMessage}
               onDelete={onDeleteMessage}
               onReply={msg.kind === "user" ? handleStartReply : undefined}

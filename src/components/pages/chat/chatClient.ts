@@ -1,3 +1,4 @@
+import type { InterconnectSite } from "@/types/chatConfig";
 import type {
 	ChatCustomBadge,
 	ChatMentionCandidate,
@@ -840,3 +841,108 @@ export async function saveMemberBadges(
 		return false;
 	}
 }
+
+export interface ExternalOriginInfo {
+	cleanName: string;
+	siteName: string;
+	site?: InterconnectSite;
+	host: string;
+}
+
+export function resolveExternalOrigin(
+	member: { name: string; userKey?: string },
+	sites: InterconnectSite[] = [],
+): ExternalOriginInfo {
+	const rawName = (member.name || "").trim();
+	const userKey = (member.userKey || "").trim();
+
+	// 1. 优先从昵称中的分隔符（· 或 •）拆分：例如 "朝朝听雨 · 听雨茶室" -> name: "朝朝听雨", site: "听雨茶室"
+	const separatorMatch = rawName.match(/^(.+?)\s*[·•]\s*(.+)$/);
+	let cleanName = rawName;
+	let siteFromSuffix = "";
+
+	if (separatorMatch) {
+		cleanName = separatorMatch[1].trim();
+		siteFromSuffix = separatorMatch[2].trim();
+	}
+
+	// 2. 尝试从 userKey 或 sender Matrix ID 提取域名并与 interconnectSites 匹配
+	const hostMatch =
+		userKey.match(/@.+?:([^/:]+)/) || userKey.match(/matrix:([^/:]+)/);
+	const host = hostMatch ? hostMatch[1].toLowerCase() : "";
+
+	let matchedSite: InterconnectSite | undefined;
+
+	if (host) {
+		for (const site of sites) {
+			try {
+				const siteUrl = new URL(site.url);
+				const siteHost = siteUrl.hostname.toLowerCase();
+				if (host.includes(siteHost) || siteHost.includes(host)) {
+					matchedSite = site;
+					break;
+				}
+				const hostParts = host.split(".").slice(-2).join(".");
+				const siteParts = siteHost.split(".").slice(-2).join(".");
+				if (hostParts && hostParts === siteParts) {
+					matchedSite = site;
+					break;
+				}
+			} catch {
+				// invalid URL
+			}
+		}
+	}
+
+	if (!matchedSite && siteFromSuffix) {
+		matchedSite = sites.find(
+			(s) =>
+				s.name.includes(siteFromSuffix) ||
+				siteFromSuffix.includes(s.name),
+		);
+	}
+
+	if (!matchedSite) {
+		for (const site of sites) {
+			if (
+				site.owner &&
+				cleanName.toLowerCase().includes(site.owner.toLowerCase())
+			) {
+				matchedSite = site;
+				break;
+			}
+			if (
+				cleanName.includes("雪") ||
+				cleanName.toLowerCase().includes("aiovtue")
+			) {
+				if (site.name.includes("雪") || site.owner.includes("雪")) {
+					matchedSite = site;
+					break;
+				}
+			}
+		}
+	}
+
+	const siteName =
+		siteFromSuffix ||
+		matchedSite?.name ||
+		(host.includes("gbk.ink")
+			? "GBK.ink"
+			: host.includes("somoe.xyz")
+				? "Somoe 茶室"
+				: host.includes("rainzt.cn")
+					? "听雨茶室"
+					: host.includes("yybb.us")
+						? "雪的茶室"
+						: host.includes("detached.online")
+							? "Detached 茶室"
+							: host || "外部站点");
+
+	return {
+		cleanName: cleanName || rawName,
+		siteName,
+		site: matchedSite,
+		host,
+	};
+}
+

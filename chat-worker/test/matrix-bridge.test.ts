@@ -2,11 +2,13 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	bridgePrefix,
+	DEFAULT_BRIDGE_AVATAR,
 	FIRST_STICKER_PART,
 	MatrixBridge,
 	matrixMediaPath,
 	nextPollDelay,
 	parseBridgeBody,
+	publicImageUrl,
 } from "../src/do/matrix-bridge.js";
 import type { ChatMessageRecord } from "../src/do/room.js";
 import type { Env } from "../src/env.js";
@@ -183,6 +185,15 @@ describe("互联茶室", () => {
 			parseBridgeBody("[ID:茶友];[URL:https://example.org/a]正文")?.text,
 		).toBe("正文");
 		expect(parseBridgeBody("普通正文")).toBeUndefined();
+		expect(
+			publicImageUrl("http://thirdqq.qlogo.cn/ek_qqapp/test/100"),
+		).toBe("https://thirdqq.qlogo.cn/ek_qqapp/test/100");
+		expect(
+			publicImageUrl("http://example.org/avatar.jpg"),
+		).toBe("http://example.org/avatar.jpg");
+		const defaultPrefix = bridgePrefix("访客", "", "https://lengxiqwq.com");
+		expect(defaultPrefix).toContain(DEFAULT_BRIDGE_AVATAR);
+		expect(defaultPrefix).not.toContain("avatar-64.webp");
 		expect(matrixMediaPath("mxc://example.org/../../secret")).toBeUndefined();
 		expect(nextPollDelay(3)).toBe(3000);
 		expect(nextPollDelay(4)).toBe(15000);

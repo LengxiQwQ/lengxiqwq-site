@@ -823,6 +823,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	box-shadow: 0 0 0 3px oklch(0.70 0.14 var(--hue) / 0.14);
 }
 
+.chat-tooltip-wrap,
 .chat-playlist-action-wrap {
 	position: relative;
 	display: inline-flex;
@@ -879,6 +880,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	color: #fff;
 }
 
+.chat-tooltip,
 .chat-playlist-tooltip {
 	position: absolute;
 	bottom: calc(100% + 7px);
@@ -903,49 +905,63 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transition: opacity 140ms ease, transform 140ms var(--ease-decelerate, ease);
 }
 
-html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-playlist-tooltip {
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page :is(.chat-tooltip, .chat-playlist-tooltip) {
 	background: rgba(23, 23, 23, 0.84);
 	border: 1px solid rgba(255, 255, 255, 0.14);
 	box-shadow: var(--shadow-md), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 	color: rgba(255, 255, 255, 0.92);
 }
 
-html[data-wallpaper-mode="none"] .chat-playlist-tooltip {
+html[data-wallpaper-mode="none"] :is(.chat-tooltip, .chat-playlist-tooltip) {
 	background: var(--card-bg);
 	-webkit-backdrop-filter: none;
 	backdrop-filter: none;
 	border: 1px solid var(--line-divider);
 }
 
-.chat-playlist-tooltip.align-left {
+:is(.chat-tooltip, .chat-playlist-tooltip).align-left {
 	left: 0;
 	transform: translateY(3px);
 }
 
-.chat-playlist-tooltip.align-right {
+:is(.chat-tooltip, .chat-playlist-tooltip).align-right {
 	left: auto;
 	right: 0;
 	transform: translateY(3px);
 }
 
-.chat-playlist-action-wrap:hover .chat-playlist-tooltip {
+:is(.chat-tooltip, .chat-playlist-tooltip).position-bottom {
+	bottom: auto;
+	top: calc(100% + 7px);
+	transform: translateX(-50%) translateY(-3px);
+}
+
+:is(.chat-tooltip, .chat-playlist-tooltip).position-bottom.align-left {
+	transform: translateY(-3px);
+}
+
+:is(.chat-tooltip, .chat-playlist-tooltip).position-bottom.align-right {
+	transform: translateY(-3px);
+}
+
+:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip) {
 	opacity: 1;
 	transform: translateX(-50%) translateY(0);
 }
 
-.chat-playlist-action-wrap:hover .chat-playlist-tooltip.align-left,
-.chat-playlist-action-wrap:hover .chat-playlist-tooltip.align-right {
+:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip).align-left,
+:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip).align-right {
 	transform: translateY(0);
 }
 
 /* 删除歌单进入二次确认后，提示气泡常驻显示，点一次就能看到「再次点击确认删除」 */
-.chat-playlist-tooltip.is-armed {
+:is(.chat-tooltip, .chat-playlist-tooltip).is-armed {
 	opacity: 1;
 	transform: translateX(-50%) translateY(0);
 }
 
-.chat-playlist-tooltip.align-left.is-armed,
-.chat-playlist-tooltip.align-right.is-armed {
+:is(.chat-tooltip, .chat-playlist-tooltip).align-left.is-armed,
+:is(.chat-tooltip, .chat-playlist-tooltip).align-right.is-armed {
 	transform: translateY(0);
 }
 

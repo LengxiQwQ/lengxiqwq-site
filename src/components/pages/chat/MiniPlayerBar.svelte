@@ -1,5 +1,6 @@
 <script lang="ts">
 import { formatClockSeconds } from "./chatClient";
+import ChatTooltip from "./ChatTooltip.svelte";
 import type { CurrentPlayback } from "./chatTypes";
 
 interface Props {
@@ -50,6 +51,24 @@ $effect(() => {
 const progressRatio = $derived(
 	durationSec > 0 ? Math.min(1, Math.max(0, elapsedSec / durationSec)) : 0,
 );
+
+const skipTooltipText = $derived.by(() => {
+	if (isSkippingTrack) return "正在切歌...";
+	if (canDirectSkip) {
+		return voteCount > 0
+			? `直接切歌（已有 ${voteCount}/${voteThreshold} 票）`
+			: "直接切歌";
+	}
+	if (isSoloCoolingDown) {
+		return `切歌冷却中（${soloCooldownRemainSec}s）`;
+	}
+	if (hasVotedSkip) {
+		return `取消投票（已投 ${voteCount}/${voteThreshold} 票）`;
+	}
+	return voteCount > 0
+		? `投票切歌（已投 ${voteCount}/${voteThreshold} 票）`
+		: "投票切歌";
+});
 </script>
 
 <div
@@ -92,7 +111,7 @@ const progressRatio = $derived(
   </button>
 
   <div class="flex items-center gap-1 shrink-0">
-    <div class="chat-playlist-action-wrap">
+    <ChatTooltip text={isListening ? "静音电台" : "开启收听"}>
       <button
         type="button"
         class="chat-queue-icon-btn w-7! h-7! rounded-lg! {isListening ? 'bg-(--primary)/14! text-[var(--chat-accent-text)]!' : ''}"
@@ -111,12 +130,9 @@ const progressRatio = $derived(
           </svg>
         {/if}
       </button>
-      <span class="chat-playlist-tooltip" role="tooltip">
-        {isListening ? "静音电台" : "开启收听"}
-      </span>
-    </div>
+    </ChatTooltip>
 
-    <div class="chat-playlist-action-wrap">
+    <ChatTooltip text={skipTooltipText} align="right">
       {#if canDirectSkip}
         <button
           type="button"
@@ -136,15 +152,6 @@ const progressRatio = $derived(
             </svg>
           {/if}
         </button>
-        <span class="chat-playlist-tooltip align-right" role="tooltip">
-          {#if isSkippingTrack}
-            正在切歌...
-          {:else if voteCount > 0}
-            直接切歌（已有 {voteCount}/{voteThreshold} 票）
-          {:else}
-            直接切歌
-          {/if}
-        </span>
       {:else if isSoloCoolingDown}
         <button
           type="button"
@@ -154,9 +161,6 @@ const progressRatio = $derived(
         >
           {soloCooldownRemainSec}s
         </button>
-        <span class="chat-playlist-tooltip align-right" role="tooltip">
-          切歌冷却中（{soloCooldownRemainSec}s）
-        </span>
       {:else}
         <button
           type="button"
@@ -177,18 +181,7 @@ const progressRatio = $derived(
             </svg>
           {/if}
         </button>
-        <span class="chat-playlist-tooltip align-right" role="tooltip">
-          {#if isSkippingTrack}
-            正在切歌...
-          {:else if hasVotedSkip}
-            取消投票（已投 {voteCount}/{voteThreshold} 票）
-          {:else if voteCount > 0}
-            投票切歌（已投 {voteCount}/{voteThreshold} 票）
-          {:else}
-            投票切歌
-          {/if}
-        </span>
       {/if}
-    </div>
+    </ChatTooltip>
   </div>
 </div>

@@ -15,6 +15,7 @@ import type {
 	RoomMusicState,
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
+import ChatTooltip from "./ChatTooltip.svelte";
 import type { ChatMusicTrack } from "./musicTypes";
 import {
 	type AmbiguousResolveCandidate,
@@ -2207,7 +2208,21 @@ $effect(() => {
             {:else}
               {@const activeVotes = musicState?.voteCount ?? 0}
               {@const activeThreshold = musicState?.voteThreshold ?? 2}
-              <div class="chat-playlist-action-wrap">
+              {@const mainSkipTooltipText =
+                isSkippingTrack
+                  ? "正在切歌..."
+                  : canDirectSkip
+                    ? activeVotes > 0
+                      ? `直接切歌（已有 ${activeVotes}/${activeThreshold} 票）`
+                      : "直接切歌"
+                    : isSoloCoolingDown
+                      ? `切歌冷却中（${soloCooldownRemainSec}s）`
+                      : hasVotedSkip
+                        ? `取消投票（已投 ${activeVotes}/${activeThreshold} 票）`
+                        : activeVotes > 0
+                          ? `投票切歌（已投 ${activeVotes}/${activeThreshold} 票）`
+                          : "投票切歌"}
+              <ChatTooltip text={mainSkipTooltipText} align="left">
                 {#if canDirectSkip}
                   <button
                     type="button"
@@ -2228,15 +2243,6 @@ $effect(() => {
                     {/if}
                     <span>切歌</span>
                   </button>
-                  <span class="chat-playlist-tooltip align-left" role="tooltip">
-                    {#if isSkippingTrack}
-                      正在切歌...
-                    {:else if activeVotes > 0}
-                      直接切歌（已有 {activeVotes}/{activeThreshold} 票）
-                    {:else}
-                      直接切歌
-                    {/if}
-                  </span>
                 {:else if isSoloCoolingDown}
                   <button
                     type="button"
@@ -2249,9 +2255,6 @@ $effect(() => {
                     </svg>
                     <span class="tabular-nums">{soloCooldownRemainSec}s</span>
                   </button>
-                  <span class="chat-playlist-tooltip align-left" role="tooltip">
-                    切歌冷却中（{soloCooldownRemainSec}s）
-                  </span>
                 {:else}
                   <button
                     type="button"
@@ -2273,19 +2276,8 @@ $effect(() => {
                     {/if}
                     <span>{hasVotedSkip ? "已投" : "切歌"}</span>
                   </button>
-                  <span class="chat-playlist-tooltip align-left" role="tooltip">
-                    {#if isSkippingTrack}
-                      正在切歌...
-                    {:else if hasVotedSkip}
-                      取消投票（已投 {activeVotes}/{activeThreshold} 票）
-                    {:else if activeVotes > 0}
-                      投票切歌（已投 {activeVotes}/{activeThreshold} 票）
-                    {:else}
-                      投票切歌
-                    {/if}
-                  </span>
                 {/if}
-              </div>
+              </ChatTooltip>
             {/if}
           </div>
 
@@ -2710,7 +2702,7 @@ $effect(() => {
         </button>
 
         {#if canManagePlaylist(pl)}
-          <div class="chat-playlist-action-wrap">
+          <ChatTooltip text={isRefreshingPlaylistId === pl.id ? "正在同步歌单..." : "从平台重新拉取歌单"} align="right">
             <button
               type="button"
               disabled={isRefreshingPlaylistId === pl.id}
@@ -2723,10 +2715,7 @@ $effect(() => {
                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
               </svg>
             </button>
-            <span class="chat-playlist-tooltip align-right" role="tooltip">
-              {isRefreshingPlaylistId === pl.id ? "正在同步歌单..." : "从平台重新拉取歌单"}
-            </span>
-          </div>
+          </ChatTooltip>
         {/if}
       </div>
     {/snippet}

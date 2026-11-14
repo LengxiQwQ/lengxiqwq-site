@@ -1,10 +1,12 @@
 <script lang="ts">
+import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import {
 	fetchUserDetailProfile,
 	fetchUserDetailTracks,
 	readStoredWalineToken,
+	resolveExternalOrigin,
 	saveMemberBadges,
 } from "./chatClient";
 import type {
@@ -32,6 +34,7 @@ interface Props {
 	onlineMembers: ChatOnlineMember[];
 	messages: ChatMessageRecord[];
 	musicHistoryLogs?: MusicHistoryLogEntry[];
+	interconnectSites?: InterconnectSite[];
 	onClose: () => void;
 	onMention: (name: string, userKey?: string) => void;
 	onEditSelf: () => void;
@@ -60,6 +63,7 @@ const {
 	onlineMembers = [],
 	messages = [],
 	musicHistoryLogs = [],
+	interconnectSites = [],
 	onClose,
 	onMention,
 	onEditSelf,
@@ -549,7 +553,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
   open={open && Boolean(profile || matrixUserId)}
   title="成员名片"
   ariaLabel={seed ? `${seed.name} 的个人资料` : "成员名片"}
-  size={matrixUserId ? "sm" : "lg"}
+  size={matrixUserId ? "md" : "lg"}
   fillHeightOnDesktop={!matrixUserId}
   {lockedMinHeight}
   {onClose}
@@ -561,31 +565,204 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
   {/snippet}
 
   {#if matrixUserId && seed}
-    <div class="p-4 space-y-3">
-      <div class="flex items-center gap-3">
-        <ChatAvatar src={seed.avatar} name={seed.name} size="lg" />
-        <div class="min-w-0">
-          <div class="text-sm font-bold text-[var(--deep-text)] break-words">{seed.name}</div>
-          <span class="chat-role-badge chat-role-badge--tag">互联茶友</span>
+    {@const origin = resolveExternalOrigin({ name: seed.name, userKey: seed.userKey }, interconnectSites)}
+    {@const cleanName = origin.cleanName || seed.name}
+    {@const matchedSite = origin.site}
+    {@const userMessages = messages.filter((m) => m.kind === "user" && m.userKey === seed.userKey)}
+    {@const onlineMatch = onlineMembers.find((m) => m.userKey === seed.userKey)}
+    {@const isOnline = Boolean(onlineMatch ?? seed.online)}
+    {@const firstSeenAt = userMessages[0]?.createdAt || 0}
+    {@const latestMsg = userMessages[userMessages.length - 1]}
+    {@const lastSeenAt = onlineMatch ? Date.now() : (latestMsg?.createdAt || 0)}
+    {@const recentMsgs = userMessages.slice(-5).reverse()}
+
+    <div class="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-4 space-y-3 min-h-0">
+      <!-- 1. 顶部身份卡片 -->
+      <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-2.5">
+        <div class="flex items-center gap-3">
+          <div class="relative shrink-0">
+            <ChatAvatar src={seed.avatar} name={cleanName} size="lg" />
+            {#if isOnline}
+              <span
+                class="chat-online-dot absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
+                title="在线中"
+              ></span>
+            {/if}
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-base font-bold text-[var(--deep-text)] dark:text-white/90 break-words">
+                {cleanName}
+              </span>
+              <span class="chat-role-badge chat-role-badge--tag">🍵 互联茶友</span>
+              {#if seed.customBadges && seed.customBadges.length > 0}
+                {#each seed.customBadges as b (b.text)}
+                  <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
+                {/each}
+              {/if}
+            </div>
+            <div class="flex items-center gap-1.5 text-xs text-[var(--chat-meta-color)] mt-0.5 flex-wrap">
+              {#if !isOnline}
+                <span>{formatLastSeen(lastSeenAt)}</span>
+                <span>·</span>
+              {/if}
+              <span>Matrix 联邦中继</span>
+            </div>
+          </div>
+
+          <!-- @该茶友 快捷按钮（站外暂不支持提及，置灰禁用） -->
+          <button
+            type="button"
+            disabled
+            class="px-2.5 py-1.5 text-xs text-[var(--chat-meta-color)] bg-black/5 dark:bg-white/5 rounded-lg shrink-0 flex items-center gap-1 cursor-not-allowed opacity-50 border-none select-none"
+            title="暂不支持跨站提及站外茶友"
+          >
+            <span class="font-bold opacity-60">@</span>
+            <span>暂不支持提及</span>
+          </button>
         </div>
       </div>
-      <div class="text-xs text-[var(--chat-meta-color)] break-all">
-        Matrix 发件账号
-        <a
-          href={`https://matrix.to/#/${encodeURIComponent(matrixUserId)}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="block text-[var(--chat-accent-text)]"
-        >{matrixUserId}</a>
+
+      <!-- 2. 🍵 归属互联茶室 / 博客卡片 -->
+      <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-2">
+        <div class="flex items-center justify-between text-xs font-semibold text-[var(--chat-meta-color)]">
+          <span class="flex items-center gap-1.5">
+            <span>🍵</span>
+            <span>归属互联茶室</span>
+          </span>
+          {#if matchedSite?.owner}
+            <span class="text-[0.6875rem] font-normal opacity-75">
+              站长: {matchedSite.owner}
+            </span>
+          {/if}
+        </div>
+
+        <div class="flex items-center justify-between gap-3 bg-black/3 dark:bg-white/5 p-2.5 rounded-lg border border-black/5 dark:border-white/5">
+          <div class="flex items-center gap-2.5 min-w-0">
+            {#if matchedSite?.avatar}
+              <img
+                src={matchedSite.avatar}
+                alt={matchedSite.name}
+                class="w-8 h-8 rounded-full object-cover shrink-0"
+              />
+            {:else}
+              <div class="w-8 h-8 rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)] flex items-center justify-center font-bold text-xs shrink-0">
+                🍵
+              </div>
+            {/if}
+            <div class="min-w-0">
+              <div class="font-bold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
+                {matchedSite?.name || origin.siteName}
+              </div>
+              <div class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
+                {matchedSite?.desc || `来自 ${origin.siteName} 互联聊天节点`}
+              </div>
+            </div>
+          </div>
+
+          {#if matchedSite?.url}
+            <a
+              href={matchedSite.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="chat-btn-ghost px-2.5 py-1 text-xs shrink-0 text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20 rounded-lg no-underline font-medium transition-colors"
+            >
+              前往串门 ↗
+            </a>
+          {:else if seed.url}
+            <a
+              href={seed.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="chat-btn-ghost px-2.5 py-1 text-xs shrink-0 text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20 rounded-lg no-underline font-medium transition-colors"
+            >
+              访问主页 ↗
+            </a>
+          {/if}
+        </div>
       </div>
-      {#if seed.url}
-        <a
-          href={seed.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="block text-xs text-[var(--chat-accent-text)] break-all"
-        >访问个人网站 ↗</a>
-      {/if}
+
+      <!-- 3. 足迹统计与联邦网络信息 -->
+      <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10">
+        <div class="grid grid-cols-2 gap-2 text-center">
+          <div class="bg-black/3 dark:bg-white/5 p-2 rounded-lg">
+            <div class="text-[0.6875rem] text-[var(--chat-meta-color)]">茶室发言</div>
+            <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5">
+              {userMessages.length} 条
+            </div>
+          </div>
+          <div class="bg-black/3 dark:bg-white/5 p-2 rounded-lg">
+            <div class="text-[0.6875rem] text-[var(--chat-meta-color)]">初次相识</div>
+            <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5 truncate" title={firstSeenAt ? new Date(firstSeenAt).toLocaleString() : "未知"}>
+              {firstSeenAt ? formatJoinTime(firstSeenAt) : "本次会话"}
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-2.5 pt-2 border-t border-[var(--chat-divider-color)]/60 text-[0.6875rem] text-[var(--chat-meta-color)] space-y-1">
+          <div class="flex items-center justify-between gap-2">
+            <span class="shrink-0">Matrix 账号:</span>
+            <a
+              href={`https://matrix.to/#/${encodeURIComponent(matrixUserId)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-[var(--chat-accent-text)] hover:underline truncate"
+              title={matrixUserId}
+            >
+              {matrixUserId}
+            </a>
+          </div>
+          {#if origin.host}
+            <div class="flex items-center justify-between gap-2">
+              <span class="shrink-0">中继节点:</span>
+              <span class="truncate">{origin.host}</span>
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- 4. 最近茶室发言 -->
+      <div class="rounded-xl bg-(--btn-regular-bg) p-3.5 border border-black/5 dark:border-white/10 space-y-2">
+        <div class="text-xs font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
+          <span>最近在茶室说了什么</span>
+          <span class="text-[0.6875rem] font-normal opacity-75">
+            共 {userMessages.length} 条
+          </span>
+        </div>
+
+        {#if recentMsgs.length === 0}
+          <div class="py-4 text-center text-xs text-[var(--chat-meta-color)]">
+            该茶友在当前加载记录中暂无发言~
+          </div>
+        {:else}
+          <div class="space-y-1.5">
+            {#each recentMsgs as m (m.msgUid)}
+              <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-black/3 dark:bg-white/5 hover:bg-black/5 dark:hover:bg-white/8 transition-colors">
+                <div class="min-w-0 flex-1">
+                  <div class="text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
+                    {m.content || (Array.isArray(m.attachments) && m.attachments.length > 0 ? "[发送了图片]" : "...")}
+                  </div>
+                  <div class="text-[0.625rem] text-[var(--chat-meta-color)] mt-0.5">
+                    {formatTrackTime(m.createdAt)}
+                  </div>
+                </div>
+                {#if onJumpToMessage}
+                  <button
+                    type="button"
+                    class="text-[0.6875rem] text-[var(--chat-accent-text)] hover:underline shrink-0 px-1 py-0.5 border-none bg-transparent cursor-pointer"
+                    onclick={() => {
+                      onJumpToMessage(m.msgUid);
+                      onClose();
+                    }}
+                  >
+                    定位 ↑
+                  </button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
     </div>
   {:else if profile}
     <!-- 主体：手机端单流平滑滚动，平板/桌面端 42%:58% 左右双栏独立滚动且高度随内容自适应 -->
@@ -694,15 +871,23 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               编辑我的资料
             </button>
           {:else}
+            {@const isExternalProfile = Boolean(profile.userKey?.startsWith("matrix:") || profile.badge === "互联茶友")}
             <button
               type="button"
-              class="chat-send-btn flex-1 h-9! rounded-xl! text-xs! truncate px-3!"
+              disabled={isExternalProfile}
+              class="{isExternalProfile ? 'bg-black/5 dark:bg-white/5 text-[var(--chat-meta-color)] opacity-50 cursor-not-allowed select-none' : 'chat-send-btn'} flex-1 h-9! rounded-xl! text-xs! truncate px-3!"
+              title={isExternalProfile ? "暂不支持跨站提及站外茶友" : `在聊天中 @${profile.name}`}
               onclick={() => {
+                if (isExternalProfile) return;
                 onClose();
                 onMention(profile.name, profile.userKey);
               }}
             >
-              @ {profile.name}
+              {#if isExternalProfile}
+                @ 暂不支持提及
+              {:else}
+                @ {profile.name}
+              {/if}
             </button>
           {/if}
         </div>

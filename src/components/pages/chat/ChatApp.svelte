@@ -1402,6 +1402,7 @@ onMount(() => {
         selfMuted={mobilePlaybackStatus.isMuted}
         connectionState={connectionState}
         isWindowFocused={isWindowFocused}
+        interconnectSites={interconnectSites}
         onRoomSelect={handleRoomSelect}
         onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
@@ -1561,6 +1562,7 @@ onMount(() => {
     onlineMembers={onlineMembers}
     messages={messages}
     musicHistoryLogs={musicState?.historyLogs ?? []}
+    interconnectSites={interconnectSites}
     onClose={() => (showUserDetailModal = false)}
     onMention={handleMentionUser}
     onEditSelf={() => {

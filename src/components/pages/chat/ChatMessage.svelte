@@ -1,6 +1,8 @@
 <script lang="ts">
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
+import { resolveExternalOrigin } from "./chatClient";
+import type { InterconnectSite } from "./chatConfig";
 import { openChatImageLightbox } from "./chatLightbox";
 import type { ChatMessageRecord, ChatUserDetailSeed } from "./chatTypes";
 import {
@@ -18,6 +20,7 @@ interface Props {
 	canRecall?: boolean;
 	canDelete?: boolean;
 	stickerMap: Map<string, StickerItem>;
+	interconnectSites?: InterconnectSite[];
 	onRecall?: (msgUid: string) => void;
 	onDelete?: (msgUid: string) => void;
 	onReply?: (message: ChatMessageRecord) => void;
@@ -35,6 +38,7 @@ const {
 	canRecall = false,
 	canDelete = false,
 	stickerMap,
+	interconnectSites = [],
 	onRecall,
 	onDelete,
 	onReply,
@@ -79,7 +83,34 @@ const replyPreviewText = $derived.by(() => {
 	);
 });
 
+const isExternal = $derived(
+	message.source === "matrix" ||
+		message.userKey.startsWith("matrix:") ||
+		message.badge === "互联茶友",
+);
+
+const externalOrigin = $derived.by(() => {
+	if (!isExternal) return null;
+	return resolveExternalOrigin(
+		{
+			userKey: message.userKey,
+			name: message.name,
+			source: message.source,
+			badge: message.badge,
+		},
+		interconnectSites,
+	);
+});
+
+const senderDisplayName = $derived.by(() => {
+	if (isExternal && externalOrigin) {
+		return `${externalOrigin.cleanName} · ${externalOrigin.siteName}`;
+	}
+	return message.name;
+});
+
 const roleBadge = $derived.by(() => {
+	if (isExternal) return null;
 	if (message.isAdmin) return { label: "站长", type: "host" as const };
 	if (message.userKey.startsWith("waline:")) {
 		return { label: "认证", type: "accent" as const };
@@ -175,8 +206,8 @@ function handleAvatarClick() {
 		});
 		return;
 	}
-	if (!isSelf) {
-		onMention?.(message.name, message.userKey);
+	if (!isSelf && !isExternal) {
+		onMention?.(externalOrigin?.cleanName || message.name, message.userKey);
 	}
 }
 </script>
@@ -247,7 +278,7 @@ function handleAvatarClick() {
     </button>
 
     <div class="flex flex-col items-end max-w-[74%] min-w-0">
-      {#if message.name || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
+      {#if senderDisplayName || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
         <div class="flex items-center justify-end gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if canDelete && onDelete}
             <button
@@ -284,8 +315,8 @@ function handleAvatarClick() {
               <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
             {/each}
           {/if}
-          {#if message.name}
-            <span class="text-xs text-[var(--chat-meta-color)] font-medium truncate">{message.name}</span>
+          {#if senderDisplayName}
+            <span class="text-xs text-[var(--chat-meta-color)] font-medium truncate">{senderDisplayName}</span>
           {/if}
         </div>
       {/if}
@@ -364,15 +395,15 @@ function handleAvatarClick() {
     >
       <ChatAvatar
         src={message.avatar}
-        name={message.name}
+        name={externalOrigin?.cleanName || message.name}
         fallback="?"
-        alt={message.name}
+        alt={senderDisplayName}
         size="md"
       />
     </button>
 
     <div class="flex flex-col items-start max-w-[74%] min-w-0">
-      {#if message.name || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
+      {#if senderDisplayName || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if message.url}
             <a
@@ -381,10 +412,10 @@ function handleAvatarClick() {
               rel="noopener noreferrer"
               class="text-xs text-[var(--chat-meta-color)] hover:text-[var(--primary)] font-medium truncate no-underline"
             >
-              {message.name}
+              {senderDisplayName}
             </a>
-          {:else if message.name}
-            <span class="text-xs text-[var(--chat-meta-color)] font-medium truncate">{message.name}</span>
+          {:else if senderDisplayName}
+            <span class="text-xs text-[var(--chat-meta-color)] font-medium truncate">{senderDisplayName}</span>
           {/if}
           {#if roleBadge}
             <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>

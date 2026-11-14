@@ -1,6 +1,7 @@
 <script lang="ts">
-import type { ChatRoomMeta } from "@/types/chatConfig";
+import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
+import { resolveExternalOrigin } from "./chatClient";
 import type {
 	ChatMentionCandidate,
 	ChatOnlineMember,
@@ -20,6 +21,7 @@ interface Props {
 	selfMuted?: boolean;
 	connectionState: ConnectionState;
 	isWindowFocused?: boolean;
+	interconnectSites?: InterconnectSite[];
 	onRoomSelect?: (roomId: string) => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onOpenProfile?: () => void;
@@ -38,6 +40,7 @@ const {
 	selfMuted = true,
 	connectionState = "idle",
 	isWindowFocused = true,
+	interconnectSites = [],
 	onRoomSelect,
 	onOpenUserProfile,
 	onOpenProfile,
@@ -143,9 +146,13 @@ const roomNameById = $derived(
 	new Map(rooms.map((room) => [room.id, room.name] as const)),
 );
 
-/** 在线成员的副标题：状态 · 当前所在房间 */
+/** 在线成员的副标题：状态 · 当前所在房间（若处于当前房间则不重复显示房间名） */
 function formatOnlineLine(member: ChatOnlineMember): string {
-	const roomName = member.roomId ? roomNameById.get(member.roomId) : "";
+	const targetRoomId = member.roomId || "";
+	const isOtherRoom = Boolean(targetRoomId && targetRoomId !== currentRoom);
+	const roomName = isOtherRoom
+		? roomNameById.get(targetRoomId) || targetRoomId
+		: "";
 	const status =
 		member.status && member.status !== "在线" ? member.status.trim() : "";
 	if (status && roomName) return `${status} · ${roomName}`;
@@ -235,62 +242,102 @@ function formatOfflineTime(ts: number): string {
 
   <!-- 成员名录：在线成员 + 离线成员 -->
   <div class="flex-1 overflow-y-auto custom-scrollbar px-2.5 py-1.5 space-y-3 min-h-0">
-    <!-- 在线成员 -->
-    <section>
-      <div class="chat-section-title flex items-center justify-between pr-1">
-        <span>在线成员</span>
-        <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
-          {isCurrentInterconnect
-            ? `${siteOnlineMembers.length + externalOnlineMembers.length + observerCount} 人`
-            : `${normalOnlineMembers.length + observerCount} 人`}
-        </span>
-      </div>
+    {#if isCurrentInterconnect}
+      <!-- 互联茶室模式：直接平铺“本地在线”、“其他站点”、“本站离线”、“其他站点” -->
 
-      {#if isCurrentInterconnect}
-        <!-- 互联茶室模式：分为“本站”和“其他网站” -->
-        {#if siteOnlineMembers.length + externalOnlineMembers.length + observerCount === 0}
-          <div class="px-2 py-4 text-center text-xs text-[var(--chat-meta-color)]">
+      <!-- 1. 本地在线 -->
+      <section>
+        <div class="chat-section-title flex items-center justify-between pr-1">
+          <span>本地在线</span>
+          <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            {siteOnlineMembers.length + observerCount} 人
+          </span>
+        </div>
+
+        {#if siteOnlineMembers.length + observerCount === 0}
+          <div class="px-2 py-3 text-center text-xs text-[var(--chat-meta-color)]">
             {#if connectionState === "connected"}
-              暂无已登录在线成员，发句话或点首歌露个面吧~
+              暂无本地已登录在线成员~
             {:else}
               正在同步成员列表...
             {/if}
           </div>
         {:else}
-          <div class="space-y-2 mt-1">
-            <!-- 本站在线 -->
-            <div>
-              <div class="text-[0.625rem] font-semibold text-[var(--chat-meta-color)] px-1 mb-1">
-                本站在线 ({siteOnlineMembers.length + observerCount})
-              </div>
-              <div class="space-y-1">
-                {#each siteOnlineMembers as member (member.userKey)}
-                  {@render memberItem(member, true, false)}
-                {/each}
-                {#each observerSlots as slotIndex (slotIndex)}
-                  {@render observerItem()}
-                {/each}
-              </div>
-            </div>
-
-            <!-- 其他网站在线 -->
-            {#if externalOnlineMembers.length > 0}
-              <div class="pt-1.5 border-t border-[var(--chat-divider-color)]/60">
-                <div class="text-[0.625rem] font-semibold text-[var(--chat-meta-color)] px-1 mb-1 flex items-center justify-between">
-                  <span>其他网站 ({externalOnlineMembers.length})</span>
-                  <span class="text-[0.5625rem] font-normal opacity-70">互联节点活跃</span>
-                </div>
-                <div class="space-y-1">
-                  {#each externalOnlineMembers as member (member.userKey)}
-                    {@render memberItem(member, true, true)}
-                  {/each}
-                </div>
-              </div>
-            {/if}
+          <div class="space-y-1 mt-0.5">
+            {#each siteOnlineMembers as member (member.userKey)}
+              {@render memberItem(member, true, false)}
+            {/each}
+            {#each observerSlots as slotIndex (slotIndex)}
+              {@render observerItem()}
+            {/each}
           </div>
         {/if}
-      {:else}
-        <!-- 本站普通房间模式：纯净显示当前房间本站在线成员 -->
+      </section>
+
+      <!-- 2. 互联站点在线 -->
+      {#if externalOnlineMembers.length > 0}
+        <section class="pt-1 border-t border-[var(--chat-divider-color)]">
+          <div class="chat-section-title flex items-center justify-between pr-1">
+            <span>互联站点</span>
+            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+              {externalOnlineMembers.length} 人
+            </span>
+          </div>
+
+          <div class="space-y-1 mt-0.5">
+            {#each externalOnlineMembers as member (member.userKey)}
+              {@render memberItem(member, true, true)}
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      <!-- 3. 本站离线 -->
+      {#if siteOfflineMembers.length > 0}
+        <section class="pt-1 border-t border-[var(--chat-divider-color)]">
+          <div class="chat-section-title flex items-center justify-between pr-1">
+            <span>本站离线</span>
+            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+              {siteOfflineMembers.length} 人
+            </span>
+          </div>
+
+          <div class="space-y-1 mt-0.5">
+            {#each siteOfflineMembers as member (member.userKey)}
+              {@render memberItem(member, false, false)}
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      <!-- 4. 互联站点离线 -->
+      {#if externalOfflineMembers.length > 0}
+        <section class="pt-1 border-t border-[var(--chat-divider-color)]">
+          <div class="chat-section-title flex items-center justify-between pr-1">
+            <span>互联站点</span>
+            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+              {externalOfflineMembers.length} 人
+            </span>
+          </div>
+
+          <div class="space-y-1 mt-0.5">
+            {#each externalOfflineMembers as member (member.userKey)}
+              {@render memberItem(member, false, true)}
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+    {:else}
+      <!-- 本站普通房间模式（如闲聊）：纯净的“在线成员”和“离线成员” -->
+      <section>
+        <div class="chat-section-title flex items-center justify-between pr-1">
+          <span>在线成员</span>
+          <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            {normalOnlineMembers.length + observerCount} 人
+          </span>
+        </div>
+
         {#if normalOnlineMembers.length + observerCount === 0}
           <div class="px-2 py-4 text-center text-xs text-[var(--chat-meta-color)]">
             {#if connectionState === "connected"}
@@ -309,45 +356,8 @@ function formatOfflineTime(ts: number): string {
             {/each}
           </div>
         {/if}
-      {/if}
-    </section>
+      </section>
 
-    <!-- 离线成员 -->
-    {#if isCurrentInterconnect}
-      {#if siteOfflineMembers.length > 0}
-        <section class="pt-1 border-t border-[var(--chat-divider-color)]">
-          <div class="chat-section-title flex items-center justify-between pr-1">
-            <span>本站离线</span>
-            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
-              {siteOfflineMembers.length} 人
-            </span>
-          </div>
-
-          <div class="space-y-1 mt-0.5">
-            {#each siteOfflineMembers as member (member.userKey)}
-              {@render memberItem(member, false, false)}
-            {/each}
-          </div>
-        </section>
-      {/if}
-
-      {#if externalOfflineMembers.length > 0}
-        <section class="pt-1 border-t border-[var(--chat-divider-color)]">
-          <div class="chat-section-title flex items-center justify-between pr-1">
-            <span>其他网站</span>
-            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
-              {externalOfflineMembers.length} 人
-            </span>
-          </div>
-
-          <div class="space-y-1 mt-0.5">
-            {#each externalOfflineMembers as member (member.userKey)}
-              {@render memberItem(member, false, true)}
-            {/each}
-          </div>
-        </section>
-      {/if}
-    {:else}
       {#if offlineMembers.length > 0}
         <section class="pt-1 border-t border-[var(--chat-divider-color)]">
           <div class="chat-section-title flex items-center justify-between pr-1">
@@ -371,15 +381,26 @@ function formatOfflineTime(ts: number): string {
     {@const roleBadge = resolveMemberRoleBadge(member)}
     {@const muted = isOnline ? isMemberMuted(member as ChatOnlineMember) : false}
     {@const isFocused = isOnline ? isMemberFocused(member as ChatOnlineMember) : false}
+    {@const origin = isExternal ? resolveExternalOrigin(member, interconnectSites) : null}
+    {@const displayName = origin ? origin.cleanName : member.name}
+    {@const siteName = origin?.siteName || "外部站点"}
+    {@const offlineTime = isOnline ? "" : formatOfflineTime((member as ChatMentionCandidate).lastSeenAt)}
+    {@const subtitle = isExternal
+      ? (isOnline
+          ? (member.status && member.status !== "在线" ? `${member.status.trim()} · 来自：${siteName}` : `来自：${siteName}`)
+          : (offlineTime === "离线" ? `来自：${siteName}` : `来自：${siteName} · ${offlineTime}`))
+      : (isOnline
+          ? formatOnlineLine(member as ChatOnlineMember)
+          : offlineTime)}
     <button
       type="button"
       class="chat-user-item group justify-between w-full text-left border-none bg-transparent {isOnline ? '' : 'opacity-75 hover:opacity-100'}"
-      title={`查看 ${member.name} 的个人资料`}
+      title={`查看 ${displayName} 的个人资料`}
       onclick={() =>
         onOpenUserProfile?.({
           userKey: member.userKey,
           authType: member.authType,
-          name: member.name,
+          name: displayName,
           avatar: member.avatar,
           url: member.url,
           badge: isExternal ? "互联茶友" : roleBadge.label,
@@ -388,7 +409,7 @@ function formatOfflineTime(ts: number): string {
           isAdmin: member.isAdmin,
           online: isOnline,
           status: member.status,
-          bio: member.bio,
+          bio: isExternal ? (member.bio || `来自 ${origin?.siteName || "互联茶室"}`) : member.bio,
           location: member.location,
         })}
     >
@@ -396,7 +417,7 @@ function formatOfflineTime(ts: number): string {
         <div class="relative shrink-0">
           <ChatAvatar
             src={member.avatar}
-            name={member.name}
+            name={displayName}
             size="sm"
             grayscale={!isOnline}
             mutedTone={!isOnline}
@@ -412,11 +433,13 @@ function formatOfflineTime(ts: number): string {
         <div class="min-w-0 flex flex-col">
           <div class="flex items-center gap-1.5 min-w-0">
             <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/90 group-hover:text-[var(--primary)] transition-colors">
-              {member.name}
+              {displayName}
             </span>
-            <span class="chat-role-badge chat-role-badge--{isExternal ? 'tag' : roleBadge.type} py-px! px-1! text-[0.5625rem]!">
-              {isExternal ? "互联" : roleBadge.label}
-            </span>
+            {#if !isExternal}
+              <span class="chat-role-badge chat-role-badge--{roleBadge.type} py-px! px-1! text-[0.5625rem]!">
+                {roleBadge.label}
+              </span>
+            {/if}
             {#if member.customBadges && member.customBadges.length > 0}
               {#each member.customBadges as b (b.text)}
                 <span class="chat-role-badge chat-role-badge--{b.color} py-px! px-1! text-[0.5625rem]!">
@@ -426,7 +449,7 @@ function formatOfflineTime(ts: number): string {
             {/if}
           </div>
           <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
-            {isOnline ? formatOnlineLine(member as ChatOnlineMember) : formatOfflineTime((member as ChatMentionCandidate).lastSeenAt)}
+            {subtitle}
           </span>
         </div>
       </div>

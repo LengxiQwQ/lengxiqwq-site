@@ -31,13 +31,26 @@ export function parseBridgeBody(body: string) {
 export function publicImageUrl(raw: string, base?: string): string {
 	try {
 		const url = new URL(raw, base);
-		return url.protocol === "https:" && !url.username && !url.password
+		if (
+			url.protocol === "http:" &&
+			(url.hostname.endsWith("qlogo.cn") ||
+				url.hostname.endsWith("cravatar.cn") ||
+				url.hostname.endsWith("gravatar.com") ||
+				url.hostname.endsWith("weavatar.com"))
+		) {
+			url.protocol = "https:";
+		}
+		return (url.protocol === "https:" || url.protocol === "http:") &&
+			!url.username &&
+			!url.password
 			? url.href
 			: "";
 	} catch {
 		return "";
 	}
 }
+
+export const DEFAULT_BRIDGE_AVATAR = "/default-avatar.png";
 
 export function bridgePrefix(
 	name: string,
@@ -46,8 +59,8 @@ export function bridgePrefix(
 ): string {
 	const safeName = name.replace(/[\]\r\n]/g, " ").trim() || "访客";
 	const safeAvatar =
-		publicImageUrl(avatar || "/avatar-64.webp", site) ||
-		new URL("/avatar-64.webp", site).href;
+		publicImageUrl(avatar || DEFAULT_BRIDGE_AVATAR, site) ||
+		new URL(DEFAULT_BRIDGE_AVATAR, site).href;
 	return `[ID:${safeName}];[URL:${safeAvatar.replaceAll("]", "%5D")}]\n`;
 }
 

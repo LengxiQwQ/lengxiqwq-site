@@ -184,6 +184,15 @@ export function sanitizeAvatarUrl(raw?: string): string {
 	if (!trimmed) return "";
 	try {
 		const parsed = new URL(trimmed);
+		if (
+			parsed.protocol === "http:" &&
+			(parsed.hostname.endsWith("qlogo.cn") ||
+				parsed.hostname.endsWith("cravatar.cn") ||
+				parsed.hostname.endsWith("gravatar.com") ||
+				parsed.hostname.endsWith("weavatar.com"))
+		) {
+			parsed.protocol = "https:";
+		}
 		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
 			return "";
 		}
@@ -371,10 +380,11 @@ export async function verifyWalineTokenWithEmail(
 				: isAdmin
 					? "站长"
 					: `用户#${data.objectId}`;
-		const avatar =
+		const rawAvatar =
 			typeof data.avatar === "string" && data.avatar.startsWith("http")
 				? data.avatar
 				: buildAvatarFromEmail(email, env.GRAVATAR_STR, env.AVATAR_PROXY);
+		const avatar = sanitizeAvatarUrl(rawAvatar);
 		const url = sanitizeWebsiteUrl(data.url);
 		const badgeInfo = resolveRoleBadge("waline", isAdmin);
 
@@ -600,7 +610,7 @@ export async function verifyGuestTokenWithEmail(
 				avatar:
 					typeof parsed.user.avatar === "string" &&
 					parsed.user.avatar.startsWith("http")
-						? parsed.user.avatar
+						? sanitizeAvatarUrl(parsed.user.avatar)
 						: "",
 				url: sanitizeWebsiteUrl(parsed.user.url),
 				badge,
