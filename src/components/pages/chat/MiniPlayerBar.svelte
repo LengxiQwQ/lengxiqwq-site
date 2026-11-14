@@ -55,19 +55,14 @@ const progressRatio = $derived(
 const skipTooltipText = $derived.by(() => {
 	if (isSkippingTrack) return "正在切歌...";
 	if (canDirectSkip) {
-		return voteCount > 0
-			? `直接切歌（已有 ${voteCount}/${voteThreshold} 票）`
-			: "直接切歌";
-	}
-	if (isSoloCoolingDown) {
-		return `切歌冷却中（${soloCooldownRemainSec}s）`;
+		return "直接切歌";
 	}
 	if (hasVotedSkip) {
 		return `取消投票（已投 ${voteCount}/${voteThreshold} 票）`;
 	}
 	return voteCount > 0
-		? `投票切歌（已投 ${voteCount}/${voteThreshold} 票）`
-		: "投票切歌";
+		? `同意切歌（已有 ${voteCount}/${voteThreshold} 票）`
+		: "投票切歌（0/2 票）";
 });
 </script>
 
@@ -137,8 +132,8 @@ const skipTooltipText = $derived.by(() => {
         <button
           type="button"
           disabled={isSkippingTrack}
-          class="chat-queue-icon-btn w-7! h-7! rounded-lg! {voteCount > 0 ? 'bg-(--primary)/14! text-[var(--chat-accent-text)]!' : ''} disabled:opacity-75 disabled:cursor-wait!"
-          aria-label={isSkippingTrack ? "正在切歌..." : voteCount > 0 ? `直接切歌（已有 ${voteCount}/${voteThreshold} 票）` : "直接切歌"}
+          class="chat-queue-icon-btn w-7! h-7! rounded-lg! disabled:opacity-75 disabled:cursor-wait!"
+          aria-label={skipTooltipText}
           onclick={onSkipTrack}
         >
           {#if isSkippingTrack}
@@ -152,28 +147,24 @@ const skipTooltipText = $derived.by(() => {
             </svg>
           {/if}
         </button>
-      {:else if isSoloCoolingDown}
-        <button
-          type="button"
-          class="chat-queue-icon-btn w-auto! px-1.5! h-7! rounded-lg! text-[10px] font-semibold tabular-nums"
-          aria-label={`切歌冷却中 (${soloCooldownRemainSec}s)`}
-          onclick={onSkipTrack}
-        >
-          {soloCooldownRemainSec}s
-        </button>
       {:else}
         <button
           type="button"
           disabled={isSkippingTrack}
           class="chat-queue-icon-btn w-7! h-7! rounded-lg! {hasVotedSkip ? 'bg-(--primary)/14! text-[var(--chat-accent-text)]!' : ''} disabled:opacity-75 disabled:cursor-wait!"
           aria-pressed={hasVotedSkip}
-          aria-label={isSkippingTrack ? "正在切歌..." : hasVotedSkip ? `取消投票（已投 ${voteCount}/${voteThreshold} 票）` : voteCount > 0 ? `投票切歌（已投 ${voteCount}/${voteThreshold} 票）` : "投票切歌"}
+          aria-label={skipTooltipText}
           onclick={onVoteSkip}
         >
           {#if isSkippingTrack}
             <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
               <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+            </svg>
+          {:else if hasVotedSkip}
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           {:else}
             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

@@ -1,6 +1,7 @@
 <script lang="ts">
 import { onMount, tick, untrack } from "svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
+import { readStoredListenIntent, saveStoredListenIntent } from "./musicStorage";
 import { formatClockSeconds } from "./chatClient";
 import type {
 	ChatMentionCandidate,
@@ -47,6 +48,7 @@ interface Props {
 	mentionMembers?: ChatMentionCandidate[];
 	clockOffsetMs: number;
 	initialVolume?: number;
+	initialListening?: boolean;
 	onSearchOnline: (keyword: string) => Promise<ChatMusicTrack[]>;
 	onEnqueueTrack: (track: ChatMusicTrack) => void;
 	onRemoveQueue: (uid: string) => void;
@@ -64,6 +66,7 @@ interface Props {
 	externalPlaylistRequest?: { playlistId: string; seq: number };
 	onPlaybackStatusChange?: (status: {
 		isListening: boolean;
+		listenIntent?: boolean;
 		isMuted: boolean;
 		elapsedSec: number;
 		durationSec: number;
@@ -71,6 +74,7 @@ interface Props {
 		isSoloCoolingDown: boolean;
 		soloCooldownRemainSec: number;
 		hasVotedSkip: boolean;
+		volume?: number;
 	}) => void;
 	onNotify?: (message: string) => void;
 }
@@ -94,6 +98,7 @@ const {
 	mentionMembers = [],
 	clockOffsetMs = 0,
 	initialVolume = 1,
+	initialListening = false,
 	onSearchOnline,
 	onEnqueueTrack,
 	onRemoveQueue,
@@ -146,7 +151,17 @@ let activeTab = $state<MusicTab>("player");
 let historySort = $state<HistorySortMode>("recent");
 let selectedRequesterKey = $state("");
 let showRequesterFilter = $state(false);
-let isListening = $state(false);
+const shouldInitialListen = untrack(() => Boolean(initialListening || readStoredListenIntent()));
+let isListening = $state(shouldInitialListen);
+let listenIntent = $state(shouldInitialListen);
+let pendingAutoplayResumeHandler: (() => void) | null = null;
+function cancelPendingAutoplayResume() {
+	if (pendingAutoplayResumeHandler) {
+		window.removeEventListener("pointerdown", pendingAutoplayResumeHandler);
+		window.removeEventListener("keydown", pendingAutoplayResumeHandler);
+		pendingAutoplayResumeHandler = null;
+	}
+}
 let hasJoinedAudio = $state(false);
 let isSyncingAudio = false;
 let syncAudioSeq = 0;
@@ -532,6 +547,16 @@ const currentRequesterAvatar = $derived.by(() => {
 	return logMatch?.requesterAvatar || "";
 });
 
+function getTrackArtistAndAlbum(track?: ChatMusicTrack | null): string {
+	if (!track) return "";
+	const artist = (track.artist || "").trim();
+	const album = (track.album || "").trim();
+	if (album && album !== artist) {
+		return artist ? `${artist} - ${album}` : album;
+	}
+	return artist || "未知歌手";
+}
+
 const isAdmin = $derived(Boolean(currentUser?.isAdmin));
 const isOwnRequest = $derived(
 	Boolean(
@@ -541,31 +566,25 @@ const isOwnRequest = $derived(
 			currentPlay.requesterKey === currentUser.userKey,
 	),
 );
-const isSoloMode = $derived(onlineMemberCount <= 1);
-const otherUnmutedCount = $derived(
-	onlineMembers.filter(
-		(m) =>
-			(!currentUser || m.userKey !== currentUser.userKey) &&
-			m.isMuted === false,
-	).length,
+// 当前在线且未静音的听歌人数（仅计在线且 isMuted === false 的人数）
+const activeListeningCount = $derived(
+	onlineMembers.filter((m) => m.isMuted === false).length,
 );
+// 能否直接切歌：
+// 1. 冷场轮播歌单：所有人随便切
+// 2. 自己点的歌：自己随便切
+// 3. 站长：随便切
+// 4. 房间在线人数 <= 2 或 正在听歌人数 <= 2：无论谁都可以随便切
 const canDirectSkip = $derived(
 	Boolean(currentPlay) &&
 		(currentPlay.isFallback ||
 			(Boolean(currentUser) &&
 				(isAdmin ||
 					isOwnRequest ||
-					(isSoloMode && soloCooldownRemainSec === 0) ||
-					(!isSoloMode && otherUnmutedCount === 0)))),
+					onlineMemberCount <= 2 ||
+					activeListeningCount <= 2))),
 );
-const isSoloCoolingDown = $derived(
-	Boolean(currentUser && currentPlay) &&
-		!currentPlay.isFallback &&
-		!isAdmin &&
-		!isOwnRequest &&
-		isSoloMode &&
-		soloCooldownRemainSec > 0,
-);
+const isSoloCoolingDown = $derived(false);
 
 function refreshSoloCooldown(): void {
 	const until = musicState?.soloCooldownUntil ?? 0;
@@ -1471,9 +1490,48 @@ function registerMediaSessionHandlers() {
 	}
 }
 
+let fadeTimer: number | null = null;
+function cancelAudioFade() {
+	if (fadeTimer !== null) {
+		window.clearInterval(fadeTimer);
+		fadeTimer = null;
+	}
+}
+
+function smoothFadeInAudio(
+	el: HTMLAudioElement,
+	targetVol: number,
+	durationMs = 320,
+) {
+	cancelAudioFade();
+	if (targetVol <= 0) {
+		el.volume = 0;
+		return;
+	}
+	el.volume = 0;
+	const steps = 12;
+	const stepInterval = Math.max(16, Math.floor(durationMs / steps));
+	const stepIncrement = targetVol / steps;
+	let step = 0;
+
+	fadeTimer = window.setInterval(() => {
+		step += 1;
+		if (step >= steps || el.paused) {
+			el.volume = targetVol;
+			cancelAudioFade();
+		} else {
+			el.volume = Math.min(targetVol, step * stepIncrement);
+		}
+	}, stepInterval);
+}
+
 function muteLocally() {
 	if (!audioEl) return;
+	cancelAudioFade();
+	cancelPendingAutoplayResume();
 	isListening = false;
+	listenIntent = false;
+	saveStoredListenIntent(false);
 	internalAudioAction = true;
 	audioEl.muted = true;
 	// 暂停本地出声并将 SMTC 标为 paused，确保系统媒体中心保留当前页控制权以便再次按播放键唤醒
@@ -1514,11 +1572,14 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 				? Math.max(0, el.duration - 0.5)
 				: target;
 		const clamped = Math.min(target, maxSeek);
-		if (clamped > 0.4 && Math.abs(el.currentTime - clamped) > 0.8) {
+
+		// 新曲刚开播（<= 3.0 秒），若播放头在 0 附近，绝不强制 Range seek 打断顺畅的流式连接！
+		const shouldSeek = clamped >= 3.0 && Math.abs(el.currentTime - clamped) > 1.2;
+		if (shouldSeek) {
 			el.currentTime = clamped;
 			await new Promise<void>((resolve) => {
 				el.addEventListener("seeked", () => resolve(), { once: true });
-				window.setTimeout(resolve, 900);
+				window.setTimeout(resolve, 800);
 			});
 		}
 		if (
@@ -1528,7 +1589,11 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 		) {
 			return;
 		}
+
+		const targetVol = volume;
+		el.volume = 0;
 		await el.play();
+		smoothFadeInAudio(el, targetVol, 320);
 		roomElapsed = computeExpectedElapsed();
 	} catch (err) {
 		const isSupersededOrAbort =
@@ -1538,6 +1603,16 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 			if (err instanceof DOMException && err.name === "NotAllowedError") {
 				isListening = false;
 				el.muted = true;
+				// 保持全局收听意愿为 true，注册一次性手势监听：用户在页面任意位置交互后立即无缝起播！
+				cancelPendingAutoplayResume();
+				pendingAutoplayResumeHandler = () => {
+					cancelPendingAutoplayResume();
+					if (audioEl && currentPlay && !isListening) {
+						void startOrResumeAudio();
+					}
+				};
+				window.addEventListener("pointerdown", pendingAutoplayResumeHandler, { once: true });
+				window.addEventListener("keydown", pendingAutoplayResumeHandler, { once: true });
 			} else if (expectedUid && reportedErrorUid !== expectedUid) {
 				// 单曲音源失效（如 NotSupportedError）时仅上报切歌，不关闭用户的持续收听状态
 				reportedErrorUid = expectedUid;
@@ -1553,6 +1628,7 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 
 async function startOrResumeAudio() {
 	if (!audioEl || !currentPlay) return;
+	cancelPendingAutoplayResume();
 	const targetUid = currentPlay.uid;
 	if (volume === 0) {
 		volume = 0.5;
@@ -1566,6 +1642,8 @@ async function startOrResumeAudio() {
 	}
 	hasJoinedAudio = true;
 	isListening = true;
+	listenIntent = true;
+	saveStoredListenIntent(true);
 
 	// 等待 Svelte 把 streamUrl 绑定到 <audio src> 上再起播，避免静音阶段预加载浪费请求
 	await tick();
@@ -1639,6 +1717,7 @@ function handleVolumeKeyDown(e: KeyboardEvent) {
 }
 
 function handleVolumeInput(value: number) {
+	cancelAudioFade();
 	const clamped = Math.min(1, Math.max(0, value));
 	volume = clamped;
 	try {
@@ -1858,7 +1937,17 @@ onMount(() => {
 	document.addEventListener("pointerdown", handlePointerDown);
 	document.addEventListener("keydown", handleKeydown);
 
+	if (isListening) {
+		void tick().then(() => {
+			if (currentPlay && audioEl) {
+				void startOrResumeAudio();
+			}
+		});
+	}
+
 	return () => {
+		cancelAudioFade();
+		cancelPendingAutoplayResume();
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleKeydown);
 		window.clearInterval(roomClock);
@@ -1896,9 +1985,19 @@ const displayedBrowseTracks = $derived(
 	searchQuery.trim() ? searchResults : fallbackTracks,
 );
 
+let hasAttemptedInitialListen = false;
+$effect(() => {
+	if (hasAttemptedInitialListen) return;
+	if (initialListening && currentPlay && audioEl) {
+		hasAttemptedInitialListen = true;
+		void startOrResumeAudio();
+	}
+});
+
 $effect(() => {
 	onPlaybackStatusChange?.({
 		isListening,
+		listenIntent,
 		isMuted: !isListening || volume <= 0,
 		elapsedSec: Math.floor(roomElapsed),
 		durationSec: effectiveDuration,
@@ -1906,6 +2005,7 @@ $effect(() => {
 		isSoloCoolingDown,
 		soloCooldownRemainSec,
 		hasVotedSkip,
+		volume,
 	});
 });
 </script>
@@ -1913,8 +2013,8 @@ $effect(() => {
 <aside class="flex flex-col h-full w-full min-h-0 overflow-hidden select-none" aria-label="点歌台">
   <audio
     bind:this={audioEl}
-    src={isListening && currentPlay?.track.streamUrl ? currentPlay.track.streamUrl : undefined}
-    preload="metadata"
+    src={currentPlay?.track.streamUrl || undefined}
+    preload="auto"
     muted={!isListening}
     onloadedmetadata={syncDurationFromAudio}
     ondurationchange={syncDurationFromAudio}
@@ -1988,18 +2088,18 @@ $effect(() => {
   </div>
 
   <!-- 4-Tab 切换栏：歌词 / 搜索 / 歌单 / 历史 -->
-  <div class="grid grid-cols-4 gap-1 border-b border-[var(--chat-divider-color)] px-2.5 py-1 shrink-0" role="tablist" aria-label="点歌台视图切换">
+  <div class="grid grid-cols-4 gap-1.5 border-b border-[var(--chat-divider-color)] px-2.5 py-1.5 shrink-0" role="tablist" aria-label="点歌台视图切换">
     <button
       type="button"
       role="tab"
       aria-selected={activeTab === "player"}
-      class="flex items-center justify-center gap-1 py-1 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2 px-1.5 text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'player'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
       onclick={() => switchMusicTab("player")}
     >
-      <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
         <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
       </svg>
@@ -2010,13 +2110,13 @@ $effect(() => {
       type="button"
       role="tab"
       aria-selected={activeTab === "search"}
-      class="flex items-center justify-center gap-1 py-1 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2 px-1.5 text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'search'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
       onclick={() => switchMusicTab("search")}
     >
-      <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="11" cy="11" r="8" />
         <line x1="21" y1="21" x2="16.65" y2="16.65" />
       </svg>
@@ -2027,7 +2127,7 @@ $effect(() => {
       type="button"
       role="tab"
       aria-selected={activeTab === "playlist"}
-      class="flex items-center justify-center gap-1 py-1 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2 px-1.5 text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'playlist'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
@@ -2035,7 +2135,7 @@ $effect(() => {
       onfocus={() => void loadPlaylists()}
       onclick={() => switchMusicTab("playlist")}
     >
-      <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M9 18V5l12-2v13" />
         <circle cx="6" cy="18" r="3" />
         <circle cx="18" cy="16" r="3" />
@@ -2047,13 +2147,13 @@ $effect(() => {
       type="button"
       role="tab"
       aria-selected={activeTab === "history"}
-      class="flex items-center justify-center gap-1 py-1 px-1 text-[11px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2 px-1.5 text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'history'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
       onclick={() => switchMusicTab("history")}
     >
-      <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="9" />
         <polyline points="12 7 12 12 15.5 14" />
       </svg>
@@ -2190,41 +2290,58 @@ $effect(() => {
   {#if activeTab === "player"}
     <div class="flex-1 min-h-0 flex flex-col">
       <div class="px-4 pt-3 pb-1.5 shrink-0">
-        <!-- 顶部行：左 w-14 圆封面转盘 + 右 歌名/点歌人/同步时间与音量 -->
-        <div class="flex items-center gap-2.5 mb-2">
-          <div class="relative shrink-0 w-14 h-14">
-            <div class="w-full h-full rounded-full overflow-hidden shadow-lg border-2 border-white/80 dark:border-neutral-700/80 relative bg-(--primary)/10 flex items-center justify-center">
-              <svg class="w-6 h-6 text-(--primary) opacity-45 absolute" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-              </svg>
-              {#if currentPlay?.track.cover && !coverLoadFailed}
-                <img
-                  src={currentPlay.track.cover}
-                  alt={`${currentPlay.track.title} 封面`}
-                  class="w-full h-full object-cover chat-spin-slow relative z-10"
-                  onerror={() => (coverLoadFailed = true)}
-                />
-              {/if}
-            </div>
+        <!-- 顶部行：左 w-20 正方形圆角大封面 + 右 三排文字（歌名、歌手/专辑、点歌人） -->
+        <div class="flex items-center gap-3 mb-2.5">
+          <div class="relative shrink-0 w-20 h-20 rounded-xl overflow-hidden shadow-sm border border-black/5 dark:border-white/10 bg-(--primary)/10 flex items-center justify-center">
+            <svg class="w-8 h-8 text-(--primary) opacity-40 absolute" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+            </svg>
+            {#if currentPlay?.track.cover && !coverLoadFailed}
+              <img
+                src={currentPlay.track.cover}
+                alt={`${currentPlay.track.title} 封面`}
+                class="w-full h-full object-cover relative z-10"
+                onerror={() => (coverLoadFailed = true)}
+              />
+            {/if}
           </div>
 
-          <div class="flex-1 min-w-0 flex flex-col">
-            <h3 class="font-bold text-base text-[var(--deep-text)] leading-tight truncate m-0">
+          <div class="flex-1 min-w-0 h-20 flex flex-col justify-between py-0.5">
+            <!-- 第一排：歌曲名称 -->
+            <h3
+              class="font-bold text-sm sm:text-base text-[var(--deep-text)] leading-snug truncate m-0"
+              title={currentPlay ? currentPlay.track.title : undefined}
+            >
               {currentPlay ? currentPlay.track.title : "未在播放"}
             </h3>
 
-            <div class="flex items-center gap-1.5 w-full min-w-0 mt-0.5 overflow-hidden">
-              <span class="min-w-0 text-xs font-medium text-[var(--chat-meta-color)] truncate">
-                {currentPlay ? currentPlay.track.artist : !musicState ? "正在连接电台..." : "暂无点播歌曲"}
-              </span>
+            <!-- 第二排：歌曲作者与专辑 -->
+            {#if currentPlay}
+              <div
+                class="text-xs font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal"
+                title={getTrackArtistAndAlbum(currentPlay.track)}
+              >
+                {getTrackArtistAndAlbum(currentPlay.track)}
+              </div>
+            {:else}
+              <div
+                class="text-xs font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal"
+              >
+                {!musicState ? "正在连接电台..." : "暂无点播歌曲"}
+              </div>
+            {/if}
+
+            <!-- 第三排：点歌人（小头像 + 名称，点击打开个人资料） -->
+            <div class="flex items-center gap-1.5 min-w-0">
               {#if currentPlay}
                 {@const isSystemFallback =
                   currentPlay.isFallback || currentPlay.requesterKey === "system:fallback"}
                 {#if !isSystemFallback && currentPlay.requesterKey && onOpenUserProfile}
                   <button
                     type="button"
-                    class="inline-flex items-center justify-center gap-1.5 shrink-0 max-w-[min(10.5rem,62%)] h-[22px] pl-[3px] pr-2 py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)] hover:bg-(--primary)/20 border-none cursor-pointer transition-colors"
+                    class="inline-flex items-center gap-1.5 min-w-0 max-w-[min(12rem,100%)] h-[22px] pl-[3px] pr-2 py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)] hover:bg-(--primary)/20 border-none cursor-pointer transition-colors active:scale-95"
                     onclick={() => openRequesterProfile(currentPlay.requesterKey, currentPlay.requesterName)}
+                    title={`查看点歌人 ${currentPlay.requesterName} 的个人资料`}
                   >
                     <ChatAvatar
                       src={currentRequesterAvatar}
@@ -2234,74 +2351,80 @@ $effect(() => {
                     <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
                   </button>
                 {:else}
-                  <span class="inline-flex items-center justify-center gap-1.5 shrink-0 max-w-[min(10.5rem,62%)] h-[22px] {isSystemFallback ? 'px-2' : 'pl-[3px] pr-2'} py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                  <span class="inline-flex items-center gap-1.5 min-w-0 max-w-[min(12rem,100%)] h-[22px] {isSystemFallback ? 'px-2' : 'pl-[3px] pr-2'} py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
                     {#if !isSystemFallback}
                       <ChatAvatar
                         src={currentRequesterAvatar}
                         name={currentPlay.requesterName}
                         size="2xs"
                       />
+                    {:else}
+                      <svg class="w-3 h-3 text-(--primary) opacity-80 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                      </svg>
                     {/if}
                     <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
                   </span>
                 {/if}
+              {:else}
+                <span class="text-xs text-[var(--chat-meta-color)] opacity-40">--</span>
               {/if}
             </div>
+          </div>
+        </div>
 
-            <!-- 同步时间与本地音量条 -->
-            <div class="flex items-center gap-2 text-[var(--chat-meta-color)] h-5 mt-0.5">
-              <div class="text-[10px] font-mono flex items-center gap-1 shrink-0 h-full tabular-nums" aria-live="polite">
-                <span>{formatTime(currentPlay ? roomElapsed : 0)}</span>
-                <span class="opacity-50" aria-hidden="true">/</span>
-                <span>{formatTime(currentPlay ? effectiveDuration : 0)}</span>
-              </div>
+        <!-- 播放进度时间与音量调节栏 -->
+        <div class="flex items-center justify-between text-[var(--chat-meta-color)] h-6 mb-1.5">
+          <div class="text-[11px] sm:text-xs font-medium font-mono flex items-center gap-1.5 shrink-0 h-full tabular-nums" aria-live="polite">
+            <span class="text-[var(--deep-text)]">{formatTime(currentPlay ? roomElapsed : 0)}</span>
+            <span class="opacity-40" aria-hidden="true">/</span>
+            <span>{formatTime(currentPlay ? effectiveDuration : 0)}</span>
+          </div>
 
-              <div class="flex items-center gap-1.5 bg-transparent h-full ml-auto">
-                <button
-                  type="button"
-                  disabled={!currentPlay}
-                  class="hover:text-(--primary) transition-colors p-0.5 rounded-md flex items-center border-none bg-transparent text-inherit cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
-                  aria-label={isListening ? "停止收听" : "开始收听"}
-                  onclick={toggleListen}
-                >
-                  {#if !isListening || volume === 0}
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                      <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
-                    </svg>
-                  {:else}
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                      <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
-                    </svg>
-                  {/if}
-                </button>
-                <div class="w-16 flex items-center">
-                  <div
-                    bind:this={volumeSliderEl}
-                    role="slider"
-                    tabindex="0"
-                    aria-label="音量"
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(volumeRatio * 100)}
-                    class="chat-slim-slider {isDraggingVolume ? 'chat-slim-slider--dragging' : ''}"
-                    style="--pct: {volumeRatio};"
-                    onpointerdown={handleVolumePointerDown}
-                    onpointermove={handleVolumePointerMove}
-                    onpointerup={handleVolumePointerEnd}
-                    onpointercancel={handleVolumePointerEnd}
-                    onkeydown={handleVolumeKeyDown}
-                  >
-                    <div class="chat-slim-slider-fill"></div>
-                    <div class="chat-slim-slider-thumb"></div>
-                  </div>
-                </div>
+          <div class="flex items-center gap-1.5 bg-transparent h-full">
+            <button
+              type="button"
+              disabled={!currentPlay}
+              class="hover:text-(--primary) transition-colors p-0.5 rounded-md flex items-center border-none bg-transparent text-inherit cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+              aria-label={isListening ? "停止收听" : "开始收听"}
+              onclick={toggleListen}
+            >
+              {#if !isListening || volume === 0}
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+                </svg>
+              {:else}
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                </svg>
+              {/if}
+            </button>
+            <div class="w-16 flex items-center">
+              <div
+                bind:this={volumeSliderEl}
+                role="slider"
+                tabindex="0"
+                aria-label="音量"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(volumeRatio * 100)}
+                class="chat-slim-slider {isDraggingVolume ? 'chat-slim-slider--dragging' : ''}"
+                style="--pct: {volumeRatio};"
+                onpointerdown={handleVolumePointerDown}
+                onpointermove={handleVolumePointerMove}
+                onpointerup={handleVolumePointerEnd}
+                onpointercancel={handleVolumePointerEnd}
+                onkeydown={handleVolumeKeyDown}
+              >
+                <div class="chat-slim-slider-fill"></div>
+                <div class="chat-slim-slider-thumb"></div>
               </div>
             </div>
           </div>
         </div>
 
         <!-- 只读同步进度条（未播放时也保留显示 0%） -->
-        <div class="my-2.5">
+        <div class="mb-2">
           <div class="chat-sync-progress" style="--pct: {currentPlay ? progressRatio : 0};" aria-label="当前歌曲同步进度">
             <div class="chat-sync-progress-fill"></div>
           </div>
@@ -2328,23 +2451,19 @@ $effect(() => {
                 isSkippingTrack
                   ? "正在切歌..."
                   : canDirectSkip
-                    ? activeVotes > 0
-                      ? `直接切歌（已有 ${activeVotes}/${activeThreshold} 票）`
-                      : "直接切歌"
-                    : isSoloCoolingDown
-                      ? `切歌冷却中（${soloCooldownRemainSec}s）`
-                      : hasVotedSkip
-                        ? `取消投票（已投 ${activeVotes}/${activeThreshold} 票）`
-                        : activeVotes > 0
-                          ? `投票切歌（已投 ${activeVotes}/${activeThreshold} 票）`
-                          : "投票切歌"}
+                    ? "直接切歌"
+                    : hasVotedSkip
+                      ? `取消投票（已投 ${activeVotes}/${activeThreshold} 票）`
+                      : activeVotes > 0
+                        ? `同意切歌（已有 ${activeVotes}/${activeThreshold} 票）`
+                        : "投票切歌（0/2 票）"}
               <ChatTooltip text={mainSkipTooltipText} align="left">
                 {#if canDirectSkip}
                   <button
                     type="button"
                     disabled={isSkippingTrack}
-                    class="chat-skip-pill whitespace-nowrap {activeVotes > 0 ? 'voted' : ''} disabled:opacity-75 disabled:cursor-wait!"
-                    aria-label={isSkippingTrack ? "正在切歌..." : activeVotes > 0 ? `直接切歌（已有 ${activeVotes}/${activeThreshold} 票）` : "直接切歌"}
+                    class="chat-skip-pill whitespace-nowrap disabled:opacity-75 disabled:cursor-wait!"
+                    aria-label={isSkippingTrack ? "正在切歌..." : "直接切歌"}
                     onclick={onSkipTrack}
                   >
                     {#if isSkippingTrack}
@@ -2359,25 +2478,13 @@ $effect(() => {
                     {/if}
                     <span>切歌</span>
                   </button>
-                {:else if isSoloCoolingDown}
-                  <button
-                    type="button"
-                    class="chat-skip-pill whitespace-nowrap opacity-75"
-                    aria-label={`切歌冷却中 (${soloCooldownRemainSec}s)`}
-                    onclick={onSkipTrack}
-                  >
-                    <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                      <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-                    </svg>
-                    <span class="tabular-nums">{soloCooldownRemainSec}s</span>
-                  </button>
                 {:else}
                   <button
                     type="button"
                     disabled={isSkippingTrack}
                     class="chat-skip-pill whitespace-nowrap {hasVotedSkip ? 'voted' : ''} disabled:opacity-75 disabled:cursor-wait!"
                     aria-pressed={hasVotedSkip}
-                    aria-label={isSkippingTrack ? "正在切歌..." : hasVotedSkip ? `取消投票（已投 ${activeVotes}/${activeThreshold} 票）` : activeVotes > 0 ? `投票切歌（已投 ${activeVotes}/${activeThreshold} 票）` : "投票切歌"}
+                    aria-label={mainSkipTooltipText}
                     onclick={onVoteSkip}
                   >
                     {#if isSkippingTrack}
@@ -2385,12 +2492,17 @@ $effect(() => {
                         <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
                         <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
                       </svg>
+                    {:else if hasVotedSkip}
+                      <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
                     {:else}
                       <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                         <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
                       </svg>
                     {/if}
-                    <span>{hasVotedSkip ? "已投" : "切歌"}</span>
+                    <span>{hasVotedSkip ? "取消" : activeVotes > 0 ? "同意" : "切歌"}</span>
                   </button>
                 {/if}
               </ChatTooltip>
@@ -2456,7 +2568,7 @@ $effect(() => {
         {#if playerPaneMode !== "queue"}
           <div
             class="min-h-0 flex flex-col border-t border-[var(--chat-divider-color)]"
-            style={playerPaneMode === "split" ? "flex: 56 1 0%;" : "flex: 1 1 0%;"}
+            style="flex: 1 1 0%;"
           >
             {#if !currentPlay}
               <div class="flex-1 flex flex-col items-center justify-center gap-3.5 py-4 text-center">
@@ -2523,8 +2635,12 @@ $effect(() => {
 
         {#if playerPaneMode !== "lyrics"}
           <div
-            class="min-h-0 flex flex-col border-t border-[var(--chat-divider-color)] pt-2 pb-2"
-            style={playerPaneMode === "split" ? "flex: 44 1 0%;" : "flex: 1 1 0%;"}
+            class="min-h-0 flex flex-col border-t border-[var(--chat-divider-color)] pt-2 pb-2 transition-[max-height] duration-200"
+            style={playerPaneMode === "split"
+              ? queue.length === 0
+                ? "flex: 0 0 auto;"
+                : "flex: 0 1 auto; max-height: 42%;"
+              : "flex: 1 1 0%;"}
           >
             <div class="flex items-center justify-between mb-1.5 shrink-0">
               <span class="text-xs font-medium text-[var(--chat-meta-color)]">
@@ -2533,7 +2649,7 @@ $effect(() => {
             </div>
 
             {#if queue.length === 0}
-              <div class="flex-1 flex flex-col items-center justify-center gap-1 text-center px-3">
+              <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 py-2">
                 {#if currentPlay?.isFallback}
                   <span class="text-xs font-medium text-[var(--deep-text)]">
                     正在冷场轮播
@@ -2572,11 +2688,12 @@ $effect(() => {
                             type="button"
                             class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[10px] inline"
                             onclick={() => openRequesterProfile(item.requesterKey, item.requesterName)}
+                            title={`点歌人：${item.requesterName}`}
                           >
-                            点歌：{item.requesterName}
+                            {item.requesterName}
                           </button>
                         {:else}
-                          点歌：{item.requesterName}
+                          <span title={`点歌人：${item.requesterName}`}>{item.requesterName}</span>
                         {/if}
                       </div>
                     </div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onMount } from "svelte";
+import { onMount, untrack } from "svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAuthModal from "./ChatAuthModal.svelte";
 import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
@@ -34,6 +34,7 @@ import type {
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import MusicPanel from "./MusicPanel.svelte";
+import { readStoredListenIntent } from "./musicStorage";
 import type { ChatMusicTrack } from "./musicTypes";
 import RoomPanel from "./RoomPanel.svelte";
 import {
@@ -97,7 +98,7 @@ const mentionMembers = $derived.by<ChatMentionCandidate[]>(() => {
 			bio: member.bio || previous?.bio,
 			status: member.status || previous?.status,
 			customBadges: member.customBadges || previous?.customBadges,
-			online: member.online || onlineKeys.has(member.userKey),
+			online: onlineKeys.has(member.userKey),
 		});
 	}
 	return [...merged.values()].sort((a, b) => {
@@ -158,7 +159,17 @@ let musicPanelRef: {
 	toggleListenControl?: () => void;
 	openPlayerTab?: () => void;
 } | null = $state(null);
-let mobilePlaybackStatus = $state({
+let mobilePlaybackStatus = $state<{
+	isListening: boolean;
+	isMuted: boolean;
+	elapsedSec: number;
+	durationSec: number;
+	canDirectSkip: boolean;
+	isSoloCoolingDown: boolean;
+	soloCooldownRemainSec: number;
+	hasVotedSkip: boolean;
+	volume?: number;
+}>({
 	isListening: false,
 	isMuted: true,
 	elapsedSec: 0,
@@ -167,7 +178,15 @@ let mobilePlaybackStatus = $state({
 	isSoloCoolingDown: false,
 	soloCooldownRemainSec: 0,
 	hasVotedSkip: false,
+	volume: initialMusicVolume,
 });
+
+// 全局收听意愿管理（跨房间与刷新页面时保持意图）
+const initialListenIntent = untrack(() => readStoredListenIntent());
+
+let isListeningIntent = $state(initialListenIntent);
+let memoryVolume = $state(initialMusicVolume);
+let hasAppMounted = false;
 
 let lastMarkedServerReadAt = 0;
 let lastReportedAudioKey = "";
@@ -214,7 +233,7 @@ function mergeRoomPresence(
 		memberMap.set(m.userKey, {
 			...existing,
 			...m,
-			roomId,
+			roomId: m.roomId || existing?.roomId || roomId,
 		});
 	}
 	onlineMembers = [...memberMap.values()];
@@ -522,9 +541,13 @@ function connectRoom(roomId: string) {
 					);
 				}
 
-				roomOnlineMembers = packet.members;
-				mergeRoomPresence(packet.roomId, packet.members, packet.totalCount);
-				void refreshGlobalPresence();
+				roomOnlineMembers = packet.members.filter(
+					(m) => !m.roomId || m.roomId === packet.roomId,
+				);
+				onlineMembers = packet.members;
+				if (typeof packet.totalCount === "number" && packet.totalCount > 0) {
+					totalOnlineCount = packet.totalCount;
+				}
 				roomMentionMembers = packet.mentionMembers ?? [];
 				if (typeof packet.totalChatters === "number" && packet.totalChatters > 0) {
 					totalChatterCount = packet.totalChatters;
@@ -714,14 +737,23 @@ function connectRoom(roomId: string) {
 			}
 			case "presence:update": {
 				if (packet.roomId === currentRoom) {
-					roomOnlineMembers = packet.members;
-					mergeRoomPresence(packet.roomId, packet.members, packet.totalCount);
-					void refreshGlobalPresence();
-					void refreshMemberDirectory();
+					roomOnlineMembers = packet.members.filter(
+						(m) => !m.roomId || m.roomId === currentRoom,
+					);
+					onlineMembers = packet.members;
+					if (
+						typeof packet.totalCount === "number" &&
+						packet.totalCount > 0
+					) {
+						totalOnlineCount = packet.totalCount;
+					}
 					if (packet.mentionMembers) {
 						roomMentionMembers = packet.mentionMembers;
 					}
-					if (typeof packet.totalChatters === "number" && packet.totalChatters > 0) {
+					if (
+						typeof packet.totalChatters === "number" &&
+						packet.totalChatters > 0
+					) {
 						totalChatterCount = packet.totalChatters;
 					}
 				}
@@ -979,15 +1011,19 @@ function handleRoomSelect(roomId: string) {
 	musicState = null;
 	clearSkipPending();
 	reconnectAttempt = 0;
-	if (ws) {
-		try {
-			ws.close(1000, "switch");
-		} catch {
-			// Ignore
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		ws.send(JSON.stringify({ type: "room:switch", roomId }));
+	} else {
+		if (ws) {
+			try {
+				ws.close(1000, "switch");
+			} catch {
+				// Ignore
+			}
+			ws = null;
 		}
-		ws = null;
+		connectRoom(roomId);
 	}
-	connectRoom(roomId);
 	if (activeTab === "room") {
 		activeTab = "chat";
 	}
@@ -1327,6 +1363,14 @@ function handleEnqueueTrack(track: ChatMusicTrack) {
 		openAuthModal();
 		return;
 	}
+	// 每个人点歌上限为 10 首歌（排队中的曲目数，非管理员限制）
+	const userQueuedCount = (musicState?.queue ?? []).filter(
+		(q) => q.requesterKey === currentUser.userKey,
+	).length;
+	if (!currentUser.isAdmin && userQueuedCount >= 10) {
+		showNotice("您排队中的曲目已达 10 首上限，请等待播放后再点歌~");
+		return;
+	}
 	sendPacket({
 		type: "music:enqueue",
 		track: {
@@ -1424,6 +1468,11 @@ onMount(() => {
 	baseDocumentTitle = document.title;
 	currentAuth = resolveInitialAuth();
 	walineToken = currentAuth?.kind === "waline" ? currentAuth.token : "";
+
+	if (readStoredListenIntent()) {
+		isListeningIntent = true;
+	}
+	hasAppMounted = true;
 
 	const urlParams = new URLSearchParams(window.location.search);
 	const paramRoom = urlParams.get("room")?.trim().toLowerCase() || "";
@@ -1562,6 +1611,7 @@ onMount(() => {
           targetMessageUid={targetMessageUid}
           clockOffsetMs={clockOffsetMs}
           musicState={musicState}
+          isSkippingTrack={isSkippingTrack}
           onSkipTrack={handleSkipTrack}
           onVoteSkip={handleVoteSkip}
           onLoadHistory={handleLoadHistory}
@@ -1645,12 +1695,22 @@ onMount(() => {
         onlineMembers={roomOnlineMembers}
         mentionMembers={mentionMembers}
         clockOffsetMs={clockOffsetMs}
-        initialVolume={initialMusicVolume}
+        initialVolume={memoryVolume}
+        initialListening={isListeningIntent}
         onSearchOnline={handleSearchOnline}
         onEnqueueTrack={handleEnqueueTrack}
         onNotify={showNotice}
         onOpenUserProfile={handleOpenUserProfile}
-        onPlaybackStatusChange={(status) => (mobilePlaybackStatus = status)}
+        onPlaybackStatusChange={(status) => {
+          mobilePlaybackStatus = status;
+          if (!hasAppMounted) return;
+          if (typeof status.listenIntent === "boolean") {
+            isListeningIntent = status.listenIntent;
+          }
+          if (typeof status.volume === "number") {
+            memoryVolume = status.volume;
+          }
+        }}
         onRemoveQueue={(uid) => {
           if (!currentUser) {
             showAuthModal = true;

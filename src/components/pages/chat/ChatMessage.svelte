@@ -70,37 +70,25 @@ const {
 }: Props = $props();
 
 let showQuickReaction = $state(false);
-let showMoreMenu = $state(false);
 let copySuccess = $state(false);
 let reactionEl = $state<HTMLElement | null>(null);
-let moreMenuEl = $state<HTMLElement | null>(null);
 
-const hasMoreActions = $derived(
-	Boolean(
-		(message.content && message.content.trim()) ||
-			(onEdit && canEdit && !message.replyTo?.isRecalled) ||
-			(isAdmin && onPin) ||
-			(canRecall && onRecall) ||
-			(canDelete && onDelete),
-	),
-);
-
-async function handleCopy() {
+async function handleCopy(e: MouseEvent) {
+	e.stopPropagation();
 	if (!message.content) return;
 	try {
 		await navigator.clipboard.writeText(message.content);
 		copySuccess = true;
 		setTimeout(() => {
 			copySuccess = false;
-			showMoreMenu = false;
-		}, 800);
+		}, 1200);
 	} catch {
-		showMoreMenu = false;
+		// ignore
 	}
 }
 
 $effect(() => {
-	if (!showQuickReaction && !showMoreMenu) return;
+	if (!showQuickReaction) return;
 	function handleOutside(e: PointerEvent) {
 		const target = e.target as Node | null;
 		if (
@@ -110,14 +98,6 @@ $effect(() => {
 			!reactionEl.contains(target)
 		) {
 			showQuickReaction = false;
-		}
-		if (
-			showMoreMenu &&
-			moreMenuEl &&
-			target &&
-			!moreMenuEl.contains(target)
-		) {
-			showMoreMenu = false;
 		}
 	}
 	window.addEventListener("pointerdown", handleOutside, { capture: true });
@@ -389,24 +369,23 @@ function formatReactionTooltip(users: string[]): string {
 {/snippet}
 
 {#snippet renderFloatingActions(isSelfMsg: boolean)}
-  {#if onReaction || onReply || hasMoreActions}
+  {#if onReaction || onReply || (message.content && message.content.trim()) || (onEdit && canEdit && !message.replyTo?.isRecalled) || (isAdmin && onPin) || (canRecall && onRecall) || (canDelete && onDelete)}
     <div
-      class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction || showMoreMenu ? 'is-active' : ''}"
+      class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction ? 'is-active' : ''}"
       role="toolbar"
       aria-label="消息快捷操作"
     >
-      <!-- 快捷表情反应（Telegram 风格 SmilePlus 图标） -->
+      <!-- 快捷表情反应 -->
       {#if onReaction}
         <div class="relative inline-flex items-center" bind:this={reactionEl}>
           <button
             type="button"
             class="chat-action-icon-btn {showQuickReaction ? 'active' : ''}"
-            aria-label="添加表情反应"
+            aria-label="表情回应"
             title="表情回应"
             onclick={(e) => {
               e.stopPropagation();
               showQuickReaction = !showQuickReaction;
-              showMoreMenu = false;
             }}
           >
             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -457,114 +436,102 @@ function formatReactionTooltip(users: string[]): string {
         </button>
       {/if}
 
-      <!-- 更多操作下拉菜单（···） -->
-      {#if hasMoreActions}
-        <div class="relative inline-flex items-center" bind:this={moreMenuEl}>
-          <button
-            type="button"
-            class="chat-action-icon-btn {showMoreMenu ? 'active' : ''}"
-            aria-label="更多操作"
-            title="更多"
-            onclick={(e) => {
-              e.stopPropagation();
-              showMoreMenu = !showMoreMenu;
-              showQuickReaction = false;
-            }}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-              <circle cx="5" cy="12" r="1.5" />
-              <circle cx="12" cy="12" r="1.5" />
-              <circle cx="19" cy="12" r="1.5" />
+      <!-- 复制内容 -->
+      {#if message.content && message.content.trim()}
+        <button
+          type="button"
+          class="chat-action-icon-btn {copySuccess ? 'text-emerald-500' : ''}"
+          aria-label="复制内容"
+          title={copySuccess ? "已复制 ✓" : "复制"}
+          onclick={handleCopy}
+        >
+          {#if copySuccess}
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" />
             </svg>
-          </button>
-
-          {#if showMoreMenu}
-            <div class="chat-msg-menu-popover {isSelfMsg ? 'self-menu' : 'other-menu'}">
-              {#if message.content && message.content.trim()}
-                <button
-                  type="button"
-                  class="chat-msg-menu-item"
-                  onclick={handleCopy}
-                >
-                  <svg class="w-3.5 h-3.5 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-                  </svg>
-                  <span>{copySuccess ? "已复制 ✓" : "复制内容"}</span>
-                </button>
-              {/if}
-
-              {#if onEdit && canEdit && !message.replyTo?.isRecalled}
-                <button
-                  type="button"
-                  class="chat-msg-menu-item"
-                  onclick={() => {
-                    showMoreMenu = false;
-                    onEdit?.(message);
-                  }}
-                >
-                  <svg class="w-3.5 h-3.5 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                  </svg>
-                  <span>编辑消息</span>
-                </button>
-              {/if}
-
-              {#if isAdmin && onPin}
-                <button
-                  type="button"
-                  class="chat-msg-menu-item"
-                  onclick={() => {
-                    showMoreMenu = false;
-                    onPin?.(message.msgUid, isPinned);
-                  }}
-                >
-                  <svg class="w-3.5 h-3.5 shrink-0 opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="12" y1="17" x2="12" y2="22" />
-                    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
-                  </svg>
-                  <span>{isPinned ? "取消置顶" : "置顶消息"}</span>
-                </button>
-              {/if}
-
-              {#if canRecall && onRecall}
-                <button
-                  type="button"
-                  class="chat-msg-menu-item"
-                  onclick={() => {
-                    showMoreMenu = false;
-                    onRecall?.(message.msgUid);
-                  }}
-                >
-                  <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="1 4 1 10 7 10" />
-                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                  </svg>
-                  <span>撤回消息</span>
-                </button>
-              {/if}
-
-              {#if canDelete && onDelete}
-                <div class="chat-msg-menu-divider"></div>
-                <button
-                  type="button"
-                  class="chat-msg-menu-item danger"
-                  onclick={() => {
-                    showMoreMenu = false;
-                    onDelete?.(message.msgUid);
-                  }}
-                >
-                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 6h18" />
-                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                  </svg>
-                  <span>删除消息</span>
-                </button>
-              {/if}
-            </div>
+          {:else}
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+            </svg>
           {/if}
-        </div>
+        </button>
+      {/if}
+
+      <!-- 编辑消息 -->
+      {#if onEdit && canEdit && !message.replyTo?.isRecalled}
+        <button
+          type="button"
+          class="chat-action-icon-btn"
+          aria-label="编辑消息"
+          title="编辑"
+          onclick={(e) => {
+            e.stopPropagation();
+            onEdit?.(message);
+          }}
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+          </svg>
+        </button>
+      {/if}
+
+      <!-- 置顶 / 取消置顶 -->
+      {#if isAdmin && onPin}
+        <button
+          type="button"
+          class="chat-action-icon-btn {isPinned ? 'text-[var(--skin-accent)]' : ''}"
+          aria-label={isPinned ? "取消置顶" : "置顶消息"}
+          title={isPinned ? "取消置顶" : "置顶"}
+          onclick={(e) => {
+            e.stopPropagation();
+            onPin?.(message.msgUid, isPinned);
+          }}
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="17" x2="12" y2="22" />
+            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+          </svg>
+        </button>
+      {/if}
+
+      <!-- 撤回消息 -->
+      {#if canRecall && onRecall}
+        <button
+          type="button"
+          class="chat-action-icon-btn hover:text-[var(--primary)]"
+          aria-label="撤回消息"
+          title="撤回"
+          onclick={(e) => {
+            e.stopPropagation();
+            onRecall?.(message.msgUid);
+          }}
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="1 4 1 10 7 10" />
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+          </svg>
+        </button>
+      {/if}
+
+      <!-- 删除消息 -->
+      {#if canDelete && onDelete}
+        <button
+          type="button"
+          class="chat-action-icon-btn hover:text-red-500"
+          aria-label="删除消息"
+          title="删除"
+          onclick={(e) => {
+            e.stopPropagation();
+            onDelete?.(message.msgUid);
+          }}
+        >
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 6h18" />
+            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+          </svg>
+        </button>
       {/if}
     </div>
   {/if}

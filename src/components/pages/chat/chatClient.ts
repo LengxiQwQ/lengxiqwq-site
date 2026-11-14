@@ -780,6 +780,9 @@ function rewriteDefaultAvatarQuery(rawUrl: string): string {
 
 export function resolveChatAvatarUrl(raw?: string): string {
 	if (!raw) return "";
+	if (raw.includes("chat-api.lengxiqwq.com/api/interconnect/media/")) {
+		return "";
+	}
 	return rewriteDefaultAvatarQuery(raw);
 }
 

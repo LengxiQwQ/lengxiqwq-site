@@ -41,6 +41,7 @@ interface Props {
 	targetMessageUid?: string;
 	clockOffsetMs?: number;
 	musicState?: RoomMusicState | null;
+	isSkippingTrack?: boolean;
 	onSkipTrack?: () => void;
 	onVoteSkip?: () => void;
 	onClearTargetMessage?: () => void;
@@ -108,6 +109,7 @@ const {
 	targetMessageUid = "",
 	clockOffsetMs = 0,
 	musicState = null,
+	isSkippingTrack = false,
 	onSkipTrack,
 	onVoteSkip,
 	onClearTargetMessage,
@@ -275,23 +277,23 @@ const skipVoteBanner = $derived.by(() => {
 	const hasVotedSkip = Boolean(
 		currentUser && current.skipVotes.includes(currentUser.userKey),
 	);
-	const otherUnmutedCount = roomOnlineMembers.filter(
-		(m) =>
-			(!currentUser || m.userKey !== currentUser.userKey) &&
-			m.isMuted === false,
+	const activeListeningCount = roomOnlineMembers.filter(
+		(m) => m.isMuted === false,
 	).length;
-	const canSkipAloneOrMuted =
+	const canDirectSkip =
 		Boolean(currentUser) &&
-		roomOnlineMembers.length >= 2 &&
-		otherUnmutedCount === 0;
+		(isAdmin ||
+			isOwnRequest ||
+			current.isFallback ||
+			roomOnlineMembers.length <= 2 ||
+			activeListeningCount <= 2);
 
 	return {
 		voterLabel,
 		title: current.track.title,
 		voteCount,
 		voteThreshold,
-		canApproveSkip:
-			isAdmin || isOwnRequest || current.isFallback || canSkipAloneOrMuted,
+		canDirectSkip,
 		hasVotedSkip,
 	};
 });
@@ -1700,29 +1702,43 @@ function removePendingImage(index: number) {
                 申请切歌：《{skipVoteBanner.title}》（{skipVoteBanner.voteCount}/{skipVoteBanner.voteThreshold}）
               </span>
             </div>
-            {#if skipVoteBanner.canApproveSkip}
+            {#if isSkippingTrack}
               <button
                 type="button"
-                class="chat-mention-jump-pill border-none cursor-pointer shrink-0"
-                onclick={() => onSkipTrack?.()}
+                disabled
+                class="chat-mention-jump-pill opacity-80 border-none cursor-wait shrink-0 flex items-center gap-1.5"
               >
-                同意切歌
+                <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                  <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                </svg>
+                <span>切歌中...</span>
               </button>
             {:else if skipVoteBanner.hasVotedSkip}
+              <!-- 发起投票 / 已经投过票的人：仅显示“取消”，绝不显示“同意” -->
               <button
                 type="button"
-                class="chat-mention-jump-pill opacity-85 border-none cursor-pointer shrink-0"
+                class="chat-mention-jump-pill opacity-90 hover:opacity-100 border-none cursor-pointer shrink-0"
                 onclick={() => onVoteSkip?.()}
+                title="取消切歌申请"
               >
-                取消投票
+                取消
               </button>
             {:else}
+              <!-- 其他没投票的人：显示“同意” -->
               <button
                 type="button"
-                class="chat-mention-jump-pill border-none cursor-pointer shrink-0"
-                onclick={() => onVoteSkip?.()}
+                class="chat-mention-jump-pill border-none cursor-pointer shrink-0 active:scale-95"
+                onclick={() => {
+                  if (skipVoteBanner.canDirectSkip) {
+                    onSkipTrack?.();
+                  } else {
+                    onVoteSkip?.();
+                  }
+                }}
+                title="同意切歌"
               >
-                投票切歌
+                同意
               </button>
             {/if}
           </div>

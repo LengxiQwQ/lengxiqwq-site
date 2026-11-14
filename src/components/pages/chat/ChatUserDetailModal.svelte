@@ -900,8 +900,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           </div>
 
           <div class="chat-user-detail-subcard text-xs leading-relaxed text-[var(--deep-text)]/90 px-2.5 py-2 rounded-lg break-words">
-            {#if profile.bio.trim()}
-              {profile.bio}
+            {#if profile.bio?.trim()}
+              {profile.bio.trim()}
             {:else}
               <span class="text-[var(--chat-meta-color)] opacity-80">这个人很懒，还没有填写个人简介~</span>
             {/if}
