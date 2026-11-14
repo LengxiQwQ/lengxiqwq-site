@@ -649,8 +649,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             <ChatAvatar src={seed.avatar} name={cleanName} size="lg" />
             {#if isOnline}
               <span
-                class="chat-online-dot absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
-                title="在线中"
+                class="chat-online-dot {profile?.isFocused !== false ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
               ></span>
             {/if}
           </div>
@@ -680,7 +679,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             type="button"
             disabled
             class="px-2.5 py-1.5 text-xs text-[var(--chat-meta-color)] bg-black/5 dark:bg-white/5 rounded-lg shrink-0 flex items-center gap-1 cursor-not-allowed opacity-50 border-none select-none"
-            title="暂不支持跨站提及站外茶友"
+            aria-label="暂不支持跨站提及站外茶友"
           >
             <span class="font-bold opacity-60">@</span>
             <span>暂不支持提及</span>
@@ -758,7 +757,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           </div>
           <div class="bg-black/3 dark:bg-white/5 p-2 rounded-lg">
             <div class="text-[0.6875rem] text-[var(--chat-meta-color)]">初次相识</div>
-            <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5 truncate" title={firstSeenAt ? new Date(firstSeenAt).toLocaleString() : "未知"}>
+            <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5 truncate">
               {firstSeenAt ? formatJoinTime(firstSeenAt) : "本次会话"}
             </div>
           </div>
@@ -772,7 +771,6 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               target="_blank"
               rel="noopener noreferrer"
               class="text-[var(--chat-accent-text)] hover:underline truncate"
-              title={matrixUserId || seed.userKey}
             >
               {matrixUserId || seed.userKey}
             </a>
@@ -941,7 +939,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               type="button"
               disabled={isExternalProfile}
               class="{isExternalProfile ? 'bg-black/5 dark:bg-white/5 text-[var(--chat-meta-color)] opacity-50 cursor-not-allowed select-none' : 'chat-send-btn'} flex-1 h-9! rounded-xl! text-xs! truncate px-3!"
-              title={isExternalProfile ? "暂不支持跨站提及站外茶友" : `在聊天中 @${profile.name}`}
+              aria-label={isExternalProfile ? "暂不支持跨站提及站外茶友" : `在聊天中 @${profile.name}`}
               onclick={() => {
                 if (isExternalProfile) return;
                 onClose();

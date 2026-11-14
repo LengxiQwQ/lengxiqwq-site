@@ -4,7 +4,7 @@ import { KAOMOJI_PRESETS } from "@/constants/kaomoji";
 import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMessage from "./ChatMessage.svelte";
-import ChatPollCreateModal from "./ChatPollCreateModal.svelte";
+import ChatTooltip from "./ChatTooltip.svelte";
 import { uploadChatImage, uploadChatMedia } from "./chatClient";
 import type {
 	ChatMentionCandidate,
@@ -65,6 +65,7 @@ interface Props {
 	onEditMessage?: (msgUid: string, content: string) => void;
 	onPinMessage?: (msgUid: string, unpin?: boolean) => void;
 	onVotePoll?: (pollUid: string, answerId: string) => void;
+	onOpenPollModal?: () => void;
 	onCreatePoll?: (
 		question: string,
 		answers: string[],
@@ -131,6 +132,7 @@ const {
 	onEditMessage,
 	onPinMessage,
 	onVotePoll,
+	onOpenPollModal,
 	onCreatePoll,
 	onTyping,
 	onToggleSettings,
@@ -164,7 +166,61 @@ const currentPinnedMsg = $derived.by(() => {
 	return pinnedMessages[safeIndex] ?? pinnedMessages[0];
 });
 let uploadError = $state("");
-let showPollModal = $state(false);
+let isDraggingFiles = $state(false);
+let dragCounter = 0;
+
+function handleDragEnter(e: DragEvent) {
+	e.preventDefault();
+	e.stopPropagation();
+	if (e.dataTransfer?.types?.includes("Files")) {
+		dragCounter++;
+		isDraggingFiles = true;
+	}
+}
+
+function handleDragOver(e: DragEvent) {
+	e.preventDefault();
+	e.stopPropagation();
+	if (e.dataTransfer) {
+		e.dataTransfer.dropEffect = "copy";
+	}
+}
+
+function handleDragLeave(e: DragEvent) {
+	e.preventDefault();
+	e.stopPropagation();
+	dragCounter--;
+	if (dragCounter <= 0) {
+		dragCounter = 0;
+		isDraggingFiles = false;
+	}
+}
+
+function handleDrop(e: DragEvent) {
+	e.preventDefault();
+	e.stopPropagation();
+	isDraggingFiles = false;
+	dragCounter = 0;
+
+	if (!currentUser) {
+		onRequireAuth();
+		return;
+	}
+
+	const files = e.dataTransfer?.files;
+	if (!files || files.length === 0) return;
+
+	const fileList = Array.from(files);
+	const imageFiles = fileList.filter((f) => f.type.startsWith("image/"));
+	const otherFiles = fileList.filter((f) => !f.type.startsWith("image/"));
+
+	if (imageFiles.length > 0) {
+		void processImageFiles(imageFiles);
+	}
+	if (otherFiles.length > 0) {
+		void processMediaFiles(otherFiles);
+	}
+}
 let activePopover = $state<"none" | "emoji">("none");
 let activeEmojiTab = $state<string>("kaomoji");
 let showMusicNotices = $state(false);
@@ -512,6 +568,9 @@ const unreadMentionSet = $derived(new Set(unreadMentionUids));
 
 const userNameMap = $derived.by<Map<string, string>>(() => {
 	const map = new Map<string, string>();
+	if (currentUser?.userKey && currentUser?.name) {
+		map.set(currentUser.userKey, currentUser.name);
+	}
 	for (const m of messages) {
 		if (m.userKey && m.name) {
 			map.set(m.userKey, m.name);
@@ -840,9 +899,19 @@ onMount(() => {
 		}
 	};
 
+	const preventWindowDrag = (e: DragEvent) => {
+		if (e.dataTransfer?.types?.includes("Files")) {
+			e.preventDefault();
+		}
+	};
+
+	window.addEventListener("dragover", preventWindowDrag);
+	window.addEventListener("drop", preventWindowDrag);
 	document.addEventListener("pointerdown", handlePointerDown);
 	document.addEventListener("keydown", handleDocKeydown);
 	return () => {
+		window.removeEventListener("dragover", preventWindowDrag);
+		window.removeEventListener("drop", preventWindowDrag);
 		resizeObserver?.disconnect();
 		messageContainer?.removeEventListener("load", handleMediaLoad, true);
 		if (rafSyncId !== null) window.cancelAnimationFrame(rafSyncId);
@@ -1416,7 +1485,29 @@ function removePendingImage(index: number) {
 }
 </script>
 
-<div class="flex flex-col h-full w-full min-h-0 relative">
+<div
+  class="flex flex-col h-full w-full min-h-0 relative"
+  ondragenter={handleDragEnter}
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
+>
+  <!-- 视窗全屏拖拽放置提示层 -->
+  {#if isDraggingFiles}
+    <div class="chat-drag-overlay" role="presentation">
+      <div class="chat-drag-box">
+        <div class="w-12 h-12 rounded-2xl bg-[var(--skin-accent)]/15 text-[var(--skin-accent)] flex items-center justify-center mb-2 animate-bounce">
+          <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+        </div>
+        <span class="text-sm font-bold text-[var(--deep-text)]">拖拽文件到此处添加为附件</span>
+        <span class="text-xs text-[var(--chat-meta-color)] mt-1">支持照片、音视频、文档或压缩包</span>
+      </div>
+    </div>
+  {/if}
   <!-- 顶栏 -->
   <div class="chat-panel-header">
     <div class="flex items-center gap-2 min-w-0">
@@ -1497,13 +1588,14 @@ function removePendingImage(index: number) {
           <span class="chat-switch-thumb"></span>
         </span>
       </button>
-      <div
-        class="text-xs text-[var(--deep-text)] dark:text-white/85 px-2.5 py-1 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] flex items-center gap-1.5"
-        title={isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount} 人在线 · 累计 ${totalChatterCount} 人聊过天` : `${onlineCount} 人在线`}
-      >
-        <span class="chat-online-dot"></span>
-        <span>{isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount}/${totalChatterCount}` : `${onlineCount} 人在线`}</span>
-      </div>
+      <ChatTooltip text={isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount} 人在线 · 累计 ${totalChatterCount} 人聊过天` : `${onlineCount} 人在线`}>
+        <div
+          class="text-xs text-[var(--deep-text)] dark:text-white/85 px-2.5 py-1 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] flex items-center gap-1.5"
+        >
+          <span class="chat-online-dot"></span>
+          <span>{isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount}/${totalChatterCount}` : `${onlineCount} 人在线`}</span>
+        </div>
+      </ChatTooltip>
       {#if isInterconnectRoom}
         <button
           type="button"
@@ -1555,27 +1647,30 @@ function removePendingImage(index: number) {
           <span class="text-[0.625rem] text-[var(--chat-meta-color)] tabular-nums">
             {activePinIndex + 1}/{pinnedMessages.length}
           </span>
-          <button
-            type="button"
-            class="p-1 text-[var(--chat-meta-color)] hover:text-[var(--skin-accent)] hover:bg-black/5 dark:hover:bg-white/5 rounded transition-colors border-none bg-transparent cursor-pointer flex items-center justify-center"
-            title="查看下一条置顶"
-            aria-label="查看下一条置顶"
-            onclick={() => (activePinIndex = (activePinIndex + 1) % pinnedMessages.length)}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="m9 18 6-6-6-6" />
-            </svg>
-          </button>
+          <ChatTooltip text="查看下一条置顶">
+            <button
+              type="button"
+              class="p-1 text-[var(--chat-meta-color)] hover:text-[var(--skin-accent)] hover:bg-black/5 dark:hover:bg-white/5 rounded transition-colors border-none bg-transparent cursor-pointer flex items-center justify-center"
+              aria-label="查看下一条置顶"
+              onclick={() => (activePinIndex = (activePinIndex + 1) % pinnedMessages.length)}
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </button>
+          </ChatTooltip>
         {/if}
         {#if currentUser?.isAdmin}
-          <button
-            type="button"
-            class="p-1 text-[var(--chat-meta-color)] hover:text-red-400 text-xs border-none bg-transparent cursor-pointer"
-            title="取消置顶"
-            onclick={() => onPinMessage?.(currentPinnedMsg.msgUid, true)}
-          >
-            ✕
-          </button>
+          <ChatTooltip text="取消置顶">
+            <button
+              type="button"
+              class="p-1 text-[var(--chat-meta-color)] hover:text-red-400 text-xs border-none bg-transparent cursor-pointer"
+              aria-label="取消置顶"
+              onclick={() => onPinMessage?.(currentPinnedMsg.msgUid, true)}
+            >
+              ✕
+            </button>
+          </ChatTooltip>
         {/if}
       </div>
     </div>
@@ -2146,25 +2241,27 @@ function removePendingImage(index: number) {
       <div class="px-2.5 pb-2 pt-1 flex items-center justify-between gap-2">
         <div class="flex items-center gap-1 shrink-0">
           <!-- 颜文字 / QQ / 贴纸统一选择器按钮 -->
-          <button
-            type="button"
-            class="chat-tool-btn {activePopover === 'emoji' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : ''}"
-            aria-label="颜文字、QQ 表情与贴纸"
-            onclick={() => {
-              if (!currentUser) {
-                onRequireAuth();
-                return;
-              }
-              activePopover = activePopover === "emoji" ? "none" : "emoji";
-            }}
-          >
-            <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-              <line x1="9" y1="9" x2="9.01" y2="9" />
-              <line x1="15" y1="9" x2="15.01" y2="9" />
-            </svg>
-          </button>
+          <ChatTooltip text="表情与贴纸">
+            <button
+              type="button"
+              class="chat-tool-btn {activePopover === 'emoji' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : ''}"
+              aria-label="颜文字、QQ 表情与贴纸"
+              onclick={() => {
+                if (!currentUser) {
+                  onRequireAuth();
+                  return;
+                }
+                activePopover = activePopover === "emoji" ? "none" : "emoji";
+              }}
+            >
+              <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                <line x1="9" y1="9" x2="9.01" y2="9" />
+                <line x1="15" y1="9" x2="15.01" y2="9" />
+              </svg>
+            </button>
+          </ChatTooltip>
 
           <!-- R2 图片上传按钮 -->
           {#if enableImageUpload}
@@ -2180,26 +2277,27 @@ function removePendingImage(index: number) {
                 }
               }}
             />
-            <button
-              type="button"
-              class="chat-tool-btn"
-              title="上传图片"
-              aria-label="上传图片"
-              disabled={isUploadingImage || isUploadingMedia}
-              onclick={() => {
-                if (!currentUser) {
-                  onRequireAuth();
-                  return;
-                }
-                fileInputEl?.click();
-              }}
-            >
-              <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
-              </svg>
-            </button>
+            <ChatTooltip text="上传图片">
+              <button
+                type="button"
+                class="chat-tool-btn"
+                aria-label="上传图片"
+                disabled={isUploadingImage || isUploadingMedia}
+                onclick={() => {
+                  if (!currentUser) {
+                    onRequireAuth();
+                    return;
+                  }
+                  fileInputEl?.click();
+                }}
+              >
+                <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
+              </button>
+            </ChatTooltip>
           {/if}
 
           <!-- 多媒体与文件附件上传按钮 -->
@@ -2215,46 +2313,48 @@ function removePendingImage(index: number) {
               }
             }}
           />
-          <button
-            type="button"
-            class="chat-tool-btn"
-            title="发送文件或音视频"
-            aria-label="发送文件或音视频"
-            disabled={isUploadingImage || isUploadingMedia}
-            onclick={() => {
-              if (!currentUser) {
-                onRequireAuth();
-                return;
-              }
-              mediaFileInputEl?.click();
-            }}
-          >
-            <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-            </svg>
-          </button>
+          <ChatTooltip text="发送文件或音视频">
+            <button
+              type="button"
+              class="chat-tool-btn"
+              aria-label="发送文件或音视频"
+              disabled={isUploadingImage || isUploadingMedia}
+              onclick={() => {
+                if (!currentUser) {
+                  onRequireAuth();
+                  return;
+                }
+                mediaFileInputEl?.click();
+              }}
+            >
+              <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+          </ChatTooltip>
 
           <!-- 发起投票按钮 -->
-          <button
-            type="button"
-            class="chat-tool-btn"
-            title="发起投票"
-            aria-label="发起投票"
-            onclick={() => {
-              if (!currentUser) {
-                onRequireAuth();
-                return;
-              }
-              showPollModal = true;
-            }}
-          >
-            <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 3v18h18" />
-              <rect x="7" y="10" width="3" height="8" rx="1" />
-              <rect x="13" y="5" width="3" height="13" rx="1" />
-              <rect x="19" y="13" width="3" height="5" rx="1" />
-            </svg>
-          </button>
+          <ChatTooltip text="发起投票">
+            <button
+              type="button"
+              class="chat-tool-btn"
+              aria-label="发起投票"
+              onclick={() => {
+                if (!currentUser) {
+                  onRequireAuth();
+                  return;
+                }
+                onOpenPollModal?.();
+              }}
+            >
+              <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 3v18h18" />
+                <rect x="7" y="10" width="3" height="8" rx="1" />
+                <rect x="13" y="5" width="3" height="13" rx="1" />
+                <rect x="19" y="13" width="3" height="5" rx="1" />
+              </svg>
+            </button>
+          </ChatTooltip>
         </div>
 
         <div class="flex items-center gap-2.5 shrink-0">
@@ -2280,12 +2380,4 @@ function removePendingImage(index: number) {
       </div>
     </div>
   </div>
-
-  <ChatPollCreateModal
-    open={showPollModal}
-    onClose={() => (showPollModal = false)}
-    onSubmit={(q, ans, max) => {
-      onCreatePoll?.(q, ans, max);
-    }}
-  />
 </div>

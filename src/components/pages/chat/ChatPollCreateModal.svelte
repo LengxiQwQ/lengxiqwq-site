@@ -126,7 +126,6 @@ function handleSubmit() {
               <button
                 type="button"
                 class="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-black/5 dark:hover:bg-white/5 text-[var(--chat-meta-color)] hover:text-red-500 border-none bg-transparent cursor-pointer transition-colors shrink-0"
-                title="删除选项"
                 aria-label="删除选项"
                 onclick={() => removeOption(idx)}
               >

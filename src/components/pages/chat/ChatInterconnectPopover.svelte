@@ -101,7 +101,7 @@ onMount(() => {
                   target="_blank"
                   rel="noopener noreferrer"
                   class="btn-regular py-1 px-2.5 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all shrink-0 inline-flex items-center gap-1 no-underline"
-                  title={`前往 ${site.name} 的茶室`}
+                  aria-label={`前往 ${site.name} 的茶室`}
                 >
                   <span>去串门</span>
                   <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

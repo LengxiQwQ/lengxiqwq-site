@@ -113,9 +113,20 @@ const {
 	onNotify,
 }: Props = $props();
 
-const initVol = untrack(() =>
-	Number.isFinite(initialVolume) ? Math.min(1, Math.max(0, initialVolume)) : 1,
-);
+const initVol = untrack(() => {
+	try {
+		if (typeof window !== "undefined" && window.sessionStorage) {
+			const saved = window.sessionStorage.getItem("chat:player:volume");
+			if (saved !== null) {
+				const n = Number.parseFloat(saved);
+				if (Number.isFinite(n)) return Math.min(1, Math.max(0, n));
+			}
+		}
+	} catch {
+		// Ignore storage error
+	}
+	return Number.isFinite(initialVolume) ? Math.min(1, Math.max(0, initialVolume)) : 1;
+});
 
 type MusicTab = "player" | "search" | "playlist" | "history";
 type HistorySortMode = "recent" | "count";
@@ -241,6 +252,8 @@ let isLoadingPlaylists = $state(false);
 let playlistsError = $state("");
 let selectedPlaylist = $state<PlaylistDetail | null>(null);
 let isLoadingPlaylistDetail = $state(false);
+let enqueuingTrackIds = $state(new Set<string>());
+let isRandomizing = $state(false);
 let playlistTrackFilter = $state("");
 let importInput = $state("");
 let isImportingPlaylist = $state(false);
@@ -477,6 +490,22 @@ const volumeRatio = $derived(isListening ? volume : 0);
 
 const queuedTrackIds = $derived(new Set(queue.map((item) => item.track.id)));
 
+$effect(() => {
+	if (enqueuingTrackIds.size > 0) {
+		const currentId = currentPlay?.track.id;
+		let changed = false;
+		for (const id of enqueuingTrackIds) {
+			if (id === currentId || queue.some((item) => item.track.id === id)) {
+				enqueuingTrackIds.delete(id);
+				changed = true;
+			}
+		}
+		if (changed) {
+			enqueuingTrackIds = new Set(enqueuingTrackIds);
+		}
+	}
+});
+
 const currentRequesterAvatar = $derived.by(() => {
 	if (
 		!currentPlay ||
@@ -696,7 +725,14 @@ async function loadPlaylists(force = false): Promise<void> {
 			const stillExists = [...res.featured, ...res.mine, ...res.members].find(
 				(p) => p.id === selectedPlaylist?.id,
 			);
-			if (!stillExists) {
+			if (stillExists) {
+				selectedPlaylist = {
+					...selectedPlaylist,
+					isFeatured: stillExists.isFeatured,
+					isFallback: stillExists.isFallback,
+					isPublic: stillExists.isPublic,
+				};
+			} else {
 				selectedPlaylist = null;
 				playlistTrackFilter = "";
 			}
@@ -796,6 +832,18 @@ function schedulePlaylistDetailPrefetch(playlistId: string): void {
 	}, 180);
 }
 
+function syncDetailFlags(detail: PlaylistDetail): PlaylistDetail {
+	const inFeatured = featuredPlaylists.some((p) => p.id === detail.id);
+	const inFallback = [...featuredPlaylists, ...myPlaylists, ...membersPlaylists].some(
+		(p) => p.id === detail.id && p.isFallback,
+	);
+	return {
+		...detail,
+		isFeatured: inFeatured || Boolean(detail.isFeatured),
+		isFallback: inFallback || Boolean(detail.isFallback),
+	};
+}
+
 async function openPlaylistDetail(
 	playlistId: string,
 	force = false,
@@ -807,7 +855,7 @@ async function openPlaylistDetail(
 	if (!force) {
 		const cached = playlistDetailCache.get(detailKey);
 		if (cached && Date.now() - cached.fetchedAt < PLAYLIST_CACHE_TTL_MS) {
-			selectedPlaylist = cached.detail;
+			selectedPlaylist = syncDetailFlags(cached.detail);
 			playlistTrackFilter = "";
 			confirmDeletePlaylistId = "";
 			playlistsError = "";
@@ -819,7 +867,7 @@ async function openPlaylistDetail(
 	confirmDeletePlaylistId = "";
 	try {
 		const detail = await getOrFetchPlaylistDetail(playlistId, authSeg, force);
-		selectedPlaylist = detail;
+		selectedPlaylist = syncDetailFlags(detail);
 		playlistTrackFilter = "";
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : "加载歌单详情失败";
@@ -998,6 +1046,18 @@ async function handleTogglePlaylistFlag(
 					? `已共享《${updated.title}》到共享歌单`
 					: `已取消共享《${updated.title}》`,
 			);
+		} else if (flag === "isFeatured") {
+			onNotify?.(
+				updated.isFeatured
+					? `已将《${updated.title}》设为房间精选`
+					: `已取消《${updated.title}》的房间精选`,
+			);
+		} else if (flag === "isFallback") {
+			onNotify?.(
+				updated.isFallback
+					? `已将《${updated.title}》设为冷场轮播歌单`
+					: `已取消《${updated.title}》的冷场轮播`,
+			);
 		}
 		invalidatePlaylistCaches(playlist.id);
 		await loadPlaylists(true);
@@ -1048,17 +1108,34 @@ function handleRandomPlayFromPlaylist(detail: PlaylistDetail): void {
 		onRequestAuth?.();
 		return;
 	}
+	if (isRandomizing) return;
 	const candidates = detail.tracks.filter((item) => {
 		const track = toEnqueueableTrack(item, detail.id);
 		return !isTrackCurrent(track) && !isTrackQueued(track);
 	});
 	const pool = candidates.length > 0 ? candidates : detail.tracks;
-	if (pool.length === 0) return;
+	if (pool.length === 0) {
+		onNotify?.("歌单内暂无可点播的曲目");
+		return;
+	}
 	const chosen = pool[Math.floor(Math.random() * pool.length)];
 	if (!chosen) return;
 	const track = toEnqueueableTrack(chosen, detail.id);
+	isRandomizing = true;
+	enqueuingTrackIds.add(track.id);
+	enqueuingTrackIds = new Set(enqueuingTrackIds);
+	window.setTimeout(() => {
+		if (enqueuingTrackIds.has(track.id)) {
+			enqueuingTrackIds.delete(track.id);
+			enqueuingTrackIds = new Set(enqueuingTrackIds);
+		}
+	}, 4000);
 	markPendingAutoUnmuteIfImmediate(track.id);
 	onEnqueueTrack(track);
+	onNotify?.(`已随机点播《${track.title}》`);
+	window.setTimeout(() => {
+		isRandomizing = false;
+	}, 600);
 }
 
 function normalizeMatchTitle(raw: string): string {
@@ -1477,7 +1554,16 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 async function startOrResumeAudio() {
 	if (!audioEl || !currentPlay) return;
 	const targetUid = currentPlay.uid;
-	if (volume === 0) volume = 0.5;
+	if (volume === 0) {
+		volume = 0.5;
+		try {
+			if (typeof window !== "undefined" && window.sessionStorage) {
+				window.sessionStorage.setItem("chat:player:volume", "0.5");
+			}
+		} catch {
+			// Ignore storage error
+		}
+	}
 	hasJoinedAudio = true;
 	isListening = true;
 
@@ -1555,6 +1641,13 @@ function handleVolumeKeyDown(e: KeyboardEvent) {
 function handleVolumeInput(value: number) {
 	const clamped = Math.min(1, Math.max(0, value));
 	volume = clamped;
+	try {
+		if (typeof window !== "undefined" && window.sessionStorage) {
+			window.sessionStorage.setItem("chat:player:volume", String(clamped));
+		}
+	} catch {
+		// Ignore storage error
+	}
 	if (clamped > 0 && !isListening) {
 		void startOrResumeAudio();
 	} else if (clamped === 0 && isListening) {
@@ -1709,6 +1802,14 @@ function handleToggleQueueTrack(song: ChatMusicTrack) {
 		if (!canRemoveEntry(existing)) return;
 		onRemoveQueue(existing.uid);
 	} else {
+		enqueuingTrackIds.add(song.id);
+		enqueuingTrackIds = new Set(enqueuingTrackIds);
+		window.setTimeout(() => {
+			if (enqueuingTrackIds.has(song.id)) {
+				enqueuingTrackIds.delete(song.id);
+				enqueuingTrackIds = new Set(enqueuingTrackIds);
+			}
+		}, 4000);
 		markPendingAutoUnmuteIfImmediate(song.id);
 		onEnqueueTrack(song);
 	}
@@ -2025,6 +2126,21 @@ $effect(() => {
         >
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true">
             <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          {#if countBadge}
+            <span class="text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+          {/if}
+        </button>
+      {:else if enqueuingTrackIds.has(song.id)}
+        <button
+          type="button"
+          disabled
+          class="chat-queue-icon-btn {countBadge ? 'w-9! h-9! flex-col gap-0.5' : 'w-7! h-7!'} shrink-0 aspect-square text-[var(--chat-accent-text)] bg-(--primary)/10 opacity-75 cursor-wait!"
+          aria-label={`正在点歌 ${song.title}...`}
+        >
+          <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+            <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
           </svg>
           {#if countBadge}
             <span class="text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
@@ -2654,7 +2770,7 @@ $effect(() => {
   {:else if activeTab === "playlist"}
     <!-- Tab 3：歌单（精选歌单 / 我的歌单 / 成员歌单 单列滚动） -->
     {#snippet playlistSummaryCard(pl: PlaylistSummary, showOwner = false)}
-      <div class="flex items-center gap-2.5 p-2 rounded-xl border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 hover:bg-[var(--card-bg)]/75 transition-colors">
+      <div class="flex items-center gap-2.5 p-2 rounded-xl border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 hover:bg-[var(--card-bg)]/80 hover:border-(--primary)/30 transition-all shadow-xs">
         <button
           type="button"
           class="flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-0 cursor-pointer"
@@ -2676,9 +2792,10 @@ $effect(() => {
               <span class="text-xs font-bold text-[var(--deep-text)] truncate">{pl.title}</span>
               {#if pl.isFallback}
                 <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
-                  轮播
+                  冷场轮播
                 </span>
-              {:else if pl.isFeatured}
+              {/if}
+              {#if pl.isFeatured}
                 <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
                   精选
                 </span>
@@ -2891,8 +3008,20 @@ $effect(() => {
             </div>
 
             <div class="min-w-0 flex-1">
-              <div class="text-xs font-bold text-[var(--deep-text)] truncate">
-                {selectedPlaylist.title}
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="text-xs font-bold text-[var(--deep-text)] truncate">
+                  {selectedPlaylist.title}
+                </span>
+                {#if selectedPlaylist.isFallback}
+                  <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
+                    冷场轮播
+                  </span>
+                {/if}
+                {#if selectedPlaylist.isFeatured}
+                  <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                    精选
+                  </span>
+                {/if}
               </div>
               <div class="text-[10px] text-[var(--chat-meta-color)] truncate mt-0.5 flex items-center gap-1">
                 <span>{formatPlatformLabel(selectedPlaylist.platform)} · {selectedPlaylist.tracks.length} 首</span>
@@ -2936,21 +3065,28 @@ $effect(() => {
               <div class="chat-playlist-action-wrap">
                 <button
                   type="button"
-                  disabled={selectedPlaylist.tracks.length === 0}
-                  class="chat-playlist-icon-btn"
-                  aria-label="随机点一首"
+                  disabled={selectedPlaylist.tracks.length === 0 || isRandomizing}
+                  class="chat-playlist-icon-btn {isRandomizing ? 'opacity-75 cursor-wait!' : ''}"
+                  aria-label={isRandomizing ? "正在随机点歌..." : "随机点一首"}
                   onclick={() => selectedPlaylist && handleRandomPlayFromPlaylist(selectedPlaylist)}
                 >
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polyline points="16 3 21 3 21 8" />
-                    <line x1="4" y1="20" x2="21" y2="3" />
-                    <polyline points="21 16 21 21 16 21" />
-                    <line x1="15" y1="15" x2="21" y2="21" />
-                    <line x1="4" y1="4" x2="9" y2="9" />
-                  </svg>
+                  {#if isRandomizing}
+                    <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                    </svg>
+                  {:else}
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polyline points="16 3 21 3 21 8" />
+                      <line x1="4" y1="20" x2="21" y2="3" />
+                      <polyline points="21 16 21 21 16 21" />
+                      <line x1="15" y1="15" x2="21" y2="21" />
+                      <line x1="4" y1="4" x2="9" y2="9" />
+                    </svg>
+                  {/if}
                 </button>
                 <span class="chat-playlist-tooltip align-left" role="tooltip">
-                  随机点一首
+                  {isRandomizing ? "正在随机点歌..." : "随机点一首"}
                 </span>
               </div>
 
@@ -3280,45 +3416,11 @@ $effect(() => {
                     </button>
                     <span class="text-[10px] text-[var(--chat-meta-color)] tabular-nums shrink-0">{group.playlists.length} 张</span>
                   </div>
-                  {#each group.playlists as pl (pl.id)}
-                    <button
-                      type="button"
-                      class="w-full flex items-center gap-2.5 px-1.5 py-1.5 rounded-lg text-left bg-transparent border-none cursor-pointer transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-                      onmouseenter={() => schedulePlaylistDetailPrefetch(pl.id)}
-                      onmouseleave={cancelPlaylistDetailPrefetch}
-                      onfocus={() => schedulePlaylistDetailPrefetch(pl.id)}
-                      onblur={cancelPlaylistDetailPrefetch}
-                      onclick={() => openPlaylistDetail(pl.id)}
-                    >
-                      <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
-                        {#if pl.coverUrl}
-                          <img src={pl.coverUrl} alt="" loading="lazy" class="w-full h-full object-cover" />
-                        {:else}
-                          <span class="text-xs text-(--primary)">♪</span>
-                        {/if}
-                      </div>
-                      <div class="min-w-0 flex-1">
-                        <div class="flex items-center gap-1.5 min-w-0">
-                          <span class="text-xs font-medium text-[var(--deep-text)] truncate">{pl.title}</span>
-                          {#if pl.isFallback}
-                            <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
-                              轮播
-                            </span>
-                          {:else if pl.isFeatured}
-                            <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
-                              精选
-                            </span>
-                          {/if}
-                        </div>
-                        <div class="text-[10px] text-[var(--chat-meta-color)] truncate mt-0.5">
-                          {formatPlatformLabel(pl.platform)} · {pl.trackCount} 首
-                        </div>
-                      </div>
-                      <svg class="w-3.5 h-3.5 shrink-0 text-[var(--chat-meta-color)] opacity-60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="9 18 15 12 9 6" />
-                      </svg>
-                    </button>
-                  {/each}
+                  <div class="space-y-1.5 mt-1">
+                    {#each group.playlists as pl (pl.id)}
+                      {@render playlistSummaryCard(pl, false)}
+                    {/each}
+                  </div>
                 </div>
               {/each}
             </div>

@@ -303,10 +303,12 @@ function formatReactionTooltip(users: string[]): string {
 		return key;
 	});
 
-	if (names.length <= 3) {
-		return names.join("、");
+	const uniqueNames = [...new Set(names)];
+
+	if (uniqueNames.length <= 3) {
+		return uniqueNames.join("、");
 	}
-	return `${names.slice(0, 3).join("、")} 等 ${names.length} 人`;
+	return `${uniqueNames.slice(0, 3).join("、")} 等 ${uniqueNames.length} 人`;
 }
 </script>
 
@@ -381,7 +383,7 @@ function formatReactionTooltip(users: string[]): string {
             <button
               type="button"
               class="chat-voice-play-btn"
-              title={activeAudioUrl === att.url ? "暂停" : "播放语音"}
+              aria-label={activeAudioUrl === att.url ? "暂停" : "播放语音"}
               onclick={() => handleToggleAudio(att.url)}
             >
               {#if activeAudioUrl === att.url}
@@ -541,7 +543,7 @@ function formatReactionTooltip(users: string[]): string {
               <button
                 type="button"
                 class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
-                title="添加表情反应"
+                aria-label="添加表情反应"
                 onclick={() => showQuickReaction = !showQuickReaction}
               >
                 😊
@@ -729,7 +731,7 @@ function formatReactionTooltip(users: string[]): string {
               <button
                 type="button"
                 class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
-                title="添加表情反应"
+                aria-label="添加表情反应"
                 onclick={() => showQuickReaction = !showQuickReaction}
               >
                 😊

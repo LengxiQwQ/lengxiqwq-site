@@ -150,11 +150,25 @@ function handleSubmit(e: SubmitEvent) {
             <div class="text-[11px] text-[var(--deep-text)]/80 truncate">
               {draftBio.trim() || "暂未填写个人简介"}
             </div>
-            {#if draftUrl.trim()}
-              <div class="text-[10px] text-[var(--chat-accent-text)] truncate opacity-85">
-                {draftUrl.trim()}
-              </div>
-            {/if}
+            <div class="flex items-center gap-1.5 flex-wrap sm:justify-end text-[10px] text-[var(--chat-meta-color)]">
+              {#if currentUser?.location}
+                <span class="inline-flex items-center gap-1 font-medium text-[var(--chat-meta-color)]">
+                  <svg class="w-3 h-3 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                  <span>{currentUser.location}</span>
+                </span>
+              {/if}
+              {#if draftUrl.trim()}
+                {#if currentUser?.location}
+                  <span class="opacity-40 select-none">·</span>
+                {/if}
+                <span class="text-[var(--chat-accent-text)] truncate opacity-85">
+                  {draftUrl.trim()}
+                </span>
+              {/if}
+            </div>
           </div>
         </div>
 

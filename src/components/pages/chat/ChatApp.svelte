@@ -3,6 +3,7 @@ import { onMount } from "svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAuthModal from "./ChatAuthModal.svelte";
 import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
+import ChatPollCreateModal from "./ChatPollCreateModal.svelte";
 import ChatProfileModal from "./ChatProfileModal.svelte";
 import ChatSettingsPopover from "./ChatSettingsPopover.svelte";
 import ChatUserDetailModal from "./ChatUserDetailModal.svelte";
@@ -310,6 +311,7 @@ let showSettings = $state(false);
 let showProfileModal = $state(false);
 let showAuthModal = $state(false);
 let showUserDetailModal = $state(false);
+let showPollCreateModal = $state(false);
 
 function openAuthModal() {
 	showUserDetailModal = false;
@@ -675,8 +677,9 @@ function connectRoom(roomId: string) {
 				}
 				break;
 			}
-			case "playlist:updated": {
-				if (packet.roomId === currentRoom) {
+			case "playlist:updated":
+			case "playlists:updated": {
+				if (!packet.roomId || packet.roomId === currentRoom) {
 					playlistRefreshSeq += 1;
 				}
 				break;
@@ -1592,6 +1595,7 @@ onMount(() => {
           onEditMessage={handleEditMessage}
           onPinMessage={handlePinMessage}
           onVotePoll={handleVotePoll}
+          onOpenPollModal={() => (showPollCreateModal = true)}
           onCreatePoll={handleCreatePoll}
           onTyping={handleTyping}
           onToggleSettings={() => {
@@ -1725,6 +1729,13 @@ onMount(() => {
     walineServerUrl={walineServerUrl}
     onAuthenticated={handleAuthenticated}
     onClose={() => (showAuthModal = false)}
+  />
+
+  <!-- 发起投票弹窗（顶级外层，免受 .chat-mobile-stage 高斯模糊影响） -->
+  <ChatPollCreateModal
+    open={showPollCreateModal}
+    onClose={() => (showPollCreateModal = false)}
+    onSubmit={handleCreatePoll}
   />
 
   <!-- 移动端跨面板全局迷你播放条（仅非点歌面板且有曲目播放时展示） -->

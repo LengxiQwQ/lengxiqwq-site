@@ -1,6 +1,7 @@
 <script lang="ts">
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
+import ChatTooltip from "./ChatTooltip.svelte";
 import { resolveExternalOrigin } from "./chatClient";
 import type {
 	ChatMentionCandidate,
@@ -189,9 +190,17 @@ function isMemberFocused(member: ChatOnlineMember): boolean {
 	return member.isFocused !== false;
 }
 
+let now = $state(Date.now());
+$effect(() => {
+	const timer = setInterval(() => {
+		now = Date.now();
+	}, 30000);
+	return () => clearInterval(timer);
+});
+
 function formatOfflineTime(ts: number): string {
 	if (!ts) return "离线";
-	const diff = Date.now() - ts;
+	const diff = Math.max(0, now - ts);
 	if (diff < 60_000) return "刚刚离线";
 	if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前离线`;
 	if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前离线`;
@@ -409,7 +418,7 @@ function formatOfflineTime(ts: number): string {
     <button
       type="button"
       class="chat-user-item group justify-between w-full text-left border-none bg-transparent {isOnline ? '' : 'opacity-75 hover:opacity-100'}"
-      title={`查看 ${displayName} 的个人资料`}
+      aria-label={`查看 ${displayName} 的个人资料`}
       onclick={() =>
         onOpenUserProfile?.({
           userKey: member.userKey,
@@ -439,7 +448,6 @@ function formatOfflineTime(ts: number): string {
           {#if isOnline}
             <span
               class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
-              title={isFocused ? "在线（活跃中）" : "在线（离开焦点）"}
             ></span>
           {/if}
         </div>
@@ -469,21 +477,22 @@ function formatOfflineTime(ts: number): string {
       </div>
 
       {#if muted}
-        <span
-          class="text-[var(--chat-meta-color)] opacity-65 shrink-0 inline-flex items-center justify-center pr-0.5"
-          title="已静音同步"
-          aria-label="已静音"
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
-          </svg>
-        </span>
+        <ChatTooltip text="已静音同步" align="right">
+          <span
+            class="text-[var(--chat-meta-color)] opacity-65 shrink-0 inline-flex items-center justify-center pr-0.5"
+            aria-label="已静音"
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+            </svg>
+          </span>
+        </ChatTooltip>
       {/if}
     </button>
   {/snippet}
 
   {#snippet observerItem()}
-    <div class="chat-user-item justify-between w-full" title="未登录的旁观者">
+    <div class="chat-user-item justify-between w-full">
       <div class="flex items-center gap-2.5 min-w-0 flex-1">
         <div class="relative shrink-0">
           <div class="chat-avatar-sm flex items-center justify-center bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)]">

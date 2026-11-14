@@ -734,25 +734,29 @@ html[data-chat-page] .chat-panel {
 	width: 8px;
 	height: 8px;
 	border-radius: var(--radius-full);
-	background: var(--skin-accent) !important;
-	box-shadow: none !important;
+	background: #22c55e !important;
+	box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.9);
 	animation: none !important;
 	flex-shrink: 0;
+	transition: background-color 200ms ease, box-shadow 200ms ease;
+}
+
+:is(.dark, [data-theme="dark"]) .chat-online-dot,
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) .chat-online-dot {
+	box-shadow: 0 0 0 1.5px rgba(24, 24, 27, 0.9);
 }
 
 .chat-online-dot--away {
-	background: #9ca3af;
-	box-shadow: none;
-	animation: none;
-	opacity: 0.85;
+	background: #eab308 !important;
+	box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.9);
+	animation: none !important;
+	opacity: 1 !important;
 }
 
 :is(.dark, [data-theme="dark"]) .chat-online-dot--away,
 html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) .chat-online-dot--away {
-	background: #6b7280;
-	box-shadow: none;
-	animation: none;
-	opacity: 0.8;
+	background: #f59e0b !important;
+	box-shadow: 0 0 0 1.5px rgba(24, 24, 27, 0.9);
 }
 
 @keyframes chat-pulse-glow {
@@ -2869,6 +2873,35 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 .chat-reply-bar-close:hover {
 	background: color-mix(in oklch, var(--deep-text) 8%, transparent);
 	color: var(--deep-text);
+}
+
+/* ─── 聊天视窗全屏文件拖拽提示遮罩 ──────────────────────────── */
+.chat-drag-overlay {
+	position: absolute;
+	inset: 0.5rem;
+	z-index: 85;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: color-mix(in oklab, var(--skin-surface) 86%, transparent);
+	-webkit-backdrop-filter: blur(12px);
+	backdrop-filter: blur(12px);
+	border: 2px dashed var(--skin-accent);
+	border-radius: 16px;
+	pointer-events: none;
+	animation: chat-fade-in 140ms ease;
+}
+
+.chat-drag-box {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 1.5rem 2.5rem;
+	border-radius: 18px;
+	background: var(--skin-surface);
+	border: 1px solid var(--skin-line);
+	box-shadow: 0 12px 36px -4px rgb(0 0 0 / 0.18);
+	text-align: center;
 }
 
 /* ─── 消息流底部居中：一键回到底部按钮 ───────────────────── */
