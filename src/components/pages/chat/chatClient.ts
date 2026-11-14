@@ -761,8 +761,8 @@ export async function fetchUserDetailProfile(
 			headers.Authorization = `Bearer ${walineToken.trim()}`;
 		}
 		const resp = await fetch(
-			`${base}/api/rooms/member?room=${encodeURIComponent(roomId)}&userKey=${encodeURIComponent(cleanKey)}&tracksLimit=${encodeURIComponent(String(tracksLimit))}`,
-			{ headers },
+			`${base}/api/rooms/member?room=${encodeURIComponent(roomId)}&userKey=${encodeURIComponent(cleanKey)}&tracksLimit=${encodeURIComponent(String(tracksLimit))}&_t=${Date.now()}`,
+			{ headers, cache: "no-store" },
 		);
 		if (!resp.ok) return null;
 		const data = (await resp.json()) as {
@@ -788,7 +788,8 @@ export async function fetchUserDetailTracks(
 	if (!base || !cleanKey) return null;
 	try {
 		const resp = await fetch(
-			`${base}/api/rooms/member/tracks?room=${encodeURIComponent(roomId)}&userKey=${encodeURIComponent(cleanKey)}&limit=${encodeURIComponent(String(limit))}&beforeId=${encodeURIComponent(String(beforeId))}`,
+			`${base}/api/rooms/member/tracks?room=${encodeURIComponent(roomId)}&userKey=${encodeURIComponent(cleanKey)}&limit=${encodeURIComponent(String(limit))}&beforeId=${encodeURIComponent(String(beforeId))}&_t=${Date.now()}`,
+			{ cache: "no-store" },
 		);
 		if (!resp.ok) return null;
 		const data = (await resp.json()) as {

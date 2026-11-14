@@ -352,15 +352,15 @@ const historyRequesters = $derived.by<HistoryRequesterOption[]>(() => {
 	return Array.from(peopleMap.values())
 		.map((p) => {
 			const meta = memberByKey.get(p.key);
-			const badge =
+			const rawBadge =
 				(currentUser && p.key === currentUser.userKey
 					? currentUser.badge
-					: meta?.badge) ||
-				(p.key.startsWith("waline:")
+					: meta?.badge) || "";
+			const badge = p.key.startsWith("waline:")
+				? rawBadge === "访客" || !rawBadge
 					? "认证"
-					: p.key.startsWith("guest:")
-						? "访客"
-						: "");
+					: rawBadge
+				: rawBadge || (p.key.startsWith("guest:") ? "访客" : "");
 			return {
 				key: p.key,
 				name:
@@ -632,8 +632,8 @@ function resolveSafeExternalUrl(raw?: string): string {
 	return "";
 }
 
-const PLAYLIST_CACHE_TTL_MS = 5 * 60 * 1000;
-const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+const PLAYLIST_CACHE_TTL_MS = 30 * 1000;
+const SEARCH_CACHE_TTL_MS = 30 * 1000;
 let lastLoadedPlaylistKey = "";
 let lastLoadedPlaylistAt = 0;
 const playlistDetailCache = new Map<

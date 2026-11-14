@@ -48,7 +48,7 @@ interface Props {
 }
 
 const TRACK_PAGE_SIZE = 50;
-const USER_DETAIL_CACHE_TTL_MS = 5 * 60 * 1000;
+const USER_DETAIL_CACHE_TTL_MS = 15 * 1000;
 const userDetailCache = new Map<
 	string,
 	{ profile: ChatUserDetailProfile; fetchedAt: number }
@@ -318,6 +318,7 @@ async function handleSaveBadges() {
 					customBadges: sanitized,
 				};
 			}
+			userDetailCache.delete(`${roomId}:${profile.userKey}`);
 			managedBadges = sanitized.map((b) => ({ ...b }));
 			badgeSaveNotice = "头衔已更新";
 			setTimeout(() => {
@@ -417,36 +418,46 @@ $effect(() => {
 
 	const detailCacheKey = `${roomId}:${currentSeed.userKey}`;
 	const cachedEntry = userDetailCache.get(detailCacheKey);
-	if (
+	const hasFreshCache =
 		cachedEntry &&
-		Date.now() - cachedEntry.fetchedAt < USER_DETAIL_CACHE_TTL_MS
-	) {
+		Date.now() - cachedEntry.fetchedAt < USER_DETAIL_CACHE_TTL_MS;
+
+	if (cachedEntry) {
 		const liveOnline = onlineMembers.find(
 			(m) => m.userKey === currentSeed.userKey,
 		);
-		const mergedProfile: ChatUserDetailProfile = liveOnline
-			? {
-					...cachedEntry.profile,
-					name: liveOnline.name || cachedEntry.profile.name,
-					avatar: liveOnline.avatar || cachedEntry.profile.avatar,
-					url: liveOnline.url ?? cachedEntry.profile.url,
-					status: cleanCustomStatus(
-						liveOnline.status || cachedEntry.profile.status,
-					),
-					bio: liveOnline.bio ?? cachedEntry.profile.bio,
-					location: liveOnline.location || cachedEntry.profile.location,
-					online: true,
-				}
-			: {
-					...cachedEntry.profile,
-					online: Boolean(liveOnline ?? currentSeed.online),
-				};
+		const isWaline = currentSeed.userKey.startsWith("waline:");
+		const mergedProfile: ChatUserDetailProfile = {
+			...cachedEntry.profile,
+			authType: isWaline ? "waline" : cachedEntry.profile.authType,
+			badge:
+				isWaline && cachedEntry.profile.badge === "访客"
+					? "认证"
+					: cachedEntry.profile.badge || (isWaline ? "认证" : "访客"),
+			badgeType:
+				isWaline && cachedEntry.profile.badgeType === "tag"
+					? "accent"
+					: cachedEntry.profile.badgeType || (isWaline ? "accent" : "tag"),
+			name: liveOnline?.name || cachedEntry.profile.name,
+			avatar: liveOnline?.avatar || cachedEntry.profile.avatar,
+			url: liveOnline?.url ?? cachedEntry.profile.url,
+			status: cleanCustomStatus(
+				liveOnline?.status || cachedEntry.profile.status,
+			),
+			bio: liveOnline?.bio ?? cachedEntry.profile.bio,
+			location: liveOnline?.location || cachedEntry.profile.location,
+			online: Boolean(liveOnline ?? currentSeed.online),
+		};
 		remoteProfile = mergedProfile;
 		remoteTracks = mergedProfile.recentTracks ?? [];
 		remoteHasMore = Boolean(mergedProfile.tracksHasMore);
 		remoteNextBeforeId = Number(mergedProfile.tracksNextBeforeId || 0);
-		isLoading = false;
-		return;
+
+		// 若缓存仍在极短保鲜期（< 3秒），作为最终展示；否则作为 SWR 瞬时骨架并在后台刷新
+		if (hasFreshCache && Date.now() - cachedEntry.fetchedAt < 3000) {
+			isLoading = false;
+			return;
+		}
 	}
 
 	let cancelled = false;

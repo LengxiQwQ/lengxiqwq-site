@@ -137,11 +137,22 @@ const connLabel = $derived(
 );
 
 function resolveMemberRoleBadge(user: {
-	isAdmin: boolean;
-	authType: "waline" | "guest";
+	isAdmin?: boolean;
+	authType?: "waline" | "guest" | string;
+	userKey?: string;
+	badge?: string;
+	badgeType?: "host" | "accent" | "tag";
 }): { label: string; type: "host" | "accent" | "tag" } {
 	if (user.isAdmin) return { label: "站长", type: "host" };
-	if (user.authType === "waline") return { label: "认证", type: "accent" };
+	if (
+		user.authType === "waline" ||
+		user.userKey?.startsWith("waline:")
+	) {
+		return { label: user.badge || "认证", type: "accent" };
+	}
+	if (user.badge && user.badgeType) {
+		return { label: user.badge, type: user.badgeType };
+	}
 	return { label: "访客", type: "tag" };
 }
 
@@ -402,7 +413,7 @@ function formatOfflineTime(ts: number): string {
       onclick={() =>
         onOpenUserProfile?.({
           userKey: member.userKey,
-          authType: member.authType,
+          authType: member.authType || (member.userKey.startsWith("waline:") ? "waline" : "guest"),
           name: displayName,
           avatar: member.avatar,
           url: member.url,

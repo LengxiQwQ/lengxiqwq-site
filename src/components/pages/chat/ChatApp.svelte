@@ -708,6 +708,7 @@ function connectRoom(roomId: string) {
 					roomOnlineMembers = packet.members;
 					mergeRoomPresence(packet.roomId, packet.members, packet.totalCount);
 					void refreshGlobalPresence();
+					void refreshMemberDirectory();
 					if (packet.mentionMembers) {
 						roomMentionMembers = packet.mentionMembers;
 					}
@@ -1326,7 +1327,7 @@ onMount(() => {
 		if (!document.hidden) {
 			void refreshMemberDirectory();
 		}
-	}, 60000);
+	}, 15000);
 
 	// 低频自增歌单刷新序列（仅在页面前台活跃时触发，避免后台休眠时无意义刷新）
 	const playlistTimer = window.setInterval(() => {
