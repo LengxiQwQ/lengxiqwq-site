@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onMount, untrack } from "svelte";
+import { onMount } from "svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAuthModal from "./ChatAuthModal.svelte";
 import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
@@ -36,7 +36,6 @@ import type {
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import MusicPanel from "./MusicPanel.svelte";
-import { readStoredListenIntent } from "./musicStorage";
 import type { ChatMusicTrack } from "./musicTypes";
 import RoomPanel from "./RoomPanel.svelte";
 import {
@@ -287,10 +286,8 @@ let mobilePlaybackStatus = $state<{
 	volume: initialMusicVolume,
 });
 
-// 全局收听意愿管理（跨房间与刷新页面时保持意图）
-const initialListenIntent = untrack(() => readStoredListenIntent());
-
-let isListeningIntent = $state(initialListenIntent);
+// 全局收听意愿管理（仅在同一次页面会话内跨房间切换时保持，刚进页面默认未收听）
+let isListeningIntent = $state(false);
 let memoryVolume = $state(initialMusicVolume);
 let hasAppMounted = false;
 
@@ -1744,9 +1741,6 @@ onMount(() => {
 		// Ignore
 	}
 
-	if (readStoredListenIntent()) {
-		isListeningIntent = true;
-	}
 	hasAppMounted = true;
 
 	if (typeof window !== "undefined" && "Notification" in window) {

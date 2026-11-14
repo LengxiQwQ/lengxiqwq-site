@@ -1,7 +1,7 @@
 <script lang="ts">
 import { onMount, tick, untrack } from "svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
-import { readStoredListenIntent, saveStoredListenIntent } from "./musicStorage";
+import ChatTooltip from "./ChatTooltip.svelte";
 import { formatClockSeconds } from "./chatClient";
 import type {
 	ChatMentionCandidate,
@@ -16,7 +16,6 @@ import type {
 	RoomMusicState,
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
-import ChatTooltip from "./ChatTooltip.svelte";
 import type { ChatMusicTrack } from "./musicTypes";
 import {
 	type AmbiguousResolveCandidate,
@@ -153,13 +152,18 @@ let activeTab = $state<MusicTab>("player");
 let historySort = $state<HistorySortMode>("recent");
 let selectedRequesterKey = $state("");
 let showRequesterFilter = $state(false);
-const shouldInitialListen = untrack(() => Boolean(initialListening || readStoredListenIntent()));
+const shouldInitialListen = untrack(() => Boolean(initialListening));
 let isListening = $state(shouldInitialListen);
 let listenIntent = $state(shouldInitialListen);
 let pendingAutoplayResumeHandler: (() => void) | null = null;
+let pendingAutoplayResumeTimer: number | null = null;
 function cancelPendingAutoplayResume() {
+	if (pendingAutoplayResumeTimer !== null) {
+		window.clearTimeout(pendingAutoplayResumeTimer);
+		pendingAutoplayResumeTimer = null;
+	}
 	if (pendingAutoplayResumeHandler) {
-		window.removeEventListener("pointerdown", pendingAutoplayResumeHandler);
+		window.removeEventListener("click", pendingAutoplayResumeHandler);
 		window.removeEventListener("keydown", pendingAutoplayResumeHandler);
 		pendingAutoplayResumeHandler = null;
 	}
@@ -168,6 +172,8 @@ let hasJoinedAudio = $state(false);
 let isSyncingAudio = false;
 let syncAudioSeq = 0;
 let internalAudioAction = false;
+let lastDriftSeekAt = 0;
+let consecutiveErrorCount = 0;
 let playerPaneMode = $state<PlayerPaneMode>("split");
 let lyricsScrolling = $state(false);
 let queueScrolling = $state(false);
@@ -1492,48 +1498,27 @@ function registerMediaSessionHandlers() {
 	}
 }
 
-let fadeTimer: number | null = null;
-function cancelAudioFade() {
-	if (fadeTimer !== null) {
-		window.clearInterval(fadeTimer);
-		fadeTimer = null;
-	}
-}
-
-function smoothFadeInAudio(
-	el: HTMLAudioElement,
-	targetVol: number,
-	durationMs = 320,
-) {
-	cancelAudioFade();
-	if (targetVol <= 0) {
-		el.volume = 0;
+function handleTrackPlaybackFailure(playUid: string) {
+	if (!isListening || !currentPlay || currentPlay.uid !== playUid) return;
+	if (reportedErrorUid === playUid) return;
+	reportedErrorUid = playUid;
+	consecutiveErrorCount += 1;
+	if (consecutiveErrorCount >= 2) {
+		consecutiveErrorCount = 0;
+		muteLocally();
+		onNotify?.("当前浏览器音频加载受限，已暂停收听，请点击开始收听重试");
 		return;
 	}
-	el.volume = 0;
-	const steps = 12;
-	const stepInterval = Math.max(16, Math.floor(durationMs / steps));
-	const stepIncrement = targetVol / steps;
-	let step = 0;
-
-	fadeTimer = window.setInterval(() => {
-		step += 1;
-		if (step >= steps || el.paused) {
-			el.volume = targetVol;
-			cancelAudioFade();
-		} else {
-			el.volume = Math.min(targetVol, step * stepIncrement);
-		}
-	}, stepInterval);
+	onReportError(playUid);
 }
 
 function muteLocally() {
-	if (!audioEl) return;
-	cancelAudioFade();
 	cancelPendingAutoplayResume();
+	consecutiveErrorCount = 0;
+	syncAudioSeq += 1;
 	isListening = false;
 	listenIntent = false;
-	saveStoredListenIntent(false);
+	if (!audioEl) return;
 	internalAudioAction = true;
 	audioEl.muted = true;
 	// 暂停本地出声并将 SMTC 标为 paused，确保系统媒体中心保留当前页控制权以便再次按播放键唤醒
@@ -1550,16 +1535,73 @@ function muteLocally() {
 	}
 }
 
+function computeClampedTarget(el: HTMLAudioElement): number {
+	const target = computeExpectedElapsed();
+	const maxSeek =
+		Number.isFinite(el.duration) && el.duration > 0
+			? Math.max(0, el.duration - 0.5)
+			: target;
+	return Math.min(target, maxSeek);
+}
+
+function alignPlaybackToRoomTime(el: HTMLAudioElement): void {
+	if (el.readyState < 1) return;
+	const clamped = computeClampedTarget(el);
+	// 新曲刚开播（< 2.5 秒），若播放头在 0 附近，不强制 Range seek 打断顺畅的流式连接
+	if (clamped >= 2.5 && Math.abs(el.currentTime - clamped) > 1.2) {
+		lastDriftSeekAt = Date.now();
+		el.currentTime = clamped;
+	}
+}
+
 async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 	const mySeq = ++syncAudioSeq;
 	isSyncingAudio = true;
 	try {
-		if (el.readyState < 1) {
-			await new Promise<void>((resolve) => {
-				el.addEventListener("loadedmetadata", () => resolve(), { once: true });
-				window.setTimeout(resolve, 1800);
+		let playPromise: Promise<void>;
+
+		if (el.readyState >= 1) {
+			// 情况 1：静音阶段已预加载好元数据 -> 同一同步调用栈内直接对齐时间并调用 play()，不等待 seeked
+			alignPlaybackToRoomTime(el);
+			el.volume = volume;
+			playPromise = el.play();
+			await playPromise;
+		} else {
+			// 情况 2：readyState === 0（如 iPad Safari 首次激活前忽略 preload）-> 第一时间同步调用 play() 解锁并触发拉流
+			el.volume = volume;
+			playPromise = el.play();
+
+			const waitForMetadataOrPlay = new Promise<void>((resolve) => {
+				let settled = false;
+				const finish = () => {
+					if (settled) return;
+					settled = true;
+					el.removeEventListener("loadedmetadata", finish);
+					el.removeEventListener("canplay", finish);
+					window.clearTimeout(timer);
+					resolve();
+				};
+				const timer = window.setTimeout(finish, 4000);
+				el.addEventListener("loadedmetadata", finish, { once: true });
+				el.addEventListener("canplay", finish, { once: true });
+				void playPromise.then(finish, finish);
 			});
+
+			await waitForMetadataOrPlay;
+			if (
+				!isListening ||
+				syncAudioSeq !== mySeq ||
+				(expectedUid && currentPlay?.uid !== expectedUid)
+			) {
+				void playPromise.catch(() => {});
+				return;
+			}
+			if (el.readyState >= 1) {
+				alignPlaybackToRoomTime(el);
+			}
+			await playPromise;
 		}
+
 		if (
 			!isListening ||
 			syncAudioSeq !== mySeq ||
@@ -1567,58 +1609,36 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 		) {
 			return;
 		}
-
-		const target = computeExpectedElapsed();
-		const maxSeek =
-			Number.isFinite(el.duration) && el.duration > 0
-				? Math.max(0, el.duration - 0.5)
-				: target;
-		const clamped = Math.min(target, maxSeek);
-
-		// 新曲刚开播（<= 3.0 秒），若播放头在 0 附近，绝不强制 Range seek 打断顺畅的流式连接！
-		const shouldSeek = clamped >= 3.0 && Math.abs(el.currentTime - clamped) > 1.2;
-		if (shouldSeek) {
-			el.currentTime = clamped;
-			await new Promise<void>((resolve) => {
-				el.addEventListener("seeked", () => resolve(), { once: true });
-				window.setTimeout(resolve, 800);
-			});
-		}
-		if (
-			!isListening ||
-			syncAudioSeq !== mySeq ||
-			(expectedUid && currentPlay?.uid !== expectedUid)
-		) {
-			return;
-		}
-
-		const targetVol = volume;
-		el.volume = 0;
-		await el.play();
-		smoothFadeInAudio(el, targetVol, 320);
 		roomElapsed = computeExpectedElapsed();
 	} catch (err) {
 		const isSupersededOrAbort =
+			syncAudioSeq !== mySeq ||
+			!isListening ||
 			(err instanceof DOMException && err.name === "AbortError") ||
 			(expectedUid !== undefined && currentPlay?.uid !== expectedUid);
 		if (!isSupersededOrAbort) {
 			if (err instanceof DOMException && err.name === "NotAllowedError") {
 				isListening = false;
 				el.muted = true;
-				// 保持全局收听意愿为 true，注册一次性手势监听：用户在页面任意位置交互后立即无缝起播！
+				// 保持房间会话内收听意愿，注册一次性手势监听：用户在页面任意位置交互后立即无缝起播
 				cancelPendingAutoplayResume();
 				pendingAutoplayResumeHandler = () => {
 					cancelPendingAutoplayResume();
 					if (audioEl && currentPlay && !isListening) {
-						void startOrResumeAudio();
+						startOrResumeAudio();
 					}
 				};
-				window.addEventListener("pointerdown", pendingAutoplayResumeHandler, { once: true });
-				window.addEventListener("keydown", pendingAutoplayResumeHandler, { once: true });
-			} else if (expectedUid && reportedErrorUid !== expectedUid) {
-				// 单曲音源失效（如 NotSupportedError）时仅上报切歌，不关闭用户的持续收听状态
-				reportedErrorUid = expectedUid;
-				onReportError(expectedUid);
+				pendingAutoplayResumeTimer = window.setTimeout(() => {
+					pendingAutoplayResumeTimer = null;
+					if (pendingAutoplayResumeHandler && !isListening && currentPlay) {
+						window.addEventListener("click", pendingAutoplayResumeHandler, { once: true });
+						window.addEventListener("keydown", pendingAutoplayResumeHandler, { once: true });
+					}
+				}, 0);
+			} else if (err instanceof DOMException && err.name === "InvalidStateError") {
+				// 媒体状态尚未就绪引发的瞬时异常，不误报为曲目损坏切歌
+			} else if (expectedUid) {
+				handleTrackPlaybackFailure(expectedUid);
 			}
 		}
 	} finally {
@@ -1628,9 +1648,10 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 	}
 }
 
-async function startOrResumeAudio() {
-	if (!audioEl || !currentPlay) return;
+function startOrResumeAudio() {
+	if (!audioEl || !currentPlay?.track.streamUrl) return;
 	cancelPendingAutoplayResume();
+	consecutiveErrorCount = 0;
 	const targetUid = currentPlay.uid;
 	if (volume === 0) {
 		volume = 0.5;
@@ -1645,11 +1666,11 @@ async function startOrResumeAudio() {
 	hasJoinedAudio = true;
 	isListening = true;
 	listenIntent = true;
-	saveStoredListenIntent(true);
 
-	// 等待 Svelte 把 streamUrl 绑定到 <audio src> 上再起播，避免静音阶段预加载浪费请求
-	await tick();
-	if (!audioEl || currentPlay?.uid !== targetUid) return;
+	const streamUrl = currentPlay.track.streamUrl;
+	if (audioEl.getAttribute("src") !== streamUrl) {
+		audioEl.src = streamUrl;
+	}
 
 	registerMediaSessionHandlers();
 	updateMediaSessionMetadata();
@@ -1657,23 +1678,20 @@ async function startOrResumeAudio() {
 	internalAudioAction = true;
 	audioEl.muted = false;
 	audioEl.volume = volume;
-	if (audioEl.readyState === 0) {
-		audioEl.load();
-	}
 	window.setTimeout(() => {
 		internalAudioAction = false;
 	}, 50);
 
-	await seekAndPlayCurrent(audioEl, targetUid);
+	void seekAndPlayCurrent(audioEl, targetUid);
 	updateMediaSessionMetadata();
 }
 
-async function toggleListen() {
+function toggleListen() {
 	if (isListening) {
 		muteLocally();
 		return;
 	}
-	await startOrResumeAudio();
+	startOrResumeAudio();
 }
 
 let isDraggingVolume = $state(false);
@@ -1719,7 +1737,6 @@ function handleVolumeKeyDown(e: KeyboardEvent) {
 }
 
 function handleVolumeInput(value: number) {
-	cancelAudioFade();
 	const clamped = Math.min(1, Math.max(0, value));
 	volume = clamped;
 	try {
@@ -1730,7 +1747,7 @@ function handleVolumeInput(value: number) {
 		// Ignore storage error
 	}
 	if (clamped > 0 && !isListening) {
-		void startOrResumeAudio();
+		startOrResumeAudio();
 	} else if (clamped === 0 && isListening) {
 		muteLocally();
 	} else if (audioEl) {
@@ -1753,7 +1770,7 @@ function syncDurationFromAudio() {
 	}
 }
 
-// 房间或当前曲目切换时，重载音轨、对齐进度、刷新歌词与系统媒体面板
+// 房间或当前曲目切换时，对齐进度、刷新歌词与系统媒体面板（保留静音阶段原生 preload，不手动 abort 重载）
 $effect(() => {
 	const active = currentPlay;
 	const activeRoom = roomId;
@@ -1774,6 +1791,7 @@ $effect(() => {
 		return;
 	}
 
+	if (!audioEl) return;
 	if (active.uid === lastPlayUid && activeRoom === lastRoomId) return;
 	lastPlayUid = active.uid;
 	lastRoomId = activeRoom;
@@ -1798,22 +1816,25 @@ $effect(() => {
 	updateMediaSessionMetadata();
 
 	const targetUid = active.uid;
-	void tick().then(async () => {
-		if (!audioEl || currentPlay?.uid !== targetUid) return;
+	const streamUrl = active.track.streamUrl || "";
+	if (streamUrl && audioEl.getAttribute("src") !== streamUrl) {
+		audioEl.src = streamUrl;
+	}
+
+	if (shouldAutoUnmute) {
+		startOrResumeAudio();
+	} else if (isListening) {
+		hasJoinedAudio = true;
+		registerMediaSessionHandlers();
+		updateMediaSessionMetadata();
 		internalAudioAction = true;
-		audioEl.load();
+		audioEl.muted = false;
+		audioEl.volume = volume;
 		window.setTimeout(() => {
 			internalAudioAction = false;
 		}, 50);
-
-		if (shouldAutoUnmute) {
-			await startOrResumeAudio();
-		} else if (isListening) {
-			audioEl.muted = false;
-			audioEl.volume = volume;
-			await seekAndPlayCurrent(audioEl, targetUid);
-		}
-	});
+		void seekAndPlayCurrent(audioEl, targetUid);
+	}
 });
 
 // 搜索防抖
@@ -1912,13 +1933,16 @@ onMount(() => {
 			!isSyncingAudio &&
 			audioEl &&
 			!audioEl.paused &&
-			!audioEl.seeking
+			!audioEl.seeking &&
+			audioEl.readyState >= 3 &&
+			Date.now() - lastDriftSeekAt > 6000
 		) {
 			const drift = Math.abs(audioEl.currentTime - expected);
 			if (
-				drift > 1.8 &&
+				drift > 2.5 &&
 				(effectiveDuration === 0 || expected < effectiveDuration - 1.5)
 			) {
+				lastDriftSeekAt = Date.now();
 				audioEl.currentTime = expected;
 			}
 		}
@@ -1939,16 +1963,7 @@ onMount(() => {
 	document.addEventListener("pointerdown", handlePointerDown);
 	document.addEventListener("keydown", handleKeydown);
 
-	if (isListening) {
-		void tick().then(() => {
-			if (currentPlay && audioEl) {
-				void startOrResumeAudio();
-			}
-		});
-	}
-
 	return () => {
-		cancelAudioFade();
 		cancelPendingAutoplayResume();
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleKeydown);
@@ -1976,7 +1991,7 @@ onMount(() => {
 });
 
 export function toggleListenControl(): void {
-	void toggleListen();
+	toggleListen();
 }
 
 export function openPlayerTab(): void {
@@ -1986,15 +2001,6 @@ export function openPlayerTab(): void {
 const displayedBrowseTracks = $derived(
 	searchQuery.trim() ? searchResults : fallbackTracks,
 );
-
-let hasAttemptedInitialListen = false;
-$effect(() => {
-	if (hasAttemptedInitialListen) return;
-	if (initialListening && currentPlay && audioEl) {
-		hasAttemptedInitialListen = true;
-		void startOrResumeAudio();
-	}
-});
 
 $effect(() => {
 	onPlaybackStatusChange?.({
@@ -2017,10 +2023,14 @@ $effect(() => {
     bind:this={audioEl}
     src={currentPlay?.track.streamUrl || undefined}
     preload="auto"
+    playsinline
     muted={!isListening}
     onloadedmetadata={syncDurationFromAudio}
     ondurationchange={syncDurationFromAudio}
     oncanplay={syncDurationFromAudio}
+    onplaying={() => {
+      consecutiveErrorCount = 0;
+    }}
     onpause={() => {
       // 自然播完（ended）、曲目切换/校时中或内部主动暂停触发的 pause 不视为硬件暂停，保持收听状态不断开
       if (
@@ -2045,9 +2055,8 @@ $effect(() => {
       }
     }}
     onerror={() => {
-      if (isListening && currentPlay && reportedErrorUid !== currentPlay.uid) {
-        reportedErrorUid = currentPlay.uid;
-        onReportError(currentPlay.uid);
+      if (currentPlay) {
+        handleTrackPlaybackFailure(currentPlay.uid);
       }
     }}
   ></audio>
@@ -2283,7 +2292,7 @@ $effect(() => {
       isSkippingTrack={isSkippingTrack}
       variant="panel"
       onOpenLyrics={() => switchMusicTab("player")}
-      onToggleListen={() => void toggleListen()}
+      onToggleListen={() => toggleListen()}
       onSkipTrack={onSkipTrack}
       onVoteSkip={onVoteSkip}
     />
