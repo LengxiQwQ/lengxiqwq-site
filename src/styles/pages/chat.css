@@ -479,6 +479,73 @@ html[data-chat-page] .chat-panel {
 	flex-shrink: 0;
 }
 
+/* 正在输入浮动提示指示器（脱离文档流，杜绝输入框跳动） */
+.chat-typing-dock-indicator {
+	position: absolute;
+	top: -1.5rem;
+	left: min(2rem, 3vw);
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	font-size: 0.6875rem;
+	line-height: 1;
+	color: var(--chat-meta-color);
+	pointer-events: none;
+	user-select: none;
+	z-index: 10;
+	background: color-mix(in oklab, var(--skin-surface) 92%, transparent);
+	padding: 0.22rem 0.55rem;
+	border-radius: 9999px;
+	backdrop-filter: blur(8px);
+	border: 1px solid var(--skin-line);
+	box-shadow: 0 2px 8px -1px rgb(0 0 0 / 0.08);
+	animation: chat-typing-fade-in 160ms ease;
+}
+
+.chat-typing-dots {
+	display: inline-flex;
+	align-items: center;
+	gap: 2.5px;
+}
+
+.chat-typing-dot {
+	width: 3.5px;
+	height: 3.5px;
+	border-radius: 50%;
+	background-color: var(--skin-accent);
+	animation: chat-typing-bounce 1.4s infinite ease-in-out both;
+}
+
+.chat-typing-dot:nth-child(1) {
+	animation-delay: -0.32s;
+}
+
+.chat-typing-dot:nth-child(2) {
+	animation-delay: -0.16s;
+}
+
+@keyframes chat-typing-bounce {
+	0%, 80%, 100% {
+		transform: scale(0.6);
+		opacity: 0.4;
+	}
+	40% {
+		transform: scale(1.15);
+		opacity: 1;
+	}
+}
+
+@keyframes chat-typing-fade-in {
+	from {
+		opacity: 0;
+		transform: translateY(3px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
 .chat-composer {
 	display: flex;
 	flex-direction: column;
@@ -2864,6 +2931,7 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 }
 
 .chat-reaction-pill {
+	position: relative;
 	display: inline-flex;
 	align-items: center;
 	gap: 0.25rem;
@@ -2874,8 +2942,50 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	font-size: 0.75rem;
 	line-height: 1.2;
 	cursor: pointer;
+	overflow: visible;
 	transition: all 140ms ease;
 	color: var(--skin-text);
+}
+
+.chat-reaction-pill .chat-reaction-tooltip {
+	position: absolute;
+	bottom: calc(100% + 7px);
+	left: 50%;
+	transform: translateX(-50%) translateY(3px);
+	padding: 0.25rem 0.55rem;
+	border-radius: 8px;
+	background: var(--skin-surface);
+	-webkit-backdrop-filter: blur(12px);
+	backdrop-filter: blur(12px);
+	border: 1px solid var(--skin-line);
+	box-shadow: 0 4px 14px -2px rgb(0 0 0 / 0.16);
+	font-size: 0.6875rem;
+	line-height: 1.25;
+	font-weight: 500;
+	white-space: nowrap;
+	pointer-events: none;
+	opacity: 0;
+	visibility: hidden;
+	z-index: 50;
+	color: var(--skin-text);
+	transition: opacity 120ms ease, transform 120ms ease, visibility 120ms;
+}
+
+.chat-reaction-pill .chat-reaction-tooltip::after {
+	content: "";
+	position: absolute;
+	top: 100%;
+	left: 50%;
+	transform: translateX(-50%);
+	border-width: 4px;
+	border-style: solid;
+	border-color: var(--skin-line) transparent transparent transparent;
+}
+
+.chat-reaction-pill:hover .chat-reaction-tooltip {
+	opacity: 1;
+	visibility: visible;
+	transform: translateX(-50%) translateY(0);
 }
 
 .chat-reaction-pill:hover {

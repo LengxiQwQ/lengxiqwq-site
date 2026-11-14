@@ -660,6 +660,53 @@ export async function uploadChatImage(
 	return data.data.url;
 }
 
+export async function uploadChatMedia(
+	file: File,
+	chatServerUrl: string,
+): Promise<{
+	url: string;
+	name: string;
+	size: number;
+	type: "image" | "audio" | "video" | "file";
+}> {
+	const base = normalizeServerUrl(chatServerUrl);
+	if (!base) {
+		throw new Error("未配置多媒体上传服务");
+	}
+
+	if (file.size > 25 * 1024 * 1024) {
+		throw new Error("文件大小超过 25MB 限制");
+	}
+
+	const resp = await fetch(
+		`${base}/api/upload?name=${encodeURIComponent(file.name)}`,
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": file.type || "application/octet-stream",
+			},
+			body: file,
+		},
+	);
+
+	const data = (await resp.json()) as {
+		ok?: boolean;
+		error?: string;
+		data?: {
+			url: string;
+			name: string;
+			size: number;
+			type: "image" | "audio" | "video" | "file";
+		};
+	};
+
+	if (!resp.ok || !data.ok || !data.data?.url) {
+		throw new Error(data.error || "文件上传失败");
+	}
+
+	return data.data;
+}
+
 export function getAvatarInitials(name?: string, fallback = "?"): string {
 	const cleaned = (name || "").replace(/\s+/g, "").trim();
 	if (!cleaned) return fallback;

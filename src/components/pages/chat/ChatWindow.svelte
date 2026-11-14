@@ -4,7 +4,8 @@ import { KAOMOJI_PRESETS } from "@/constants/kaomoji";
 import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMessage from "./ChatMessage.svelte";
-import { uploadChatImage } from "./chatClient";
+import ChatPollCreateModal from "./ChatPollCreateModal.svelte";
+import { uploadChatImage, uploadChatMedia } from "./chatClient";
 import type {
 	ChatMentionCandidate,
 	ChatMessageRecord,
@@ -49,6 +50,7 @@ interface Props {
 	stickerMap: Map<string, StickerItem>;
 	enableImageUpload: boolean;
 	walineServerUrl: string;
+	chatServerUrl?: string;
 	mentionEvent?: { name: string; userKey?: string; seq: number };
 	showSettings?: boolean;
 	showInterconnect?: boolean;
@@ -63,6 +65,11 @@ interface Props {
 	onEditMessage?: (msgUid: string, content: string) => void;
 	onPinMessage?: (msgUid: string, unpin?: boolean) => void;
 	onVotePoll?: (pollUid: string, answerId: string) => void;
+	onCreatePoll?: (
+		question: string,
+		answers: string[],
+		maxSelections: number,
+	) => void;
 	onTyping?: (typing: boolean) => void;
 	onToggleSettings?: () => void;
 	onToggleInterconnect?: () => void;
@@ -109,6 +116,7 @@ const {
 	stickerMap,
 	enableImageUpload = true,
 	walineServerUrl = "",
+	chatServerUrl = "",
 	mentionEvent,
 	showSettings = false,
 	showInterconnect = false,
@@ -123,6 +131,7 @@ const {
 	onEditMessage,
 	onPinMessage,
 	onVotePoll,
+	onCreatePoll,
 	onTyping,
 	onToggleSettings,
 	onToggleInterconnect,
@@ -142,6 +151,7 @@ let editingMessage = $state<ChatMessageRecord | null>(null);
 let activePinIndex = $state(0);
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
 let isUploadingImage = $state(false);
+let isUploadingMedia = $state(false);
 
 const effectiveSubtitle = $derived(roomTopic ? roomTopic : roomSubtitle);
 const pinnedMessages = $derived.by(() => {
@@ -154,6 +164,7 @@ const currentPinnedMsg = $derived.by(() => {
 	return pinnedMessages[safeIndex] ?? pinnedMessages[0];
 });
 let uploadError = $state("");
+let showPollModal = $state(false);
 let activePopover = $state<"none" | "emoji">("none");
 let activeEmojiTab = $state<string>("kaomoji");
 let showMusicNotices = $state(false);
@@ -240,6 +251,7 @@ let messageContainer: HTMLDivElement | null = $state(null);
 let messageContentEl: HTMLDivElement | null = $state(null);
 let inputEl: HTMLTextAreaElement | null = $state(null);
 let fileInputEl: HTMLInputElement | null = $state(null);
+let mediaFileInputEl: HTMLInputElement | null = $state(null);
 let dockEl: HTMLDivElement | null = $state(null);
 let mentionHistoryWrapEl: HTMLDivElement | null = $state(null);
 let lastMentionSeq = 0;
@@ -497,6 +509,36 @@ const filteredMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 });
 
 const unreadMentionSet = $derived(new Set(unreadMentionUids));
+
+const userNameMap = $derived.by<Map<string, string>>(() => {
+	const map = new Map<string, string>();
+	for (const m of messages) {
+		if (m.userKey && m.name) {
+			map.set(m.userKey, m.name);
+		}
+	}
+	for (const m of mentionMembers) {
+		if (m.userKey && m.name) {
+			map.set(m.userKey, m.name);
+		}
+	}
+	for (const m of onlineMembers) {
+		if (m.userKey && m.name) {
+			map.set(m.userKey, m.name);
+		}
+	}
+	for (const m of roomOnlineMembers) {
+		if (m.userKey && m.name) {
+			map.set(m.userKey, m.name);
+		}
+	}
+	return map;
+});
+
+const displayTypingUsers = $derived.by<string[]>(() => {
+	const myName = currentUser?.name?.trim();
+	return (typingUsers || []).filter((name) => name && name.trim() !== myName);
+});
 
 const activeAlertMessage = $derived.by<ChatMessageRecord | null>(() => {
 	const targetUid =
@@ -1175,13 +1217,19 @@ function handleJumpToReply(msgUid: string) {
 	onNotify?.("原消息较早或已撤回");
 }
 
+let lastTypingSentAt = 0;
 function triggerTyping() {
 	if (onTyping) {
-		onTyping(true);
+		const now = Date.now();
+		if (now - lastTypingSentAt > 2500) {
+			lastTypingSentAt = now;
+			onTyping(true);
+		}
 		if (typingTimer) clearTimeout(typingTimer);
 		typingTimer = setTimeout(() => {
 			onTyping?.(false);
-		}, 3000);
+			lastTypingSentAt = 0;
+		}, 4500);
 	}
 }
 
@@ -1192,6 +1240,10 @@ function handleSend() {
 		onRequireAuth();
 		return;
 	}
+
+	if (typingTimer) clearTimeout(typingTimer);
+	onTyping?.(false);
+	lastTypingSentAt = 0;
 
 	if (editingMessage) {
 		onEditMessage?.(editingMessage.msgUid, trimmed);
@@ -1301,15 +1353,61 @@ async function processImageFiles(files: FileList | File[]) {
 	}
 }
 
+async function processMediaFiles(files: FileList | File[]) {
+	if (!currentUser) {
+		onRequireAuth();
+		return;
+	}
+	const list = Array.from(files);
+	if (list.length === 0) return;
+
+	const remaining = Math.max(0, 3 - pendingImages.length);
+	if (remaining === 0) {
+		uploadError = "单条消息最多附带 3 个附件";
+		return;
+	}
+
+	uploadError = "";
+	isUploadingMedia = true;
+	try {
+		for (const file of list.slice(0, remaining)) {
+			const res = await uploadChatMedia(
+				file,
+				chatServerUrl || "https://chat-server.lengxiqwq.com",
+			);
+			pendingImages = [
+				...pendingImages,
+				{
+					type: res.type,
+					url: res.url,
+					name: res.name,
+					size: res.size,
+				},
+			];
+		}
+	} catch (err) {
+		uploadError = err instanceof Error ? err.message : "附件上传失败";
+	} finally {
+		isUploadingMedia = false;
+		if (mediaFileInputEl) {
+			mediaFileInputEl.value = "";
+		}
+	}
+}
+
 function handlePaste(e: ClipboardEvent) {
 	const items = e.clipboardData?.files;
 	if (!items || items.length === 0) return;
-	const imageFiles = Array.from(items).filter((f) =>
-		f.type.startsWith("image/"),
-	);
+	const files = Array.from(items);
+	const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+	const otherFiles = files.filter((f) => !f.type.startsWith("image/"));
 	if (imageFiles.length > 0) {
 		e.preventDefault();
 		void processImageFiles(imageFiles);
+	}
+	if (otherFiles.length > 0) {
+		e.preventDefault();
+		void processMediaFiles(otherFiles);
 	}
 }
 
@@ -1459,11 +1557,14 @@ function removePendingImage(index: number) {
           </span>
           <button
             type="button"
-            class="text-xs p-1 text-[var(--chat-meta-color)] hover:text-[var(--skin-accent)] border-none bg-transparent cursor-pointer"
-            title="下一条置顶"
-            onclick={() => activePinIndex = (activePinIndex + 1) % pinnedMessages.length}
+            class="p-1 text-[var(--chat-meta-color)] hover:text-[var(--skin-accent)] hover:bg-black/5 dark:hover:bg-white/5 rounded transition-colors border-none bg-transparent cursor-pointer flex items-center justify-center"
+            title="查看下一条置顶"
+            aria-label="查看下一条置顶"
+            onclick={() => (activePinIndex = (activePinIndex + 1) % pinnedMessages.length)}
           >
-            ▶
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m9 18 6-6-6-6" />
+            </svg>
           </button>
         {/if}
         {#if currentUser?.isAdmin}
@@ -1689,6 +1790,7 @@ function removePendingImage(index: number) {
               canDelete={canDelete}
               stickerMap={stickerMap}
               interconnectSites={interconnectSites}
+              userNameMap={userNameMap}
               onRecall={onRecallMessage}
               onDelete={onDeleteMessage}
               onReply={msg.kind === "user" ? handleStartReply : undefined}
@@ -1900,6 +2002,18 @@ function removePendingImage(index: number) {
       </div>
     {/if}
 
+    <!-- 正在输入浮动提示条（独立绝对定位，杜绝输入框跳动） -->
+    {#if displayTypingUsers.length > 0}
+      <div class="chat-typing-dock-indicator">
+        <span class="chat-typing-dots">
+          <span class="chat-typing-dot"></span>
+          <span class="chat-typing-dot"></span>
+          <span class="chat-typing-dot"></span>
+        </span>
+        <span>{displayTypingUsers.join("、")} 正在输入...</span>
+      </div>
+    {/if}
+
     <!-- 统一一体化毛玻璃输入卡片 -->
     <div class="chat-composer">
       <!-- 正在编辑提示条 -->
@@ -1949,32 +2063,49 @@ function removePendingImage(index: number) {
         </div>
       {/if}
 
-      <!-- 正在输入提示 -->
-      {#if typingUsers && typingUsers.length > 0}
-        <div class="px-3 pt-1.5 flex items-center gap-1.5 text-[0.6875rem] text-[var(--chat-meta-color)]">
-          <span class="w-1.5 h-1.5 rounded-full bg-[var(--skin-accent)] animate-pulse"></span>
-          <span>{typingUsers.join("、")} 正在输入...</span>
-        </div>
-      {/if}
 
-      <!-- 待发送图片预览条 -->
-      {#if pendingImages.length > 0 || isUploadingImage || uploadError}
+      <!-- 待发送附件预览条 -->
+      {#if pendingImages.length > 0 || isUploadingImage || isUploadingMedia || uploadError}
         <div class="px-3 pt-2.5 pb-1 flex flex-wrap items-center gap-2 border-b border-black/5 dark:border-white/10">
-          {#each pendingImages as img, idx (img.url)}
-            <div class="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--chat-divider-color)] bg-black/10 shrink-0">
-              <img src={img.url} alt="待发送图片" class="w-full h-full object-cover" />
-              <button
-                type="button"
-                aria-label="移除图片"
-                class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/65 text-white border-none text-[10px] leading-none flex items-center justify-center cursor-pointer"
-                onclick={() => removePendingImage(idx)}
-              >
-                ×
-              </button>
-            </div>
+          {#each pendingImages as att, idx (att.url)}
+            {#if att.type === "image"}
+              <div class="relative w-14 h-14 rounded-lg overflow-hidden border border-[var(--chat-divider-color)] bg-black/10 shrink-0">
+                <img src={att.url} alt="待发送图片" class="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  aria-label="移除图片"
+                  class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-black/65 text-white border-none text-[10px] leading-none flex items-center justify-center cursor-pointer"
+                  onclick={() => removePendingImage(idx)}
+                >
+                  ×
+                </button>
+              </div>
+            {:else}
+              <div class="relative flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-[var(--skin-line)] bg-[var(--btn-regular-bg)] max-w-[14rem] shrink-0">
+                <span class="text-base shrink-0">
+                  {att.type === "audio" ? "🎵" : att.type === "video" ? "🎬" : "📎"}
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div class="text-xs font-medium truncate text-[var(--skin-text)]">{att.name || "附件"}</div>
+                  {#if att.size}
+                    <div class="text-[10px] text-[var(--chat-meta-color)]">
+                      {att.size > 1024 * 1024 ? `${(att.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(att.size / 1024)} KB`}
+                    </div>
+                  {/if}
+                </div>
+                <button
+                  type="button"
+                  aria-label="移除附件"
+                  class="w-4 h-4 rounded-full bg-black/40 hover:bg-black/70 text-white border-none text-[10px] leading-none flex items-center justify-center cursor-pointer ml-1"
+                  onclick={() => removePendingImage(idx)}
+                >
+                  ×
+                </button>
+              </div>
+            {/if}
           {/each}
-          {#if isUploadingImage}
-            <span class="text-xs text-[var(--chat-accent-text)]">图片上传中...</span>
+          {#if isUploadingImage || isUploadingMedia}
+            <span class="text-xs text-[var(--chat-accent-text)] animate-pulse">附件上传中...</span>
           {/if}
           {#if uploadError}
             <span class="text-xs text-red-500">{uploadError}</span>
@@ -2052,8 +2183,9 @@ function removePendingImage(index: number) {
             <button
               type="button"
               class="chat-tool-btn"
+              title="上传图片"
               aria-label="上传图片"
-              disabled={isUploadingImage}
+              disabled={isUploadingImage || isUploadingMedia}
               onclick={() => {
                 if (!currentUser) {
                   onRequireAuth();
@@ -2069,6 +2201,60 @@ function removePendingImage(index: number) {
               </svg>
             </button>
           {/if}
+
+          <!-- 多媒体与文件附件上传按钮 -->
+          <input
+            bind:this={mediaFileInputEl}
+            type="file"
+            accept="audio/*,video/*,.pdf,.zip,.tar,.gz,.7z,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md"
+            multiple
+            class="hidden"
+            onchange={(e) => {
+              if (e.currentTarget.files) {
+                void processMediaFiles(e.currentTarget.files);
+              }
+            }}
+          />
+          <button
+            type="button"
+            class="chat-tool-btn"
+            title="发送文件或音视频"
+            aria-label="发送文件或音视频"
+            disabled={isUploadingImage || isUploadingMedia}
+            onclick={() => {
+              if (!currentUser) {
+                onRequireAuth();
+                return;
+              }
+              mediaFileInputEl?.click();
+            }}
+          >
+            <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
+
+          <!-- 发起投票按钮 -->
+          <button
+            type="button"
+            class="chat-tool-btn"
+            title="发起投票"
+            aria-label="发起投票"
+            onclick={() => {
+              if (!currentUser) {
+                onRequireAuth();
+                return;
+              }
+              showPollModal = true;
+            }}
+          >
+            <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 3v18h18" />
+              <rect x="7" y="10" width="3" height="8" rx="1" />
+              <rect x="13" y="5" width="3" height="13" rx="1" />
+              <rect x="19" y="13" width="3" height="5" rx="1" />
+            </svg>
+          </button>
         </div>
 
         <div class="flex items-center gap-2.5 shrink-0">
@@ -2082,7 +2268,7 @@ function removePendingImage(index: number) {
           <button
             type="button"
             class="chat-send-btn h-8! px-4! text-xs! shrink-0"
-            disabled={isUploadingImage}
+            disabled={isUploadingImage || isUploadingMedia}
             onclick={handleSend}
           >
             <span>发送</span>
@@ -2094,4 +2280,12 @@ function removePendingImage(index: number) {
       </div>
     </div>
   </div>
+
+  <ChatPollCreateModal
+    open={showPollModal}
+    onClose={() => (showPollModal = false)}
+    onSubmit={(q, ans, max) => {
+      onCreatePoll?.(q, ans, max);
+    }}
+  />
 </div>

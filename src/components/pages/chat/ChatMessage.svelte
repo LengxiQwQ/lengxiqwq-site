@@ -29,6 +29,7 @@ interface Props {
 	canDelete?: boolean;
 	stickerMap: Map<string, StickerItem>;
 	interconnectSites?: InterconnectSite[];
+	userNameMap?: Map<string, string>;
 	onRecall?: (msgUid: string) => void;
 	onDelete?: (msgUid: string) => void;
 	onReply?: (message: ChatMessageRecord) => void;
@@ -55,6 +56,7 @@ const {
 	canDelete = false,
 	stickerMap,
 	interconnectSites = [],
+	userNameMap = new Map(),
 	onRecall,
 	onDelete,
 	onReply,
@@ -302,20 +304,50 @@ function handleAvatarClick() {
   {/if}
 {/snippet}
 
+function formatReactionTooltip(users: string[]): string {
+	if (!users || users.length === 0) return "";
+	const names = users.map((key) => {
+		if (currentUserKey && key === currentUserKey) return "你";
+		if (userNameMap.has(key)) return userNameMap.get(key)!;
+		if (key.startsWith("matrix:") || (key.startsWith("@") && key.includes(":"))) {
+			const cleanKey = key.replace(/^matrix:/, "");
+			const match = cleanKey.match(/^@([^:]+):(.+)$/);
+			if (match) {
+				const [, uName] = match;
+				const origin = resolveExternalOrigin(cleanKey, interconnectSites);
+				return origin?.siteName ? `${uName} (${origin.siteName})` : uName;
+			}
+			return cleanKey;
+		}
+		if (key.startsWith("waline:") || key.startsWith("guest:")) {
+			return key.split(":")[1] || key;
+		}
+		return key;
+	});
+
+	if (names.length <= 3) {
+		return names.join("、");
+	}
+	return `${names.slice(0, 3).join("、")} 等 ${names.length} 人`;
+}
+
 {#snippet renderReactions(alignEnd: boolean)}
   {@const reactionEntries = Object.entries(message.reactions || {}).filter(([_, users]) => Array.isArray(users) && users.length > 0)}
   {#if reactionEntries.length > 0}
     <div class="chat-reaction-pills {alignEnd ? 'justify-end' : 'justify-start'}">
       {#each reactionEntries as [emoji, users] (emoji)}
         {@const isMine = Boolean(currentUserKey && users.includes(currentUserKey))}
+        {@const tooltipText = formatReactionTooltip(users)}
         <button
           type="button"
           class="chat-reaction-pill {isMine ? 'is-active' : ''}"
-          title="{users.length} 人反应"
           onclick={() => onReaction?.(message.msgUid, emoji)}
         >
           <span>{emoji}</span>
           <span class="text-[0.6875rem] font-medium opacity-85">{users.length}</span>
+          {#if tooltipText}
+            <span class="chat-reaction-tooltip" role="tooltip">{tooltipText}</span>
+          {/if}
         </button>
       {/each}
     </div>

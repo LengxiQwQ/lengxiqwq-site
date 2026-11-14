@@ -820,9 +820,13 @@ function connectRoom(roomId: string) {
 			}
 			case "chat:typing": {
 				if (packet.roomId === currentRoom) {
+					const myName = currentUser?.name?.trim();
 					if (Array.isArray(packet.users)) {
-						typingUsers = packet.users;
+						typingUsers = packet.users.filter((u: string) => !myName || u.trim() !== myName);
 					} else if (packet.userName) {
+						if (myName && packet.userName.trim() === myName) {
+							break;
+						}
 						if (packet.typing) {
 							if (!typingUsers.includes(packet.userName)) {
 								typingUsers = [...typingUsers, packet.userName];
@@ -830,7 +834,7 @@ function connectRoom(roomId: string) {
 							const targetName = packet.userName;
 							setTimeout(() => {
 								typingUsers = typingUsers.filter((u) => u !== targetName);
-							}, 6000);
+							}, 5000);
 						} else {
 							typingUsers = typingUsers.filter((u) => u !== packet.userName);
 						}
@@ -1289,6 +1293,23 @@ function handleVotePoll(pollUid: string, answerId: string) {
 	sendPacket({ type: "chat:poll_vote", pollUid, answerId });
 }
 
+function handleCreatePoll(
+	question: string,
+	answers: string[],
+	maxSelections: number,
+) {
+	if (!currentUser) {
+		openAuthModal();
+		return;
+	}
+	sendPacket({
+		type: "chat:poll_create",
+		question,
+		answers,
+		maxSelections,
+	});
+}
+
 function handleTyping(typing: boolean) {
 	if (!currentUser || ws?.readyState !== WebSocket.OPEN) return;
 	sendPacket({ type: "chat:typing", typing });
@@ -1556,6 +1577,7 @@ onMount(() => {
           stickerMap={stickerMap}
           enableImageUpload={enableImageUpload}
           walineServerUrl={walineServerUrl}
+          chatServerUrl={normalizedChatServer}
           mentionEvent={mentionEvent}
           showSettings={showSettings}
           showInterconnect={showInterconnect}
@@ -1570,6 +1592,7 @@ onMount(() => {
           onEditMessage={handleEditMessage}
           onPinMessage={handlePinMessage}
           onVotePoll={handleVotePoll}
+          onCreatePoll={handleCreatePoll}
           onTyping={handleTyping}
           onToggleSettings={() => {
             showSettings = !showSettings;
