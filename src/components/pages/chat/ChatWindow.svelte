@@ -1531,7 +1531,17 @@ function removePendingImage(index: number) {
                 <span class="chat-unread-divider-line"></span>
               </div>
             {/if}
-            {@const isSelf = Boolean(currentUser && msg.userKey === currentUser.userKey)}
+            {@const isSelf = Boolean(
+              currentUser && (
+                msg.userKey === currentUser.userKey ||
+                (currentUser.isAdmin && (
+                  msg.isAdmin ||
+                  msg.userKey === "waline:1" ||
+                  msg.userKey === "@lengxiqwq:matrix.lengxiqwq.com" ||
+                  msg.userKey === "matrix:@lengxiqwq:matrix.lengxiqwq.com"
+                ))
+              )
+            )}
             {@const isAdmin = Boolean(currentUser?.isAdmin)}
             {@const serverNow = nowMs + clockOffsetMs}
             {@const canRecall = Boolean(

@@ -894,6 +894,16 @@ export function resolveExternalOrigin(
 		}
 	}
 
+	if (host.includes("lengxiqwq.com")) {
+		matchedSite = {
+			name: "冷汐的杂货铺",
+			owner: "冷汐OωO",
+			url: "https://lengxiqwq.com",
+			avatar: "https://avatars.githubusercontent.com/u/97082679?v=4",
+			desc: "冷汐的个人网站",
+		};
+	}
+
 	if (!matchedSite && siteFromSuffix) {
 		matchedSite = sites.find(
 			(s) =>

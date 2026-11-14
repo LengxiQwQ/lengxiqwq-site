@@ -83,10 +83,17 @@ const replyPreviewText = $derived.by(() => {
 	);
 });
 
+const isFromOurServer = $derived(
+	message.userKey.endsWith(":matrix.lengxiqwq.com") ||
+		message.userKey.includes("matrix.lengxiqwq.com"),
+);
+
 const isExternal = $derived(
-	message.source === "matrix" ||
-		message.userKey.startsWith("matrix:") ||
-		message.badge === "互联茶友",
+	!isSelf &&
+		!isFromOurServer &&
+		(message.source === "matrix" ||
+			message.userKey.startsWith("matrix:") ||
+			message.badge === "互联茶友"),
 );
 
 const externalOrigin = $derived.by(() => {
@@ -107,6 +114,13 @@ const senderDisplayName = $derived.by(() => {
 		return `${externalOrigin.cleanName} · ${externalOrigin.siteName}`;
 	}
 	return message.name;
+});
+
+const effectiveSenderUrl = $derived.by(() => {
+	if (isFromOurServer || isSelf) return "https://lengxiqwq.com";
+	if (externalOrigin?.site?.url) return externalOrigin.site.url;
+	if (message.url && !message.url.includes("matrix.lengxiqwq.com")) return message.url;
+	return externalOrigin?.site?.url || "";
 });
 
 const roleBadge = $derived.by(() => {
@@ -405,9 +419,9 @@ function handleAvatarClick() {
     <div class="flex flex-col items-start max-w-[74%] min-w-0">
       {#if senderDisplayName || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
-          {#if message.url}
+          {#if effectiveSenderUrl}
             <a
-              href={message.url}
+              href={effectiveSenderUrl}
               target="_blank"
               rel="noopener noreferrer"
               class="text-xs text-[var(--chat-meta-color)] hover:text-[var(--primary)] font-medium truncate no-underline"
