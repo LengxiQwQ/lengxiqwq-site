@@ -140,6 +140,9 @@ let sessionUnreadSince = $state(0);
 let serverUnreadCount = $state(0);
 let serverUnreadUserCount = $state(0);
 let unreadJumpSeq = $state(0);
+let pinnedUids = $state<string[]>([]);
+let roomTopic = $state<string>("");
+let typingUsers = $state<string[]>([]);
 let musicState = $state<RoomMusicState | null>(null);
 let isSkippingTrack = $state(false);
 let skipPendingTimer: number | null = null;
@@ -527,6 +530,9 @@ function connectRoom(roomId: string) {
 					totalChatterCount = Math.max(totalChatterCount, packet.mentionMembers.length);
 				}
 				musicState = packet.music;
+				pinnedUids = packet.pinnedUids ?? [];
+				roomTopic = packet.topic ?? "";
+				typingUsers = [];
 				clearSkipPending();
 				clockOffsetMs = packet.music.serverTime - Date.now();
 				if (packet.mergedGuestHistory) {
@@ -777,6 +783,75 @@ function connectRoom(roomId: string) {
 									}
 								: m,
 						);
+				}
+				break;
+			}
+			case "chat:reaction_updated": {
+				if (packet.roomId === currentRoom) {
+					messages = messages.map((m) =>
+						m.msgUid === packet.msgUid
+							? { ...m, reactions: packet.reactions }
+							: m,
+					);
+				}
+				break;
+			}
+			case "chat:edited": {
+				if (packet.roomId === currentRoom) {
+					messages = messages.map((m) =>
+						m.msgUid === packet.msgUid
+							? { ...m, content: packet.content, isEdited: true, editedAt: packet.editedAt }
+							: m,
+					);
+				}
+				break;
+			}
+			case "chat:pinned_update": {
+				if (packet.roomId === currentRoom) {
+					pinnedUids = packet.pinnedUids || [];
+				}
+				break;
+			}
+			case "chat:topic_update": {
+				if (packet.roomId === currentRoom) {
+					roomTopic = packet.topic || "";
+				}
+				break;
+			}
+			case "chat:typing": {
+				if (packet.roomId === currentRoom) {
+					if (Array.isArray(packet.users)) {
+						typingUsers = packet.users;
+					} else if (packet.userName) {
+						if (packet.typing) {
+							if (!typingUsers.includes(packet.userName)) {
+								typingUsers = [...typingUsers, packet.userName];
+							}
+							const targetName = packet.userName;
+							setTimeout(() => {
+								typingUsers = typingUsers.filter((u) => u !== targetName);
+							}, 6000);
+						} else {
+							typingUsers = typingUsers.filter((u) => u !== packet.userName);
+						}
+					}
+				}
+				break;
+			}
+			case "chat:poll_updated": {
+				if (packet.roomId === currentRoom) {
+					messages = messages.map((m) =>
+						m.msgUid === packet.msgUid && m.poll
+							? {
+									...m,
+									poll: {
+										...m.poll,
+										votes: packet.votes,
+										ended: Boolean(packet.ended),
+									},
+								}
+							: m,
+					);
 				}
 				break;
 			}
@@ -1190,6 +1265,35 @@ function handleDeleteMessage(msgUid: string) {
 	sendPacket({ type: "chat:delete", msgUid });
 }
 
+function handleReaction(msgUid: string, key: string) {
+	if (!currentUser) {
+		openAuthModal();
+		return;
+	}
+	sendPacket({ type: "chat:reaction", msgUid, key });
+}
+
+function handleEditMessage(msgUid: string, content: string) {
+	sendPacket({ type: "chat:edit", msgUid, content });
+}
+
+function handlePinMessage(msgUid: string, unpin?: boolean) {
+	sendPacket({ type: "chat:pin", msgUid, unpin });
+}
+
+function handleVotePoll(pollUid: string, answerId: string) {
+	if (!currentUser) {
+		openAuthModal();
+		return;
+	}
+	sendPacket({ type: "chat:poll_vote", pollUid, answerId });
+}
+
+function handleTyping(typing: boolean) {
+	if (!currentUser || ws?.readyState !== WebSocket.OPEN) return;
+	sendPacket({ type: "chat:typing", typing });
+}
+
 async function handleSearchOnline(keyword: string): Promise<ChatMusicTrack[]> {
 	return searchOnlineMusic(normalizedChatServer, keyword);
 }
@@ -1459,6 +1563,14 @@ onMount(() => {
           interconnectSites={interconnectSites}
           totalChatterCount={totalChatterCount}
           noticeText={noticeText}
+          pinnedUids={pinnedUids}
+          roomTopic={roomTopic}
+          typingUsers={typingUsers}
+          onReaction={handleReaction}
+          onEditMessage={handleEditMessage}
+          onPinMessage={handlePinMessage}
+          onVotePoll={handleVotePoll}
+          onTyping={handleTyping}
           onToggleSettings={() => {
             showSettings = !showSettings;
             if (showSettings) showInterconnect = false;

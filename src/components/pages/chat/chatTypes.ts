@@ -180,8 +180,27 @@ export interface ChatMentionCandidate {
 }
 
 export interface ImageAttachment {
-	type: "image";
+	type: "image" | "audio" | "video" | "file";
 	url: string;
+	name?: string;
+	duration?: number;
+	size?: number;
+	isSticker?: boolean;
+}
+
+export type ChatAttachment = ImageAttachment;
+
+export interface ChatPollAnswer {
+	id: string;
+	text: string;
+}
+
+export interface ChatPollData {
+	question: string;
+	answers: ChatPollAnswer[];
+	maxSelections: number;
+	votes: Record<string, string[]>;
+	ended?: boolean;
 }
 
 export interface ChatReplyRef {
@@ -197,7 +216,7 @@ export interface ChatMessageRecord {
 	source?: "matrix";
 	id: number;
 	msgUid: string;
-	kind: "user" | "system";
+	kind: "user" | "system" | "poll";
 	userKey: string;
 	name: string;
 	avatar: string;
@@ -212,6 +231,11 @@ export interface ChatMessageRecord {
 	mentionKeys?: string[];
 	replyTo?: ChatReplyRef | null;
 	createdAt: number;
+	reactions?: Record<string, string[]>;
+	isEdited?: boolean;
+	editedAt?: number;
+	poll?: ChatPollData;
+	isPinned?: boolean;
 }
 
 export interface QueueEntry {

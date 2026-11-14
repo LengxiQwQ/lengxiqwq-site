@@ -56,6 +56,14 @@ interface Props {
 	interconnectSites?: InterconnectSite[];
 	totalChatterCount?: number;
 	noticeText?: string;
+	pinnedUids?: string[];
+	roomTopic?: string;
+	typingUsers?: string[];
+	onReaction?: (msgUid: string, key: string) => void;
+	onEditMessage?: (msgUid: string, content: string) => void;
+	onPinMessage?: (msgUid: string, unpin?: boolean) => void;
+	onVotePoll?: (pollUid: string, answerId: string) => void;
+	onTyping?: (typing: boolean) => void;
 	onToggleSettings?: () => void;
 	onToggleInterconnect?: () => void;
 	onSendMessage: (
@@ -108,6 +116,14 @@ const {
 	interconnectSites = [],
 	totalChatterCount = 0,
 	noticeText = "",
+	pinnedUids = [],
+	roomTopic = "",
+	typingUsers = [],
+	onReaction,
+	onEditMessage,
+	onPinMessage,
+	onVotePoll,
+	onTyping,
 	onToggleSettings,
 	onToggleInterconnect,
 	onSendMessage,
@@ -122,7 +138,21 @@ const {
 let inputText = $state("");
 let pendingImages = $state<ImageAttachment[]>([]);
 let replyingTo = $state<ChatMessageRecord | null>(null);
+let editingMessage = $state<ChatMessageRecord | null>(null);
+let activePinIndex = $state(0);
+let typingTimer: ReturnType<typeof setTimeout> | null = null;
 let isUploadingImage = $state(false);
+
+const effectiveSubtitle = $derived(roomTopic ? roomTopic : roomSubtitle);
+const pinnedMessages = $derived.by(() => {
+	if (!pinnedUids || pinnedUids.length === 0) return [];
+	return pinnedUids.map(uid => messages.find(m => m.msgUid === uid)).filter((m): m is ChatMessageRecord => Boolean(m));
+});
+const currentPinnedMsg = $derived.by(() => {
+	if (pinnedMessages.length === 0) return null;
+	const safeIndex = activePinIndex % pinnedMessages.length;
+	return pinnedMessages[safeIndex] ?? pinnedMessages[0];
+});
 let uploadError = $state("");
 let activePopover = $state<"none" | "emoji">("none");
 let activeEmojiTab = $state<string>("kaomoji");
@@ -1145,11 +1175,30 @@ function handleJumpToReply(msgUid: string) {
 	onNotify?.("原消息较早或已撤回");
 }
 
+function triggerTyping() {
+	if (onTyping) {
+		onTyping(true);
+		if (typingTimer) clearTimeout(typingTimer);
+		typingTimer = setTimeout(() => {
+			onTyping?.(false);
+		}, 3000);
+	}
+}
+
 function handleSend() {
 	const trimmed = inputText.trim();
 	if (!trimmed && pendingImages.length === 0) return;
 	if (!currentUser) {
 		onRequireAuth();
+		return;
+	}
+
+	if (editingMessage) {
+		onEditMessage?.(editingMessage.msgUid, trimmed);
+		editingMessage = null;
+		inputText = "";
+		pendingImages = [];
+		replyingTo = null;
 		return;
 	}
 
@@ -1161,7 +1210,6 @@ function handleSend() {
 	replyingTo = null;
 	selectedMentionMap = {};
 	uploadError = "";
-	selectedMentionMap = {};
 	mentionMenuOpen = false;
 	activePopover = "none";
 	void scrollToBottom();
@@ -1198,10 +1246,18 @@ function handleKeydown(e: KeyboardEvent) {
 		}
 	}
 
-	if (e.key === "Escape" && replyingTo) {
-		e.preventDefault();
-		replyingTo = null;
-		return;
+	if (e.key === "Escape") {
+		if (editingMessage) {
+			e.preventDefault();
+			editingMessage = null;
+			inputText = "";
+			return;
+		}
+		if (replyingTo) {
+			e.preventDefault();
+			replyingTo = null;
+			return;
+		}
 	}
 
 	if (e.key === "Enter" && !e.shiftKey) {
@@ -1270,7 +1326,7 @@ function removePendingImage(index: number) {
         # {roomName}
       </span>
       <span class="text-xs text-[var(--chat-meta-color)] truncate hidden sm:inline">
-        · {roomSubtitle}
+        · {effectiveSubtitle}
       </span>
     </div>
     <div class="flex items-center gap-1.5 shrink-0">
@@ -1381,6 +1437,48 @@ function removePendingImage(index: number) {
       </button>
     </div>
   </div>
+
+  <!-- 置顶消息横幅 (Pinned Messages) -->
+  {#if currentPinnedMsg}
+    <div class="chat-pinned-banner">
+      <button
+        type="button"
+        class="flex items-center gap-2 truncate flex-1 chat-pinned-btn text-left bg-transparent border-none p-0 text-[var(--skin-text)] cursor-pointer"
+        onclick={() => void jumpToMessage(currentPinnedMsg.msgUid)}
+      >
+        <span class="text-xs">📌</span>
+        <span class="font-semibold text-xs shrink-0">{currentPinnedMsg.name}:</span>
+        <span class="truncate text-xs text-[var(--chat-meta-color)]">
+          {currentPinnedMsg.content || (currentPinnedMsg.attachments?.length > 0 ? "[多媒体附件]" : "消息")}
+        </span>
+      </button>
+      <div class="flex items-center gap-1.5 shrink-0 ml-2">
+        {#if pinnedMessages.length > 1}
+          <span class="text-[0.625rem] text-[var(--chat-meta-color)] tabular-nums">
+            {activePinIndex + 1}/{pinnedMessages.length}
+          </span>
+          <button
+            type="button"
+            class="text-xs p-1 text-[var(--chat-meta-color)] hover:text-[var(--skin-accent)] border-none bg-transparent cursor-pointer"
+            title="下一条置顶"
+            onclick={() => activePinIndex = (activePinIndex + 1) % pinnedMessages.length}
+          >
+            ▶
+          </button>
+        {/if}
+        {#if currentUser?.isAdmin}
+          <button
+            type="button"
+            class="p-1 text-[var(--chat-meta-color)] hover:text-red-400 text-xs border-none bg-transparent cursor-pointer"
+            title="取消置顶"
+            onclick={() => onPinMessage?.(currentPinnedMsg.msgUid, true)}
+          >
+            ✕
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   <!-- 提示条 -->
   {#if noticeText}
@@ -1568,6 +1666,12 @@ function removePendingImage(index: number) {
                 (isAdmin ||
                   (isSelf && serverNow - msg.createdAt <= RECALL_WINDOW_MS)),
             )}
+            {@const canEdit = Boolean(
+              currentUser &&
+                msg.kind === "user" &&
+                (isAdmin ||
+                  (isSelf && serverNow - msg.createdAt <= 15 * 60 * 1000)),
+            )}
             {@const canDelete = Boolean(
               currentUser && msg.kind === "user" && isAdmin && roomId !== "interconnect",
             )}
@@ -1577,13 +1681,25 @@ function removePendingImage(index: number) {
               isMentionedMe={isMentionedToMe(msg)}
               isHighlighted={highlightedMsgUid === msg.msgUid}
               currentUserName={currentUser?.name || ""}
+              currentUserKey={currentUser?.userKey}
+              isAdmin={isAdmin}
+              isPinned={pinnedUids.includes(msg.msgUid)}
               canRecall={canRecall}
+              canEdit={canEdit}
               canDelete={canDelete}
               stickerMap={stickerMap}
               interconnectSites={interconnectSites}
               onRecall={onRecallMessage}
               onDelete={onDeleteMessage}
               onReply={msg.kind === "user" ? handleStartReply : undefined}
+              onEdit={(m) => {
+                editingMessage = m;
+                inputText = m.content;
+                inputEl?.focus();
+              }}
+              onPin={onPinMessage}
+              onReaction={onReaction}
+              onVotePoll={onVotePoll}
               onJumpToMessage={handleJumpToReply}
               onOpenUserProfile={onOpenUserProfile}
               onMention={onMentionUser}
@@ -1786,6 +1902,29 @@ function removePendingImage(index: number) {
 
     <!-- 统一一体化毛玻璃输入卡片 -->
     <div class="chat-composer">
+      <!-- 正在编辑提示条 -->
+      {#if editingMessage}
+        <div class="chat-reply-bar">
+          <div class="chat-reply-bar-main">
+            <span class="chat-reply-bar-label font-bold text-[var(--skin-accent)]">编辑消息</span>
+            <span class="chat-reply-bar-text">
+              {editingMessage.content}
+            </span>
+          </div>
+          <button
+            type="button"
+            class="chat-reply-bar-close"
+            aria-label="取消编辑"
+            onclick={() => {
+              editingMessage = null;
+              inputText = "";
+            }}
+          >
+            ×
+          </button>
+        </div>
+      {/if}
+
       <!-- 正在回复提示条 -->
       {#if replyingTo}
         <div class="chat-reply-bar">
@@ -1807,6 +1946,14 @@ function removePendingImage(index: number) {
           >
             ×
           </button>
+        </div>
+      {/if}
+
+      <!-- 正在输入提示 -->
+      {#if typingUsers && typingUsers.length > 0}
+        <div class="px-3 pt-1.5 flex items-center gap-1.5 text-[0.6875rem] text-[var(--chat-meta-color)]">
+          <span class="w-1.5 h-1.5 rounded-full bg-[var(--skin-accent)] animate-pulse"></span>
+          <span>{typingUsers.join("、")} 正在输入...</span>
         </div>
       {/if}
 
@@ -1844,7 +1991,10 @@ function removePendingImage(index: number) {
           ? `以 ${currentUser.name} 的身份在 #${roomName} 说点什么...`
           : `在 #${roomName} 中说点什么（发送前需先登录）...`}
         bind:value={inputText}
-        oninput={syncMentionTrigger}
+        oninput={() => {
+          syncMentionTrigger();
+          triggerTyping();
+        }}
         onclick={syncMentionTrigger}
         onkeyup={(e) => {
           if (

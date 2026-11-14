@@ -1,3 +1,7 @@
+<script module lang="ts">
+let activeGlobalVoiceStop: (() => void) | null = null;
+</script>
+
 <script lang="ts">
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
@@ -17,13 +21,21 @@ interface Props {
 	isMentionedMe?: boolean;
 	isHighlighted?: boolean;
 	currentUserName?: string;
+	currentUserKey?: string;
+	isAdmin?: boolean;
+	isPinned?: boolean;
 	canRecall?: boolean;
+	canEdit?: boolean;
 	canDelete?: boolean;
 	stickerMap: Map<string, StickerItem>;
 	interconnectSites?: InterconnectSite[];
 	onRecall?: (msgUid: string) => void;
 	onDelete?: (msgUid: string) => void;
 	onReply?: (message: ChatMessageRecord) => void;
+	onEdit?: (message: ChatMessageRecord) => void;
+	onPin?: (msgUid: string, unpin?: boolean) => void;
+	onReaction?: (msgUid: string, key: string) => void;
+	onVotePoll?: (pollUid: string, answerId: string) => void;
 	onJumpToMessage?: (msgUid: string) => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onMention?: (name: string, userKey?: string) => void;
@@ -35,17 +47,56 @@ const {
 	isMentionedMe = false,
 	isHighlighted = false,
 	currentUserName = "",
+	currentUserKey = "",
+	isAdmin = false,
+	isPinned = false,
 	canRecall = false,
+	canEdit = false,
 	canDelete = false,
 	stickerMap,
 	interconnectSites = [],
 	onRecall,
 	onDelete,
 	onReply,
+	onEdit,
+	onPin,
+	onReaction,
+	onVotePoll,
 	onJumpToMessage,
 	onOpenUserProfile,
 	onMention,
 }: Props = $props();
+
+let showQuickReaction = $state(false);
+let activeAudioUrl = $state<string | null>(null);
+let audioPlayer = $state<HTMLAudioElement | null>(null);
+
+function handleToggleAudio(url: string) {
+	if (activeAudioUrl === url) {
+		audioPlayer?.pause();
+		activeAudioUrl = null;
+		activeGlobalVoiceStop = null;
+	} else {
+		if (activeGlobalVoiceStop) {
+			activeGlobalVoiceStop();
+		}
+		if (audioPlayer) audioPlayer.pause();
+		activeAudioUrl = url;
+		const a = new Audio(url);
+		audioPlayer = a;
+		activeGlobalVoiceStop = () => {
+			a.pause();
+			activeAudioUrl = null;
+		};
+		a.play().catch(() => {});
+		a.onended = () => {
+			if (activeAudioUrl === url) {
+				activeAudioUrl = null;
+				activeGlobalVoiceStop = null;
+			}
+		};
+	}
+}
 
 const segments = $derived(
 	parseChatSegments(message.content, stickerMap, message.mentions),
@@ -251,6 +302,153 @@ function handleAvatarClick() {
   {/if}
 {/snippet}
 
+{#snippet renderReactions(alignEnd: boolean)}
+  {@const reactionEntries = Object.entries(message.reactions || {}).filter(([_, users]) => Array.isArray(users) && users.length > 0)}
+  {#if reactionEntries.length > 0}
+    <div class="chat-reaction-pills {alignEnd ? 'justify-end' : 'justify-start'}">
+      {#each reactionEntries as [emoji, users] (emoji)}
+        {@const isMine = Boolean(currentUserKey && users.includes(currentUserKey))}
+        <button
+          type="button"
+          class="chat-reaction-pill {isMine ? 'is-active' : ''}"
+          title="{users.length} 人反应"
+          onclick={() => onReaction?.(message.msgUid, emoji)}
+        >
+          <span>{emoji}</span>
+          <span class="text-[0.6875rem] font-medium opacity-85">{users.length}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet renderAttachmentsBlock()}
+  {#if message.attachments && message.attachments.length > 0}
+    <div class="flex flex-col gap-2 mt-2">
+      {#each message.attachments as att (att.url)}
+        {#if att.type === "image"}
+          <a
+            href={att.url}
+            data-chat-image={att.url}
+            class="block overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
+            onclick={(e) => {
+              e.preventDefault();
+              void openChatImageLightbox(att.url, e.currentTarget);
+            }}
+          >
+            <img
+              src={att.url}
+              loading="lazy"
+              alt="聊天图片"
+              decoding="async"
+              class="chat-msg-image"
+            />
+          </a>
+        {:else if att.type === "audio"}
+          <div class="chat-voice-msg">
+            <button
+              type="button"
+              class="chat-voice-play-btn"
+              title={activeAudioUrl === att.url ? "暂停" : "播放语音"}
+              onclick={() => handleToggleAudio(att.url)}
+            >
+              {#if activeAudioUrl === att.url}
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16" rx="1"/>
+                  <rect x="14" y="4" width="4" height="16" rx="1"/>
+                </svg>
+              {:else}
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M8 5v14l11-7z"/>
+                </svg>
+              {/if}
+            </button>
+            <div class="flex flex-col min-w-0 flex-1">
+              <span class="text-xs font-semibold truncate">{att.name || "语音留言"}</span>
+              <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">
+                {att.duration ? `${att.duration} 秒` : "音频片段"}
+              </span>
+            </div>
+          </div>
+        {:else if att.type === "video"}
+          <video
+            src={att.url}
+            controls
+            preload="metadata"
+            class="chat-msg-video"
+          >
+            <track kind="captions"/>
+          </video>
+        {:else if att.type === "file"}
+          <a
+            href={att.url}
+            download={att.name || "下载文件"}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="chat-file-card"
+          >
+            <div class="w-8 h-8 rounded-lg bg-[var(--skin-accent)]/15 text-[var(--skin-accent)] flex items-center justify-center shrink-0">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+                <polyline points="14 2 14 8 20 8"/>
+              </svg>
+            </div>
+            <div class="flex flex-col min-w-0 flex-1">
+              <span class="text-xs font-medium truncate">{att.name || "文件附件"}</span>
+              {#if att.size}
+                <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">
+                  {att.size > 1024 * 1024 ? `${(att.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(att.size / 1024)} KB`}
+                </span>
+              {/if}
+            </div>
+          </a>
+        {/if}
+      {/each}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet renderPollBlock()}
+  {#if message.kind === "poll" && message.poll}
+    {@const poll = message.poll}
+    {@const totalVotes = Object.values(poll.votes || {}).reduce((acc, list) => acc + (Array.isArray(list) ? list.length : 0), 0)}
+    <div class="chat-poll-card my-1">
+      <div class="flex items-center justify-between gap-2 mb-2">
+        <span class="text-xs font-bold text-[var(--skin-text)]">{poll.question}</span>
+        <span class="text-[0.6875rem] text-[var(--chat-meta-color)] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10">
+          {poll.ended ? "已结束" : poll.maxSelections > 1 ? "多选" : "单选"}
+        </span>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        {#each poll.answers as ans (ans.id)}
+          {@const votesList = poll.votes?.[ans.id] || []}
+          {@const count = votesList.length}
+          {@const percent = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0}
+          {@const isMyVote = Boolean(currentUserKey && votesList.includes(currentUserKey))}
+          <button
+            type="button"
+            disabled={poll.ended}
+            class="chat-poll-option {isMyVote ? 'is-selected' : ''}"
+            onclick={() => onVotePoll?.(message.msgUid, ans.id)}
+          >
+            <div class="chat-poll-progress" style="width: {percent}%"></div>
+            <span class="relative z-10 truncate text-[var(--skin-text)]">{ans.text}</span>
+            <span class="relative z-10 text-[0.6875rem] text-[var(--chat-meta-color)] shrink-0 ml-2 font-medium">
+              {percent}% ({count})
+            </span>
+          </button>
+        {/each}
+      </div>
+      <div class="mt-2 text-[0.6875rem] text-[var(--chat-meta-color)] flex justify-between">
+        <span>共 {totalVotes} 票</span>
+        {#if poll.ended}
+          <span class="text-red-400">投票已截止</span>
+        {/if}
+      </div>
+    </div>
+  {/if}
+{/snippet}
+
 {#if message.kind === "system"}
   <div class="w-full flex justify-center my-1.5">
     <div class="chat-system-msg">
@@ -296,8 +494,62 @@ function handleAvatarClick() {
     </button>
 
     <div class="flex flex-col items-end max-w-[74%] min-w-0">
-      {#if senderDisplayName || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
+      {#if senderDisplayName || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete) || onReaction || onEdit || (isAdmin && onPin)}
         <div class="flex items-center justify-end gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
+          {#if onReaction}
+            <div
+              class="relative inline-flex items-center"
+              tabindex="-1"
+              onfocusout={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) {
+                  showQuickReaction = false;
+                }
+              }}
+            >
+              <button
+                type="button"
+                class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
+                title="添加表情反应"
+                onclick={() => showQuickReaction = !showQuickReaction}
+              >
+                😊
+              </button>
+              {#if showQuickReaction}
+                <div class="absolute bottom-full right-0 mb-1 z-30 chat-quick-reactions">
+                  {#each ["👍", "❤️", "😂", "🎉", "🔥", "👀"] as em (em)}
+                    <button
+                      type="button"
+                      class="chat-quick-reaction-btn"
+                      onclick={() => {
+                        onReaction?.(message.msgUid, em);
+                        showQuickReaction = false;
+                      }}
+                    >
+                      {em}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
+          {#if onEdit && canEdit && !message.replyTo?.isRecalled}
+            <button
+              type="button"
+              class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
+              onclick={() => onEdit?.(message)}
+            >
+              编辑
+            </button>
+          {/if}
+          {#if isAdmin && onPin}
+            <button
+              type="button"
+              class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
+              onclick={() => onPin?.(message.msgUid, isPinned)}
+            >
+              {isPinned ? "取消置顶" : "置顶"}
+            </button>
+          {/if}
           {#if canDelete && onDelete}
             <button
               type="button"
@@ -371,36 +623,22 @@ function handleAvatarClick() {
             />
           {/if}
 
-          {#if message.attachments.length > 0}
-            <div class="chat-msg-images {message.content.trim().length > 0 ? 'mt-2' : ''}">
-              {#each message.attachments as att (att.url)}
-                <a
-                  href={att.url}
-                  data-chat-image={att.url}
-                  class="block overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
-                  onclick={(e) => {
-                    e.preventDefault();
-                    void openChatImageLightbox(att.url, e.currentTarget);
-                  }}
-                >
-                  <img
-                    src={att.url}
-                    loading="lazy"
-                    alt="聊天图片"
-                    decoding="async"
-                    class="chat-msg-image"
-                  />
-                </a>
-              {/each}
-            </div>
-          {/if}
+          {@render renderAttachmentsBlock()}
+          {@render renderPollBlock()}
         </div>
       {/if}
 
+      {@render renderReactions(true)}
+
       {#if formattedTime}
-        <span class="text-[0.6875rem] text-[var(--chat-meta-color)] mt-1 px-1 select-none">
-          {formattedTime}
-        </span>
+        <div class="flex items-center gap-1 mt-1 px-1 select-none">
+          <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">
+            {formattedTime}
+          </span>
+          {#if message.isEdited}
+            <span class="text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
+          {/if}
+        </div>
       {/if}
     </div>
   </div>
@@ -421,7 +659,7 @@ function handleAvatarClick() {
     </button>
 
     <div class="flex flex-col items-start max-w-[74%] min-w-0">
-      {#if senderDisplayName || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete)}
+      {#if senderDisplayName || roleBadge || onReply || (canRecall && onRecall) || (canDelete && onDelete) || onReaction || (isAdmin && onPin)}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if effectiveSenderUrl}
             <a
@@ -446,6 +684,42 @@ function handleAvatarClick() {
           {#if isMentionedMe}
             <span class="chat-mentioned-tag">@了你</span>
           {/if}
+          {#if onReaction}
+            <div
+              class="relative inline-flex items-center"
+              tabindex="-1"
+              onfocusout={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) {
+                  showQuickReaction = false;
+                }
+              }}
+            >
+              <button
+                type="button"
+                class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
+                title="添加表情反应"
+                onclick={() => showQuickReaction = !showQuickReaction}
+              >
+                😊
+              </button>
+              {#if showQuickReaction}
+                <div class="absolute bottom-full left-0 mb-1 z-30 chat-quick-reactions">
+                  {#each ["👍", "❤️", "😂", "🎉", "🔥", "👀"] as em (em)}
+                    <button
+                      type="button"
+                      class="chat-quick-reaction-btn"
+                      onclick={() => {
+                        onReaction?.(message.msgUid, em);
+                        showQuickReaction = false;
+                      }}
+                    >
+                      {em}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
           {#if onReply}
             <button
               type="button"
@@ -453,6 +727,15 @@ function handleAvatarClick() {
               onclick={() => onReply?.(message)}
             >
               回复
+            </button>
+          {/if}
+          {#if isAdmin && onPin}
+            <button
+              type="button"
+              class="chat-msg-action-btn hover:text-[var(--skin-accent)]"
+              onclick={() => onPin?.(message.msgUid, isPinned)}
+            >
+              {isPinned ? "取消置顶" : "置顶"}
             </button>
           {/if}
           {#if canRecall && onRecall}
@@ -508,36 +791,22 @@ function handleAvatarClick() {
             />
           {/if}
 
-          {#if message.attachments.length > 0}
-            <div class="chat-msg-images {message.content.trim().length > 0 ? 'mt-2' : ''}">
-              {#each message.attachments as att (att.url)}
-                <a
-                  href={att.url}
-                  data-chat-image={att.url}
-                  class="block overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
-                  onclick={(e) => {
-                    e.preventDefault();
-                    void openChatImageLightbox(att.url, e.currentTarget);
-                  }}
-                >
-                  <img
-                    src={att.url}
-                    loading="lazy"
-                    alt="聊天图片"
-                    decoding="async"
-                    class="chat-msg-image"
-                  />
-                </a>
-              {/each}
-            </div>
-          {/if}
+          {@render renderAttachmentsBlock()}
+          {@render renderPollBlock()}
         </div>
       {/if}
 
+      {@render renderReactions(false)}
+
       {#if formattedTime}
-        <span class="text-[0.6875rem] text-[var(--chat-meta-color)] mt-1 px-1 select-none">
-          {formattedTime}
-        </span>
+        <div class="flex items-center gap-1 mt-1 px-1 select-none">
+          <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">
+            {formattedTime}
+          </span>
+          {#if message.isEdited}
+            <span class="text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
+          {/if}
+        </div>
       {/if}
     </div>
   </div>
