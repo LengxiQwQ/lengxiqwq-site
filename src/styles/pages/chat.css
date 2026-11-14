@@ -923,6 +923,17 @@ html[data-wallpaper-mode="none"] .chat-playlist-tooltip {
 	transform: translateY(0);
 }
 
+/* 删除歌单进入二次确认后，提示气泡常驻显示，点一次就能看到「再次点击确认删除」 */
+.chat-playlist-tooltip.is-armed {
+	opacity: 1;
+	transform: translateX(-50%) translateY(0);
+}
+
+.chat-playlist-tooltip.align-left.is-armed,
+.chat-playlist-tooltip.align-right.is-armed {
+	transform: translateY(0);
+}
+
 /* 与 MusicPlayer.astro 一致的缓慢唱片旋转与等化器动画 */
 @keyframes chat-spin-slow {
 	from {

@@ -194,26 +194,77 @@ app.get("/api/rooms/summary", async (c) => {
 		}),
 	);
 
+	c.header(
+		"Cache-Control",
+		"public, max-age=5, s-maxage=10, stale-while-revalidate=30",
+	);
 	return c.json({ ok: true, rooms: summaries });
 });
 
 app.get("/api/presence", async (c) => {
-	const rooms = (c.env.DEFAULT_ROOMS || "chat").split(",")
+	const rooms = (c.env.DEFAULT_ROOMS || "chat")
+		.split(",")
 		.map((room) => room.trim().toLowerCase())
 		.filter((room) => /^[a-z0-9_-]{1,24}$/.test(room));
-	const snapshots = await Promise.all(rooms.map(async (room) => {
-		const stub = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName(room));
-		const response = await stub.fetch(`https://room.internal/presence-snapshot?room=${encodeURIComponent(room)}`);
-		if (!response.ok) throw new Error("Presence unavailable");
-		return response.json() as Promise<{ members: Array<{ userKey: string; isAdmin: boolean; name: string; roomId?: string }>; observerCount: number }>;
-	}));
-	const members = new Map<string, (typeof snapshots)[number]["members"][number]>();
+	const snapshots = await Promise.all(
+		rooms.map(async (room) => {
+			try {
+				const stub = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName(room));
+				const response = await stub.fetch(
+					`https://room.internal/presence-snapshot?room=${encodeURIComponent(room)}`,
+				);
+				if (!response.ok) {
+					const summaryResp = await stub.fetch(
+						`https://room.internal/summary?room=${encodeURIComponent(room)}`,
+					);
+					if (summaryResp.ok) {
+						const s = (await summaryResp.json()) as { onlineCount?: number };
+						return { members: [], observerCount: s.onlineCount || 0 };
+					}
+					return { members: [], observerCount: 0 };
+				}
+				const data = (await response.json()) as {
+					members?: Array<{
+						userKey: string;
+						isAdmin: boolean;
+						name: string;
+						roomId?: string;
+					}>;
+					observerCount?: number;
+				};
+				return {
+					members: Array.isArray(data.members) ? data.members : [],
+					observerCount: data.observerCount || 0,
+				};
+			} catch {
+				return { members: [], observerCount: 0 };
+			}
+		}),
+	);
+	const members = new Map<
+		string,
+		(typeof snapshots)[number]["members"][number]
+	>();
 	let observerCount = 0;
 	for (const snapshot of snapshots) {
-		for (const member of snapshot.members) members.set(member.userKey, member);
+		for (const member of snapshot.members) {
+			members.set(member.userKey, member);
+		}
 		observerCount += snapshot.observerCount;
 	}
-	return c.json({ members: [...members.values()].sort((a, b) => Number(b.isAdmin) - Number(a.isAdmin) || a.name.localeCompare(b.name, "zh-CN")), observerCount, totalCount: members.size + observerCount });
+	c.header(
+		"Cache-Control",
+		"public, max-age=5, s-maxage=10, stale-while-revalidate=30",
+	);
+	return c.json({
+		members: [...members.values()].sort(
+			(a, b) =>
+				Number(b.isAdmin) - Number(a.isAdmin) ||
+				a.name.localeCompare(b.name, "zh-CN"),
+		),
+		observerCount,
+		totalCount: members.size + observerCount,
+	});
 });
 
 type MemberDirectoryRow = {
@@ -263,6 +314,10 @@ app.get("/api/members", async (c) => {
 			Number(b.isAdmin) - Number(a.isAdmin) ||
 			(b.lastSeenAt || 0) - (a.lastSeenAt || 0) ||
 			a.name.localeCompare(b.name, "zh-CN"),
+	);
+	c.header(
+		"Cache-Control",
+		"public, max-age=30, s-maxage=60, stale-while-revalidate=120",
 	);
 	return c.json({ ok: true, members: list });
 });

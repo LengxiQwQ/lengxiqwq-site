@@ -68,6 +68,7 @@ let connectionState = $state<ConnectionState>("idle");
 let currentUser = $state<ChatSessionUser | null>(null);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
 let roomOnlineMembers = $state<ChatOnlineMember[]>([]);
+let hasGlobalPresence = false;
 let roomMentionMembers = $state<ChatMentionCandidate[]>([]);
 let globalMemberDirectory = $state<ChatMentionCandidate[]>([]);
 const mentionMembers = $derived.by<ChatMentionCandidate[]>(() => {
@@ -464,12 +465,12 @@ function connectRoom(roomId: string) {
 				}
 
 				roomOnlineMembers = packet.members;
-				onlineMembers = packet.members;
-				totalOnlineCount = packet.totalCount;
-				roomMentionMembers = packet.mentionMembers ?? [];
-				if (packet.mentionMembers && packet.mentionMembers.length > 0) {
-					globalMemberDirectory = packet.mentionMembers;
+				if (!hasGlobalPresence) {
+					onlineMembers = packet.members;
+					totalOnlineCount = packet.totalCount;
 				}
+				void refreshGlobalPresence();
+				roomMentionMembers = packet.mentionMembers ?? [];
 				musicState = packet.music;
 				clearSkipPending();
 				clockOffsetMs = packet.music.serverTime - Date.now();
@@ -622,8 +623,11 @@ function connectRoom(roomId: string) {
 			case "presence:update": {
 				if (packet.roomId === currentRoom) {
 					roomOnlineMembers = packet.members;
-					onlineMembers = packet.members;
-					totalOnlineCount = packet.totalCount;
+					if (!hasGlobalPresence) {
+						onlineMembers = packet.members;
+						totalOnlineCount = packet.totalCount;
+					}
+					void refreshGlobalPresence();
 					if (packet.mentionMembers) {
 						roomMentionMembers = packet.mentionMembers;
 					}
@@ -1045,6 +1049,65 @@ function handleEnqueueTrack(track: ChatMusicTrack) {
 	});
 }
 
+async function refreshGlobalPresence() {
+	if (!normalizedChatServer || isUnmounted) return;
+	try {
+		const response = await fetch(`${normalizedChatServer}/api/presence`);
+		if (!response.ok) return;
+		const data = (await response.json()) as {
+			members: ChatOnlineMember[];
+			totalCount: number;
+		};
+		if (!isUnmounted && Array.isArray(data.members)) {
+			hasGlobalPresence = true;
+			onlineMembers = data.members;
+			totalOnlineCount = data.totalCount;
+		}
+	} catch {
+		// Keep the most recent snapshot until the next refresh.
+	}
+}
+
+async function refreshMemberDirectory() {
+	if (!normalizedChatServer || isUnmounted) return;
+	try {
+		const response = await fetch(`${normalizedChatServer}/api/members`);
+		if (!response.ok) return;
+		const data = (await response.json()) as {
+			members: Array<{
+				userKey: string;
+				authType: "waline" | "guest";
+				name: string;
+				avatar: string;
+				url: string;
+				badge: string;
+				badgeType: ChatMentionCandidate["badgeType"];
+				isAdmin: boolean;
+				bio: string;
+				status: string;
+				lastSeenAt: number;
+			}>;
+		};
+		if (isUnmounted || !Array.isArray(data.members)) return;
+		globalMemberDirectory = data.members.map((member) => ({
+			userKey: member.userKey,
+			authType: member.authType,
+			name: member.name,
+			avatar: member.avatar || "",
+			url: member.url || "",
+			badge: member.badge || "",
+			badgeType: member.badgeType,
+			isAdmin: Boolean(member.isAdmin),
+			online: false,
+			status: member.status || "",
+			bio: member.bio || "",
+			lastSeenAt: member.lastSeenAt || 0,
+		}));
+	} catch {
+		// 名录拉取失败时保留上一份数据
+	}
+}
+
 onMount(() => {
 	isUnmounted = false;
 	baseDocumentTitle = document.title;
@@ -1069,19 +1132,34 @@ onMount(() => {
 		stickerPacks = packs;
 	});
 	connectRoom(currentRoom);
+	void refreshGlobalPresence();
+	void refreshMemberDirectory();
+
+	const presenceTimer = window.setInterval(() => {
+		if (!document.hidden) {
+			void refreshGlobalPresence();
+		}
+	}, 15000);
+	const memberTimer = window.setInterval(() => {
+		if (!document.hidden) {
+			void refreshMemberDirectory();
+		}
+	}, 60000);
 
 	// 低频自增歌单刷新序列（仅在页面前台活跃时触发，避免后台休眠时无意义刷新）
 	const playlistTimer = window.setInterval(() => {
 		if (!document.hidden) {
 			playlistRefreshSeq += 1;
 		}
-	}, 60000);
+	}, 30000);
 
 	const handleVisibility = () => {
 		if (document.visibilityState === "visible") {
 			if (baseDocumentTitle && document.title !== baseDocumentTitle) {
 				document.title = baseDocumentTitle;
 			}
+			void refreshGlobalPresence();
+			void refreshMemberDirectory();
 			if (ws && ws.readyState === WebSocket.OPEN) {
 				ws.send(JSON.stringify({ type: "ping" }));
 			} else if (!ws && !isUnmounted) {
@@ -1093,6 +1171,8 @@ onMount(() => {
 
 	return () => {
 		isUnmounted = true;
+		window.clearInterval(presenceTimer);
+		window.clearInterval(memberTimer);
 		window.clearInterval(playlistTimer);
 		document.removeEventListener("visibilitychange", handleVisibility);
 		cancelWalinePopup?.();
