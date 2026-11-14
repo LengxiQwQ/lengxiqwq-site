@@ -281,28 +281,6 @@ function handleAvatarClick() {
 		onMention?.(externalOrigin?.cleanName || message.name, message.userKey);
 	}
 }
-</script>
-
-{#snippet replyQuoteBlock()}
-  {#if message.replyTo}
-    <button
-      type="button"
-      class="chat-reply-quote {isSelf ? 'self' : 'other'} {message.replyTo.isRecalled ? 'recalled' : ''}"
-      onclick={() => {
-        if (message.replyTo) {
-          if (!message.replyTo.isRecalled) {
-            onJumpToMessage?.(message.replyTo.msgUid);
-          } else {
-            handleOpenProfileForReplyTo();
-          }
-        }
-      }}
-    >
-      <span class="chat-reply-quote-author">{message.replyTo.name || "用户"}</span>
-      <span class="chat-reply-quote-text">{replyPreviewText}</span>
-    </button>
-  {/if}
-{/snippet}
 
 function formatReactionTooltip(users: string[]): string {
 	if (!users || users.length === 0) return "";
@@ -330,6 +308,28 @@ function formatReactionTooltip(users: string[]): string {
 	}
 	return `${names.slice(0, 3).join("、")} 等 ${names.length} 人`;
 }
+</script>
+
+{#snippet replyQuoteBlock()}
+  {#if message.replyTo}
+    <button
+      type="button"
+      class="chat-reply-quote {isSelf ? 'self' : 'other'} {message.replyTo.isRecalled ? 'recalled' : ''}"
+      onclick={() => {
+        if (message.replyTo) {
+          if (!message.replyTo.isRecalled) {
+            onJumpToMessage?.(message.replyTo.msgUid);
+          } else {
+            handleOpenProfileForReplyTo();
+          }
+        }
+      }}
+    >
+      <span class="chat-reply-quote-author">{message.replyTo.name || "用户"}</span>
+      <span class="chat-reply-quote-text">{replyPreviewText}</span>
+    </button>
+  {/if}
+{/snippet}
 
 {#snippet renderReactions(alignEnd: boolean)}
   {@const reactionEntries = Object.entries(message.reactions || {}).filter(([_, users]) => Array.isArray(users) && users.length > 0)}
