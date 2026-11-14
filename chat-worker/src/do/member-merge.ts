@@ -1,3 +1,5 @@
+import { sanitizeStatus } from "../auth/verify";
+
 export interface CustomProfileColumns {
 	customName: string;
 	customAvatar: string;
@@ -122,8 +124,9 @@ export function resolveMergedMemberMetadata(params: {
 			?.status ??
 		latestGuest?.status ??
 		"";
-	const status =
-		statusFromUser || existingTarget?.status || guestStatus || "在线";
+	const status = sanitizeStatus(
+		statusFromUser || existingTarget?.status || guestStatus,
+	);
 
 	const firstSeenAt = pickEarliestPositiveTimestamp([
 		existingTarget?.firstSeenAt,

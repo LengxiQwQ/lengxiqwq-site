@@ -424,21 +424,23 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	flex-shrink: 0;
 }
 
-/* 站长与认证用户统一金色胶囊，靠文字区分，不再用主题色 */
+/* 站长与认证用户及金色自定义头衔统一金色胶囊，靠文字区分，不再用主题色 */
 .chat-role-badge--host,
-.chat-role-badge--accent {
+.chat-role-badge--accent,
+.chat-role-badge--gold {
 	background: oklch(0.78 0.12 85 / 0.16);
 	color: oklch(0.48 0.12 75);
 	border: 1px solid oklch(0.72 0.12 80 / 0.26);
 }
 
-html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page :is(.chat-role-badge--host, .chat-role-badge--accent) {
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page :is(.chat-role-badge--host, .chat-role-badge--accent, .chat-role-badge--gold) {
 	background: oklch(0.78 0.12 85 / 0.18);
 	color: oklch(0.86 0.11 85);
 	border-color: oklch(0.78 0.12 85 / 0.28);
 }
 
-.chat-role-badge--tag {
+.chat-role-badge--tag,
+.chat-role-badge--gray {
 	background: color-mix(in oklch, var(--deep-text) 7%, transparent);
 	color: var(--chat-meta-color);
 	border: 1px solid var(--chat-divider-color);
@@ -673,6 +675,22 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	box-shadow: 0 0 6px oklch(0.72 0.19 145 / 0.65);
 	flex-shrink: 0;
 	animation: chat-pulse-glow 2.2s ease-in-out infinite;
+	transition: background-color 0.25s ease, box-shadow 0.25s ease, opacity 0.25s ease;
+}
+
+.chat-online-dot--away {
+	background: #9ca3af;
+	box-shadow: none;
+	animation: none;
+	opacity: 0.85;
+}
+
+:is(.dark, [data-theme="dark"]) .chat-online-dot--away,
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) .chat-online-dot--away {
+	background: #6b7280;
+	box-shadow: none;
+	animation: none;
+	opacity: 0.8;
 }
 
 @keyframes chat-pulse-glow {
@@ -910,16 +928,13 @@ html[data-wallpaper-mode="none"] .chat-playlist-tooltip {
 	transform: translateY(3px);
 }
 
-.chat-playlist-action-wrap:hover .chat-playlist-tooltip,
-.chat-playlist-action-wrap:focus-within .chat-playlist-tooltip {
+.chat-playlist-action-wrap:hover .chat-playlist-tooltip {
 	opacity: 1;
 	transform: translateX(-50%) translateY(0);
 }
 
 .chat-playlist-action-wrap:hover .chat-playlist-tooltip.align-left,
-.chat-playlist-action-wrap:focus-within .chat-playlist-tooltip.align-left,
-.chat-playlist-action-wrap:hover .chat-playlist-tooltip.align-right,
-.chat-playlist-action-wrap:focus-within .chat-playlist-tooltip.align-right {
+.chat-playlist-action-wrap:hover .chat-playlist-tooltip.align-right {
 	transform: translateY(0);
 }
 
@@ -2347,7 +2362,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	left: 0.75rem;
 	bottom: calc(100% + 0.45rem);
 	z-index: 25;
-	width: min(17rem, calc(100% - 1.5rem));
+	width: min(19.5rem, calc(100% - 1.5rem));
 	max-height: 14rem;
 	overflow-y: auto;
 	/* 弹窗朝输入框上方展开：倒序排列，让优先级最高的成员（在线、最新在线）贴着输入框排在最下方 */

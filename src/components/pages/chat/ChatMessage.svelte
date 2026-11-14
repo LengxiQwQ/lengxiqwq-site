@@ -133,6 +133,7 @@ function handleOpenSystemUserProfile(name: string, explicitUserKey?: string) {
 		badgeType: useMessageMeta
 			? roleBadge?.type || message.badgeType
 			: undefined,
+		customBadges: useMessageMeta ? message.customBadges : undefined,
 		isAdmin: useMessageMeta ? message.isAdmin : undefined,
 		authType: key
 			? key.startsWith("waline:")
@@ -169,6 +170,7 @@ function handleAvatarClick() {
 			url: message.url,
 			badge: roleBadge?.label || message.badge,
 			badgeType: roleBadge?.type || message.badgeType,
+			customBadges: message.customBadges,
 			isAdmin: message.isAdmin,
 		});
 		return;
@@ -184,9 +186,6 @@ function handleAvatarClick() {
     <button
       type="button"
       class="chat-reply-quote {isSelf ? 'self' : 'other'} {message.replyTo.isRecalled ? 'recalled' : ''}"
-      title={message.replyTo.isRecalled
-        ? `原消息已撤回 · 点击查看 ${message.replyTo.name || "用户"} 的个人资料`
-        : "点击定位到原消息"}
       onclick={() => {
         if (message.replyTo) {
           if (!message.replyTo.isRecalled) {
@@ -212,7 +211,6 @@ function handleAvatarClick() {
           <button
             type="button"
             class="chat-system-msg-link"
-            title={`查看 ${recallNoticeParsed.actorName} 的个人资料`}
             onclick={() => handleOpenSystemUserProfile(recallNoticeParsed.actorName, message.userKey)}
           >{recallNoticeParsed.actorName}</button>
           {#if recallNoticeParsed.targetName}
@@ -220,7 +218,6 @@ function handleAvatarClick() {
             <button
               type="button"
               class="chat-system-msg-link"
-              title={`查看 ${recallNoticeParsed.targetName} 的个人资料`}
               onclick={() => handleOpenSystemUserProfile(recallNoticeParsed.targetName || "", message.mentionKeys?.[0])}
             >{recallNoticeParsed.targetName}</button>
             <span>的一条消息</span>
@@ -238,7 +235,6 @@ function handleAvatarClick() {
     <button
       type="button"
       class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
-      title={`查看 ${message.name || "我"} 的个人资料`}
       onclick={handleAvatarClick}
     >
       <ChatAvatar
@@ -283,6 +279,11 @@ function handleAvatarClick() {
           {#if roleBadge}
             <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
           {/if}
+          {#if message.customBadges && message.customBadges.length > 0}
+            {#each message.customBadges as b (b.text)}
+              <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
+            {/each}
+          {/if}
           {#if message.name}
             <span class="text-xs text-[var(--chat-meta-color)] font-medium truncate">{message.name}</span>
           {/if}
@@ -299,7 +300,6 @@ function handleAvatarClick() {
               <img
                 src={seg.url}
                 alt={seg.alt}
-                title={seg.alt}
                 decoding="async"
                 class={seg.category === "sticker"
                   ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
@@ -360,7 +360,6 @@ function handleAvatarClick() {
     <button
       type="button"
       class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
-      title={`查看 ${message.name} 的个人资料`}
       onclick={handleAvatarClick}
     >
       <ChatAvatar
@@ -381,7 +380,6 @@ function handleAvatarClick() {
               target="_blank"
               rel="noopener noreferrer"
               class="text-xs text-[var(--chat-meta-color)] hover:text-[var(--primary)] font-medium truncate no-underline"
-              title={`访问 ${message.name} 的主页`}
             >
               {message.name}
             </a>
@@ -390,6 +388,11 @@ function handleAvatarClick() {
           {/if}
           {#if roleBadge}
             <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
+          {/if}
+          {#if message.customBadges && message.customBadges.length > 0}
+            {#each message.customBadges as b (b.text)}
+              <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
+            {/each}
           {/if}
           {#if isMentionedMe}
             <span class="chat-mentioned-tag">@了你</span>
@@ -434,7 +437,6 @@ function handleAvatarClick() {
               <img
                 src={seg.url}
                 alt={seg.alt}
-                title={seg.alt}
                 decoding="async"
                 class={seg.category === "sticker"
                   ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`

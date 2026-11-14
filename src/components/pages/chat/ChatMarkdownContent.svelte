@@ -108,7 +108,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
       {:else}
         {#each restoreTextSegments((tok as Tokens.Text).text, ast) as seg, sIdx (`${sIdx}-${seg.kind}`)}
           {#if seg.kind === "sticker"}
-            <img src={seg.url} alt={seg.alt} title={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
+            <img src={seg.url} alt={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
           {:else if seg.kind === "mention"}
             <span class="chat-mention-pill {isSelfMentionTarget(seg.target) ? 'self' : ''}">{seg.text}</span>
           {:else}

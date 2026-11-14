@@ -1,4 +1,5 @@
 import type {
+	ChatCustomBadge,
 	ChatMentionCandidate,
 	ChatMessageRecord,
 	ChatOnlineMember,
@@ -34,6 +35,7 @@ export interface RoomInitPacket {
 	mentionMembers?: ChatMentionCandidate[];
 	observerCount: number;
 	totalCount: number;
+	totalChatters?: number;
 	music: RoomMusicState;
 }
 
@@ -52,12 +54,19 @@ export type ServerPacket =
 			user: ChatSessionUser;
 	  }
 	| {
+			type: "member:badges_updated";
+			roomId: string;
+			userKey: string;
+			customBadges: ChatCustomBadge[];
+	  }
+	| {
 			type: "presence:update";
 			roomId: string;
 			members: ChatOnlineMember[];
 			mentionMembers?: ChatMentionCandidate[];
 			observerCount: number;
 			totalCount: number;
+			totalChatters?: number;
 	  }
 	| { type: "chat:message" | "chat:updated"; roomId: string; message: ChatMessageRecord }
 	| {
@@ -795,5 +804,39 @@ export async function fetchUserDetailTracks(
 		};
 	} catch {
 		return null;
+	}
+}
+
+export async function saveMemberBadges(
+	chatServerUrl: string,
+	roomId: string,
+	targetUserKey: string,
+	customBadges: ChatCustomBadge[],
+	walineToken = "",
+): Promise<boolean> {
+	const base = normalizeServerUrl(chatServerUrl);
+	const cleanKey = targetUserKey.trim();
+	if (!base || !cleanKey) return false;
+	try {
+		const headers: Record<string, string> = {
+			"Content-Type": "application/json",
+		};
+		if (walineToken.trim()) {
+			headers.Authorization = `Bearer ${walineToken.trim()}`;
+		}
+		const resp = await fetch(`${base}/api/rooms/member/badges`, {
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				room: roomId,
+				userKey: cleanKey,
+				customBadges,
+			}),
+		});
+		if (!resp.ok) return false;
+		const data = (await resp.json()) as { ok?: boolean };
+		return Boolean(data.ok);
+	} catch {
+		return false;
 	}
 }

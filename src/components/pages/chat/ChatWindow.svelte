@@ -50,8 +50,12 @@ interface Props {
 	walineServerUrl: string;
 	mentionEvent?: { name: string; userKey?: string; seq: number };
 	showSettings?: boolean;
+	showInterconnect?: boolean;
+	isInterconnectRoom?: boolean;
+	totalChatterCount?: number;
 	noticeText?: string;
 	onToggleSettings?: () => void;
+	onToggleInterconnect?: () => void;
 	onSendMessage: (
 		content: string,
 		attachments: ImageAttachment[],
@@ -97,8 +101,12 @@ const {
 	walineServerUrl = "",
 	mentionEvent,
 	showSettings = false,
+	showInterconnect = false,
+	isInterconnectRoom = false,
+	totalChatterCount = 0,
 	noticeText = "",
 	onToggleSettings,
+	onToggleInterconnect,
 	onSendMessage,
 	onRecallMessage,
 	onDeleteMessage,
@@ -375,6 +383,20 @@ function isMentionedToMe(msg: ChatMessageRecord): boolean {
 
 const mentionsToMe = $derived(messages.filter(isMentionedToMe));
 
+function formatOfflineTime(ts?: number): string {
+	if (!ts || !Number.isFinite(ts) || ts <= 0) return "离线";
+	const diff = Date.now() - ts;
+	if (diff < 60_000) return "刚刚离线";
+	if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前离线`;
+	if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前离线`;
+	const d = new Date(ts);
+	const now = new Date();
+	if (d.getFullYear() === now.getFullYear()) {
+		return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} 离线`;
+	}
+	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} 离线`;
+}
+
 const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 	const map = new Map<string, ChatMentionCandidate>();
 	for (const m of mentionMembers) {
@@ -383,6 +405,7 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 	}
 	for (const m of onlineMembers) {
 		if (!m.userKey || m.userKey === currentUser?.userKey) continue;
+		const prev = map.get(m.userKey);
 		map.set(m.userKey, {
 			userKey: m.userKey,
 			authType: m.authType,
@@ -392,7 +415,7 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 			badgeType: m.badgeType,
 			isAdmin: m.isAdmin,
 			online: true,
-			lastSeenAt: Date.now(),
+			lastSeenAt: prev?.lastSeenAt ?? Date.now(),
 		});
 	}
 	return Array.from(map.values()).sort((a, b) => {
@@ -401,7 +424,12 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 			if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
 			return a.name.localeCompare(b.name, "zh-CN");
 		}
-		if (a.lastSeenAt !== b.lastSeenAt) return b.lastSeenAt - a.lastSeenAt;
+		const aTime = a.lastSeenAt || 0;
+		const bTime = b.lastSeenAt || 0;
+		if (aTime !== bTime) {
+			return bTime - aTime;
+		}
+		if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
 		return a.name.localeCompare(b.name, "zh-CN");
 	});
 });
@@ -1291,10 +1319,29 @@ function removePendingImage(index: number) {
           <span class="chat-switch-thumb"></span>
         </span>
       </button>
-      <div class="text-xs text-[var(--deep-text)] dark:text-white/85 px-2.5 py-1 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] flex items-center gap-1.5">
+      <div
+        class="text-xs text-[var(--deep-text)] dark:text-white/85 px-2.5 py-1 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] flex items-center gap-1.5"
+        title={isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount} 人在线 · 累计 ${totalChatterCount} 人聊过天` : `${onlineCount} 人在线`}
+      >
         <span class="chat-online-dot"></span>
-        <span>{onlineCount} 人在线</span>
+        <span>{isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount}/${totalChatterCount}` : `${onlineCount} 人在线`}</span>
       </div>
+      {#if isInterconnectRoom}
+        <button
+          type="button"
+          data-chat-interconnect-trigger
+          class="chat-header-pill-btn {showInterconnect ? 'active text-[var(--primary)]' : ''} flex items-center gap-1"
+          aria-label="查看互联茶室友站列表"
+          aria-expanded={showInterconnect}
+          onclick={() => onToggleInterconnect?.()}
+        >
+          <span class="text-xs">🍵</span>
+          <span class="hidden sm:inline">互联茶室</span>
+          <svg class="w-3 h-3 opacity-70 transition-transform {showInterconnect ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+      {/if}
       <button
         type="button"
         data-chat-settings-trigger
@@ -1582,7 +1629,7 @@ function removePendingImage(index: number) {
                   <button
                     type="button"
                     class="chat-sticker-btn {isStickerPack ? 'chat-sticker-btn--sticker' : 'chat-sticker-btn--emoji'}"
-                    title={item.name}
+                    aria-label={item.name}
                     onclick={() => {
                       insertAtCursor(item.code);
                       activePopover = "none";
@@ -1669,11 +1716,15 @@ function removePendingImage(index: number) {
                     src={person.avatar}
                     name={person.name}
                     size="xs"
+                    grayscale={!person.online}
+                    mutedTone={!person.online}
                   />
-                  <span
-                    class="chat-ac-status-dot {person.online ? 'online' : 'offline'}"
-                    aria-hidden="true"
-                  ></span>
+                  {#if person.online}
+                    <span
+                      class="chat-ac-status-dot online"
+                      aria-hidden="true"
+                    ></span>
+                  {/if}
                 </div>
                 <span class="text-xs font-medium truncate text-[var(--deep-text)] dark:text-white/90">
                   {person.name}
@@ -1681,9 +1732,16 @@ function removePendingImage(index: number) {
                 <span class="chat-role-badge chat-role-badge--{personBadgeType} scale-90 origin-left">
                   {personBadgeLabel}
                 </span>
+                {#if person.customBadges && person.customBadges.length > 0}
+                  {#each person.customBadges as b (b.text)}
+                    <span class="chat-role-badge chat-role-badge--{b.color} scale-90 origin-left">
+                      {b.text}
+                    </span>
+                  {/each}
+                {/if}
               </div>
               <span class="text-[10px] shrink-0 {person.online ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[var(--chat-meta-color)] opacity-75'}">
-                {person.online ? "在线" : "离线"}
+                {person.online ? "在线" : formatOfflineTime(person.lastSeenAt)}
               </span>
             </button>
           {/each}

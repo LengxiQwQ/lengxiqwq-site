@@ -3,6 +3,11 @@ import type { Env } from "../env.js";
 
 export type BadgeType = "host" | "accent" | "tag";
 
+export interface ChatCustomBadge {
+	text: string;
+	color: "gold" | "gray";
+}
+
 export interface VerifiedUser {
 	userKey: string;
 	authType: "waline" | "guest";
@@ -11,6 +16,7 @@ export interface VerifiedUser {
 	url: string;
 	badge: string;
 	badgeType: BadgeType;
+	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	isolated?: boolean;
 	status?: string;
@@ -120,12 +126,50 @@ export function sanitizeWebsiteUrl(raw?: string): string {
 	}
 }
 
+export const ALLOWED_STATUS_PRESETS = [
+	"听歌中",
+	"摸鱼中",
+	"写代码",
+	"改Bug中",
+	"学习中",
+	"工作中",
+	"忙碌中",
+	"开会中",
+	"码字中",
+	"思考中",
+	"游戏中",
+	"看番中",
+	"追剧中",
+	"刷视频",
+	"冲浪中",
+	"潜水中",
+	"喝咖啡",
+	"喝茶中",
+	"干饭中",
+	"去散步",
+	"发呆中",
+	"想静静",
+	"困困的",
+	"熬夜中",
+	"挂机中",
+	"闭关中",
+	"充电中",
+	"元气满满",
+	"emo中",
+	"勿扰中",
+] as const;
+
+const ALLOWED_STATUS_SET = new Set<string>(ALLOWED_STATUS_PRESETS);
+
 export function sanitizeStatus(raw?: string): string {
 	const cleaned = stripControlChars(raw ?? "", " ")
 		.replace(/\s+/g, " ")
 		.trim()
 		.slice(0, 16);
-	return cleaned || "在线";
+	if (!cleaned || cleaned === "在线" || !ALLOWED_STATUS_SET.has(cleaned)) {
+		return "";
+	}
+	return cleaned;
 }
 
 export function sanitizeBio(raw?: string): string {

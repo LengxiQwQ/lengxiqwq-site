@@ -2,6 +2,46 @@ import type { ChatMusicTrack } from "./musicTypes";
 
 export type BadgeType = "host" | "accent" | "tag";
 
+export interface ChatCustomBadge {
+	text: string;
+	color: "gold" | "gray";
+}
+
+export const CHAT_STATUS_PRESETS = [
+	"听歌中",
+	"摸鱼中",
+	"写代码",
+	"改Bug中",
+	"学习中",
+	"工作中",
+	"忙碌中",
+	"开会中",
+	"码字中",
+	"思考中",
+	"游戏中",
+	"看番中",
+	"追剧中",
+	"刷视频",
+	"冲浪中",
+	"潜水中",
+	"喝咖啡",
+	"喝茶中",
+	"干饭中",
+	"去散步",
+	"发呆中",
+	"想静静",
+	"困困的",
+	"熬夜中",
+	"挂机中",
+	"闭关中",
+	"充电中",
+	"元气满满",
+	"emo中",
+	"勿扰中",
+] as const;
+
+export type ChatStatusPreset = (typeof CHAT_STATUS_PRESETS)[number];
+
 export interface ChatSessionUser {
 	userKey: string;
 	authType: "waline" | "guest";
@@ -10,10 +50,12 @@ export interface ChatSessionUser {
 	url: string;
 	badge: string;
 	badgeType: BadgeType;
+	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	isolated?: boolean;
 	status?: string;
 	bio?: string;
+	location?: string;
 	notifyEmail?: boolean;
 }
 
@@ -32,7 +74,10 @@ export interface ChatOnlineMember extends ChatSessionUser {
 	roomId?: string;
 	status: string;
 	bio?: string;
+	location?: string;
 	isMuted?: boolean;
+	/** 浏览器/窗口是否处于焦点中（离开焦点或切出页面时为 false） */
+	isFocused?: boolean;
 }
 
 export interface ChatUserDetailSeed {
@@ -43,10 +88,12 @@ export interface ChatUserDetailSeed {
 	url?: string;
 	badge?: string;
 	badgeType?: BadgeType;
+	customBadges?: ChatCustomBadge[];
 	isAdmin?: boolean;
 	online?: boolean;
 	status?: string;
 	bio?: string;
+	location?: string;
 }
 
 export interface ChatUserRequestedTrackItem {
@@ -88,10 +135,12 @@ export interface ChatUserDetailProfile {
 	url: string;
 	badge: string;
 	badgeType: BadgeType;
+	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	online: boolean;
 	status: string;
 	bio: string;
+	location?: string;
 	firstSeenAt: number;
 	lastSeenAt: number;
 	stats: {
@@ -121,10 +170,12 @@ export interface ChatMentionCandidate {
 	url?: string;
 	badge: string;
 	badgeType: BadgeType;
+	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	online: boolean;
 	status?: string;
 	bio?: string;
+	location?: string;
 	lastSeenAt: number;
 }
 
@@ -153,6 +204,7 @@ export interface ChatMessageRecord {
 	url: string;
 	badge: string;
 	badgeType: BadgeType;
+	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	content: string;
 	attachments: ImageAttachment[];

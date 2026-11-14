@@ -13,6 +13,7 @@ import type { Env } from "./env.js";
 import { createMusicRegistry } from "./music/registry.js";
 import { verifyStreamProxyToken } from "./music/stream-signer.js";
 import { isOriginAllowed } from "./utils/cors.js";
+import { resolveLocation } from "./utils/geo.js";
 
 export { RoomDO };
 
@@ -57,8 +58,22 @@ app.get("/ws", async (c) => {
 		return c.json({ ok: false, error: "Invalid room id" }, 400);
 	}
 
+	const rawReq = c.req.raw as Request & {
+		cf?: { country?: string; region?: string; regionCode?: string };
+	};
+	const cf = rawReq.cf;
+	const location = resolveLocation({
+		country: cf?.country || c.req.header("cf-ipcountry"),
+		region: cf?.region || c.req.header("cf-region"),
+		regionCode: cf?.regionCode || c.req.header("cf-region-code"),
+	});
+
 	const stub = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName(roomId));
-	return stub.fetch(c.req.raw);
+	const req = new Request(c.req.raw);
+	if (location) {
+		req.headers.set("X-Client-Location", encodeURIComponent(location));
+	}
+	return stub.fetch(req);
 });
 
 app.get("/api/interconnect/media/:id", (c) => {
@@ -229,6 +244,7 @@ app.get("/api/presence", async (c) => {
 						isAdmin: boolean;
 						name: string;
 						roomId?: string;
+						isFocused?: boolean;
 					}>;
 					observerCount?: number;
 				};
@@ -252,10 +268,7 @@ app.get("/api/presence", async (c) => {
 		}
 		observerCount += snapshot.observerCount;
 	}
-	c.header(
-		"Cache-Control",
-		"public, max-age=5, s-maxage=10, stale-while-revalidate=30",
-	);
+	c.header("Cache-Control", "private, no-cache, no-transform");
 	return c.json({
 		members: [...members.values()].sort(
 			(a, b) =>
@@ -278,6 +291,7 @@ type MemberDirectoryRow = {
 	isAdmin: boolean;
 	bio: string;
 	status: string;
+	location?: string;
 	lastSeenAt: number;
 };
 
@@ -405,6 +419,47 @@ app.get("/api/rooms/member", async (c) => {
 		}
 	}
 	return c.json(data, status as 200 | 400 | 404 | 500);
+});
+
+app.post("/api/rooms/member/badges", async (c) => {
+	const authHeader = c.req.header("Authorization") || "";
+	const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+	const token = bearerMatch ? bearerMatch[1].trim() : "";
+	if (!token) {
+		return c.json({ ok: false, error: "未授权" }, 401);
+	}
+	const viewer = await verifyWalineToken(c.env, token);
+	if (!viewer?.isAdmin) {
+		return c.json({ ok: false, error: "仅站长有权修改成员头衔" }, 403);
+	}
+
+	const body = (await c.req.json().catch(() => null)) as {
+		room?: string;
+		userKey?: string;
+		customBadges?: unknown;
+	} | null;
+	const roomId = (body?.room || "chat").trim().toLowerCase();
+	const userKey = (body?.userKey || "").trim();
+	const customBadges = Array.isArray(body?.customBadges) ? body.customBadges : [];
+
+	if (!userKey) {
+		return c.json({ ok: false, error: "缺少 userKey" }, 400);
+	}
+
+	const stub = c.env.CHAT_ROOMS.get(c.env.CHAT_ROOMS.idFromName(roomId));
+	const resp = await stub.fetch("https://room.internal/update-member-badges", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"X-Chat-User": JSON.stringify(viewer),
+		},
+		body: JSON.stringify({
+			userKey,
+			customBadges,
+		}),
+	});
+	const data = (await resp.json()) as Record<string, unknown>;
+	return c.json(data, resp.status as 200 | 400 | 403 | 500);
 });
 
 app.get("/api/rooms/member/tracks", async (c) => {

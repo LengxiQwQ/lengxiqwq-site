@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
+	type ChatCustomBadge,
 	computeGuestUserKey,
 	isAdminEmail,
 	isIsolatedGuestUserKey,
@@ -87,6 +88,7 @@ export interface ChatMessageRecord {
 	url: string;
 	badge: string;
 	badgeType: "host" | "accent" | "tag";
+	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	content: string;
 	attachments: ImageAttachment[];
@@ -156,10 +158,13 @@ export interface OnlineMember {
 	url: string;
 	badge: string;
 	badgeType: "host" | "accent" | "tag";
+	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	status: string;
 	bio?: string;
 	isMuted?: boolean;
+	location?: string;
+	isFocused?: boolean;
 }
 
 export interface MentionDirectoryMember {
@@ -170,10 +175,12 @@ export interface MentionDirectoryMember {
 	url?: string;
 	badge: string;
 	badgeType: "host" | "accent" | "tag";
+	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	online: boolean;
 	status?: string;
 	bio?: string;
+	location?: string;
 	lastSeenAt: number;
 }
 
@@ -186,11 +193,13 @@ type RoomMemberRow = {
 	url: string;
 	badge: string;
 	badge_type: string;
+	custom_badges_json?: string;
 	is_admin: number;
 	notify_email: number;
 	allow_auto_merge?: number;
 	bio?: string;
 	status?: string;
+	location?: string;
 	first_seen_at?: number;
 	last_seen_at: number;
 	last_notified_at: number;
@@ -219,6 +228,8 @@ interface WsAttachment {
 	baseUrl?: string;
 	connectedAt: number;
 	isMuted?: boolean;
+	location?: string;
+	isFocused?: boolean;
 }
 
 const MAX_STORED_MESSAGES = 500;
@@ -244,6 +255,7 @@ type MsgSqlRow = {
 	url: string;
 	badge: string;
 	badge_type: string;
+	custom_badges_json?: string;
 	is_admin: number;
 	content: string;
 	attachments_json: string;
@@ -260,7 +272,7 @@ type MsgSqlRow = {
 };
 
 const MESSAGE_SELECT_COLS =
-	"id, msg_uid, kind, user_key, name, avatar, url, badge, badge_type, is_admin, content, attachments_json, mentions_json, mention_keys_json, reply_to_uid, reply_to_json, is_recalled, status, recalled_at, recalled_by, recalled_by_name, created_at, source";
+	"id, msg_uid, kind, user_key, name, avatar, url, badge, badge_type, custom_badges_json, is_admin, content, attachments_json, mentions_json, mention_keys_json, reply_to_uid, reply_to_json, is_recalled, status, recalled_at, recalled_by, recalled_by_name, created_at, source";
 
 export class RoomDO extends DurableObject<Env> {
 	private readonly msgTimestamps = new Map<string, number[]>();
@@ -284,6 +296,9 @@ export class RoomDO extends DurableObject<Env> {
 						? { type: "chat:deleted", roomId: INTERCONNECT_ROOM, msgUid: record }
 						: { type: `chat:${kind}`, roomId: INTERCONNECT_ROOM, message: record },
 				);
+				if (kind === "message") {
+					this.broadcastPresence();
+				}
 			},
 		});
 		return this.matrix;
@@ -479,6 +494,7 @@ export class RoomDO extends DurableObject<Env> {
 			"ALTER TABLE messages ADD COLUMN recalled_by_name TEXT NOT NULL DEFAULT ''",
 			"ALTER TABLE messages ADD COLUMN reply_to_uid TEXT NOT NULL DEFAULT ''",
 			"ALTER TABLE messages ADD COLUMN reply_to_json TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE messages ADD COLUMN custom_badges_json TEXT NOT NULL DEFAULT '[]'",
 		]) {
 			try {
 				this.ctx.storage.sql.exec(ddl);
@@ -501,6 +517,8 @@ export class RoomDO extends DurableObject<Env> {
 			"ALTER TABLE room_members ADD COLUMN custom_url TEXT NOT NULL DEFAULT ''",
 			"ALTER TABLE room_members ADD COLUMN has_custom_url INTEGER NOT NULL DEFAULT 0",
 			"ALTER TABLE room_members ADD COLUMN allow_auto_merge INTEGER NOT NULL DEFAULT 1",
+			"ALTER TABLE room_members ADD COLUMN location TEXT NOT NULL DEFAULT ''",
+			"ALTER TABLE room_members ADD COLUMN custom_badges_json TEXT NOT NULL DEFAULT '[]'",
 		]) {
 			try {
 				this.ctx.storage.sql.exec(ddl);
@@ -1041,8 +1059,8 @@ export class RoomDO extends DurableObject<Env> {
 			`INSERT INTO room_members (
 				user_key, auth_type, name, email, avatar, url, badge, badge_type,
 				is_admin, notify_email, last_seen_at, first_seen_at, bio, status,
-				custom_name, custom_avatar, custom_url, has_custom_url
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				custom_name, custom_avatar, custom_url, has_custom_url, location
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(user_key) DO UPDATE SET
 				auth_type = excluded.auth_type,
 				name = excluded.name,
@@ -1059,7 +1077,8 @@ export class RoomDO extends DurableObject<Env> {
 				custom_name = excluded.custom_name,
 				custom_avatar = excluded.custom_avatar,
 				custom_url = excluded.custom_url,
-				has_custom_url = excluded.has_custom_url`,
+				has_custom_url = excluded.has_custom_url,
+				location = CASE WHEN excluded.location != '' THEN excluded.location ELSE room_members.location END`,
 			userKey,
 			readString(raw.authType) || "guest",
 			readString(raw.name),
@@ -1073,12 +1092,26 @@ export class RoomDO extends DurableObject<Env> {
 			lastSeenAt,
 			firstSeenAt,
 			readString(raw.bio),
-			readString(raw.status) || "在线",
+			sanitizeStatus(readString(raw.status)),
 			readString(raw.customName),
 			readString(raw.customAvatar),
 			readString(raw.customUrl),
 			raw.hasCustomUrl === true ? 1 : 0,
+			readString(raw.location),
 		);
+		const rawBadges = Array.isArray(raw.customBadges)
+			? (raw.customBadges as ChatCustomBadge[])
+			: typeof raw.customBadgesJson === "string"
+				? safeParseArray<ChatCustomBadge>(raw.customBadgesJson)
+				: null;
+		if (rawBadges !== null) {
+			const badgesJson = JSON.stringify(rawBadges);
+			this.ctx.storage.sql.exec(
+				"UPDATE room_members SET custom_badges_json = ? WHERE user_key = ?",
+				badgesJson,
+				userKey,
+			);
+		}
 		for (const socket of this.ctx.getWebSockets()) {
 			const attachment = socket.deserializeAttachment() as WsAttachment | null;
 			if (!attachment?.user || attachment.user.userKey !== userKey) continue;
@@ -1090,8 +1123,11 @@ export class RoomDO extends DurableObject<Env> {
 				badge: readString(raw.badge) || attachment.user.badge,
 				badgeType: (readString(raw.badgeType) ||
 					attachment.user.badgeType) as typeof attachment.user.badgeType,
-				status: readString(raw.status) || attachment.user.status,
+				status: sanitizeStatus(
+					readString(raw.status) || attachment.user.status,
+				),
 				bio: readString(raw.bio),
+				customBadges: rawBadges ?? attachment.user.customBadges,
 			};
 			socket.serializeAttachment(attachment);
 		}
@@ -1119,7 +1155,7 @@ export class RoomDO extends DurableObject<Env> {
 				 WHERE name != ''`,
 			)
 			.toArray();
-		return rows.map((row) => ({
+		const list: Array<Record<string, unknown>> = rows.map((row) => ({
 			userKey: row.user_key,
 			authType: row.auth_type,
 			name: row.name,
@@ -1132,6 +1168,51 @@ export class RoomDO extends DurableObject<Env> {
 			status: row.status || "",
 			lastSeenAt: row.last_seen_at || 0,
 		}));
+
+		if (this.getRoomId() === INTERCONNECT_ROOM) {
+			try {
+				const matrixChatters = this.ctx.storage.sql
+					.exec<{
+						user_key: string;
+						name: string;
+						avatar: string;
+						last_seen_at: number;
+					}>(
+						`SELECT user_key, name, avatar, MAX(created_at) AS last_seen_at
+						 FROM messages
+						 WHERE (source = 'matrix' OR user_key LIKE 'matrix:%' OR badge = '互联茶友')
+						   AND kind = 'user' AND is_recalled = 0 AND name != ''
+						 GROUP BY user_key, name
+						 ORDER BY last_seen_at DESC
+						 LIMIT 100`,
+					)
+					.toArray();
+
+				const existingKeys = new Set(rows.map((r) => r.user_key));
+				for (const chatter of matrixChatters) {
+					const extKey = chatter.user_key || `matrix:${chatter.name}`;
+					if (existingKeys.has(extKey)) continue;
+					existingKeys.add(extKey);
+					list.push({
+						userKey: extKey,
+						authType: "guest",
+						name: chatter.name,
+						avatar: chatter.avatar || "/favicon/favicon-light-192.png",
+						url: "",
+						badge: "互联茶友",
+						badgeType: "tag",
+						isAdmin: false,
+						bio: "来自互联茶室",
+						status: "离线",
+						lastSeenAt: chatter.last_seen_at || 0,
+					});
+				}
+			} catch (err) {
+				console.warn("[RoomDO] Failed to query matrix chatters for global directory:", err);
+			}
+		}
+
+		return list;
 	}
 
 	private async fanoutMemberProfile(userKey: string): Promise<void> {
@@ -1165,6 +1246,8 @@ export class RoomDO extends DurableObject<Env> {
 				customAvatar: row.custom_avatar,
 				customUrl: row.custom_url,
 				hasCustomUrl: row.has_custom_url === 1,
+				location: row.location || "",
+				customBadges: safeParseArray<ChatCustomBadge>(row.custom_badges_json),
 			},
 		});
 		await Promise.all(
@@ -2302,6 +2385,7 @@ export class RoomDO extends DurableObject<Env> {
 				r.badge_type === "host" || r.badge_type === "accent"
 					? r.badge_type
 					: "tag",
+			customBadges: safeParseArray<ChatCustomBadge>(r.custom_badges_json),
 			isAdmin: r.is_admin === 1,
 			content: r.content,
 			attachments: safeParseArray<ImageAttachment>(r.attachments_json),
@@ -2555,10 +2639,11 @@ export class RoomDO extends DurableObject<Env> {
 		const createdAt = Date.now();
 		const replyToUid = record.replyTo?.msgUid ?? "";
 		const replyToJson = record.replyTo ? JSON.stringify(record.replyTo) : "";
+		const customBadgesJson = JSON.stringify(record.customBadges ?? []);
 
 		this.ctx.storage.sql.exec(
-			`INSERT INTO messages (msg_uid, kind, user_key, name, avatar, url, badge, badge_type, is_admin, content, attachments_json, mentions_json, mention_keys_json, reply_to_uid, reply_to_json, is_recalled, status, recalled_at, recalled_by, recalled_by_name, created_at, source)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'normal', 0, '', '', ?, ?)`,
+			`INSERT INTO messages (msg_uid, kind, user_key, name, avatar, url, badge, badge_type, custom_badges_json, is_admin, content, attachments_json, mentions_json, mention_keys_json, reply_to_uid, reply_to_json, is_recalled, status, recalled_at, recalled_by, recalled_by_name, created_at, source)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'normal', 0, '', '', ?, ?)`,
 			msgUid,
 			record.kind,
 			record.userKey,
@@ -2567,6 +2652,7 @@ export class RoomDO extends DurableObject<Env> {
 			record.url,
 			record.badge,
 			record.badgeType,
+			customBadgesJson,
 			record.isAdmin ? 1 : 0,
 			record.content,
 			JSON.stringify(record.attachments),
@@ -2609,6 +2695,118 @@ export class RoomDO extends DurableObject<Env> {
 		};
 	}
 
+	private updateMemberCustomBadges(
+		targetUserKey: string,
+		sanitizedBadges: ChatCustomBadge[],
+		syncToOtherRooms = true,
+	): void {
+		const badgesJson = JSON.stringify(sanitizedBadges);
+		this.ctx.storage.transactionSync(() => {
+			const exists = this.ctx.storage.sql
+				.exec<{ user_key: string }>(
+					"SELECT user_key FROM room_members WHERE user_key = ?",
+					targetUserKey,
+				)
+				.toArray()[0];
+			if (exists) {
+				this.ctx.storage.sql.exec(
+					"UPDATE room_members SET custom_badges_json = ? WHERE user_key = ?",
+					badgesJson,
+					targetUserKey,
+				);
+			} else {
+				this.ctx.storage.sql.exec(
+					`INSERT INTO room_members (user_key, custom_badges_json, last_seen_at)
+					 VALUES (?, ?, ?)`,
+					targetUserKey,
+					badgesJson,
+					Date.now(),
+				);
+			}
+		});
+
+		for (const peer of this.ctx.getWebSockets()) {
+			const peerAtt = peer.deserializeAttachment() as WsAttachment | null;
+			if (peerAtt?.user && peerAtt.user.userKey === targetUserKey) {
+				peerAtt.user.customBadges = sanitizedBadges;
+				peer.serializeAttachment(peerAtt);
+				this.send(peer, {
+					type: "auth:result",
+					user: peerAtt.user,
+				});
+			}
+		}
+
+		this.broadcast({
+			type: "member:badges_updated",
+			roomId: this.getRoomId(),
+			userKey: targetUserKey,
+			customBadges: sanitizedBadges,
+		});
+		this.broadcastPresence();
+
+		if (syncToOtherRooms) {
+			void this.fanoutMemberCustomBadges(targetUserKey, sanitizedBadges);
+		}
+	}
+
+	private async fanoutMemberCustomBadges(
+		targetUserKey: string,
+		sanitizedBadges: ChatCustomBadge[],
+	): Promise<void> {
+		const currentRoom = this.getRoomId();
+		const rooms = parseDefaultRooms(this.env.DEFAULT_ROOMS).filter(
+			(room) => room !== currentRoom,
+		);
+		const payload = JSON.stringify({
+			userKey: targetUserKey,
+			customBadges: sanitizedBadges,
+		});
+		await Promise.all(
+			rooms.map(async (room) => {
+				try {
+					const stub = this.env.CHAT_ROOMS.get(
+						this.env.CHAT_ROOMS.idFromName(room),
+					);
+					await stub.fetch(
+						`https://room.internal/sync-member-badges?room=${encodeURIComponent(room)}`,
+						{
+							method: "POST",
+							headers: { "content-type": "application/json" },
+							body: payload,
+						},
+					);
+				} catch {
+					// 跨房同步失败不阻塞当前房间
+				}
+			}),
+		);
+	}
+
+	private getTotalChatterCount(): number {
+		try {
+			const msgRow = this.ctx.storage.sql
+				.exec<{ cnt: number }>(
+					`SELECT COUNT(DISTINCT CASE
+						WHEN (source = 'matrix' OR user_key LIKE 'matrix:%' OR badge = '互联茶友') AND name != '' THEN 'm:' || name
+						WHEN user_key != '' THEN user_key
+						ELSE msg_uid
+					END) AS cnt
+					FROM messages
+					WHERE kind = 'user' AND is_recalled = 0`,
+				)
+				.toArray()[0];
+			const memberRow = this.ctx.storage.sql
+				.exec<{ cnt: number }>(
+					"SELECT COUNT(*) AS cnt FROM room_members WHERE name != ''",
+				)
+				.toArray()[0];
+			return Math.max(msgRow?.cnt || 0, memberRow?.cnt || 0);
+		} catch {
+			return 0;
+		}
+	}
+
 	private getPresenceSnapshot(excludeWs?: WebSocket): {
 		members: OnlineMember[];
 		observerCount: number;
@@ -2632,6 +2830,7 @@ export class RoomDO extends DurableObject<Env> {
 			if (att.user) {
 				const existing = membersMap.get(att.user.userKey);
 				const socketMuted = att.isMuted !== false;
+				const socketFocused = att.isFocused !== false;
 				membersMap.set(att.user.userKey, {
 					userKey: att.user.userKey,
 					roomId,
@@ -2641,13 +2840,60 @@ export class RoomDO extends DurableObject<Env> {
 					url: att.user.url,
 					badge: att.user.badge,
 					badgeType: att.user.badgeType,
+					customBadges: att.user.customBadges,
 					isAdmin: att.user.isAdmin,
-					status: att.user.status || "在线",
+					status: sanitizeStatus(att.user.status),
 					bio: att.user.bio || "",
 					isMuted: existing ? existing.isMuted && socketMuted : socketMuted,
+					isFocused: existing
+						? Boolean(existing.isFocused || socketFocused)
+						: socketFocused,
+					location: att.location || "",
 				});
 			} else {
 				observerCount += 1;
+			}
+		}
+
+		if (roomId === INTERCONNECT_ROOM) {
+			try {
+				const recentMatrixSenders = this.ctx.storage.sql
+					.exec<{
+						user_key: string;
+						name: string;
+						avatar: string;
+					}>(
+						`SELECT user_key, name, avatar
+						 FROM messages
+						 WHERE (source = 'matrix' OR user_key LIKE 'matrix:%' OR badge = '互联茶友')
+						   AND kind = 'user' AND is_recalled = 0 AND created_at >= ?
+						 GROUP BY user_key, name`,
+						Date.now() - 15 * 60 * 1000,
+					)
+					.toArray();
+				for (const m of recentMatrixSenders) {
+					const extKey = m.user_key || `matrix:${m.name}`;
+					if (!membersMap.has(extKey)) {
+						membersMap.set(extKey, {
+							userKey: extKey,
+							roomId,
+							authType: "guest",
+							name: m.name,
+							avatar: m.avatar,
+							url: "",
+							badge: "互联茶友",
+							badgeType: "tag",
+							isAdmin: false,
+							status: "在线",
+							bio: "来自互联茶室",
+							isMuted: true,
+							isFocused: true,
+							location: "",
+						});
+					}
+				}
+			} catch {
+				// Ignore if query fails
 			}
 		}
 
@@ -2824,9 +3070,10 @@ export class RoomDO extends DurableObject<Env> {
 					custom_avatar: string;
 					custom_url: string;
 					has_custom_url: number;
+					custom_badges_json?: string;
 				}>(
 					`SELECT notify_email, bio, status, first_seen_at, last_seen_at, last_notified_at, last_read_at,
-					        custom_name, custom_avatar, custom_url, has_custom_url
+					        custom_name, custom_avatar, custom_url, has_custom_url, custom_badges_json
 					 FROM room_members WHERE user_key = ?`,
 					user.userKey,
 				)
@@ -2951,11 +3198,17 @@ export class RoomDO extends DurableObject<Env> {
 						},
 					});
 
+			const effectiveBadges =
+				user.customBadges && user.customBadges.length > 0
+					? user.customBadges
+					: safeParseArray<ChatCustomBadge>(existing?.custom_badges_json);
+			const badgesJson = JSON.stringify(effectiveBadges);
+
 			this.ctx.storage.sql.exec(
 				`INSERT INTO room_members (
 					user_key, auth_type, name, email, avatar, url, badge, badge_type, is_admin, notify_email, allow_auto_merge, bio, status, first_seen_at, last_seen_at, last_notified_at, cooldown_until, last_read_at,
-					custom_name, custom_avatar, custom_url, has_custom_url
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+					custom_name, custom_avatar, custom_url, has_custom_url, custom_badges_json
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT(user_key) DO UPDATE SET
 					auth_type = excluded.auth_type,
 					name = excluded.name,
@@ -2976,6 +3229,7 @@ export class RoomDO extends DurableObject<Env> {
 					custom_avatar = ?,
 					custom_url = ?,
 					has_custom_url = ?,
+					custom_badges_json = excluded.custom_badges_json,
 					first_seen_at = CASE
 						WHEN room_members.first_seen_at > 0 AND room_members.first_seen_at < excluded.first_seen_at THEN room_members.first_seen_at
 						ELSE excluded.first_seen_at
@@ -3010,6 +3264,7 @@ export class RoomDO extends DurableObject<Env> {
 				nextCustomAvatar,
 				nextCustomUrl,
 				nextHasCustomUrl,
+				badgesJson,
 				mergedMeta.notifyInt,
 				mergedMeta.bio,
 				mergedMeta.status,
@@ -3027,6 +3282,7 @@ export class RoomDO extends DurableObject<Env> {
 				url: effectiveProfile.url,
 				bio: mergedMeta.bio,
 				status: mergedMeta.status,
+				customBadges: effectiveBadges,
 				notifyEmail: isIsolatedGuest ? false : mergedMeta.notifyInt !== 0,
 			};
 
@@ -3281,10 +3537,11 @@ export class RoomDO extends DurableObject<Env> {
 			url: row.url,
 			badge: roleBadge.badge,
 			badgeType: roleBadge.badgeType,
+			customBadges: safeParseArray<ChatCustomBadge>(row.custom_badges_json),
 			isAdmin,
 			...(isIsolated ? { isolated: true } : {}),
 			bio: row.bio || "",
-			status: row.status || "在线",
+			status: sanitizeStatus(row.status),
 			notifyEmail: isIsolated ? false : row.notify_email !== 0,
 		};
 	}
@@ -3652,7 +3909,7 @@ export class RoomDO extends DurableObject<Env> {
 
 		const memberRow = this.ctx.storage.sql
 			.exec<RoomMemberRow>(
-				`SELECT user_key, auth_type, name, email, avatar, url, badge, badge_type, is_admin, notify_email, bio, status, first_seen_at, last_seen_at, last_notified_at, cooldown_until
+				`SELECT user_key, auth_type, name, email, avatar, url, badge, badge_type, is_admin, notify_email, bio, status, location, first_seen_at, last_seen_at, last_notified_at, cooldown_until
 				 FROM room_members WHERE user_key = ?`,
 				userKey,
 			)
@@ -3815,10 +4072,14 @@ export class RoomDO extends DurableObject<Env> {
 			url: onlineMatch?.url || memberRow?.url || latestMsg?.url || "",
 			badge: roleBadge.badge,
 			badgeType: roleBadge.badgeType,
+			customBadges:
+				onlineMatch?.customBadges ??
+				safeParseArray<ChatCustomBadge>(memberRow?.custom_badges_json),
 			isAdmin,
 			online: Boolean(onlineMatch),
-			status: onlineMatch?.status || memberRow?.status || "在线",
+			status: sanitizeStatus(onlineMatch?.status || memberRow?.status),
 			bio: onlineMatch?.bio ?? memberRow?.bio ?? "",
+			location: onlineMatch?.location || memberRow?.location || "",
 			firstSeenAt:
 				memberRow?.first_seen_at ||
 				memberRow?.last_seen_at ||
@@ -3858,6 +4119,21 @@ export class RoomDO extends DurableObject<Env> {
 			userKey,
 		);
 		await this.syncNextAlarm();
+	}
+
+	private updateMemberLocation(userKey: string, location: string): void {
+		const key = (userKey || "").trim();
+		const loc = (location || "").trim();
+		if (!key || !loc) return;
+		try {
+			this.ctx.storage.sql.exec(
+				"UPDATE room_members SET location = ? WHERE user_key = ?",
+				loc,
+				key,
+			);
+		} catch {
+			// Ignore if column is being migrated
+		}
 	}
 
 	private touchMemberLastSeen(userKey: string): void {
@@ -3904,17 +4180,19 @@ export class RoomDO extends DurableObject<Env> {
 				url: m.url,
 				badge: m.badge,
 				badgeType: m.badgeType,
+				customBadges: m.customBadges,
 				isAdmin: m.isAdmin,
 				online: true,
 				status: m.status,
 				bio: m.bio,
+				location: m.location,
 				lastSeenAt: now,
 			});
 		}
 
 		const offlineRows = this.ctx.storage.sql
 			.exec<RoomMemberRow>(
-				`SELECT user_key, auth_type, name, email, avatar, url, badge, badge_type, is_admin, notify_email, bio, status, last_seen_at, last_notified_at, cooldown_until
+				`SELECT user_key, auth_type, name, email, avatar, url, badge, badge_type, custom_badges_json, is_admin, notify_email, bio, status, location, last_seen_at, last_notified_at, cooldown_until
 				 FROM room_members
 				 WHERE name != ''
 				 ORDER BY is_admin DESC, last_seen_at DESC
@@ -3929,6 +4207,7 @@ export class RoomDO extends DurableObject<Env> {
 			const authType: "waline" | "guest" =
 				row.auth_type === "waline" ? "waline" : "guest";
 			const roleBadge = resolveRoleBadge(authType, isAdmin);
+			const customBadges = safeParseArray<ChatCustomBadge>(row.custom_badges_json);
 			list.push({
 				userKey: row.user_key,
 				authType,
@@ -3937,12 +4216,59 @@ export class RoomDO extends DurableObject<Env> {
 				url: row.url || "",
 				badge: roleBadge.badge,
 				badgeType: roleBadge.badgeType,
+				customBadges,
 				isAdmin,
 				online: false,
-				status: row.status || "在线",
+				status: sanitizeStatus(row.status),
 				bio: row.bio || "",
+				location: row.location,
 				lastSeenAt: row.last_seen_at,
 			});
+		}
+
+		if (this.getRoomId() === INTERCONNECT_ROOM) {
+			try {
+				const matrixChatters = this.ctx.storage.sql
+					.exec<{
+						user_key: string;
+						name: string;
+						avatar: string;
+						last_seen_at: number;
+					}>(
+						`SELECT user_key, name, avatar, MAX(created_at) AS last_seen_at
+						 FROM messages
+						 WHERE (source = 'matrix' OR user_key LIKE 'matrix:%' OR badge = '互联茶友')
+						   AND kind = 'user' AND is_recalled = 0 AND name != ''
+						 GROUP BY user_key, name
+						 ORDER BY last_seen_at DESC
+						 LIMIT 100`,
+					)
+					.toArray();
+
+				for (const chatter of matrixChatters) {
+					const extKey = chatter.user_key || `matrix:${chatter.name}`;
+					if (onlineSet.has(extKey)) continue;
+					onlineSet.add(extKey);
+					list.push({
+						userKey: extKey,
+						authType: "guest",
+						name: chatter.name,
+						avatar: chatter.avatar || "/favicon/favicon-light-192.png",
+						url: "",
+						badge: "互联茶友",
+						badgeType: "tag",
+						customBadges: [],
+						isAdmin: false,
+						online: false,
+						status: "离线",
+						bio: "来自互联茶室",
+						location: "",
+						lastSeenAt: chatter.last_seen_at,
+					});
+				}
+			} catch (err) {
+				console.warn("[RoomDO] Failed to query matrix chatters for mention directory:", err);
+			}
 		}
 
 		return list.slice(0, MAX_MENTION_DIRECTORY);
@@ -4289,6 +4615,7 @@ export class RoomDO extends DurableObject<Env> {
 				roomId: this.getRoomId(),
 				...presence,
 				mentionMembers,
+				totalChatters: this.getTotalChatterCount(),
 			},
 			excludeWs,
 		);
@@ -4791,6 +5118,32 @@ export class RoomDO extends DurableObject<Env> {
 		}
 		if (
 			url.hostname === "room.internal" &&
+			url.pathname === "/sync-member-badges" &&
+			request.method === "POST"
+		) {
+			let payload: { userKey?: string; customBadges?: ChatCustomBadge[] } = {};
+			try {
+				payload = (await request.json()) as {
+					userKey?: string;
+					customBadges?: ChatCustomBadge[];
+				};
+			} catch {
+				return Response.json(
+					{ ok: false, error: "请求体格式错误" },
+					{ status: 400 },
+				);
+			}
+			if (payload.userKey && Array.isArray(payload.customBadges)) {
+				this.updateMemberCustomBadges(
+					payload.userKey,
+					payload.customBadges,
+					false,
+				);
+			}
+			return Response.json({ ok: true });
+		}
+		if (
+			url.hostname === "room.internal" &&
 			url.pathname === "/member-directory"
 		) {
 			return Response.json({
@@ -5136,6 +5489,38 @@ export class RoomDO extends DurableObject<Env> {
 			return Response.json({ ok: true, ...page });
 		}
 
+		if (url.pathname === "/update-member-badges" && request.method === "POST") {
+			const viewerUser = this.parseForwardedUser(request);
+			if (!viewerUser?.isAdmin) {
+				return Response.json(
+					{ ok: false, error: "仅站长有权修改成员头衔" },
+					{ status: 403 },
+				);
+			}
+			const body = (await request.json().catch(() => null)) as {
+				userKey?: string;
+				customBadges?: ChatCustomBadge[];
+			} | null;
+			const targetUserKey = (body?.userKey || "").trim();
+			if (!targetUserKey) {
+				return Response.json(
+					{ ok: false, error: "缺少 userKey" },
+					{ status: 400 },
+				);
+			}
+			const rawBadges = Array.isArray(body?.customBadges) ? body.customBadges : [];
+			const sanitizedBadges: ChatCustomBadge[] = rawBadges
+				.map((b) => ({
+					text: typeof b?.text === "string" ? b.text.trim().slice(0, 8) : "",
+					color: b?.color === "gold" ? ("gold" as const) : ("gray" as const),
+				}))
+				.filter((b) => Boolean(b.text))
+				.slice(0, 3);
+
+			this.updateMemberCustomBadges(targetUserKey, sanitizedBadges);
+			return Response.json({ ok: true, customBadges: sanitizedBadges });
+		}
+
 		if (url.pathname === "/admin/messages") {
 			const filterParam = (url.searchParams.get("filter") || "all").trim();
 			const filter =
@@ -5309,6 +5694,14 @@ export class RoomDO extends DurableObject<Env> {
 			}
 		}
 
+		const rawLocationHeader = request.headers.get("X-Client-Location") || "";
+		let clientLocation = "";
+		try {
+			clientLocation = rawLocationHeader ? decodeURIComponent(rawLocationHeader) : "";
+		} catch {
+			clientLocation = rawLocationHeader;
+		}
+
 		if (user) {
 			if (mergedFromKeys.length > 0) {
 				this.syncMergedSockets(mergedFromKeys, user, undefined, {
@@ -5318,6 +5711,9 @@ export class RoomDO extends DurableObject<Env> {
 				});
 			}
 			await this.markMemberOnline(user.userKey);
+			if (clientLocation) {
+				this.updateMemberLocation(user.userKey, clientLocation);
+			}
 		}
 
 		const pair = new WebSocketPair();
@@ -5332,6 +5728,7 @@ export class RoomDO extends DurableObject<Env> {
 			baseUrl: rawBaseUrl,
 			connectedAt: Date.now(),
 			isMuted: true,
+			location: clientLocation || undefined,
 		};
 
 		const firstSocket = !this.hasConnectedSockets();
@@ -5383,6 +5780,7 @@ export class RoomDO extends DurableObject<Env> {
 			unreadUserCount,
 			...presence,
 			mentionMembers,
+			totalChatters: this.getTotalChatterCount(),
 			music,
 		});
 
@@ -5528,6 +5926,9 @@ export class RoomDO extends DurableObject<Env> {
 						});
 					}
 					await this.markMemberOnline(verified.userKey);
+					if (attachment.location) {
+						this.updateMemberLocation(verified.userKey, attachment.location);
+					}
 				}
 				this.send(ws, {
 					type: "auth:result",
@@ -5594,6 +5995,18 @@ export class RoomDO extends DurableObject<Env> {
 				return;
 			}
 
+			case "presence:focus": {
+				const nextFocused = packet.isFocused !== false;
+				if ((attachment.isFocused !== false) !== nextFocused) {
+					attachment.isFocused = nextFocused;
+					ws.serializeAttachment(attachment);
+					if (attachment.user) {
+						this.broadcastPresence();
+					}
+				}
+				return;
+			}
+
 			case "auth:update_profile": {
 				const currentUser = attachment.user;
 				if (!currentUser) {
@@ -5626,7 +6039,7 @@ export class RoomDO extends DurableObject<Env> {
 				const nextStatus =
 					typeof packet.status === "string"
 						? sanitizeStatus(packet.status)
-						: currentUser.status || "在线";
+						: sanitizeStatus(currentUser.status);
 				const nextUrl =
 					typeof packet.url === "string"
 						? sanitizeWebsiteUrl(packet.url)
@@ -5840,6 +6253,7 @@ export class RoomDO extends DurableObject<Env> {
 						url: user.url,
 						badge: user.badge,
 						badgeType: user.badgeType,
+						customBadges: user.customBadges,
 						isAdmin: user.isAdmin,
 						content,
 						attachments,
@@ -6051,6 +6465,42 @@ export class RoomDO extends DurableObject<Env> {
 					msgUid,
 					recalled: false,
 				});
+				return;
+			}
+
+			case "admin:update_member_badges": {
+				const user = attachment.user;
+				if (!user?.isAdmin) {
+					this.send(ws, {
+						type: "error",
+						message: "仅站长有权修改成员头衔",
+					});
+					return;
+				}
+				const targetUserKey =
+					typeof packet.targetUserKey === "string"
+						? packet.targetUserKey.trim()
+						: "";
+				if (!targetUserKey) {
+					this.send(ws, {
+						type: "error",
+						message: "目标成员 userKey 不能为空",
+					});
+					return;
+				}
+
+				const rawBadges = Array.isArray(packet.customBadges)
+					? packet.customBadges
+					: [];
+				const sanitizedBadges: ChatCustomBadge[] = rawBadges
+					.map((b: any) => ({
+						text: typeof b?.text === "string" ? b.text.trim().slice(0, 8) : "",
+						color: b?.color === "gold" ? ("gold" as const) : ("gray" as const),
+					}))
+					.filter((b: ChatCustomBadge) => Boolean(b.text))
+					.slice(0, 3);
+
+				this.updateMemberCustomBadges(targetUserKey, sanitizedBadges);
 				return;
 			}
 
@@ -6569,7 +7019,8 @@ export class RoomDO extends DurableObject<Env> {
 	}
 }
 
-function safeParseArray<T>(json: string): T[] {
+function safeParseArray<T>(json?: string | null): T[] {
+	if (!json) return [];
 	try {
 		const val = JSON.parse(json);
 		return Array.isArray(val) ? (val as T[]) : [];

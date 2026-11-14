@@ -2107,7 +2107,6 @@ $effect(() => {
                   <button
                     type="button"
                     class="inline-flex items-center justify-center gap-1.5 shrink-0 max-w-[min(10.5rem,62%)] h-[22px] pl-[3px] pr-2 py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)] hover:bg-(--primary)/20 border-none cursor-pointer transition-colors"
-                    title={`查看 ${currentPlay.requesterName} 的个人资料`}
                     onclick={() => openRequesterProfile(currentPlay.requesterKey, currentPlay.requesterName)}
                   >
                     <ChatAvatar
@@ -2205,64 +2204,88 @@ $effect(() => {
                 </svg>
                 <span>切歌</span>
               </button>
-            {:else if canDirectSkip}
+            {:else}
               {@const activeVotes = musicState?.voteCount ?? 0}
               {@const activeThreshold = musicState?.voteThreshold ?? 2}
-              <button
-                type="button"
-                disabled={isSkippingTrack}
-                class="chat-skip-pill whitespace-nowrap {activeVotes > 0 ? 'voted' : ''} disabled:opacity-75 disabled:cursor-wait!"
-                aria-label={isSkippingTrack ? "正在切歌..." : activeVotes > 0 ? `已有 ${activeVotes}/${activeThreshold} 人投票切歌，点击立即切歌` : "切歌"}
-                title={isSkippingTrack ? "正在切歌..." : activeVotes > 0 ? `已有 ${activeVotes}/${activeThreshold} 人投票切歌，点击立即切歌` : "切歌"}
-                onclick={onSkipTrack}
-              >
-                {#if isSkippingTrack}
-                  <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
-                    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
-                  </svg>
+              <div class="chat-playlist-action-wrap">
+                {#if canDirectSkip}
+                  <button
+                    type="button"
+                    disabled={isSkippingTrack}
+                    class="chat-skip-pill whitespace-nowrap {activeVotes > 0 ? 'voted' : ''} disabled:opacity-75 disabled:cursor-wait!"
+                    aria-label={isSkippingTrack ? "正在切歌..." : activeVotes > 0 ? `直接切歌（已有 ${activeVotes}/${activeThreshold} 票）` : "直接切歌"}
+                    onclick={onSkipTrack}
+                  >
+                    {#if isSkippingTrack}
+                      <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                      </svg>
+                    {:else}
+                      <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                      </svg>
+                    {/if}
+                    <span>切歌</span>
+                  </button>
+                  <span class="chat-playlist-tooltip align-left" role="tooltip">
+                    {#if isSkippingTrack}
+                      正在切歌...
+                    {:else if activeVotes > 0}
+                      直接切歌（已有 {activeVotes}/{activeThreshold} 票）
+                    {:else}
+                      直接切歌
+                    {/if}
+                  </span>
+                {:else if isSoloCoolingDown}
+                  <button
+                    type="button"
+                    class="chat-skip-pill whitespace-nowrap opacity-75"
+                    aria-label={`切歌冷却中 (${soloCooldownRemainSec}s)`}
+                    onclick={onSkipTrack}
+                  >
+                    <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                    </svg>
+                    <span class="tabular-nums">{soloCooldownRemainSec}s</span>
+                  </button>
+                  <span class="chat-playlist-tooltip align-left" role="tooltip">
+                    切歌冷却中（{soloCooldownRemainSec}s）
+                  </span>
                 {:else}
-                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-                  </svg>
+                  <button
+                    type="button"
+                    disabled={isSkippingTrack}
+                    class="chat-skip-pill whitespace-nowrap {hasVotedSkip ? 'voted' : ''} disabled:opacity-75 disabled:cursor-wait!"
+                    aria-pressed={hasVotedSkip}
+                    aria-label={isSkippingTrack ? "正在切歌..." : hasVotedSkip ? `取消投票（已投 ${activeVotes}/${activeThreshold} 票）` : activeVotes > 0 ? `投票切歌（已投 ${activeVotes}/${activeThreshold} 票）` : "投票切歌"}
+                    onclick={onVoteSkip}
+                  >
+                    {#if isSkippingTrack}
+                      <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                      </svg>
+                    {:else}
+                      <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+                      </svg>
+                    {/if}
+                    <span>{hasVotedSkip ? "已投" : "切歌"}</span>
+                  </button>
+                  <span class="chat-playlist-tooltip align-left" role="tooltip">
+                    {#if isSkippingTrack}
+                      正在切歌...
+                    {:else if hasVotedSkip}
+                      取消投票（已投 {activeVotes}/{activeThreshold} 票）
+                    {:else if activeVotes > 0}
+                      投票切歌（已投 {activeVotes}/{activeThreshold} 票）
+                    {:else}
+                      投票切歌
+                    {/if}
+                  </span>
                 {/if}
-                <span>切歌</span>
-              </button>
-            {:else if isSoloCoolingDown}
-              <button
-                type="button"
-                class="chat-skip-pill whitespace-nowrap opacity-75"
-                aria-label={`切歌冷却 ${soloCooldownRemainSec} 秒`}
-                title={`切歌冷却 ${soloCooldownRemainSec} 秒`}
-                onclick={onSkipTrack}
-              >
-                <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-                </svg>
-                <span class="tabular-nums">{soloCooldownRemainSec}s</span>
-              </button>
-            {:else}
-              <button
-                type="button"
-                disabled={isSkippingTrack}
-                class="chat-skip-pill whitespace-nowrap {hasVotedSkip ? 'voted' : ''} disabled:opacity-75 disabled:cursor-wait!"
-                aria-pressed={hasVotedSkip}
-                aria-label={isSkippingTrack ? "正在切歌..." : hasVotedSkip ? "已投票切歌，点击取消" : "投票切歌"}
-                title={isSkippingTrack ? "正在切歌..." : hasVotedSkip ? "已发起/投票切歌，点击可取消" : "发起或投票切歌"}
-                onclick={onVoteSkip}
-              >
-                {#if isSkippingTrack}
-                  <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
-                    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
-                  </svg>
-                {:else}
-                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-                  </svg>
-                {/if}
-                <span>{hasVotedSkip ? "已投" : "切歌"}</span>
-              </button>
+              </div>
             {/if}
           </div>
 
@@ -2440,7 +2463,6 @@ $effect(() => {
                           <button
                             type="button"
                             class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[10px] inline"
-                            title={`查看 ${item.requesterName} 的个人资料`}
                             onclick={() => openRequesterProfile(item.requesterKey, item.requesterName)}
                           >
                             点歌：{item.requesterName}
@@ -2594,7 +2616,6 @@ $effect(() => {
                       <button
                         type="button"
                         class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[10px] inline"
-                        title={`查看 ${item.requesterName} 的个人资料`}
                         onclick={() => openRequesterProfile(item.requesterKey, item.requesterName)}
                       >
                         点歌：{item.requesterName}
@@ -2689,19 +2710,23 @@ $effect(() => {
         </button>
 
         {#if canManagePlaylist(pl)}
-          <button
-            type="button"
-            disabled={isRefreshingPlaylistId === pl.id}
-            class="chat-queue-icon-btn w-7! h-7! shrink-0 aspect-square"
-            aria-label={`刷新 ${pl.title}`}
-            title="重新拉取最新歌单"
-            onclick={() => handleRefreshPlaylist(pl)}
-          >
-            <svg class="w-3.5 h-3.5 {isRefreshingPlaylistId === pl.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="23 4 23 10 17 10" />
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-            </svg>
-          </button>
+          <div class="chat-playlist-action-wrap">
+            <button
+              type="button"
+              disabled={isRefreshingPlaylistId === pl.id}
+              class="chat-queue-icon-btn w-7! h-7! shrink-0 aspect-square"
+              aria-label={`刷新 ${pl.title}`}
+              onclick={() => handleRefreshPlaylist(pl)}
+            >
+              <svg class="w-3.5 h-3.5 {isRefreshingPlaylistId === pl.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
+            </button>
+            <span class="chat-playlist-tooltip align-right" role="tooltip">
+              {isRefreshingPlaylistId === pl.id ? "正在同步歌单..." : "从平台重新拉取歌单"}
+            </span>
+          </div>
         {/if}
       </div>
     {/snippet}
@@ -3259,7 +3284,6 @@ $effect(() => {
                       type="button"
                       class="flex items-center gap-1.5 min-w-0 flex-1 bg-transparent border-none p-0 cursor-pointer text-left transition-opacity hover:opacity-80"
                       aria-label={`查看 ${group.ownerName} 的个人资料`}
-                      title={`查看 ${group.ownerName} 的个人资料`}
                       onclick={() => openRequesterProfile(group.ownerKey, group.ownerName)}
                     >
                       <ChatAvatar src={group.ownerAvatar} name={group.ownerName} size="2xs" />

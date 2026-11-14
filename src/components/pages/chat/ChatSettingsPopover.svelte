@@ -399,7 +399,6 @@ onMount(() => {
             <button
               type="button"
               aria-label="恢复默认参数"
-              title="恢复默认参数"
               class="btn-regular chat-settings-reset-btn rounded-md active:scale-90 cursor-pointer border-none"
               onclick={resetGlass}
             >
@@ -467,7 +466,6 @@ onMount(() => {
             <button
               type="button"
               aria-label="重置聊天室主题色"
-              title="重置聊天室主题色"
               class="btn-regular chat-settings-reset-btn rounded-md active:scale-90 cursor-pointer border-none"
               onclick={resetTheme}
             >

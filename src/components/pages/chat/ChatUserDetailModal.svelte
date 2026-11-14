@@ -5,8 +5,10 @@ import {
 	fetchUserDetailProfile,
 	fetchUserDetailTracks,
 	readStoredWalineToken,
+	saveMemberBadges,
 } from "./chatClient";
 import type {
+	ChatCustomBadge,
 	ChatMessageRecord,
 	ChatOnlineMember,
 	ChatSessionUser,
@@ -36,6 +38,10 @@ interface Props {
 	onEnqueueTrack?: (track: ChatMusicTrack) => void;
 	onOpenPlaylist?: (playlistId: string) => void;
 	onJumpToMessage?: (msgUid: string) => void;
+	onUpdateMemberBadges?: (
+		targetUserKey: string,
+		badges: ChatCustomBadge[],
+	) => Promise<boolean> | boolean;
 }
 
 const TRACK_PAGE_SIZE = 50;
@@ -60,6 +66,7 @@ const {
 	onEnqueueTrack,
 	onOpenPlaylist,
 	onJumpToMessage,
+	onUpdateMemberBadges,
 }: Props = $props();
 
 let remoteProfile = $state<ChatUserDetailProfile | null>(null);
@@ -181,10 +188,19 @@ const fallbackData = $derived.by<{
 				onlineMatch?.url || selfUser?.url || seed.url || latestMsg?.url || "",
 			badge,
 			badgeType,
+			customBadges:
+				onlineMatch?.customBadges ??
+				selfUser?.customBadges ??
+				seed.customBadges ??
+				latestMsg?.customBadges ??
+				[],
 			isAdmin,
 			online: Boolean(onlineMatch ?? seed.online),
-			status: onlineMatch?.status || selfUser?.status || seed.status || "在线",
+			status: cleanCustomStatus(
+				onlineMatch?.status || selfUser?.status || seed.status,
+			),
 			bio: onlineMatch?.bio ?? selfUser?.bio ?? seed.bio ?? "",
+			location: onlineMatch?.location || selfUser?.location || seed.location || "",
 			firstSeenAt: userMessages[0]?.createdAt || 0,
 			lastSeenAt: onlineMatch ? Date.now() : latestMsg?.createdAt || 0,
 			stats: {
@@ -207,6 +223,80 @@ const fallbackData = $derived.by<{
 });
 
 const profile = $derived(remoteProfile ?? fallbackData?.profile ?? null);
+let managedBadges = $state<ChatCustomBadge[]>([]);
+let isSavingBadges = $state(false);
+let badgeSaveNotice = $state("");
+
+$effect(() => {
+	if (open && profile) {
+		managedBadges = (profile.customBadges || []).map((b) => ({ ...b }));
+		badgeSaveNotice = "";
+	}
+});
+
+const effectiveCustomBadges = $derived.by<ChatCustomBadge[]>(() => {
+	return profile?.customBadges ?? [];
+});
+
+async function handleSaveBadges() {
+	if (!profile || !currentUser?.isAdmin) return;
+	const sanitized: ChatCustomBadge[] = managedBadges
+		.map((b) => ({
+			text: (b.text || "").trim().slice(0, 8),
+			color: b.color === "gold" ? ("gold" as const) : ("gray" as const),
+		}))
+		.filter((b) => Boolean(b.text))
+		.slice(0, 3);
+
+	isSavingBadges = true;
+	badgeSaveNotice = "";
+	try {
+		let ok = false;
+		if (onUpdateMemberBadges) {
+			ok = await onUpdateMemberBadges(profile.userKey, sanitized);
+		} else {
+			const walineToken = readStoredWalineToken();
+			ok = await saveMemberBadges(
+				chatServerUrl,
+				roomId,
+				profile.userKey,
+				sanitized,
+				walineToken,
+			);
+		}
+		if (ok) {
+			if (remoteProfile) {
+				remoteProfile = {
+					...remoteProfile,
+					customBadges: sanitized,
+				};
+			}
+			managedBadges = sanitized.map((b) => ({ ...b }));
+			badgeSaveNotice = "头衔已更新";
+			setTimeout(() => {
+				if (badgeSaveNotice === "头衔已更新") {
+					badgeSaveNotice = "";
+				}
+			}, 3000);
+		} else {
+			badgeSaveNotice = "保存失败，请重试";
+		}
+	} catch {
+		badgeSaveNotice = "网络异常，保存失败";
+	} finally {
+		isSavingBadges = false;
+	}
+}
+
+function handleAddBadge() {
+	if (managedBadges.length >= 3) return;
+	managedBadges = [...managedBadges, { text: "", color: "gold" }];
+}
+
+function handleRemoveBadge(index: number) {
+	managedBadges = managedBadges.filter((_, i) => i !== index);
+}
+
 const isSelf = $derived(
 	Boolean(currentUser && profile && currentUser.userKey === profile.userKey),
 );
@@ -282,8 +372,11 @@ $effect(() => {
 					name: liveOnline.name || cachedEntry.profile.name,
 					avatar: liveOnline.avatar || cachedEntry.profile.avatar,
 					url: liveOnline.url ?? cachedEntry.profile.url,
-					status: liveOnline.status || cachedEntry.profile.status,
+					status: cleanCustomStatus(
+						liveOnline.status || cachedEntry.profile.status,
+					),
 					bio: liveOnline.bio ?? cachedEntry.profile.bio,
+					location: liveOnline.location || cachedEntry.profile.location,
 					online: true,
 				}
 			: {
@@ -402,6 +495,11 @@ function formatJoinTime(ts: number): string {
 	return `${yyyy}-${mm}-${dd}`;
 }
 
+function cleanCustomStatus(status?: string | null): string {
+	const trimmed = (status ?? "").trim();
+	return trimmed === "在线" ? "" : trimmed;
+}
+
 function formatLastSeen(ts: number): string {
 	if (!ts) return "离线";
 	const diff = Date.now() - ts;
@@ -509,7 +607,6 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               />
               <span
                 class="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-neutral-900 {profile.online ? 'bg-emerald-500' : 'bg-neutral-400'}"
-                title={profile.online ? "当前在线" : "当前离线"}
               ></span>
             </div>
 
@@ -521,12 +618,42 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 <span class="chat-role-badge chat-role-badge--{profile.badgeType}">
                   {profile.badge}
                 </span>
+                {#if effectiveCustomBadges.length > 0}
+                  {#each effectiveCustomBadges as b (b.text)}
+                    <span class="chat-role-badge chat-role-badge--{b.color}">
+                      {b.text}
+                    </span>
+                  {/each}
+                {/if}
               </div>
-              <div class="text-[11px] text-[var(--chat-meta-color)] mt-0.5 truncate">
-                {#if profile.online}
-                  在线 · {profile.status || "在线"}
-                {:else}
-                  {formatLastSeen(profile.lastSeenAt)}
+              <div class="text-[11px] text-[var(--chat-meta-color)] mt-0.5 truncate flex items-center gap-1.5 flex-wrap">
+                <span>{profile.online ? "在线" : formatLastSeen(profile.lastSeenAt)}</span>
+
+                {#if cleanCustomStatus(profile.status)}
+                  <span class="opacity-40 select-none">·</span>
+                  <span>{cleanCustomStatus(profile.status)}</span>
+                {/if}
+
+                {#if profile.location}
+                  <span class="opacity-40 select-none">·</span>
+                  <span
+                    class="inline-flex items-center gap-1 font-medium text-[var(--chat-meta-color)]"
+                  >
+                    <svg
+                      class="w-3 h-3 shrink-0 opacity-70"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z" />
+                      <circle cx="12" cy="10" r="3" />
+                    </svg>
+                    <span>{profile.location}</span>
+                  </span>
                 {/if}
               </div>
             </div>
@@ -579,6 +706,130 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             </button>
           {/if}
         </div>
+
+        <!-- 站长专属：身份头衔管理 -->
+        {#if currentUser?.isAdmin && profile}
+          <div class="rounded-xl bg-(--btn-regular-bg) p-3 space-y-2.5 border border-amber-500/25 dark:border-amber-400/25">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <svg class="w-3.5 h-3.5 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+                <span class="text-xs font-bold text-[var(--deep-text)] truncate">身份头衔管理</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold shrink-0">站长视角</span>
+              </div>
+              <span class="text-[11px] text-[var(--chat-meta-color)] shrink-0 font-medium">
+                {managedBadges.length}/3
+              </span>
+            </div>
+
+            <!-- 系统固定头衔只读 -->
+            <div class="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg bg-black/5 dark:bg-white/5 gap-2">
+              <span class="text-[11px] text-[var(--chat-meta-color)]">系统固定头衔：</span>
+              <div class="flex items-center gap-1.5">
+                <span class="chat-role-badge chat-role-badge--{profile.badgeType}">
+                  {profile.badge}
+                </span>
+                <span class="text-[10px] text-[var(--chat-meta-color)] opacity-70">（固定头衔，不可修改）</span>
+              </div>
+            </div>
+
+            <!-- 自定义头衔列表编辑 -->
+            <div class="space-y-2">
+              <div class="text-[11px] font-medium text-[var(--chat-meta-color)] flex items-center justify-between">
+                <span>自定义头衔（最多 3 个）：</span>
+                {#if managedBadges.length < 3}
+                  <button
+                    type="button"
+                    class="text-[11px] text-[var(--primary)] hover:underline bg-transparent border-none cursor-pointer p-0 font-medium inline-flex items-center gap-0.5"
+                    onclick={handleAddBadge}
+                  >
+                    <span>+ 添加头衔</span>
+                  </button>
+                {/if}
+              </div>
+
+              {#if managedBadges.length === 0}
+                <div class="text-[11px] text-[var(--chat-meta-color)] opacity-70 py-1 px-1">
+                  暂未添加自定义头衔，点击右上角“+ 添加头衔”即可为该成员添加头衔。
+                </div>
+              {:else}
+                <div class="space-y-2">
+                  {#each managedBadges as badge, idx}
+                    <div class="p-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 space-y-1.5">
+                      <div class="flex items-center gap-2">
+                        <input
+                          type="text"
+                          maxlength={8}
+                          bind:value={badge.text}
+                          placeholder="输入头衔（最多 8 字）"
+                          class="chat-auth-input text-xs py-1 px-2 h-7.5 flex-1 min-w-0"
+                        />
+                        <button
+                          type="button"
+                          class="text-neutral-400 hover:text-red-500 p-1 rounded transition-colors bg-transparent border-none cursor-pointer shrink-0"
+                          onclick={() => handleRemoveBadge(idx)}
+                          aria-label="删除此头衔"
+                        >
+                          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      <div class="flex items-center justify-between text-[11px] pt-0.5">
+                        <span class="text-[var(--chat-meta-color)]">头衔颜色：</span>
+                        <div class="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            class="px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition-all flex items-center gap-1
+                              {badge.color === 'gold'
+                                ? 'chat-role-badge--gold border-amber-500/50 shadow-xs font-semibold'
+                                : 'bg-transparent text-[var(--chat-meta-color)] border-transparent opacity-60 hover:opacity-100'}"
+                            onclick={() => (badge.color = 'gold')}
+                          >
+                            <span class="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
+                            <span>金色</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition-all flex items-center gap-1
+                              {badge.color === 'gray'
+                                ? 'chat-role-badge--gray border-neutral-400/50 shadow-xs font-semibold'
+                                : 'bg-transparent text-[var(--chat-meta-color)] border-transparent opacity-60 hover:opacity-100'}"
+                            onclick={() => (badge.color = 'gray')}
+                          >
+                            <span class="w-1.5 h-1.5 rounded-full bg-neutral-400 inline-block"></span>
+                            <span>灰色</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <!-- 保存按钮与提示 -->
+            <div class="flex items-center justify-between pt-1 gap-2">
+              {#if badgeSaveNotice}
+                <span class="text-[11px] {badgeSaveNotice === '头衔已更新' ? 'text-emerald-500' : 'text-red-400'} font-medium truncate">
+                  {badgeSaveNotice}
+                </span>
+              {:else}
+                <span></span>
+              {/if}
+              <button
+                type="button"
+                class="chat-send-btn h-7.5! px-3! rounded-lg! text-xs! font-medium cursor-pointer shrink-0 disabled:opacity-50"
+                disabled={isSavingBadges}
+                onclick={handleSaveBadges}
+              >
+                {isSavingBadges ? "保存中..." : "保存头衔修改"}
+              </button>
+            </div>
+          </div>
+        {/if}
 
         <!-- 2x2 互动与活跃统计 -->
         <div class="grid grid-cols-2 gap-2">

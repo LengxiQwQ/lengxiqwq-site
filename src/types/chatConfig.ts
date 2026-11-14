@@ -4,6 +4,14 @@ export interface ChatRoomMeta {
 	subtitle: string;
 }
 
+export interface InterconnectSite {
+	name: string;
+	owner: string;
+	avatar?: string;
+	url: string;
+	desc?: string;
+}
+
 export interface ChatConfig {
 	/**
 	 * 聊天室后端 Worker 基础地址（例如 "https://chat-api.lengxiqwq.com"）
@@ -22,4 +30,8 @@ export interface ChatConfig {
 	 * PlaylistOut 公开 API 基础地址（可选，默认 https://playlistout-api.lengxiqwq.com）
 	 */
 	playlistOutApiURL?: string;
+	/**
+	 * 互联茶室联动友站列表（点击一键前往对方茶室）
+	 */
+	interconnectSites?: InterconnectSite[];
 }

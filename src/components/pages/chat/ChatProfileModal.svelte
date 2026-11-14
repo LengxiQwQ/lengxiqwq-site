@@ -2,7 +2,12 @@
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import { normalizeServerUrl } from "./chatClient";
-import type { ChatProfileDraft, ChatSessionUser } from "./chatTypes";
+import {
+	CHAT_STATUS_PRESETS,
+	type ChatProfileDraft,
+	type ChatSessionUser,
+	type ChatStatusPreset,
+} from "./chatTypes";
 
 interface Props {
 	open: boolean;
@@ -25,11 +30,8 @@ const walineProfileUrl = $derived.by(() => {
 	return base ? `${base}/ui/profile?lng=zh-CN` : "";
 });
 
-const STATUS_PRESETS = ["在线", "听歌中", "摸鱼中", "忙碌中", "潜水"];
-
 let draftNickname = $state("");
-let draftBadge = $state("");
-let draftStatus = $state("在线");
+let draftStatus = $state("");
 let draftBio = $state("");
 let draftUrl = $state("");
 let draftAvatar = $state("");
@@ -64,8 +66,11 @@ const isIsolatedGuest = $derived(
 $effect(() => {
 	if (open && currentUser) {
 		draftNickname = currentUser.name;
-		draftBadge = roleBadge.label;
-		draftStatus = currentUser.status || "在线";
+		draftStatus =
+			currentUser.status &&
+			CHAT_STATUS_PRESETS.includes(currentUser.status as ChatStatusPreset)
+				? currentUser.status
+				: "";
 		draftBio = currentUser.bio || "";
 		draftUrl = currentUser.url || "";
 		draftAvatar = currentUser.avatar || "";
@@ -80,10 +85,15 @@ $effect(() => {
 function handleSubmit(e: SubmitEvent) {
 	e.preventDefault();
 	if (!currentUser) return;
+	const statusValue = CHAT_STATUS_PRESETS.includes(
+		draftStatus as ChatStatusPreset,
+	)
+		? draftStatus
+		: "";
 	const payload: ChatProfileDraft = {
 		nickname: draftNickname.trim().slice(0, 16) || currentUser.name,
 		badge: roleBadge.label,
-		status: draftStatus.trim().slice(0, 16) || "在线",
+		status: statusValue,
 		bio: draftBio.trim().slice(0, 80),
 		url: draftUrl.trim().slice(0, 200),
 		notifyEmail: isIsolatedGuest ? false : draftNotifyEmail,
@@ -117,13 +127,18 @@ function handleSubmit(e: SubmitEvent) {
               size="md"
             />
             <div class="min-w-0">
-              <div class="flex items-center gap-1.5 min-w-0">
+              <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
                 <span class="text-xs font-bold text-[var(--deep-text)] truncate">
                   {draftNickname.trim() || currentUser.name}
                 </span>
                 <span class="chat-role-badge chat-role-badge--{roleBadge.type}">
                   {roleBadge.label}
                 </span>
+                {#if currentUser.customBadges && currentUser.customBadges.length > 0}
+                  {#each currentUser.customBadges as b (b.text)}
+                    <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
+                  {/each}
+                {/if}
               </div>
               <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
                 {draftStatus.trim() || "在线"}
@@ -166,14 +181,6 @@ function handleSubmit(e: SubmitEvent) {
                   />
                 </div>
 
-                <div class="flex items-center justify-between pt-0.5 gap-2">
-                  <span class="text-xs font-medium text-(--btn-content) opacity-85">身份头衔</span>
-                  <div class="flex items-center gap-2 min-w-0">
-                    <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
-                    <span class="text-[11px] text-(--content-meta) truncate">{roleBadge.hint}</span>
-                  </div>
-                </div>
-
                 <div>
                   <label for="profile-modal-bio" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                     个性签名（可选，最多 80 字）
@@ -192,24 +199,30 @@ function handleSubmit(e: SubmitEvent) {
 
             <div>
               <div class="chat-settings-section-title">
-                <span>在线状态</span>
+                <span>个性状态</span>
               </div>
               <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2">
-                <input
-                  id="profile-modal-status"
-                  type="text"
-                  maxlength={16}
-                  bind:value={draftStatus}
-                  placeholder="例如：听歌中 / 摸鱼中"
-                  class="chat-auth-input"
-                />
-                <div class="grid grid-cols-5 gap-1">
-                  {#each STATUS_PRESETS as preset (preset)}
+                <div class="flex items-center justify-between text-xs text-[var(--btn-content)] opacity-85 px-0.5">
+                  <span class="text-[11px]">点选状态标签：</span>
+                  {#if draftStatus}
                     <button
                       type="button"
-                      class="btn-regular rounded-md py-1.5 px-1 text-[11px] font-medium active:scale-95 transition-all cursor-pointer border-none truncate
-                        {draftStatus === preset ? 'bg-(--btn-regular-bg-hover) text-(--primary) font-semibold' : 'opacity-75'}"
-                      onclick={() => (draftStatus = preset)}
+                      class="text-[11px] text-[var(--primary)] hover:underline bg-transparent border-none cursor-pointer p-0 font-normal"
+                      onclick={() => (draftStatus = "")}
+                    >
+                      清除状态
+                    </button>
+                  {/if}
+                </div>
+                <div class="grid grid-cols-4 gap-1.5 max-h-28 overflow-y-auto custom-scrollbar pr-1 pt-0.5">
+                  {#each CHAT_STATUS_PRESETS as preset (preset)}
+                    <button
+                      type="button"
+                      class="w-full text-center px-1 py-1 text-xs rounded-lg font-medium active:scale-95 transition-all cursor-pointer border truncate
+                        {draftStatus === preset
+                          ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow-xs font-semibold'
+                          : 'bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) text-(--btn-content) opacity-80 hover:opacity-100 border-black/5 dark:border-white/10'}"
+                      onclick={() => (draftStatus = draftStatus === preset ? "" : preset)}
                     >
                       {preset}
                     </button>
@@ -219,7 +232,7 @@ function handleSubmit(e: SubmitEvent) {
             </div>
           </div>
 
-          <!-- 右栏：主页与头像 + 消息提醒 -->
+          <!-- 右栏：主页与头像 + 个人设置 -->
           <div class="space-y-3">
             <div>
               <div class="chat-settings-section-title">
@@ -271,7 +284,7 @@ function handleSubmit(e: SubmitEvent) {
 
             <div>
               <div class="chat-settings-section-title">
-                <span>消息提醒</span>
+                <span>个人设置</span>
               </div>
               <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-3 flex items-center justify-between gap-3">
                 <div class="min-w-0">
@@ -313,7 +326,6 @@ function handleSubmit(e: SubmitEvent) {
             target="_blank"
             rel="noopener noreferrer"
             class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 no-underline shrink-0"
-            title="前往 Waline 平台查看或编辑账号信息、密码与头像"
           >
             <span>{currentUser.authType === "waline" ? "Waline 个人中心" : "前往 Waline 平台"}</span>
             <span class="text-[11px] opacity-80">↗</span>

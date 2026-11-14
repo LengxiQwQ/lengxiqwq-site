@@ -677,12 +677,34 @@ if (document.readyState === 'loading') {
         left: 50%;
         transform: translateX(-50%);
         padding-top: 0.5rem;
-        pointer-events: none;
+        pointer-events: none !important;
+        visibility: hidden !important;
         z-index: 50;
+    }
+
+    .site-switcher-container .dropdown-content {
+        visibility: hidden;
+        pointer-events: none;
+        transition: opacity 200ms ease-out, transform 200ms ease-out, visibility 200ms ease-out;
+    }
+
+    .site-switcher-container:not(.is-open) .dropdown-menu,
+    .site-switcher-container:not(.is-open) .dropdown-menu * {
+        pointer-events: none !important;
+        visibility: hidden !important;
     }
 
     /* 浠呭綋鐐瑰嚮瑙﹀彂娣诲姞 is-open 鍚庢墠灞曞紑锛岄紶鏍囨斁涓婂幓 (:hover) 缁濅笉瑙﹀彂灞曞紑 */
     .site-switcher-container.is-open .dropdown-menu {
+        pointer-events: auto !important;
+        visibility: visible !important;
+    }
+
+    .site-switcher-container.is-open .dropdown-menu * {
+        visibility: visible;
+    }
+
+    .site-switcher-container.is-open .dropdown-menu *:not(:disabled):not([aria-disabled="true"]):not(.btn-disabled) {
         pointer-events: auto !important;
     }
 

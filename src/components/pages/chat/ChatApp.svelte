@@ -1,7 +1,8 @@
 <script lang="ts">
 import { onMount } from "svelte";
-import type { ChatRoomMeta } from "@/types/chatConfig";
+import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAuthModal from "./ChatAuthModal.svelte";
+import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
 import ChatProfileModal from "./ChatProfileModal.svelte";
 import ChatSettingsPopover from "./ChatSettingsPopover.svelte";
 import ChatUserDetailModal from "./ChatUserDetailModal.svelte";
@@ -12,11 +13,14 @@ import {
 	clearWalineAuth,
 	normalizeServerUrl,
 	openWalineLoginPopup,
+	readStoredWalineToken,
 	resolveInitialAuth,
 	type ServerPacket,
+	saveMemberBadges,
 	searchOnlineMusic,
 } from "./chatClient";
 import type {
+	ChatCustomBadge,
 	ChatMentionCandidate,
 	ChatMessageRecord,
 	ChatOnlineMember,
@@ -46,6 +50,7 @@ interface Props {
 	stickerPackUrls?: string[];
 	musicTracks?: ChatMusicTrack[];
 	initialMusicVolume?: number;
+	interconnectSites?: InterconnectSite[];
 }
 
 const {
@@ -57,6 +62,7 @@ const {
 	stickerPackUrls = ["/assets/stickers/qq", "/assets/stickers/miku"],
 	musicTracks = [],
 	initialMusicVolume = 1,
+	interconnectSites = [],
 }: Props = $props();
 
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
@@ -65,6 +71,7 @@ const LAST_ROOM_STORAGE_KEY = "lengxi_chat_last_room";
 let activeTab = $state<"room" | "chat" | "music">("chat");
 let currentRoom = $state(rooms[0]?.id || "chat");
 let connectionState = $state<ConnectionState>("idle");
+let isWindowFocused = $state(true);
 let currentUser = $state<ChatSessionUser | null>(null);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
 let roomOnlineMembers = $state<ChatOnlineMember[]>([]);
@@ -88,15 +95,24 @@ const mentionMembers = $derived.by<ChatMentionCandidate[]>(() => {
 			avatar: member.avatar || previous?.avatar || "",
 			bio: member.bio || previous?.bio,
 			status: member.status || previous?.status,
+			customBadges: member.customBadges || previous?.customBadges,
 			online: member.online || onlineKeys.has(member.userKey),
 		});
 	}
-	return [...merged.values()].sort(
-		(a, b) =>
-			Number(b.online) - Number(a.online) ||
-			Number(b.isAdmin) - Number(a.isAdmin) ||
-			(b.lastSeenAt || 0) - (a.lastSeenAt || 0),
-	);
+	return [...merged.values()].sort((a, b) => {
+		if (a.online !== b.online) return a.online ? -1 : 1;
+		if (a.online && b.online) {
+			if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
+			return a.name.localeCompare(b.name, "zh-CN");
+		}
+		const aTime = a.lastSeenAt || 0;
+		const bTime = b.lastSeenAt || 0;
+		if (aTime !== bTime) {
+			return bTime - aTime;
+		}
+		if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
+		return a.name.localeCompare(b.name, "zh-CN");
+	});
 });
 let totalOnlineCount = $state(0);
 let messages = $state<ChatMessageRecord[]>([]);
@@ -130,6 +146,8 @@ let skipPendingTimer: number | null = null;
 let clockOffsetMs = $state(0);
 let noticeText = $state("");
 let targetMessageUid = $state("");
+let showInterconnect = $state(false);
+let totalChatterCount = $state(0);
 let walineToken = $state("");
 let playlistRefreshSeq = $state(0);
 let musicPanelRef: {
@@ -165,6 +183,41 @@ $effect(() => {
 		ws.send(JSON.stringify({ type: "presence:audio", isMuted: muted }));
 	}
 });
+
+let lastReportedFocusKey = "";
+$effect(() => {
+	const userKey = currentUser?.userKey || "";
+	if (connectionState !== "connected" || !userKey) {
+		lastReportedFocusKey = "";
+		return;
+	}
+	const key = `${currentRoom}:${userKey}:${isWindowFocused ? 1 : 0}`;
+	if (key === lastReportedFocusKey) return;
+	if (ws && ws.readyState === WebSocket.OPEN) {
+		lastReportedFocusKey = key;
+		ws.send(JSON.stringify({ type: "presence:focus", isFocused: isWindowFocused }));
+	}
+});
+
+function mergeRoomPresence(
+	roomId: string,
+	members: ChatOnlineMember[],
+	totalCount?: number,
+) {
+	const memberMap = new Map(onlineMembers.map((m) => [m.userKey, m]));
+	for (const m of members) {
+		const existing = memberMap.get(m.userKey);
+		memberMap.set(m.userKey, {
+			...existing,
+			...m,
+			roomId,
+		});
+	}
+	onlineMembers = [...memberMap.values()];
+	if (typeof totalCount === "number" && totalCount > 0) {
+		totalOnlineCount = Math.max(totalCount, onlineMembers.length);
+	}
+}
 
 function readAnyStoredLastSeen(roomId: string): number {
 	if (typeof localStorage === "undefined") return 0;
@@ -465,12 +518,14 @@ function connectRoom(roomId: string) {
 				}
 
 				roomOnlineMembers = packet.members;
-				if (!hasGlobalPresence) {
-					onlineMembers = packet.members;
-					totalOnlineCount = packet.totalCount;
-				}
+				mergeRoomPresence(packet.roomId, packet.members, packet.totalCount);
 				void refreshGlobalPresence();
 				roomMentionMembers = packet.mentionMembers ?? [];
+				if (typeof packet.totalChatters === "number" && packet.totalChatters > 0) {
+					totalChatterCount = packet.totalChatters;
+				} else if (packet.mentionMembers && packet.mentionMembers.length > 0) {
+					totalChatterCount = Math.max(totalChatterCount, packet.mentionMembers.length);
+				}
 				musicState = packet.music;
 				clearSkipPending();
 				clockOffsetMs = packet.music.serverTime - Date.now();
@@ -620,16 +675,44 @@ function connectRoom(roomId: string) {
 				}
 				break;
 			}
+			case "member:badges_updated": {
+				const { userKey, customBadges } = packet;
+				if (currentUser && currentUser.userKey === userKey) {
+					currentUser = {
+						...currentUser,
+						customBadges,
+					};
+				}
+				roomOnlineMembers = roomOnlineMembers.map((m) =>
+					m.userKey === userKey ? { ...m, customBadges } : m,
+				);
+				roomMentionMembers = roomMentionMembers.map((m) =>
+					m.userKey === userKey ? { ...m, customBadges } : m,
+				);
+				globalMemberDirectory = globalMemberDirectory.map((m) =>
+					m.userKey === userKey ? { ...m, customBadges } : m,
+				);
+				messages = messages.map((m) =>
+					m.userKey === userKey ? { ...m, customBadges } : m,
+				);
+				if (userDetailSeed && userDetailSeed.userKey === userKey) {
+					userDetailSeed = {
+						...userDetailSeed,
+						customBadges,
+					};
+				}
+				break;
+			}
 			case "presence:update": {
 				if (packet.roomId === currentRoom) {
 					roomOnlineMembers = packet.members;
-					if (!hasGlobalPresence) {
-						onlineMembers = packet.members;
-						totalOnlineCount = packet.totalCount;
-					}
+					mergeRoomPresence(packet.roomId, packet.members, packet.totalCount);
 					void refreshGlobalPresence();
 					if (packet.mentionMembers) {
 						roomMentionMembers = packet.mentionMembers;
+					}
+					if (typeof packet.totalChatters === "number" && packet.totalChatters > 0) {
+						totalChatterCount = packet.totalChatters;
 					}
 				}
 				break;
@@ -786,6 +869,8 @@ function closePendingSocket() {
 }
 
 function handleRoomSelect(roomId: string) {
+	showInterconnect = false;
+	showSettings = false;
 	if (roomId === currentRoom) {
 		if (activeTab === "room") activeTab = "chat";
 		return;
@@ -794,6 +879,12 @@ function handleRoomSelect(roomId: string) {
 	currentRoom = roomId;
 	persistStoredRoom(roomId);
 	syncRoomUrl(roomId);
+	if (currentUser) {
+		const currentKey = currentUser.userKey;
+		onlineMembers = onlineMembers.map((m) =>
+			m.userKey === currentKey ? { ...m, roomId } : m,
+		);
+	}
 	messages = roomMessageCache.get(roomId) ?? [];
 	hasMoreHistory = false;
 	isLoadingHistory = false;
@@ -805,6 +896,14 @@ function handleRoomSelect(roomId: string) {
 	musicState = null;
 	clearSkipPending();
 	reconnectAttempt = 0;
+	if (ws) {
+		try {
+			ws.close(1000, "switch");
+		} catch {
+			// Ignore
+		}
+		ws = null;
+	}
 	connectRoom(roomId);
 	if (activeTab === "room") {
 		activeTab = "chat";
@@ -915,6 +1014,9 @@ function handleOpenUserProfile(seed: ChatUserDetailSeed) {
 				badge: enriched.badge || match.badge,
 				badgeType: enriched.badgeType || match.badgeType,
 				isAdmin: enriched.isAdmin ?? match.isAdmin,
+				location:
+					enriched.location ||
+					("location" in match ? match.location : undefined),
 			};
 		}
 	}
@@ -939,7 +1041,8 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 	if (!currentUser) return;
 	const cleanNick = draft.nickname.trim().slice(0, 16) || currentUser.name;
 	const cleanBadge = getFixedRoleBadge(currentUser);
-	const cleanStatus = draft.status.trim().slice(0, 16) || "在线";
+	const rawStatus = draft.status.trim().slice(0, 16);
+	const cleanStatus = rawStatus === "在线" ? "" : rawStatus;
 	const cleanUrl = draft.url.trim().slice(0, 200);
 	const cleanBio = (draft.bio ?? "").trim().slice(0, 80);
 	const packet: Record<string, unknown> = {
@@ -959,6 +1062,72 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 	if (sendPacket(packet)) {
 		showNotice("个人资料已更新");
 	}
+}
+
+async function handleUpdateMemberBadges(
+	targetUserKey: string,
+	badges: ChatCustomBadge[],
+): Promise<boolean> {
+	if (!currentUser?.isAdmin) return false;
+	const packet: Record<string, unknown> = {
+		type: "admin:update_member_badges",
+		targetUserKey,
+		customBadges: badges,
+	};
+	const sent = sendPacket(packet);
+	if (sent) {
+		if (currentUser.userKey === targetUserKey) {
+			currentUser = { ...currentUser, customBadges: badges };
+		}
+		roomOnlineMembers = roomOnlineMembers.map((m) =>
+			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+		);
+		roomMentionMembers = roomMentionMembers.map((m) =>
+			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+		);
+		globalMemberDirectory = globalMemberDirectory.map((m) =>
+			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+		);
+		messages = messages.map((m) =>
+			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+		);
+		if (userDetailSeed && userDetailSeed.userKey === targetUserKey) {
+			userDetailSeed = { ...userDetailSeed, customBadges: badges };
+		}
+		showNotice("头衔已更新");
+		return true;
+	}
+	const token = readStoredWalineToken();
+	const httpOk = await saveMemberBadges(
+		normalizedChatServer,
+		currentRoom,
+		targetUserKey,
+		badges,
+		token,
+	);
+	if (httpOk) {
+		if (currentUser.userKey === targetUserKey) {
+			currentUser = { ...currentUser, customBadges: badges };
+		}
+		roomOnlineMembers = roomOnlineMembers.map((m) =>
+			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+		);
+		roomMentionMembers = roomMentionMembers.map((m) =>
+			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+		);
+		globalMemberDirectory = globalMemberDirectory.map((m) =>
+			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+		);
+		messages = messages.map((m) =>
+			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+		);
+		if (userDetailSeed && userDetailSeed.userKey === targetUserKey) {
+			userDetailSeed = { ...userDetailSeed, customBadges: badges };
+		}
+		showNotice("头衔已更新");
+		return true;
+	}
+	return false;
 }
 
 function handleSendMessage(
@@ -1052,7 +1221,11 @@ function handleEnqueueTrack(track: ChatMusicTrack) {
 async function refreshGlobalPresence() {
 	if (!normalizedChatServer || isUnmounted) return;
 	try {
-		const response = await fetch(`${normalizedChatServer}/api/presence`);
+		const separator = normalizedChatServer.includes("?") ? "&" : "?";
+		const response = await fetch(
+			`${normalizedChatServer}/api/presence${separator}_t=${Date.now()}`,
+			{ cache: "no-store" },
+		);
 		if (!response.ok) return;
 		const data = (await response.json()) as {
 			members: ChatOnlineMember[];
@@ -1060,7 +1233,13 @@ async function refreshGlobalPresence() {
 		};
 		if (!isUnmounted && Array.isArray(data.members)) {
 			hasGlobalPresence = true;
-			onlineMembers = data.members;
+			const currentKey = currentUser?.userKey;
+			onlineMembers = data.members.map((m) => {
+				if (currentKey && m.userKey === currentKey) {
+					return { ...m, roomId: currentRoom };
+				}
+				return m;
+			});
 			totalOnlineCount = data.totalCount;
 		}
 	} catch {
@@ -1071,7 +1250,8 @@ async function refreshGlobalPresence() {
 async function refreshMemberDirectory() {
 	if (!normalizedChatServer || isUnmounted) return;
 	try {
-		const response = await fetch(`${normalizedChatServer}/api/members`);
+		const separator = normalizedChatServer.includes("?") ? "&" : "?";
+		const response = await fetch(`${normalizedChatServer}/api/members${separator}_t=${Date.now()}`, { cache: "no-store" });
 		if (!response.ok) return;
 		const data = (await response.json()) as {
 			members: Array<{
@@ -1085,6 +1265,7 @@ async function refreshMemberDirectory() {
 				isAdmin: boolean;
 				bio: string;
 				status: string;
+				location?: string;
 				lastSeenAt: number;
 			}>;
 		};
@@ -1101,6 +1282,7 @@ async function refreshMemberDirectory() {
 			online: false,
 			status: member.status || "",
 			bio: member.bio || "",
+			location: member.location || "",
 			lastSeenAt: member.lastSeenAt || 0,
 		}));
 	} catch {
@@ -1153,7 +1335,17 @@ onMount(() => {
 		}
 	}, 30000);
 
+	const updateFocusState = () => {
+		if (document.hidden) {
+			isWindowFocused = false;
+			return;
+		}
+		isWindowFocused =
+			typeof document.hasFocus === "function" ? document.hasFocus() : true;
+	};
+
 	const handleVisibility = () => {
+		updateFocusState();
 		if (document.visibilityState === "visible") {
 			if (baseDocumentTitle && document.title !== baseDocumentTitle) {
 				document.title = baseDocumentTitle;
@@ -1168,6 +1360,8 @@ onMount(() => {
 		}
 	};
 	document.addEventListener("visibilitychange", handleVisibility);
+	window.addEventListener("focus", updateFocusState);
+	window.addEventListener("blur", updateFocusState);
 
 	return () => {
 		isUnmounted = true;
@@ -1175,6 +1369,8 @@ onMount(() => {
 		window.clearInterval(memberTimer);
 		window.clearInterval(playlistTimer);
 		document.removeEventListener("visibilitychange", handleVisibility);
+		window.removeEventListener("focus", updateFocusState);
+		window.removeEventListener("blur", updateFocusState);
 		cancelWalinePopup?.();
 		if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
@@ -1201,9 +1397,11 @@ onMount(() => {
         onlineMembers={onlineMembers}
         mentionMembers={mentionMembers}
         totalOnlineCount={totalOnlineCount}
+        totalChatterCount={totalChatterCount}
         currentUser={currentUser}
         selfMuted={mobilePlaybackStatus.isMuted}
         connectionState={connectionState}
+        isWindowFocused={isWindowFocused}
         onRoomSelect={handleRoomSelect}
         onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
@@ -1254,8 +1452,19 @@ onMount(() => {
           walineServerUrl={walineServerUrl}
           mentionEvent={mentionEvent}
           showSettings={showSettings}
+          showInterconnect={showInterconnect}
+          isInterconnectRoom={currentRoom === "interconnect"}
+          interconnectSites={interconnectSites}
+          totalChatterCount={totalChatterCount}
           noticeText={noticeText}
-          onToggleSettings={() => (showSettings = !showSettings)}
+          onToggleSettings={() => {
+            showSettings = !showSettings;
+            if (showSettings) showInterconnect = false;
+          }}
+          onToggleInterconnect={() => {
+            showInterconnect = !showInterconnect;
+            if (showInterconnect) showSettings = false;
+          }}
           onSendMessage={handleSendMessage}
           onRecallMessage={handleRecallMessage}
           onDeleteMessage={handleDeleteMessage}
@@ -1269,6 +1478,12 @@ onMount(() => {
       <ChatSettingsPopover
         open={showSettings}
         onClose={() => (showSettings = false)}
+      />
+
+      <ChatInterconnectPopover
+        open={showInterconnect}
+        sites={interconnectSites}
+        onClose={() => (showInterconnect = false)}
       />
     </div>
 
@@ -1354,6 +1569,7 @@ onMount(() => {
     }}
     onEnqueueTrack={handleEnqueueTrack}
     onOpenPlaylist={handleOpenPlaylistFromProfile}
+    onUpdateMemberBadges={handleUpdateMemberBadges}
     onJumpToMessage={(msgUid) => {
       showUserDetailModal = false;
       targetMessageUid = msgUid;
