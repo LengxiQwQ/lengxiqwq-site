@@ -1107,6 +1107,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
       </div>
     </div>
   {:else if profile}
+    {@const safeProfileUrl = sanitizeChatUrl(profile.url, false)}
     <!-- 主体：手机端单流平滑滚动，平板/桌面端 42%:58% 左右双栏独立滚动且高度随内容自适应 -->
     <div
       bind:this={bodyContainerEl}
@@ -1186,7 +1187,6 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             {/if}
           </div>
 
-          {@const safeProfileUrl = sanitizeChatUrl(profile.url, false)}
           {#if safeProfileUrl}
             <a
               href={safeProfileUrl}

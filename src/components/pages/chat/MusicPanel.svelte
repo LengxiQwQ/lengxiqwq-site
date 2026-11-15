@@ -1,6 +1,7 @@
 <script lang="ts">
 import { onMount, tick, untrack } from "svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
+import ChatModal from "./ChatModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import { formatClockSeconds } from "./chatClient";
 import type {
@@ -3614,54 +3615,12 @@ $effect(() => {
           <div class="text-xs text-red-500 px-1">{playlistsError}</div>
         {/if}
 
-        {#if rotation}
-          <section aria-label="冷场轮播" class="space-y-2 border-b border-[var(--chat-divider-color)] pb-3">
-            <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <div class="flex min-w-0 flex-1 items-baseline gap-2">
-                <h3 class="m-0 shrink-0 text-xs font-bold text-[var(--deep-text)]">冷场轮播</h3>
-                <span class="truncate text-xs text-[var(--chat-meta-color)]" title={rotationLabel}>{rotationLabel}</span>
-              </div>
-              {#if isWalineLoggedIn && currentUser?.isAdmin}
-                <button type="button" class="chat-queue-icon-btn w-auto! min-h-8 px-2 text-xs shrink-0"
-                  aria-expanded={rotationExpanded} disabled={rotationSaving} onclick={toggleRotationSettings}>
-                  {rotationExpanded ? "收起设置" : "轮播设置"}
-                </button>
-              {/if}
-            </div>
-            {#if rotationExpanded && isWalineLoggedIn && currentUser?.isAdmin}
-              <form class="space-y-2" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>
-                <div class="flex flex-wrap items-center gap-2">
-                  <label for="chat-rotation-mode" class="text-xs text-[var(--deep-text)]">轮播方式</label>
-                  <select id="chat-rotation-mode" class="chat-playlist-input min-w-0 flex-1"
-                    bind:value={rotationMode} disabled={rotationSaving}>
-                    <option value="off">关闭</option>
-                    <option value="all">全部公开歌单</option>
-                    <option value="playlist">指定歌单</option>
-                  </select>
-                </div>
-                {#if rotationMode === "playlist"}
-                  <div class="flex flex-wrap items-center gap-2">
-                    <label for="chat-rotation-playlist" class="text-xs text-[var(--deep-text)]">公开歌单</label>
-                    <select id="chat-rotation-playlist" class="chat-playlist-input min-w-0 flex-1"
-                      bind:value={rotationPlaylistId} disabled={rotationSaving || rotationChoices.length === 0}>
-                      <option value="" disabled>{rotationChoices.length === 0 ? "没有可选的公开歌单" : "请选择歌单"}</option>
-                      {#each rotationChoices as playlist (playlist.id)}
-                        <option value={playlist.id}>{playlist.title} · {playlist.ownerName}</option>
-                      {/each}
-                    </select>
-                  </div>
-                {/if}
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <p class="m-0 flex-1 text-xs text-[var(--chat-meta-color)]">仅作用于当前房间，待播队列优先。</p>
-                  <button type="submit" disabled={rotationSaving || !canSaveRotation}
-                    class="shrink-0 rounded-lg border-none bg-(--primary) px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
-                    {rotationSaving ? "保存中" : "保存"}
-                  </button>
-                </div>
-                {#if rotationError}<p role="alert" class="m-0 text-xs text-red-500">{rotationError}</p>{/if}
-              </form>
-            {/if}
-          </section>
+        {#if rotation && isWalineLoggedIn && currentUser?.isAdmin}
+          <button type="button" class="w-full flex items-center justify-between gap-2 rounded-lg border border-[var(--chat-divider-color)] bg-transparent px-3 py-2 text-left cursor-pointer hover:bg-(--btn-plain-bg-hover)"
+            disabled={rotationSaving} onclick={toggleRotationSettings}>
+            <span class="text-xs font-semibold text-[var(--deep-text)]">冷场轮播</span>
+            <span class="min-w-0 truncate text-xs text-[var(--chat-meta-color)]">{rotationLabel} · 设置</span>
+          </button>
         {/if}
 
         <!-- 段落 1：房间精选（可折叠） -->
@@ -3971,5 +3930,44 @@ $effect(() => {
       {/if}
     </div>
   {/if}
+
+  <ChatModal open={rotationExpanded && isWalineLoggedIn && Boolean(currentUser?.isAdmin)}
+    title="冷场轮播设置" subtitle="仅作用于当前房间，待播队列优先" size="md"
+    onClose={() => { if (!rotationSaving) rotationExpanded = false; }}>
+    <form class="flex flex-col min-h-0 p-4 gap-3" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>
+      <fieldset class="border-0 p-0 m-0 flex flex-wrap gap-x-4 gap-y-2" disabled={rotationSaving}>
+        <legend class="text-xs font-semibold text-[var(--deep-text)] mb-2">轮播方式</legend>
+        <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="off" bind:group={rotationMode} />关闭</label>
+        <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="all" bind:group={rotationMode} />全部公开歌单</label>
+        <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="playlist" bind:group={rotationMode} />指定歌单</label>
+      </fieldset>
+      {#if rotationMode === "playlist"}
+        <fieldset class="border-0 p-0 m-0 min-h-0" disabled={rotationSaving}>
+          <legend class="text-xs font-semibold text-[var(--deep-text)] mb-2">选择公开歌单</legend>
+          <div class="max-h-[min(45vh,24rem)] overflow-y-auto custom-scrollbar space-y-2 pr-1">
+            {#each rotationChoices as playlist (playlist.id)}
+              <label class="flex items-center gap-2.5 p-2 rounded-xl border cursor-pointer transition-colors {rotationPlaylistId === playlist.id ? 'border-(--primary) bg-(--primary)/10' : 'border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 hover:bg-[var(--card-bg)]/80'}">
+                <input type="radio" name="rotation-playlist" value={playlist.id} bind:group={rotationPlaylistId} class="shrink-0" />
+                <span class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+                  {#if playlist.coverUrl}<img src={playlist.coverUrl} alt="" loading="lazy" class="w-full h-full object-cover" />{:else}<span class="text-sm text-(--primary)">♪</span>{/if}
+                </span>
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-xs font-bold text-[var(--deep-text)]">{playlist.title}</span>
+                  <span class="block truncate text-[10px] text-[var(--chat-meta-color)] mt-0.5">{formatPlatformLabel(playlist.platform)} · {playlist.trackCount} 首 · {playlist.ownerName || "房友"}</span>
+                </span>
+              </label>
+            {:else}
+              <p class="text-xs text-[var(--chat-meta-color)]">暂无可选的公开歌单</p>
+            {/each}
+          </div>
+        </fieldset>
+      {/if}
+      {#if rotationError}<p role="alert" class="m-0 text-xs text-red-500">{rotationError}</p>{/if}
+      <div class="flex justify-end gap-2">
+        <button type="button" class="rounded-lg px-3 py-2 text-xs border border-[var(--chat-divider-color)]" disabled={rotationSaving} onclick={() => rotationExpanded = false}>取消</button>
+        <button type="submit" disabled={rotationSaving || !canSaveRotation} class="rounded-lg border-none bg-(--primary) px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{rotationSaving ? "保存中" : "保存"}</button>
+      </div>
+    </form>
+  </ChatModal>
 
 </aside>

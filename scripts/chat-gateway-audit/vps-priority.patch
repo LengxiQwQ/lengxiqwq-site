@@ -1,0 +1,55 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -1012,4 +1012,17 @@
+ });
+ 
++function publicRoomHistory(roomId) {
++  const records = Object.hasOwn(messagesStore, roomId) ? messagesStore[roomId] : [];
++  const hidden = new Set(records.filter((message) => message.isRecalled ||
++    message.status === 'recalled' || message.status === 'deleted').map((message) => message.msgUid));
++  return records.filter((message) => !hidden.has(message.msgUid)).map((message) => {
++    if (!hidden.has(message.replyTo?.msgUid)) return message;
++    return {
++      ...message,
++      replyTo: { ...message.replyTo, content: '', hasImage: false, isRecalled: true }
++    };
++  });
++}
++
+ // WebSocket Server
+ const wss = new WebSocketServer({ server, path: '/ws' });
+@@ -1038,5 +1051,5 @@
+   }
+ 
+-  const roomMessages = messagesStore[roomId] || [];
++  const roomMessages = publicRoomHistory(roomId);
+   const initialMessages = roomMessages.slice(-50);
+ 
+@@ -1083,5 +1096,5 @@
+         broadcastPresence(oldRoom);
+ 
+-        const currentRoomMsgs = messagesStore[ws.currentRoom] || [];
++        const currentRoomMsgs = publicRoomHistory(ws.currentRoom);
+         const initSlice = currentRoomMsgs.slice(-50);
+         ws.send(JSON.stringify({
+@@ -1104,5 +1117,5 @@
+       if (packet.type === 'chat:load_history') {
+         const beforeId = Number(packet.beforeId) || 0;
+-        const roomMsgs = messagesStore[ws.currentRoom] || [];
++        const roomMsgs = publicRoomHistory(ws.currentRoom);
+         let older = [];
+         if (beforeId > 0) {
+@@ -1628,5 +1641,5 @@
+   let text = rawBody;
+ 
+-  const prefixMatch = /^\[ID:(?<name>[^\]\r\n]+)\];\[URL:(?<avatar>[^\]\r\n]*?)\](?:;\[KEY:(?<userKey>[^\]\r\n]+)\])?(?:\r?\n)?(?<content>[\s\S]*)$/.exec(rawBody);
++  const prefixMatch = ev.sender === MATRIX_ADMIN_USER_ID ? /^\[ID:(?<name>[^\]\r\n]+)\];\[URL:(?<avatar>[^\]\r\n]*?)\](?:;\[KEY:(?<userKey>[^\]\r\n]+)\])?(?:\r?\n)?(?<content>[\s\S]*)$/.exec(rawBody) : null;
+   if (prefixMatch && prefixMatch.groups) {
+     displayName = prefixMatch.groups.name;
+@@ -1781,5 +1794,5 @@
+           const rawBody = ev.content?.body || '';
+           const isFromOurMatrixServer = ev.sender.endsWith(':matrix.lengxiqwq.com') || ev.sender === MATRIX_ADMIN_USER_ID;
+-          const hasLocalPrefix = rawBody.startsWith('[ID:') && rawBody.includes(';[KEY:');
++          const hasLocalPrefix = ev.sender === MATRIX_ADMIN_USER_ID && rawBody.startsWith('[ID:') && rawBody.includes(';[KEY:');
+ 
+           if (isFromOurMatrixServer || hasLocalPrefix) {

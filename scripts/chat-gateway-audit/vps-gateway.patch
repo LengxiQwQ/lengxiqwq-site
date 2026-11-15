@@ -1,0 +1,870 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -1,6 +1,8 @@
+ import { createServer } from 'node:http';
+-import { createHmac, createHash } from 'node:crypto';
++import { createHmac, createHash, timingSafeEqual } from 'node:crypto';
+ import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
+ import { join } from 'node:path';
++import { Readable, Transform } from 'node:stream';
++import { pipeline } from 'node:stream/promises';
+ import { WebSocketServer, WebSocket } from 'ws';
+ 
+@@ -46,8 +48,9 @@
+   const [payloadB64, sig] = parts;
+   const expectedSig = signHmac(payloadB64, secret);
+-  if (sig !== expectedSig) return null;
++  if (!/^[A-Za-z0-9_-]{43}$/.test(sig) ||
++      !timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSig))) return null;
+   try {
+     const payload = JSON.parse(fromBase64Url(payloadB64));
+-    if (!payload.exp || payload.exp < Math.floor(Date.now() / 1000)) return null;
++    if (!Number.isSafeInteger(payload.exp) || payload.exp <= Math.floor(Date.now() / 1000)) return null;
+     return payload;
+   } catch { return null; }
+@@ -79,5 +82,5 @@
+   const tmpPath = `${filePath}.tmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+   try {
+-    writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
++    writeFileSync(tmpPath, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600, flush: true });
+     renameSync(tmpPath, filePath);
+   } catch (err) {
+@@ -100,6 +103,7 @@
+ 
+ function saveStoreDebounced() {
+-  clearTimeout(saveStoreDebounced._timer);
++  if (saveStoreDebounced._timer) return;
+   saveStoreDebounced._timer = setTimeout(() => {
++    saveStoreDebounced._timer = undefined;
+     writeJsonAtomic(join(DATA_DIR, 'messages_chat.json'), messagesStore.chat);
+     writeJsonAtomic(join(DATA_DIR, 'messages_interconnect.json'), messagesStore.interconnect);
+@@ -109,6 +113,8 @@
+ }
+ 
++const ROOM_IDS = new Set(['chat', 'interconnect']);
+ const clients = new Set();
+ const userMatrixTokenCache = new Map();
++const pendingMatrixAccounts = new Map();
+ const recentlySentEventIds = new Set();
+ 
+@@ -192,5 +198,8 @@
+   if (authKind === 'guest') {
+     const payload = verifyHmacToken(token, CHAT_GUEST_SECRET);
+-    if (payload && payload.user) user = payload.user;
++    if (payload?.user && /^guest:[a-f0-9]{20}$/.test(payload.user.userKey) &&
++        typeof payload.user.name === 'string') {
++      user = { ...payload.user, authType: 'guest', isAdmin: false, badge: '访客', badgeType: 'tag' };
++    }
+   } else if (authKind === 'waline') {
+     user = await verifyWalineTokenRemote(token);
+@@ -212,4 +221,10 @@
+ }
+ 
++function matrixUserIdForKey(userKey) {
++  const cleanKey = userKey.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
++  const hash = createHash('sha256').update(cleanKey).digest('hex').slice(0, 10);
++  return '@u_' + hash + ':matrix.lengxiqwq.com';
++}
++
+ // Matrix Account Provisioning for Users
+ async function getOrCreateMatrixAccountForUser(user) {
+@@ -218,11 +233,24 @@
+     return { token: MATRIX_ADMIN_TOKEN, userId: MATRIX_ADMIN_USER_ID };
+   }
+-  if (userMatrixTokenCache.has(user.userKey)) {
+-    return userMatrixTokenCache.get(user.userKey);
+-  }
+-
+-  const cleanKey = user.userKey.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+-  const rawHash = createHash('sha256').update(cleanKey).digest('hex').slice(0, 10);
+-  const matrixUsername = `u_${rawHash}`;
++  const cached = userMatrixTokenCache.get(user.userKey);
++  if (cached && cached.expiresAt > Date.now()) return cached.creds;
++  if (pendingMatrixAccounts.has(user.userKey)) return pendingMatrixAccounts.get(user.userKey);
++  const pending = provisionMatrixAccount(user);
++  pendingMatrixAccounts.set(user.userKey, pending);
++  try {
++    const creds = await pending;
++    if (creds) {
++      userMatrixTokenCache.delete(user.userKey);
++      userMatrixTokenCache.set(user.userKey, { creds, expiresAt: Date.now() + 60 * 60 * 1000 });
++      if (userMatrixTokenCache.size > 256) userMatrixTokenCache.delete(userMatrixTokenCache.keys().next().value);
++    }
++    return creds;
++  } finally {
++    pendingMatrixAccounts.delete(user.userKey);
++  }
++}
++
++async function provisionMatrixAccount(user) {
++  const matrixUsername = matrixUserIdForKey(user.userKey).split(':')[0].slice(1);
+   const matrixPassword = createHmac('sha256', CHAT_GUEST_SECRET).update(matrixUsername).digest('hex').slice(0, 24);
+ 
+@@ -233,7 +261,9 @@
+     const loginRes = await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/login`, {
+       method: 'POST',
++      signal: AbortSignal.timeout(5000),
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify({
+         type: 'm.login.password',
++        device_id: 'LENGXI_CHAT_GATEWAY',
+         identifier: { type: 'm.id.user', user: matrixUsername },
+         password: matrixPassword
+@@ -251,7 +281,9 @@
+       const regRes = await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/register`, {
+         method: 'POST',
++        signal: AbortSignal.timeout(5000),
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({
+           username: matrixUsername,
++          device_id: 'LENGXI_CHAT_GATEWAY',
+           password: matrixPassword,
+           auth: { type: 'm.login.registration_token', token: MATRIX_REG_TOKEN }
+@@ -268,27 +300,19 @@
+   }
+ 
+-  if (!token || !userId) {
+-    return { token: MATRIX_ADMIN_TOKEN, userId: MATRIX_ADMIN_USER_ID, isProxy: true };
+-  }
+-
+-  (async () => {
+-    try {
+-      const displayname = `${user.name} · 冷汐的杂货铺`;
+-      await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, {
+-        method: 'PUT',
+-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ displayname })
+-      });
+-      await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/join/${encodeURIComponent(MATRIX_ROOM_ID)}`, {
+-        method: 'POST',
+-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ server_name: ['detached.online', 'matrix.rainzt.cn', 'chat.gbk.ink'] })
+-      });
+-    } catch {}
+-  })();
+-
+-  const creds = { token, userId, isProxy: false };
+-  userMatrixTokenCache.set(user.userKey, creds);
+-  return creds;
++  if (!token || userId !== matrixUserIdForKey(user.userKey)) return null;
++  const headers = { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' };
++  try {
++    const response = await fetch(MATRIX_INTERNAL_URL + '/_matrix/client/v3/join/' + encodeURIComponent(MATRIX_ROOM_ID), {
++      method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(8000)
++    });
++    if (!response.ok) return null;
++  } catch {
++    return null;
++  }
++  void fetch(MATRIX_INTERNAL_URL + '/_matrix/client/v3/profile/' + encodeURIComponent(userId) + '/displayname', {
++    method: 'PUT', headers, signal: AbortSignal.timeout(5000),
++    body: JSON.stringify({ displayname: user.name + ' · 冷汐的杂货铺' })
++  }).catch(() => {});
++  return { token, userId };
+ }
+ 
+@@ -408,5 +432,5 @@
+   const membersMap = new Map();
+   for (const client of clients) {
+-    if (client.user && client.user.userKey && (client.currentRoom === roomId || !roomId)) {
++    if (client.readyState === WebSocket.OPEN && client.user?.userKey && (client.currentRoom === roomId || !roomId)) {
+       membersMap.set(client.user.userKey, {
+         userKey: client.user.userKey,
+@@ -450,19 +474,17 @@
+ }
+ 
++function countRoomObservers(roomId) {
++  let count = 0;
++  for (const client of clients) {
++    if (client.readyState === WebSocket.OPEN && client.currentRoom === roomId && !client.user) count++;
++  }
++  return count;
++}
++
+ function broadcastPresence(roomId) {
+   const members = getOnlineMembers(roomId);
+   const mentionMembers = getAllMentionCandidates(roomId);
+-  let observerCount = 0;
+-  let totalCount = 0;
+-  for (const client of clients) {
+-    if (client.currentRoom === roomId) {
+-      totalCount++;
+-      if (!client.user) observerCount++;
+-    }
+-  }
+-  if (roomId === 'interconnect') {
+-    const extOnline = members.filter(m => m.userKey?.startsWith('matrix:') || m.userKey?.startsWith('@'));
+-    totalCount += extOnline.length;
+-  }
++  const observerCount = countRoomObservers(roomId);
++  const totalCount = members.length + observerCount;
+   broadcastToRoom(roomId, {
+     type: 'presence:update',
+@@ -476,10 +498,16 @@
+ }
+ 
++function redactMessageOnMatrix(message) {
++  const eventId = message.matrixEventId || message.msgUid;
++  if (eventId.startsWith('$')) return redactMatrixEvent(eventId);
++}
++
+ async function redactMatrixEvent(eventId) {
+   try {
+     const txnId = 'redact_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+     const url = `${MATRIX_INTERNAL_URL}/_matrix/client/v3/rooms/${encodeURIComponent(MATRIX_ROOM_ID)}/redact/${encodeURIComponent(eventId)}/${txnId}`;
+-    await fetch(url, {
++    const response = await fetch(url, {
+       method: 'PUT',
++      signal: AbortSignal.timeout(8000),
+       headers: {
+         'Authorization': `Bearer ${MATRIX_ADMIN_TOKEN}`,
+@@ -488,4 +516,5 @@
+       body: JSON.stringify({ reason: '撤回消息' })
+     });
++    if (!response.ok) console.warn('[Matrix] Redact rejected:', response.status);
+   } catch (err) {
+     console.warn('[Matrix] Redact error:', err.message);
+@@ -506,6 +535,11 @@
+   }
+ 
+-  const host = req.headers.host || 'localhost';
+-  const url = new URL(req.url, 'http://' + host);
++  let url;
++  try {
++    url = new URL(req.url, 'http://localhost');
++  } catch {
++    res.writeHead(400).end();
++    return;
++  }
+ 
+   // Health
+@@ -529,5 +563,5 @@
+   // Global Presence
+   if (url.pathname === '/api/presence') {
+-    const members = getOnlineMembers('interconnect');
++    const members = getOnlineMembers();
+     const mentionMembers = getAllMentionCandidates('interconnect');
+     let observerCount = 0;
+@@ -854,36 +888,49 @@
+ 
+   // Matrix Media Proxy: GET /api/media/:serverName/:mediaId
+-  if (url.pathname.startsWith('/api/media/')) {
+-    const rawPath = url.pathname.slice('/api/media/'.length);
+-    const slashIdx = rawPath.indexOf('/');
+-    if (slashIdx > 0) {
+-      const serverName = decodeURIComponent(rawPath.slice(0, slashIdx));
+-      const mediaId = decodeURIComponent(rawPath.slice(slashIdx + 1));
+-      try {
+-        const mediaUrl = `${MATRIX_INTERNAL_URL}/_matrix/client/v1/media/download/${encodeURIComponent(serverName)}/${encodeURIComponent(mediaId)}`;
+-        const mRes = await fetch(mediaUrl, {
+-          headers: { Authorization: `Bearer ${MATRIX_ADMIN_TOKEN}` },
+-          signal: AbortSignal.timeout(8000)
+-        });
+-        if (!mRes.ok) {
+-          res.writeHead(mRes.status, { 'Content-Type': 'application/json' });
+-          res.end(JSON.stringify({ ok: false, error: 'Media not found or inaccessible' }));
+-          return;
+-        }
+-        const cType = mRes.headers.get('content-type') || 'application/octet-stream';
+-        res.writeHead(200, {
+-          'Content-Type': cType,
+-          'Cache-Control': 'public, max-age=604800, immutable'
+-        });
+-        const arrayBuf = await mRes.arrayBuffer();
+-        res.end(Buffer.from(arrayBuf));
+-        return;
+-      } catch (err) {
+-        console.error(`[MediaProxy] Error fetching media ${serverName}/${mediaId}:`, err.message);
+-        res.writeHead(502, { 'Content-Type': 'application/json' });
+-        res.end(JSON.stringify({ ok: false, error: 'Proxy error' }));
+-        return;
+-      }
+-    }
++  if (url.pathname.startsWith('/api/media/') && req.method === 'GET') {
++    const parts = url.pathname.slice('/api/media/'.length).split('/');
++    const mediaLimit = 5 * 1024 * 1024;
++    try {
++      if (parts.length !== 2 || parts.some((part) => !part || !/^[a-zA-Z0-9.:%_~!-]+$/.test(part))) {
++        res.writeHead(400).end();
++        return;
++      }
++      const [mediaServer, mediaId] = parts.map(decodeURIComponent);
++      if (!/^[a-zA-Z0-9.:[\]-]{1,255}$/.test(mediaServer) || !/^[a-zA-Z0-9_~!.-]{1,255}$/.test(mediaId)) {
++        res.writeHead(400).end();
++        return;
++      }
++      const mediaUrl = MATRIX_INTERNAL_URL + '/_matrix/client/v1/media/download/' +
++        encodeURIComponent(mediaServer) + '/' + encodeURIComponent(mediaId);
++      const upstream = await fetch(mediaUrl, {
++        headers: { Authorization: 'Bearer ' + MATRIX_ADMIN_TOKEN },
++        signal: AbortSignal.timeout(8000), redirect: 'error'
++      });
++      const type = (upstream.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
++      const isImage = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'].includes(type);
++      const tooLarge = Number(upstream.headers.get('content-length')) > mediaLimit;
++      if (!upstream.ok || !upstream.body || !isImage || tooLarge) {
++        await upstream.body?.cancel();
++        res.writeHead(!upstream.ok ? upstream.status : tooLarge ? 413 : 415).end();
++        return;
++      }
++      let received = 0;
++      const limit = new Transform({
++        transform(chunk, _encoding, done) {
++          received += chunk.length;
++          done(received > mediaLimit ? new Error('Media size limit exceeded') : null, chunk);
++        }
++      });
++      res.writeHead(200, {
++        'Content-Type': type, 'X-Content-Type-Options': 'nosniff',
++        'Content-Security-Policy': "default-src 'none'; sandbox",
++        'Cache-Control': 'public, max-age=300'
++      });
++      await pipeline(Readable.fromWeb(upstream.body), limit, res);
++    } catch {
++      if (!res.headersSent) res.writeHead(502).end();
++      else res.destroy();
++    }
++    return;
+   }
+ 
+@@ -1013,13 +1060,54 @@
+ 
+ // WebSocket Server
+-const wss = new WebSocketServer({ server, path: '/ws' });
++const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 64 * 1024 });
++const heartbeat = setInterval(() => {
++  for (const ws of clients) {
++    if (!ws.alive || ws.bufferedAmount > 1024 * 1024) {
++      ws.terminate();
++    } else if (ws.readyState === WebSocket.OPEN) {
++      ws.alive = false;
++      ws.ping();
++    }
++  }
++}, 30000);
++heartbeat.unref();
++
++const lastMessageId = Object.fromEntries([...ROOM_IDS].map((roomId) => [
++  roomId, messagesStore[roomId].reduce((max, message) => Math.max(max, message.id), 0)
++]));
++function nextMessageId(roomId) {
++  lastMessageId[roomId] = Math.max(Date.now(), lastMessageId[roomId] + 1);
++  return lastMessageId[roomId];
++}
++
++function visibleHistory(roomId) {
++  const records = messagesStore[roomId];
++  const hidden = new Set(records.filter((message) => message.isRecalled || message.status === 'deleted')
++    .map((message) => message.msgUid));
++  return records.filter((message) => !hidden.has(message.msgUid))
++    .map((message) => hidden.has(message.replyTo?.msgUid) ? {
++      ...message,
++      replyTo: { ...message.replyTo, content: '', hasImage: false, isRecalled: true }
++    } : message)
++    .sort((left, right) => left.id - right.id);
++}
+ 
+ wss.on('connection', async (ws, req) => {
+-  clients.add(ws);
+-  ws.user = null;
+-
+   const reqUrl = new URL(req.url, 'http://localhost');
+   const roomId = reqUrl.searchParams.get('room') || 'interconnect';
++  if (!ROOM_IDS.has(roomId)) {
++    ws.close(1008, 'Unknown room');
++    return;
++  }
++  ws.user = null;
+   ws.currentRoom = roomId;
++  ws.alive = true;
++  ws.on('pong', () => { ws.alive = true; });
++  ws.on('error', () => ws.terminate());
++  ws.on('close', () => {
++    clients.delete(ws);
++    broadcastPresence(ws.currentRoom);
++  });
++  clients.add(ws);
+ 
+   try {
+@@ -1038,15 +1126,13 @@
+   }
+ 
+-  const roomMessages = messagesStore[roomId] || [];
++  if (ws.readyState !== WebSocket.OPEN) return;
++  const roomMessages = visibleHistory(roomId);
++  const requestedLastRead = Number(reqUrl.searchParams.get('lastReadAt'));
++  const lastReadAt = Number.isSafeInteger(requestedLastRead) && requestedLastRead > 0 ? requestedLastRead : 0;
++  const unread = lastReadAt ? roomMessages.filter((message) => message.createdAt > lastReadAt) : [];
+   const initialMessages = roomMessages.slice(-50);
+ 
+-  let observerCount = 0;
+-  let totalCount = 0;
+-  for (const client of clients) {
+-    if (client.currentRoom === roomId) {
+-      totalCount++;
+-      if (!client.user) observerCount++;
+-    }
+-  }
++  const observerCount = countRoomObservers(roomId);
++  const totalCount = getOnlineMembers(roomId).length + observerCount;
+ 
+   const mentionMembers = getAllMentionCandidates(roomId);
+@@ -1058,4 +1144,7 @@
+     messages: initialMessages,
+     hasMoreHistory: roomMessages.length > initialMessages.length,
++    lastReadAt,
++    unreadCount: unread.length,
++    unreadUserCount: unread.filter((message) => message.kind === 'user').length,
+     members: getOnlineMembers(roomId),
+     mentionMembers,
+@@ -1079,9 +1168,13 @@
+       // Switch room dynamically
+       if (packet.type === 'room:switch' && packet.roomId) {
++        if (!ROOM_IDS.has(packet.roomId)) {
++          ws.send(JSON.stringify({ type: 'error', message: '未知房间' }));
++          return;
++        }
+         const oldRoom = ws.currentRoom;
+         ws.currentRoom = packet.roomId;
+         broadcastPresence(oldRoom);
+ 
+-        const currentRoomMsgs = messagesStore[ws.currentRoom] || [];
++        const currentRoomMsgs = visibleHistory(ws.currentRoom);
+         const initSlice = currentRoomMsgs.slice(-50);
+         ws.send(JSON.stringify({
+@@ -1093,6 +1186,6 @@
+           hasMoreHistory: currentRoomMsgs.length > initSlice.length,
+           members: getOnlineMembers(ws.currentRoom),
+-          observerCount: 1,
+-          totalCount: 1,
++          observerCount: countRoomObservers(ws.currentRoom),
++          totalCount: getOnlineMembers(ws.currentRoom).length + countRoomObservers(ws.currentRoom),
+           music: musicManager.getSnapshot(getOnlineUserKeys())
+         }));
+@@ -1104,5 +1197,5 @@
+       if (packet.type === 'chat:load_history') {
+         const beforeId = Number(packet.beforeId) || 0;
+-        const roomMsgs = messagesStore[ws.currentRoom] || [];
++        const roomMsgs = visibleHistory(ws.currentRoom);
+         let older = [];
+         if (beforeId > 0) {
+@@ -1118,5 +1211,6 @@
+           roomId: ws.currentRoom,
+           messages: slice,
+-          hasMoreHistory: hasMore
++          hasMoreHistory: hasMore,
++          jumpTarget: Boolean(packet.jumpTarget)
+         }));
+         return;
+@@ -1215,8 +1309,31 @@
+       // Music WebSocket commands
+       if (packet.type === 'music:enqueue') {
+-        const track = packet.track;
++        if (!ws.user) {
++          ws.send(JSON.stringify({ type: 'error', code: 'AUTH_REQUIRED', message: '请先登录或填写访客信息后再点歌' }));
++          return;
++        }
++        let track = packet.track;
++        if (track?.provider === 'external') {
++          const playlist = typeof track.playlistId === 'string' && Object.hasOwn(playlistDetailsStore, track.playlistId)
++            ? playlistDetailsStore[track.playlistId]
++            : null;
++          const item = playlist?.tracks?.find((song) => song.position === track.position);
++          if (!item) {
++            ws.send(JSON.stringify({ type: 'error', message: '歌单曲目不存在' }));
++            return;
++          }
++          try {
++            track = await musicRegistry.resolvePlaylistTrack(item);
++          } catch {
++            track = null;
++          }
++          if (!track) {
++            ws.send(JSON.stringify({ type: 'error', message: '曲库中没有找到可信的可播版本' }));
++            return;
++          }
++        }
+         const res = await musicManager.enqueueTrack(
+           track,
+-          ws.user || { userKey: 'guest:anonymous', name: '房友' },
++          ws.user,
+           getOnlineUserKeys()
+         );
+@@ -1271,5 +1388,5 @@
+         const roomMsgs = messagesStore[ws.currentRoom] || [];
+         const targetMsg = roomMsgs.find((m) => m.msgUid === packet.msgUid);
+-        if (!targetMsg) return;
++        if (!targetMsg || targetMsg.isRecalled || targetMsg.kind !== 'user') return;
+ 
+         const isOwner = targetMsg.userKey === ws.user.userKey;
+@@ -1291,7 +1408,5 @@
+         });
+ 
+-        if (ws.currentRoom === 'interconnect' && targetMsg.msgUid.startsWith('$')) {
+-          redactMatrixEvent(targetMsg.msgUid).catch(() => {});
+-        }
++        if (ws.currentRoom === 'interconnect') void redactMessageOnMatrix(targetMsg);
+         return;
+       }
+@@ -1303,5 +1418,10 @@
+         const targetIdx = roomMsgs.findIndex((m) => m.msgUid === packet.msgUid);
+         if (targetIdx >= 0) {
+-          const deletedMsg = roomMsgs.splice(targetIdx, 1)[0];
++          const deletedMsg = roomMsgs[targetIdx];
++          if (deletedMsg.isRecalled || deletedMsg.kind !== 'user') return;
++          Object.assign(deletedMsg, {
++            isRecalled: true, status: 'deleted', recalledAt: Date.now(),
++            recalledBy: ws.user.userKey, recalledByName: ws.user.name
++          });
+           saveStoreDebounced();
+           broadcastToRoom(ws.currentRoom, {
+@@ -1311,7 +1431,5 @@
+           });
+ 
+-          if (ws.currentRoom === 'interconnect' && deletedMsg.msgUid.startsWith('$')) {
+-            redactMatrixEvent(deletedMsg.msgUid).catch(() => {});
+-          }
++          if (ws.currentRoom === 'interconnect') void redactMessageOnMatrix(deletedMsg);
+         }
+         return;
+@@ -1319,8 +1437,11 @@
+ 
+       // Send chat message
+-      const hasText = typeof packet.content === 'string' && packet.content.trim().length > 0;
+-      const hasAttachments = Array.isArray(packet.attachments) && packet.attachments.length > 0;
+-
+-      if (packet.type === 'chat:send' && (hasText || hasAttachments)) {
++      const content = typeof packet.content === 'string' ? packet.content.trim().slice(0, 1000) : '';
++      const attachments = Array.isArray(packet.attachments)
++        ? packet.attachments.slice(0, 3).map((item) => item?.type === 'image' ? safeImageUrl(item.url) : '')
++          .filter(Boolean).map((url) => ({ type: 'image', url }))
++        : [];
++
++      if (packet.type === 'chat:send' && (content || attachments.length)) {
+         if (!ws.user) {
+           ws.send(JSON.stringify({
+@@ -1332,6 +1453,18 @@
+         }
+ 
++        if (!ws.user.isAdmin && Date.now() - (ws.lastChatAt || 0) < 750) {
++          ws.send(JSON.stringify({ type: 'error', message: '发言太快，请稍后重试' }));
++          return;
++        }
++        ws.lastChatAt = Date.now();
++        const records = messagesStore[ws.currentRoom];
++        const replied = typeof packet.replyToUid === 'string'
++          ? records.find((message) => message.msgUid === packet.replyToUid && !message.isRecalled)
++          : undefined;
++        const keys = new Set(Array.isArray(packet.mentionKeys) ? packet.mentionKeys.slice(0, 20) : []);
++        const mentioned = getAllMentionCandidates(ws.currentRoom)
++          .filter((member) => keys.has(member.userKey) && member.userKey !== ws.user.userKey);
+         const msg = {
+-          id: Date.now(),
++          id: nextMessageId(ws.currentRoom),
+           msgUid: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+           kind: 'user',
+@@ -1343,8 +1476,12 @@
+           badgeType: ws.user.badgeType,
+           isAdmin: Boolean(ws.user.isAdmin),
+-          content: packet.content || '',
+-          attachments: Array.isArray(packet.attachments) ? packet.attachments : [],
+-          mentions: Array.isArray(packet.mentions) ? packet.mentions : [],
+-          replyToUid: packet.replyToUid || undefined,
++          content,
++          attachments,
++          mentions: mentioned.map((member) => member.name),
++          mentionKeys: mentioned.map((member) => member.userKey),
++          replyTo: replied ? {
++            msgUid: replied.msgUid, userKey: replied.userKey, name: replied.name,
++            content: replied.content.slice(0, 120), hasImage: replied.attachments.length > 0
++          } : null,
+           createdAt: Date.now()
+         };
+@@ -1366,8 +1503,4 @@
+   });
+ 
+-  ws.on('close', () => {
+-    clients.delete(ws);
+-    broadcastPresence(ws.currentRoom);
+-  });
+ });
+ 
+@@ -1379,5 +1512,5 @@
+   const match = mxcUrl.match(/^mxc:\/\/([^\/]+)\/(.+)$/);
+   if (!match) {
+-    return mxcUrl.startsWith('http') ? mxcUrl : '';
++    return safeImageUrl(mxcUrl);
+   }
+   const serverName = match[1];
+@@ -1446,10 +1579,22 @@
+ }
+ 
++function escapeHtml(value) {
++  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
++    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
++}
++
++function safeImageUrl(raw) {
++  if (typeof raw !== 'string' || raw.length > 2048) return '';
++  try {
++    const url = new URL(raw);
++    return url.protocol === 'https:' && !url.username && !url.password ? url.href : '';
++  } catch {
++    return '';
++  }
++}
++
+ function formatMatrixContent(content, attachments = []) {
+   let md = (content || '').trim();
+-  let html = md
+-    .replace(/&/g, '&amp;')
+-    .replace(/</g, '&lt;')
+-    .replace(/>/g, '&gt;');
++  let html = escapeHtml(md).replaceAll('\n', '<br>');
+ 
+   // 1. QQ 表情: :qq_smile: -> https://lengxiqwq.com/assets/stickers/qq/qq_smile.gif
+@@ -1465,5 +1610,5 @@
+ 
+   // 2. Miku 贴纸: :miku_xxx: -> https://lengxiqwq.com/assets/stickers/miku/miku_xxx.webp
+-  const mikuRegex = /:miku_([^:\s]+):/g;
++  const mikuRegex = /:miku_([\p{L}\p{N}_-]+):/gu;
+   md = md.replace(mikuRegex, (match, name) => {
+     const fn = encodeURIComponent(`miku_${name}.webp`);
+@@ -1489,7 +1634,9 @@
+   if (Array.isArray(attachments) && attachments.length > 0) {
+     for (const att of attachments) {
+-      if (att && att.url) {
+-        md = md ? `${md}\n\n![图片](${att.url})` : `![图片](${att.url})`;
+-        html = html ? `${html}<br><img src="${att.url}" alt="图片" />` : `<img src="${att.url}" alt="图片" />`;
++      const url = safeImageUrl(att?.url);
++      if (url) {
++        md = md ? `${md}\n\n![图片](<${url}>)` : `![图片](<${url}>)`;
++        const image = `<img src="${escapeHtml(url)}" alt="图片" />`;
++        html = html ? `${html}<br>${image}` : image;
+       }
+     }
+@@ -1503,25 +1650,14 @@
+   try {
+     const creds = await getOrCreateMatrixAccountForUser(user);
+-    const token = creds?.token || MATRIX_ADMIN_TOKEN;
+-
+-    const txnId = 'txn_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+-    let { markdownBody, htmlBody } = formatMatrixContent(msg.content, msg.attachments);
+-
+-    // If using Admin token proxy for non-admin user, add author prefix
+-    if (creds?.isProxy && !user.isAdmin) {
+-      const prefixText = `[ID:${user.name}];[URL:${user.avatar || ''}];[KEY:${user.userKey}]\n`;
+-      markdownBody = prefixText + markdownBody;
+-      htmlBody = `<div>[ID:${user.name}]</div>` + htmlBody;
+-    }
+-
+-    recentlySentEventIds.add(msg.msgUid);
+-    setTimeout(() => {
+-      recentlySentEventIds.delete(msg.msgUid);
+-    }, 60000);
+-
++    if (!creds?.token || msg.isRecalled) return;
++    const { token } = creds;
++
++    const txnId = encodeURIComponent(msg.msgUid);
++    const { markdownBody, htmlBody } = formatMatrixContent(msg.content, msg.attachments);
+     const url = `${MATRIX_INTERNAL_URL}/_matrix/client/v3/rooms/${encodeURIComponent(MATRIX_ROOM_ID)}/send/m.room.message/${txnId}`;
+ 
+     const res = await fetch(url, {
+       method: 'PUT',
++      signal: AbortSignal.timeout(8000),
+       headers: {
+         Authorization: `Bearer ${token}`,
+@@ -1532,8 +1668,10 @@
+         body: markdownBody,
+         format: 'org.matrix.custom.html',
+-        formatted_body: htmlBody
++        formatted_body: htmlBody,
++        'com.lengxiqwq.chat.uid': msg.msgUid
+       })
+     });
+ 
++    if (!res.ok) console.warn('[Matrix] Send rejected:', res.status);
+     if (res.ok) {
+       const data = await res.json().catch(() => null);
+@@ -1541,7 +1679,9 @@
+         recentlySentEventIds.add(data.event_id);
+         msg.matrixEventId = data.event_id;
++        saveStoreDebounced();
++        if (msg.isRecalled) void redactMessageOnMatrix(msg);
+         setTimeout(() => {
+           recentlySentEventIds.delete(data.event_id);
+-        }, 120000);
++        }, 120000).unref();
+       }
+     }
+@@ -1605,5 +1745,6 @@
+ async function parseMatrixEvent(ev) {
+   const msgType = ev.content?.msgtype;
+-  let rawBody = ev.content?.body || '';
++  if (!['m.text', 'm.image'].includes(msgType) || ev.content?.['m.relates_to']?.rel_type === 'm.replace') return null;
++  let rawBody = typeof ev.content?.body === 'string' ? ev.content.body.slice(0, 8000) : '';
+ 
+   if (!rawBody && msgType !== 'm.image') return null;
+@@ -1611,8 +1752,5 @@
+   let attachments = [];
+   if (msgType === 'm.image') {
+-    let imgUrl = ev.content?.url || '';
+-    if (imgUrl.startsWith('mxc://')) {
+-      imgUrl = mxcToHttp(imgUrl);
+-    }
++    const imgUrl = mxcToHttp(ev.content?.url);
+     if (imgUrl) {
+       attachments.push({ type: 'image', url: imgUrl });
+@@ -1625,16 +1763,6 @@
+   let displayName = '';
+   let avatarUrl = '';
+-  let customUserKey = '';
+   let text = rawBody;
+-
+-  const prefixMatch = /^\[ID:(?<name>[^\]\r\n]+)\];\[URL:(?<avatar>[^\]\r\n]*?)\](?:;\[KEY:(?<userKey>[^\]\r\n]+)\])?(?:\r?\n)?(?<content>[\s\S]*)$/.exec(rawBody);
+-  if (prefixMatch && prefixMatch.groups) {
+-    displayName = prefixMatch.groups.name;
+-    avatarUrl = prefixMatch.groups.avatar;
+-    customUserKey = prefixMatch.groups.userKey || '';
+-    text = prefixMatch.groups.content;
+-  }
+-
+-  const isSelfAdmin = ev.sender === MATRIX_ADMIN_USER_ID && !prefixMatch;
++  const isSelfAdmin = ev.sender === MATRIX_ADMIN_USER_ID;
+   const isFromOurMatrixServer = ev.sender.endsWith(':matrix.lengxiqwq.com');
+ 
+@@ -1670,5 +1798,5 @@
+   }
+ 
+-  const finalUserKey = customUserKey || (isSelfAdmin ? 'waline:1' : `matrix:${ev.sender}`);
++  const finalUserKey = (isSelfAdmin ? 'waline:1' : `matrix:${ev.sender}`);
+ 
+   // Extract and resolve mentions
+@@ -1739,4 +1867,5 @@
+ 
+       const res = await fetch(syncUrl.toString(), {
++        signal: AbortSignal.timeout(40000),
+         headers: { Authorization: `Bearer ${MATRIX_ADMIN_TOKEN}` }
+       });
+@@ -1748,5 +1877,4 @@
+ 
+       const data = await res.json();
+-      nextBatch = data.next_batch || nextBatch;
+ 
+       // Realtime member profile cache updates
+@@ -1767,4 +1895,15 @@
+       const roomEvents = data.rooms?.join?.[MATRIX_ROOM_ID]?.timeline?.events || [];
+       for (const ev of roomEvents) {
++        if (ev.type === 'm.room.redaction') {
++          const eventId = ev.content?.redacts || ev.redacts;
++          if (typeof eventId !== 'string') continue;
++          const message = messagesStore.interconnect.find((item) =>
++            item.matrixEventId === eventId || item.msgUid === eventId);
++          if (message && !message.isRecalled) {
++            Object.assign(message, { isRecalled: true, status: 'deleted', recalledAt: Date.now() });
++            saveStoreDebounced();
++            broadcastToRoom('interconnect', { type: 'chat:deleted', roomId: 'interconnect', msgUid: message.msgUid });
++          }
++        }
+         if (ev.type === 'm.room.message') {
+           // 1. Skip if recently sent from our server
+@@ -1778,28 +1917,14 @@
+           }
+ 
+-          // 3. Loopback prevention for messages sent from this server / local users
+-          const rawBody = ev.content?.body || '';
+-          const isFromOurMatrixServer = ev.sender.endsWith(':matrix.lengxiqwq.com') || ev.sender === MATRIX_ADMIN_USER_ID;
+-          const hasLocalPrefix = rawBody.startsWith('[ID:') && rawBody.includes(';[KEY:');
+-
+-          if (isFromOurMatrixServer || hasLocalPrefix) {
+-            let text = rawBody;
+-            if (hasLocalPrefix) {
+-              const newlineIdx = rawBody.indexOf('\n');
+-              if (newlineIdx !== -1) {
+-                text = rawBody.slice(newlineIdx + 1);
+-              }
+-            }
+-            const originTs = ev.origin_server_ts || Date.now();
+-            const matchedLocal = messagesStore.interconnect.slice(-30).reverse().find((m) => {
+-              if (m.matrixEventId === ev.event_id) return true;
+-              const timeDiff = Math.abs((m.createdAt || 0) - originTs);
+-              return timeDiff < 60000 && m.content === text;
+-            });
+-
+-            if (matchedLocal) {
+-              matchedLocal.matrixEventId = ev.event_id;
+-              recentlySentEventIds.add(ev.event_id);
+-              // Local origin, DO NOT secondary broadcast to room!
++          const localUid = ev.content?.['com.lengxiqwq.chat.uid'];
++          const local = typeof localUid === 'string'
++            ? messagesStore.interconnect.find((message) => message.msgUid === localUid)
++            : undefined;
++          if (local) {
++            const localSender = local.isAdmin ? MATRIX_ADMIN_USER_ID : matrixUserIdForKey(local.userKey);
++            if (ev.sender === localSender) {
++              local.matrixEventId = ev.event_id;
++              saveStoreDebounced();
++              if (local.isRecalled) void redactMessageOnMatrix(local);
+               continue;
+             }
+@@ -1808,4 +1933,5 @@
+           const msg = await parseMatrixEvent(ev);
+           if (msg) {
++            msg.id = nextMessageId('interconnect');
+             messagesStore.interconnect.push(msg);
+             saveStoreDebounced();
+@@ -1814,4 +1940,5 @@
+         }
+       }
++      nextBatch = data.next_batch || nextBatch;
+     } catch (err) {
+       console.error('[Matrix] Sync loop error:', err.message);
+--- a/src/music/music-manager.mjs
++++ b/src/music/music-manager.mjs
+@@ -356,5 +356,9 @@
+ 
+   reportDuration(playUid, durationSec) {
+-    if (this.current && this.current.uid === playUid && durationSec > 0) {
++    if (this.current && this.current.uid === playUid && !(this.current.track.durationSec > 0) &&
++        Number.isFinite(durationSec) && durationSec >= 10 && durationSec <= 1800) {
++      clearTimeout(this._advanceTimer);
++      const due = this.current.startedAt + (durationSec + 10) * 1000;
++      this._advanceTimer = setTimeout(() => this.advanceNext(), Math.max(0, due - Date.now()));
+       this.current.durationSec = durationSec;
+       this.current.track.durationSec = durationSec;
+@@ -381,7 +385,8 @@
+ 
+   ended(playUid) {
+-    if (this.current && this.current.uid === playUid) {
+-      this.advanceNext();
+-    }
++    if (!this.current || this.current.uid !== playUid) return;
++    const elapsed = (Date.now() - this.current.startedAt) / 1000;
++    const duration = this.current.track.durationSec;
++    if (elapsed >= (duration > 0 ? Math.max(8, duration - 4) : 25)) this.advanceNext();
+   }
+ 
+--- a/src/music/registry.mjs
++++ b/src/music/registry.mjs
+@@ -33,4 +33,20 @@
+     }
+     return [];
++  }
++
++  async resolvePlaylistTrack(item) {
++    if (item.matchedTrack) return item.matchedTrack;
++    if (item.sourcePlatform === 'qqmusic' && item.sourceTrackId) {
++      return {
++        id: 'qq:' + item.sourceTrackId, provider: 'qq', sourceId: item.sourceTrackId,
++        title: item.title, artist: item.artist, cover: item.cover, durationSec: item.durationSec
++      };
++    }
++    const normalize = (value) => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, '');
++    const matches = await this.search(item.title + ' ' + item.artist, 10, 'qq');
++    const match = matches.find((candidate) => normalize(candidate.title) === normalize(item.title) &&
++      normalize(candidate.artist) === normalize(item.artist) &&
++      (!(candidate.durationSec > 0 && item.durationSec > 0) || Math.abs(candidate.durationSec - item.durationSec) <= 5));
++    return match ?? null;
+   }
+ 
