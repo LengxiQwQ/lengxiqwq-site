@@ -709,24 +709,65 @@ export async function registerGuestSession(
 	}
 }
 
+export interface MusicSearchResponse {
+	tracks: ChatMusicTrack[];
+	hasMore: boolean;
+	page: number;
+}
+
 export async function searchOnlineMusic(
 	chatServerUrl: string,
 	keyword: string,
-): Promise<ChatMusicTrack[]> {
+	options?: { signal?: AbortSignal; limit?: number; page?: number },
+): Promise<MusicSearchResponse> {
 	const base = normalizeServerUrl(chatServerUrl);
 	const q = keyword.trim();
-	if (!base || !q) return [];
-	const resp = await fetch(
-		`${base}/api/music/search?q=${encodeURIComponent(q)}&limit=15`,
-	);
-	if (!resp.ok) {
-		throw new Error(`搜索请求失败 (${resp.status})`);
+	if (!base || !q) return { tracks: [], hasMore: false, page: 1 };
+	const limit = Math.min(30, Math.max(1, options?.limit ?? 30));
+	const page = Math.max(1, options?.page ?? 1);
+
+	const controller = new AbortController();
+	const timeoutId = window.setTimeout(() => controller.abort("timeout"), 10_000);
+	const onExternalAbort = () => controller.abort(options?.signal?.reason);
+	if (options?.signal) {
+		if (options.signal.aborted) {
+			window.clearTimeout(timeoutId);
+			controller.abort(options.signal.reason);
+		} else {
+			options.signal.addEventListener("abort", onExternalAbort, { once: true });
+		}
 	}
-	const data = (await resp.json()) as {
-		ok?: boolean;
-		tracks?: ChatMusicTrack[];
-	};
-	return Array.isArray(data.tracks) ? data.tracks : [];
+
+	try {
+		const resp = await fetch(
+			`${base}/api/music/search?q=${encodeURIComponent(q)}&limit=${limit}&page=${page}`,
+			{ signal: controller.signal },
+		);
+		const data = (await resp.json().catch(() => null)) as {
+			ok?: boolean;
+			error?: string;
+			hasMore?: boolean;
+			page?: number;
+			tracks?: ChatMusicTrack[];
+		} | null;
+		if (!resp.ok || data?.ok === false) {
+			throw new Error(data?.error || `搜索请求失败 (${resp.status})`);
+		}
+		const tracks = Array.isArray(data?.tracks) ? data.tracks : [];
+		return {
+			tracks,
+			hasMore: Boolean(data?.hasMore ?? tracks.length >= limit),
+			page: typeof data?.page === "number" ? data.page : page,
+		};
+	} catch (err) {
+		if (controller.signal.aborted && controller.signal.reason === "timeout") {
+			throw new Error("搜索超时，请稍后重试");
+		}
+		throw err;
+	} finally {
+		window.clearTimeout(timeoutId);
+		options?.signal?.removeEventListener("abort", onExternalAbort);
+	}
 }
 
 async function compressChatImageIfNeeded(file: File): Promise<File> {

@@ -1589,8 +1589,11 @@ function handleTyping(typing: boolean) {
 	sendPacket({ type: "chat:typing", typing });
 }
 
-async function handleSearchOnline(keyword: string): Promise<ChatMusicTrack[]> {
-	return searchOnlineMusic(normalizedChatServer, keyword);
+async function handleSearchOnline(
+	keyword: string,
+	options?: { signal?: AbortSignal; page?: number },
+) {
+	return searchOnlineMusic(normalizedChatServer, keyword, options);
 }
 
 function handleEnqueueTrack(track: ChatMusicTrack) {

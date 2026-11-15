@@ -49,7 +49,10 @@ interface Props {
 	clockOffsetMs: number;
 	initialVolume?: number;
 	initialListening?: boolean;
-	onSearchOnline: (keyword: string) => Promise<ChatMusicTrack[]>;
+	onSearchOnline: (
+		keyword: string,
+		options?: { signal?: AbortSignal; page?: number },
+	) => Promise<{ tracks: ChatMusicTrack[]; hasMore: boolean; page: number }>;
 	onEnqueueTrack: (track: ChatMusicTrack) => void;
 	onRemoveQueue: (uid: string) => void;
 	onPlayQueued: (uid: string) => void;
@@ -221,10 +224,14 @@ let coverLoadFailed = $state(false);
 
 // 搜索相关状态
 let searchQuery = $state("");
+let submittedSearchQuery = $state("");
 let searchResults = $state<ChatMusicTrack[]>([]);
+let searchPage = $state(1);
+let hasMoreSearchResults = $state(false);
 let isSearching = $state(false);
+let isLoadingMore = $state(false);
 let searchError = $state("");
-let searchTimer: number | null = null;
+let searchAbortController: AbortController | null = null;
 
 // 歌单相关状态
 let featuredCollapsed = $state(false);
@@ -638,8 +645,12 @@ $effect(() => {
 	if (!currentUser && activeTab !== "player") {
 		activeTab = "player";
 		searchQuery = "";
+		submittedSearchQuery = "";
 		searchResults = [];
 		searchError = "";
+		isSearching = false;
+		searchAbortController?.abort();
+		searchAbortController = null;
 		selectedRequesterKey = "";
 		showRequesterFilter = false;
 		selectedPlaylist = null;
@@ -700,7 +711,7 @@ const pendingPlaylistDetails = new Map<string, Promise<PlaylistDetail>>();
 let playlistHoverTimer: number | null = null;
 const searchResultCache = new Map<
 	string,
-	{ tracks: ChatMusicTrack[]; fetchedAt: number }
+	{ tracks: ChatMusicTrack[]; hasMore: boolean; fetchedAt: number }
 >();
 
 function invalidatePlaylistCaches(playlistId?: string): void {
@@ -1837,55 +1848,129 @@ $effect(() => {
 	}
 });
 
-// 搜索防抖
+// 清空输入框时重置搜索状态，不再输入即发请求
 $effect(() => {
-	const q = searchQuery.trim();
-	if (searchTimer !== null) {
-		window.clearTimeout(searchTimer);
-		searchTimer = null;
-	}
-	if (!q) {
+	if (!searchQuery.trim()) {
+		searchAbortController?.abort();
+		searchAbortController = null;
+		submittedSearchQuery = "";
 		searchResults = [];
+		searchPage = 1;
+		hasMoreSearchResults = false;
 		isSearching = false;
+		isLoadingMore = false;
 		searchError = "";
-		return;
 	}
-
-	const cacheKey = q.toLowerCase();
-	const cached = searchResultCache.get(cacheKey);
-	if (cached && Date.now() - cached.fetchedAt < SEARCH_CACHE_TTL_MS) {
-		searchResults = cached.tracks;
-		isSearching = false;
-		searchError = "";
-		return;
-	}
-
-	isSearching = true;
-	searchError = "";
-	searchTimer = window.setTimeout(() => {
-		void runSearch(q);
-	}, 700);
 });
 
-async function runSearch(q: string) {
+function clearSearch() {
+	searchAbortController?.abort();
+	searchAbortController = null;
+	searchQuery = "";
+	submittedSearchQuery = "";
+	searchResults = [];
+	searchPage = 1;
+	hasMoreSearchResults = false;
+	isSearching = false;
+	isLoadingMore = false;
+	searchError = "";
+}
+
+function submitSearch(bypassCache = false) {
+	const q = searchQuery.trim();
+	if (!q) {
+		clearSearch();
+		return;
+	}
+	void runSearch(q, bypassCache);
+}
+
+async function runSearch(q: string, bypassCache = false) {
+	searchAbortController?.abort();
+	const controller = new AbortController();
+	searchAbortController = controller;
+
+	submittedSearchQuery = q;
+	searchError = "";
+	searchPage = 1;
+	isLoadingMore = false;
+
+	const cacheKey = q.toLowerCase();
+	const cached = !bypassCache ? searchResultCache.get(cacheKey) : undefined;
+	if (cached && Date.now() - cached.fetchedAt < SEARCH_CACHE_TTL_MS) {
+		searchResults = cached.tracks;
+		hasMoreSearchResults = cached.hasMore;
+		isSearching = false;
+		return;
+	}
+
+	searchResults = [];
+	hasMoreSearchResults = false;
+	isSearching = true;
 	try {
-		const tracks = await onSearchOnline(q);
-		searchResultCache.set(q.toLowerCase(), {
-			tracks,
+		const res = await onSearchOnline(q, { signal: controller.signal, page: 1 });
+		if (controller.signal.aborted) return;
+		searchResultCache.set(cacheKey, {
+			tracks: res.tracks,
+			hasMore: res.hasMore,
 			fetchedAt: Date.now(),
 		});
-		if (searchQuery.trim() === q) {
-			searchResults = tracks;
+		if (submittedSearchQuery === q) {
+			searchResults = res.tracks;
+			searchPage = res.page;
+			hasMoreSearchResults = res.hasMore;
 			searchError = "";
 		}
 	} catch (err) {
-		if (searchQuery.trim() === q) {
+		if (controller.signal.aborted && err instanceof DOMException && err.name === "AbortError") {
+			return;
+		}
+		if (controller.signal.aborted && controller.signal.reason !== "timeout") {
+			return;
+		}
+		if (submittedSearchQuery === q) {
 			searchError = err instanceof Error ? err.message : "搜索失败，请稍后重试";
 		}
 	} finally {
-		if (searchQuery.trim() === q) {
+		if (searchAbortController === controller) {
+			searchAbortController = null;
 			isSearching = false;
 		}
+	}
+}
+
+async function loadMoreSearchResults() {
+	const q = submittedSearchQuery;
+	if (!q || isSearching || isLoadingMore || !hasMoreSearchResults) return;
+
+	const nextPage = searchPage + 1;
+	const controller = new AbortController();
+	searchAbortController = controller;
+	isLoadingMore = true;
+
+	try {
+		const res = await onSearchOnline(q, {
+			signal: controller.signal,
+			page: nextPage,
+		});
+		if (controller.signal.aborted || submittedSearchQuery !== q) return;
+		const existingIds = new Set(searchResults.map((t) => t.id));
+		const newTracks = res.tracks.filter((t) => !existingIds.has(t.id));
+		searchResults = [...searchResults, ...newTracks];
+		searchPage = res.page;
+		hasMoreSearchResults = res.hasMore && newTracks.length > 0;
+	} catch (err) {
+		if (controller.signal.aborted && err instanceof DOMException && err.name === "AbortError") {
+			return;
+		}
+		if (submittedSearchQuery === q) {
+			searchError = err instanceof Error ? err.message : "加载更多失败，请稍后重试";
+		}
+	} finally {
+		if (searchAbortController === controller) {
+			searchAbortController = null;
+		}
+		isLoadingMore = false;
 	}
 }
 
@@ -1968,9 +2053,8 @@ onMount(() => {
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleKeydown);
 		window.clearInterval(roomClock);
-		if (searchTimer !== null) {
-			window.clearTimeout(searchTimer);
-		}
+		searchAbortController?.abort();
+		searchAbortController = null;
 		if (confirmDeleteTimer !== null) {
 			window.clearTimeout(confirmDeleteTimer);
 		}
@@ -1999,7 +2083,7 @@ export function openPlayerTab(): void {
 }
 
 const displayedBrowseTracks = $derived(
-	searchQuery.trim() ? searchResults : fallbackTracks,
+	submittedSearchQuery ? searchResults : fallbackTracks,
 );
 
 $effect(() => {
@@ -2747,63 +2831,117 @@ $effect(() => {
   {:else if activeTab === "search"}
     <!-- Tab 2：歌曲 / 歌手搜索与待播队列 -->
     <div class="px-3 pt-2.5 pb-2 shrink-0">
-      <div class="relative">
-        <svg class="w-3.5 h-3.5 text-[var(--chat-meta-color)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <circle cx="11" cy="11" r="8" />
-          <line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-        <input
-          type="text"
-          bind:value={searchQuery}
-          placeholder="搜索歌曲 / 歌手"
-          class="chat-music-search is-focus-reveal"
-          onkeydown={(e) => {
-            if (e.key === "Enter" && searchQuery.trim()) {
-              if (searchTimer !== null) window.clearTimeout(searchTimer);
-              isSearching = true;
-              void runSearch(searchQuery.trim());
-            }
-          }}
-        />
-        {#if searchQuery.trim().length > 0}
-          <button
-            type="button"
-            class="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
-            aria-label="清除搜索"
-            onclick={() => (searchQuery = "")}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        {/if}
+      <div class="flex items-center gap-1.5">
+        <div class="relative flex-1 min-w-0">
+          <svg class="w-3.5 h-3.5 text-[var(--chat-meta-color)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            type="text"
+            bind:value={searchQuery}
+            placeholder="搜索歌曲 / 歌手"
+            class="chat-music-search is-focus-reveal"
+            onkeydown={(e) => {
+              if (e.key === "Enter" && !e.isComposing) {
+                submitSearch();
+              }
+            }}
+          />
+          {#if searchQuery.trim().length > 0}
+            <button
+              type="button"
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
+              aria-label="清除搜索"
+              onclick={clearSearch}
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          {/if}
+        </div>
+        <button
+          type="button"
+          class="shrink-0 h-[32px] px-3 rounded-full text-xs font-medium border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          disabled={!searchQuery.trim() || isSearching}
+          onclick={() => submitSearch()}
+        >
+          {isSearching ? "搜索中" : "搜索"}
+        </button>
       </div>
     </div>
 
     <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 pb-3 space-y-3">
       <div>
-        {#if !searchQuery.trim() && fallbackTracks.length === 0}
+        {#if !submittedSearchQuery && !isSearching && fallbackTracks.length === 0}
           <div class="text-center py-6 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-1">
-            <p class="text-xs font-medium text-[var(--deep-text)] m-0">搜索歌曲 / 歌手即可点播</p>
+            <p class="text-xs font-medium text-[var(--deep-text)] m-0">输入歌名或歌手后点击「搜索」</p>
             <p class="text-[11px] text-[var(--chat-meta-color)] m-0">点歌后全房将同步播放与滚动歌词</p>
           </div>
         {:else}
           <div class="flex items-center justify-between mb-1 px-0.5">
             <span class="text-xs font-medium text-[var(--chat-meta-color)]">
-              {searchQuery.trim()
+              {submittedSearchQuery || isSearching
                 ? isSearching
                   ? "正在搜索..."
                   : `搜索结果 (${displayedBrowseTracks.length})`
                 : `房间曲库 (${displayedBrowseTracks.length})`}
             </span>
+            {#if submittedSearchQuery}
+              <button
+                type="button"
+                class="text-[11px] text-[var(--chat-meta-color)] hover:text-(--primary) bg-transparent border-none p-0 cursor-pointer"
+                onclick={clearSearch}
+              >
+                {fallbackTracks.length > 0 ? "返回曲库" : "清空"}
+              </button>
+            {/if}
           </div>
 
-          {#if searchError}
-            <div class="text-center py-4 text-xs text-red-500">{searchError}</div>
-          {:else if !isSearching && displayedBrowseTracks.length === 0}
-            <div class="text-center py-5 rounded-xl border border-dashed border-[var(--chat-divider-color)]">
-              <p class="text-xs text-[var(--chat-meta-color)]">未找到相关歌曲，换个关键词试试吧</p>
+          {#if isSearching}
+            <div class="text-center py-8 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-1.5">
+              <div class="inline-block w-4 h-4 rounded-full border-2 border-[var(--primary)]/30 border-t-[var(--primary)] animate-spin"></div>
+              <p class="text-xs text-[var(--chat-meta-color)] m-0">正在搜索「{submittedSearchQuery}」...</p>
+            </div>
+          {:else if searchError && displayedBrowseTracks.length === 0}
+            <div class="text-center py-5 px-3 rounded-xl border border-dashed border-red-400/40 space-y-2">
+              <p class="text-xs text-red-500 m-0">{searchError}</p>
+              <div class="flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  class="px-3 py-1 rounded-full text-xs border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer"
+                  onclick={() => submitSearch(true)}
+                >
+                  重试
+                </button>
+                <button
+                  type="button"
+                  class="px-3 py-1 rounded-full text-xs border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] cursor-pointer"
+                  onclick={clearSearch}
+                >
+                  清空
+                </button>
+              </div>
+            </div>
+          {:else if displayedBrowseTracks.length === 0}
+            <div class="text-center py-6 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-2">
+              <p class="text-xs font-medium text-[var(--deep-text)] m-0">
+                {submittedSearchQuery
+                  ? `未找到与「${submittedSearchQuery}」相关的歌曲`
+                  : "暂无可用曲目"}
+              </p>
+              <p class="text-[11px] text-[var(--chat-meta-color)] m-0">请检查关键词拼写，或换个歌名 / 歌手试试</p>
+              {#if submittedSearchQuery}
+                <button
+                  type="button"
+                  class="px-3 py-1 rounded-full text-xs border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
+                  onclick={clearSearch}
+                >
+                  清空搜索
+                </button>
+              {/if}
             </div>
           {:else}
             <div class="space-y-0.5">
@@ -2814,6 +2952,21 @@ $effect(() => {
                 )}
               {/each}
             </div>
+            {#if searchError}
+              <div class="text-center pt-2 text-xs text-red-500">{searchError}</div>
+            {/if}
+            {#if submittedSearchQuery && hasMoreSearchResults}
+              <div class="pt-2 flex justify-center">
+                <button
+                  type="button"
+                  class="px-4 py-1.5 rounded-full text-xs border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) hover:border-[var(--primary)]/40 disabled:opacity-50 transition-colors cursor-pointer"
+                  disabled={isLoadingMore}
+                  onclick={() => void loadMoreSearchResults()}
+                >
+                  {isLoadingMore ? "正在加载更多..." : "加载更多结果"}
+                </button>
+              </div>
+            {/if}
           {/if}
         {/if}
       </div>
