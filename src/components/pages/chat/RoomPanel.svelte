@@ -1,4 +1,6 @@
 <script lang="ts">
+import { backOut, cubicOut } from "svelte/easing";
+import type { TransitionConfig } from "svelte/transition";
 import Icon from "@/components/common/Icon.svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
@@ -224,6 +226,78 @@ $effect(() => {
 	}, 30000);
 	return () => clearInterval(timer);
 });
+
+let logoutConfirmOpen = $state(false);
+let logoutConfirmWrapEl: HTMLDivElement | null = $state(null);
+
+function prefersReducedMotion(): boolean {
+	return (
+		typeof window !== "undefined" &&
+		window.matchMedia("(prefers-reduced-motion: reduce)").matches
+	);
+}
+
+function toolboxIn(_node: Element): TransitionConfig {
+	if (prefersReducedMotion()) {
+		return { duration: 0 };
+	}
+	return {
+		duration: 240,
+		easing: backOut,
+		css: (t) => {
+			const opacity = Math.min(1, Math.max(0, t * 1.45));
+			const translateY = (1 - t) * 10;
+			const scale = 0.86 + 0.14 * t;
+			return `opacity: ${opacity}; transform: translate3d(0, ${translateY.toFixed(2)}px, 0) scale(${scale.toFixed(4)});`;
+		},
+	};
+}
+
+function toolboxOut(_node: Element): TransitionConfig {
+	if (prefersReducedMotion()) {
+		return { duration: 0 };
+	}
+	return {
+		duration: 140,
+		easing: cubicOut,
+		css: (t) => {
+			const translateY = (1 - t) * 6;
+			const scale = 0.92 + 0.08 * t;
+			return `opacity: ${t}; transform: translate3d(0, ${translateY.toFixed(2)}px, 0) scale(${scale.toFixed(4)});`;
+		},
+	};
+}
+
+$effect(() => {
+	if (!currentUser) {
+		logoutConfirmOpen = false;
+	}
+});
+
+$effect(() => {
+	if (!logoutConfirmOpen) return;
+	const handlePointerDown = (e: PointerEvent) => {
+		const target = e.target as Node | null;
+		if (target && logoutConfirmWrapEl?.contains(target)) return;
+		logoutConfirmOpen = false;
+	};
+	const handleKeydown = (e: KeyboardEvent) => {
+		if (e.key === "Escape") {
+			logoutConfirmOpen = false;
+		}
+	};
+	document.addEventListener("pointerdown", handlePointerDown, true);
+	document.addEventListener("keydown", handleKeydown);
+	return () => {
+		document.removeEventListener("pointerdown", handlePointerDown, true);
+		document.removeEventListener("keydown", handleKeydown);
+	};
+});
+
+function handleConfirmLogout() {
+	logoutConfirmOpen = false;
+	onLogout?.();
+}
 
 function formatOfflineTime(ts?: number): string {
 	if (!ts || !Number.isFinite(ts) || ts <= 0) return "离线";
@@ -785,20 +859,77 @@ function formatOfflineTime(ts?: number): string {
       </ChatTooltip>
 
       {#if onLogout}
-        <ChatTooltip text="退出登录" position="top" align="right">
-          <button
-            type="button"
-            class="chat-tool-btn w-7! h-7! shrink-0"
-            aria-label="退出登录"
-            onclick={onLogout}
+        <div class="relative shrink-0" bind:this={logoutConfirmWrapEl}>
+          <ChatTooltip
+            text="退出登录"
+            position="top"
+            align="right"
+            disabled={logoutConfirmOpen}
           >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
-          </button>
-        </ChatTooltip>
+            <button
+              type="button"
+              class="chat-tool-btn w-7! h-7! shrink-0 chat-logout-trigger {logoutConfirmOpen ? 'is-armed' : ''}"
+              aria-label={logoutConfirmOpen ? "收起退出确认" : "退出登录"}
+              aria-expanded={logoutConfirmOpen}
+              aria-haspopup="dialog"
+              onclick={() => (logoutConfirmOpen = !logoutConfirmOpen)}
+            >
+              <svg class="w-3.5 h-3.5 transition-transform duration-200 {logoutConfirmOpen ? 'translate-x-0.5' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+            </button>
+          </ChatTooltip>
+
+          {#if logoutConfirmOpen}
+            <div
+              class="chat-logout-toolbox"
+              role="dialog"
+              aria-label="确认退出登录"
+              in:toolboxIn
+              out:toolboxOut
+            >
+              <div class="flex items-start gap-2">
+                <span class="chat-logout-toolbox-icon" aria-hidden="true">
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div class="text-xs font-semibold text-[var(--skin-text)] leading-tight">
+                    确认退出登录？
+                  </div>
+                  <div class="text-[0.6875rem] text-[var(--skin-text-dim)] mt-0.5 leading-snug">
+                    {currentUser.authType === "waline"
+                      ? "退出后将进入只读旁观模式"
+                      : "退出后将清除当前访客身份"}
+                  </div>
+                </div>
+              </div>
+
+              <div class="flex items-center gap-1.5 mt-2.5">
+                <button
+                  type="button"
+                  class="btn-regular flex-1 h-7 rounded-lg text-[11px] font-medium border-none cursor-pointer active:scale-95 transition-all"
+                  onclick={() => (logoutConfirmOpen = false)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  class="chat-logout-confirm-btn flex-1 h-7 rounded-lg text-[11px] font-semibold border-none cursor-pointer active:scale-95 transition-all"
+                  onclick={handleConfirmLogout}
+                >
+                  确认退出
+                </button>
+              </div>
+              <span class="chat-logout-toolbox-caret" aria-hidden="true"></span>
+            </div>
+          {/if}
+        </div>
       {/if}
     {:else}
       <div class="chat-avatar flex items-center justify-center text-sm font-bold text-[var(--chat-meta-color)] shrink-0">

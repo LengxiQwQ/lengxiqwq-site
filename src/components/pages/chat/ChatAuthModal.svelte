@@ -3,7 +3,8 @@ import { onMount } from "svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import {
-	loginWalineWithPassword,
+	buildWalineLoginUrl,
+	normalizeServerUrl,
 	openWalineLoginPopup,
 	previewAvatarFromEmail,
 	readStoredGuestMeta,
@@ -32,16 +33,13 @@ const {
 	onClose,
 }: Props = $props();
 
-// 账号授权窗口状态与页内直登表单状态
+// Waline 新窗口 / 新标签页授权状态
 let walinePopupWaiting = $state(false);
-let walineEmail = $state("");
-let walinePassword = $state("");
-let waline2faCode = $state("");
-let walineNeed2fa = $state(false);
-let walineLoginLoading = $state(false);
+let walinePopupBlocked = $state(false);
 let walineLoginError = $state("");
+let walineLoginUrl = $state("");
 
-// 访客身份表单状态（默认折叠降级，主推 Waline 登录）
+// 访客身份表单状态（默认折叠降级，主推 Waline 窗口登录）
 let showGuestForm = $state(false);
 let guestNick = $state("");
 let guestEmail = $state("");
@@ -62,7 +60,6 @@ function hydrateStoredGuestFields() {
 	const meta = readStoredGuestMeta();
 	if (!guestNick.trim() && meta.nickname) guestNick = meta.nickname;
 	if (!guestEmail.trim() && meta.email) guestEmail = meta.email;
-	if (!walineEmail.trim() && meta.email) walineEmail = meta.email;
 	if (!guestUrl.trim() && meta.url) guestUrl = meta.url;
 }
 
@@ -79,11 +76,9 @@ $effect(() => {
 		guestError = "";
 		guestLoading = false;
 		walinePopupWaiting = false;
-		walinePassword = "";
-		waline2faCode = "";
-		walineNeed2fa = false;
-		walineLoginLoading = false;
+		walinePopupBlocked = false;
 		walineLoginError = "";
+		walineLoginUrl = buildWalineLoginUrl(walineServerUrl);
 		resetInterceptionState();
 		hydrateStoredGuestFields();
 	} else if (!open && lastOpenState) {
@@ -92,7 +87,7 @@ $effect(() => {
 		cancelPopup?.();
 		cancelPopup = null;
 		walinePopupWaiting = false;
-		walineLoginLoading = false;
+		walinePopupBlocked = false;
 		guestLoading = false;
 		splitGuestLoading = false;
 	}
@@ -105,60 +100,14 @@ onMount(() => {
 	};
 });
 
-async function handleWalinePasswordSubmit(e?: SubmitEvent) {
-	e?.preventDefault();
-	walineLoginError = "";
-	const emailToUse = (guestBlockedByWaline ? guestEmail : walineEmail).trim();
-	if (!emailToUse) {
-		walineLoginError = "请填写 Waline 绑定邮箱";
-		return;
-	}
-	if (!walinePassword) {
-		walineLoginError = "请填写账号密码";
-		return;
-	}
-	if (walineNeed2fa && !waline2faCode.trim()) {
-		walineLoginError = "请输入 6 位两步验证码";
-		return;
-	}
-
-	const attemptSeq = ++authAttemptSeq;
-	walineLoginLoading = true;
-	const res = await loginWalineWithPassword(
-		walineServerUrl,
-		emailToUse,
-		walinePassword,
-		walineNeed2fa ? waline2faCode.trim() : undefined,
-	);
-	if (!open || attemptSeq !== authAttemptSeq) {
-		walineLoginLoading = false;
-		return;
-	}
-	walineLoginLoading = false;
-
-	if (!res.ok || !res.token) {
-		if (res.need2fa) {
-			walineNeed2fa = true;
-			walineLoginError =
-				res.error && res.error !== "2FA required"
-					? res.error
-					: "该账号已开启两步验证，请输入 6 位动态验证码";
-			return;
-		}
-		walineLoginError = res.error || "邮箱或密码错误";
-		return;
-	}
-
-	walinePassword = "";
-	waline2faCode = "";
-	walineNeed2fa = false;
-	resetInterceptionState();
-	onAuthenticated({ kind: "waline", token: res.token });
-	onClose();
-}
-
 function handleOpenWalinePopup() {
+	if (!normalizeServerUrl(walineServerUrl)) {
+		walineLoginError = "未配置 Waline 服务端地址";
+		return;
+	}
+	walineLoginUrl = buildWalineLoginUrl(walineServerUrl);
 	walinePopupWaiting = true;
+	walinePopupBlocked = false;
 	guestError = "";
 	walineLoginError = "";
 	cancelPopup?.();
@@ -166,6 +115,7 @@ function handleOpenWalinePopup() {
 		walineServerUrl,
 		(token) => {
 			walinePopupWaiting = false;
+			walinePopupBlocked = false;
 			cancelPopup = null;
 			resetInterceptionState();
 			onAuthenticated({ kind: "waline", token });
@@ -176,8 +126,10 @@ function handleOpenWalinePopup() {
 			cancelPopup = null;
 		},
 		() => {
+			walinePopupWaiting = false;
+			walinePopupBlocked = true;
 			walineLoginError =
-				"登录窗口被浏览器拦截，请直接使用上方账号密码登录或允许弹窗";
+				"登录窗口被浏览器拦截，请允许弹出窗口或点击下方链接在新标签页登录";
 		},
 	);
 }
@@ -213,12 +165,7 @@ async function handleGuestSubmit(e: SubmitEvent) {
 		if (res.code === "WALINE_LOGIN_REQUIRED") {
 			guestBlockedByWaline = true;
 			guestBlockedCanSplit = res.allowSplitGuest !== false;
-			if (guestEmail.trim()) {
-				walineEmail = guestEmail.trim();
-			}
-			walinePassword = "";
-			waline2faCode = "";
-			walineNeed2fa = false;
+			walinePopupBlocked = false;
 			walineLoginError = "";
 			guestError = guestBlockedCanSplit
 				? ""
@@ -328,67 +275,58 @@ async function handleSplitGuestEnter() {
           </p>
         {/if}
 
-        <form class="space-y-2 pt-0.5" onsubmit={handleWalinePasswordSubmit}>
-          <div class="space-y-1.5">
-            <input
-              type="password"
-              autocomplete="current-password"
-              bind:value={walinePassword}
-              placeholder="输入 Waline 账号密码直接验证"
-              class="chat-auth-input"
-            />
-            {#if walineNeed2fa}
-              <input
-                type="text"
-                inputmode="numeric"
-                autocomplete="one-time-code"
-                maxlength={8}
-                bind:value={waline2faCode}
-                placeholder="输入 6 位两步验证码"
-                class="chat-auth-input"
-              />
-            {/if}
-          </div>
+        {#if walineLoginError}
+          <p class="text-[11px] text-red-500 leading-relaxed m-0">
+            {walineLoginError}
+          </p>
+        {/if}
 
-          {#if walineLoginError}
-            <p class="text-[11px] text-red-500 leading-relaxed m-0">
-              {walineLoginError}
-            </p>
-          {/if}
-
-          <button
-            type="submit"
-            disabled={walineLoginLoading || walinePopupWaiting || splitGuestLoading}
-            class="chat-send-btn w-full h-9! rounded-xl! text-xs! font-semibold disabled:opacity-60"
-          >
-            {walineLoginLoading ? "验证登录中..." : "密码验证并登录"}
-          </button>
-        </form>
-
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 pt-0.5">
           <button
             type="button"
-            disabled={walinePopupWaiting || walineLoginLoading || splitGuestLoading}
+            disabled={walinePopupWaiting || splitGuestLoading}
             onclick={handleOpenWalinePopup}
-            class="btn-regular flex-1 h-8 px-3 rounded-xl text-[11px] font-medium cursor-pointer border-none disabled:opacity-60"
+            class="chat-send-btn flex-1 h-9! rounded-xl! text-xs! font-semibold disabled:opacity-60"
           >
-            {walinePopupWaiting ? "等待授权中..." : "前往网页授权 / 第三方登录"}
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <polyline points="15 3 21 3 21 9" />
+              <line x1="10" y1="14" x2="21" y2="3" />
+            </svg>
+            <span>{walinePopupWaiting ? "等待 Waline 登录完成..." : "打开 Waline 窗口登录"}</span>
           </button>
           {#if guestBlockedCanSplit}
             <button
               type="button"
-              disabled={splitGuestLoading || walinePopupWaiting || walineLoginLoading}
+              disabled={splitGuestLoading || walinePopupWaiting}
               onclick={handleSplitGuestEnter}
-              class="btn-regular h-8 px-3 rounded-xl text-[11px] font-semibold shrink-0 cursor-pointer border-none disabled:opacity-60"
+              class="btn-regular h-9 px-3 rounded-xl text-[11px] font-semibold shrink-0 cursor-pointer border-none disabled:opacity-60"
             >
               {splitGuestLoading ? "创建中..." : "直接进入"}
             </button>
           {/if}
         </div>
+
+        {#if (walinePopupBlocked || walinePopupWaiting) && walineLoginUrl}
+          <div class="text-center">
+            <a
+              href={walineLoginUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onclick={() => {
+                walineLoginError = "";
+              }}
+              class="inline-flex items-center gap-1 text-[11px] font-medium text-(--chat-accent-text) hover:underline"
+            >
+              <span>在新标签页中打开 Waline 登录</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        {/if}
       </div>
     {:else}
-      <!-- 主推方式：Waline 账号登录（支持页内密码直登与网页授权） -->
-      <div class="rounded-2xl border border-(--primary)/35 bg-(--primary)/8 px-3.5 py-3 space-y-2.5">
+      <!-- 主推方式：统一通过新窗口 / 新标签页打开 Waline 登录（严禁站内直输账号密码） -->
+      <div class="rounded-2xl border border-(--primary)/35 bg-(--primary)/8 px-3.5 py-3.5 space-y-3">
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-1.5 min-w-0">
             <span class="text-sm font-bold text-(--deep-text) truncate">
@@ -404,75 +342,44 @@ async function handleSplitGuestEnter() {
         </div>
 
         <p class="text-[11px] text-(--deep-text)/80 leading-relaxed m-0">
-          使用博客评论区账号登录，即可拥有 <strong class="font-semibold text-(--chat-accent-text)">认证</strong> 标识，并解锁导入/共享个人歌单与离线 @ 邮件提醒。
+          点击下方按钮将打开独立 Waline 窗口完成登录或注册（支持账号密码、GitHub 等方式），即可拥有 <strong class="font-semibold text-(--chat-accent-text)">认证</strong> 标识并解锁个人歌单与离线 @ 提醒。
         </p>
 
-        <form class="space-y-2" onsubmit={handleWalinePasswordSubmit}>
-          <div class="space-y-1.5">
-            <div>
-              <label for="chat-waline-email" class="sr-only">Waline 邮箱</label>
-              <input
-                id="chat-waline-email"
-                name="email"
-                type="email"
-                autocomplete="email"
-                maxlength={128}
-                bind:value={walineEmail}
-                placeholder="Waline 注册邮箱"
-                class="chat-auth-input"
-              />
-            </div>
-            <div>
-              <label for="chat-waline-password" class="sr-only">Waline 密码</label>
-              <input
-                id="chat-waline-password"
-                name="password"
-                type="password"
-                autocomplete="current-password"
-                bind:value={walinePassword}
-                placeholder="账号密码（手机端免跳转直登）"
-                class="chat-auth-input"
-              />
-            </div>
-            {#if walineNeed2fa}
-              <div>
-                <label for="chat-waline-2fa" class="sr-only">两步验证码</label>
-                <input
-                  id="chat-waline-2fa"
-                  name="code"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="one-time-code"
-                  maxlength={8}
-                  bind:value={waline2faCode}
-                  placeholder="6 位两步验证码"
-                  class="chat-auth-input"
-                />
-              </div>
-            {/if}
-          </div>
-
-          {#if walineLoginError}
-            <p class="text-xs text-red-500 m-0">{walineLoginError}</p>
-          {/if}
-
-          <button
-            type="submit"
-            disabled={walineLoginLoading || walinePopupWaiting}
-            class="chat-send-btn w-full h-10! rounded-xl! text-[13px]! font-semibold disabled:opacity-60"
-          >
-            {walineLoginLoading ? "正在登录..." : "使用 Waline 账号登录"}
-          </button>
-        </form>
+        {#if walineLoginError}
+          <p class="text-xs text-red-500 m-0 leading-relaxed">{walineLoginError}</p>
+        {/if}
 
         <button
           type="button"
-          disabled={walinePopupWaiting || walineLoginLoading}
+          disabled={walinePopupWaiting}
           onclick={handleOpenWalinePopup}
-          class="btn-regular w-full h-8 rounded-xl text-[11px] font-medium cursor-pointer border-none disabled:opacity-60"
+          class="chat-send-btn w-full h-10! rounded-xl! text-[13px]! font-semibold disabled:opacity-60"
         >
-          {walinePopupWaiting ? "等待网页授权完成..." : "前往网页端登录 / 注册新账号 / GitHub 登录"}
+          <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+          <span>{walinePopupWaiting ? "等待 Waline 登录完成..." : "使用 Waline 账号登录"}</span>
         </button>
+
+        {#if walineLoginUrl}
+          <div class="flex items-center justify-between gap-2 text-[11px] text-(--chat-meta-color) pt-0.5">
+            <span>{walinePopupBlocked ? "弹窗被拦截？" : "未弹出窗口或偏好标签页？"}</span>
+            <a
+              href={walineLoginUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onclick={() => {
+                walineLoginError = "";
+              }}
+              class="inline-flex items-center gap-0.5 font-medium text-(--chat-accent-text) hover:underline shrink-0"
+            >
+              <span>在新标签页打开</span>
+              <span aria-hidden="true">↗</span>
+            </a>
+          </div>
+        {/if}
       </div>
 
       <!-- 降级次选：临时访客入口（默认收起） -->

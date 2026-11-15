@@ -233,18 +233,28 @@ $effect(() => {
 });
 
 let lastReportedFocusKey = "";
-$effect(() => {
-	const userKey = currentUser?.userKey || "spectator";
+/** 同步上报当前焦点/离开状态至网关，避免切标签页时仅依赖微任务 $effect 而延误发送 */
+function reportFocusState(force = false) {
 	if (connectionState !== "connected") {
 		lastReportedFocusKey = "";
 		return;
 	}
-	const key = `${currentRoom}:${userKey}:${isEffectiveFocused ? 1 : 0}`;
-	if (key === lastReportedFocusKey) return;
-	if (ws && ws.readyState === WebSocket.OPEN) {
-		lastReportedFocusKey = key;
-		ws.send(JSON.stringify({ type: "presence:focus", isFocused: isEffectiveFocused }));
-	}
+	if (!ws || ws.readyState !== WebSocket.OPEN) return;
+	const focused = isWindowFocused && !isIdleAway;
+	const userKey = currentUser?.userKey || "spectator";
+	const key = `${currentRoom}:${userKey}:${focused ? 1 : 0}`;
+	if (!force && key === lastReportedFocusKey) return;
+	lastReportedFocusKey = key;
+	ws.send(JSON.stringify({ type: "presence:focus", isFocused: focused }));
+}
+
+$effect(() => {
+	// 订阅响应式依赖变化（房间、身份、连接状态、有效焦点）作为兜底同步
+	void currentRoom;
+	void currentUser?.userKey;
+	void connectionState;
+	void isEffectiveFocused;
+	reportFocusState();
 });
 
 function mergeRoomPresence(
@@ -611,6 +621,7 @@ function connectRoom(roomId: string) {
 		roomId,
 		currentAuth,
 		storedLastRead,
+		isEffectiveFocused,
 	);
 	const handshakeSig = currentAuth
 		? `${currentAuth.kind}:${currentAuth.token}`
@@ -624,6 +635,7 @@ function connectRoom(roomId: string) {
 		connectionState = "connected";
 		reconnectAttempt = 0;
 		closePendingSocket();
+		reportFocusState(true);
 
 		const currentSig = currentAuth
 			? `${currentAuth.kind}:${currentAuth.token}`
@@ -1831,6 +1843,7 @@ onMount(() => {
 		const now = Date.now();
 		if (isIdleAway) {
 			isIdleAway = false;
+			reportFocusState();
 		} else if (now - lastActivityResetAt < 1000) {
 			return;
 		}
@@ -1838,38 +1851,62 @@ onMount(() => {
 		if (idleAwayTimer !== null) window.clearTimeout(idleAwayTimer);
 		idleAwayTimer = window.setTimeout(() => {
 			isIdleAway = true;
+			reportFocusState();
 		}, IDLE_AWAY_MS);
 	};
 
+	const isDocumentHidden = () =>
+		document.hidden || document.visibilityState === "hidden";
+
+	const computeFocusedState = () =>
+		!isDocumentHidden() &&
+		(typeof document.hasFocus !== "function" || document.hasFocus());
+
 	const syncFocusState = () => {
-		const focused =
-			!document.hidden &&
-			(typeof document.hasFocus !== "function" || document.hasFocus());
+		const focused = computeFocusedState();
 		isWindowFocused = focused;
+		reportFocusState();
 		if (focused) {
 			resetIdleTimer();
 		}
 	};
 
 	const handleWindowFocus = () => {
-		isWindowFocused = true;
-		resetIdleTimer();
+		const focused = !isDocumentHidden();
+		isWindowFocused = focused;
+		reportFocusState();
+		if (focused) {
+			resetIdleTimer();
+		}
 	};
 
 	const handleWindowBlur = () => {
 		isWindowFocused = false;
+		reportFocusState();
 	};
 
 	const handlePageHide = () => {
 		isWindowFocused = false;
+		reportFocusState();
+	};
+
+	const handlePageFreeze = () => {
+		isWindowFocused = false;
+		reportFocusState();
+	};
+
+	const handlePageShowOrResume = () => {
+		syncFocusState();
 	};
 
 	const handleVisibility = () => {
-		if (document.hidden) {
+		if (isDocumentHidden()) {
 			isWindowFocused = false;
+			reportFocusState();
 		} else {
 			isWindowFocused =
 				typeof document.hasFocus === "function" ? document.hasFocus() : true;
+			reportFocusState();
 			if (isWindowFocused) {
 				resetIdleTimer();
 			}
@@ -1888,22 +1925,51 @@ onMount(() => {
 	};
 	syncFocusState();
 	const focusSyncTimer = window.setInterval(() => {
-		if (document.hidden) {
-			if (isWindowFocused) isWindowFocused = false;
+		if (isDocumentHidden()) {
+			if (isWindowFocused) {
+				isWindowFocused = false;
+				reportFocusState();
+			}
 			return;
 		}
 		if (typeof document.hasFocus === "function") {
 			const focused = document.hasFocus();
 			if (focused !== isWindowFocused) {
 				isWindowFocused = focused;
+				reportFocusState();
 				if (focused) resetIdleTimer();
 			}
 		}
 	}, 800);
+	const handleWalineStorageSync = (e: StorageEvent) => {
+		if (isUnmounted) return;
+		if (
+			e.key !== "WALINE_USER" &&
+			e.key !== "TOKEN" &&
+			e.key !== "WALINE_ADMIN_TOKEN"
+		) {
+			return;
+		}
+		if (!e.newValue) return;
+		const nextToken = readStoredWalineToken();
+		if (!nextToken) return;
+		if (currentAuth?.kind !== "waline" || currentAuth.token !== nextToken) {
+			walineLoginWaiting = false;
+			cancelWalinePopup?.();
+			cancelWalinePopup = null;
+			showAuthModal = false;
+			handleAuthenticated({ kind: "waline", token: nextToken });
+		}
+	};
+
 	document.addEventListener("visibilitychange", handleVisibility);
+	document.addEventListener("freeze", handlePageFreeze);
+	document.addEventListener("resume", handlePageShowOrResume);
 	window.addEventListener("focus", handleWindowFocus);
 	window.addEventListener("blur", handleWindowBlur);
 	window.addEventListener("pagehide", handlePageHide);
+	window.addEventListener("pageshow", handlePageShowOrResume);
+	window.addEventListener("storage", handleWalineStorageSync);
 	window.addEventListener("mousemove", resetIdleTimer, { passive: true });
 	window.addEventListener("pointerdown", resetIdleTimer, { passive: true });
 	window.addEventListener("keydown", resetIdleTimer, { passive: true });
@@ -1919,9 +1985,13 @@ onMount(() => {
 		window.clearInterval(focusSyncTimer);
 		if (idleAwayTimer !== null) window.clearTimeout(idleAwayTimer);
 		document.removeEventListener("visibilitychange", handleVisibility);
+		document.removeEventListener("freeze", handlePageFreeze);
+		document.removeEventListener("resume", handlePageShowOrResume);
 		window.removeEventListener("focus", handleWindowFocus);
 		window.removeEventListener("blur", handleWindowBlur);
 		window.removeEventListener("pagehide", handlePageHide);
+		window.removeEventListener("pageshow", handlePageShowOrResume);
+		window.removeEventListener("storage", handleWalineStorageSync);
 		window.removeEventListener("mousemove", resetIdleTimer);
 		window.removeEventListener("pointerdown", resetIdleTimer);
 		window.removeEventListener("keydown", resetIdleTimer);

@@ -184,12 +184,14 @@ export function buildWsUrl(
 	roomId: string,
 	auth?: { kind: "waline" | "guest"; token: string } | null,
 	lastReadAt = 0,
+	isFocused = true,
 ): string {
 	const cleanBase = normalizeServerUrl(serverUrl);
 	const wsBase = cleanBase
 		.replace(/^https:\/\//i, "wss://")
 		.replace(/^http:\/\//i, "ws://");
 	const params = new URLSearchParams({ room: roomId });
+	params.set("focused", isFocused ? "1" : "0");
 	if (auth?.token) {
 		params.set("authKind", auth.kind);
 		params.set("token", auth.token);
@@ -511,69 +513,12 @@ export function resolveInitialAuth(): {
 	return null;
 }
 
-export async function loginWalineWithPassword(
-	walineServerUrl: string,
-	email: string,
-	password: string,
-	code?: string,
-): Promise<{
-	ok: boolean;
-	error?: string;
-	need2fa?: boolean;
-	token?: string;
-}> {
+export function buildWalineLoginUrl(walineServerUrl: string): string {
 	const base = normalizeServerUrl(walineServerUrl);
-	if (!base) {
-		return { ok: false, error: "未配置 Waline 服务端地址" };
-	}
-	try {
-		const resp = await fetch(`${base}/api/token`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				email: email.trim(),
-				password,
-				...(code?.trim() ? { code: code.trim() } : {}),
-			}),
-		});
-		const data = (await resp.json()) as {
-			errno?: number;
-			errmsg?: string;
-			data?: {
-				token?: string;
-				"2fa"?: boolean;
-				display_name?: string;
-				email?: string;
-				type?: string;
-				avatar?: string;
-				url?: string;
-				label?: string;
-				objectId?: string | number;
-				mailMd5?: string;
-			};
-		};
-		if (data.errno !== 0 || !data.data?.token) {
-			return {
-				ok: false,
-				need2fa: Boolean(data.data?.["2fa"]),
-				error: data.errmsg || "邮箱或密码错误",
-			};
-		}
-		persistWalineAuth({
-			token: data.data.token,
-			display_name: data.data.display_name,
-			email: data.data.email,
-			type: data.data.type,
-			avatar: data.data.avatar,
-			url: data.data.url,
-			label: data.data.label,
-			objectId: data.data.objectId,
-			mailMd5: data.data.mailMd5,
-		});
-		return { ok: true, token: data.data.token };
-	} catch {
-		return { ok: false, error: "网络异常，无法连接 Waline 服务" };
-	}
+	if (!base) return "";
+	const redirect =
+		typeof window !== "undefined" ? window.location.href : "";
+	return `${base}/ui/login?lng=zh-CN${redirect ? `&redirect=${encodeURIComponent(redirect)}` : ""}`;
 }
 
 export function openWalineLoginPopup(
@@ -583,6 +528,12 @@ export function openWalineLoginPopup(
 	onBlocked?: () => void,
 ): () => void {
 	const base = normalizeServerUrl(walineServerUrl);
+	const loginUrl = buildWalineLoginUrl(walineServerUrl);
+	if (!base || !loginUrl) {
+		onBlocked?.();
+		onCancel?.();
+		return () => {};
+	}
 	let walineOrigin = "";
 	try {
 		walineOrigin = new URL(base).origin;
@@ -601,7 +552,6 @@ export function openWalineLoginPopup(
 		Math.floor((window.innerHeight - height) / 2 + (window.screenY || 0)),
 	);
 
-	const loginUrl = `${base}/ui/login?lng=zh-CN&redirect=${encodeURIComponent(window.location.href)}`;
 	if (isMobileLikeBrowser()) {
 		window.location.href = loginUrl;
 		return () => {};
