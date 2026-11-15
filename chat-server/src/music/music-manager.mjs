@@ -1,0 +1,582 @@
+import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+
+export function stableTrack(track) {
+  const { streamUrl, lrcUrl, url, lrc, ...identity } = track;
+  return identity;
+}
+
+function durationOf(value) {
+  return Number.isFinite(value) && value > 0 && value <= 86400 ? value : 0;
+}
+
+export function computeVoteThreshold(onlineMemberCount, isFallback, requesterOnline) {
+  if (isFallback) return 1;
+  return 2;
+}
+
+function writeJsonAtomic(filePath, data) {
+  const tmpPath = `${filePath}.tmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  try {
+    writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+    renameSync(tmpPath, filePath);
+  } catch (err) {
+    console.error(`[Data] Failed atomic write for ${filePath}:`, err.message);
+  }
+}
+
+export class MusicManager {
+  constructor({ roomId = 'chat', dataDir, musicRegistry, signSecret, serverOrigin, onStateChanged, onPrefetchTrack, onUnavailable }) {
+    this.roomId = roomId;
+    this.dataDir = dataDir;
+    this.musicRegistry = musicRegistry;
+    this.signSecret = signSecret;
+    this.serverOrigin = serverOrigin;
+    this.onStateChanged = onStateChanged || (() => {});
+    this.onPrefetchTrack = onPrefetchTrack || (() => {});
+    this.onUnavailable = onUnavailable;
+
+    this.current = null;
+    this.queue = [];
+    this.historyMap = new Map(); // trackId -> MusicHistoryEntry
+    this.historyLogs = []; // Array of MusicHistoryLogEntry
+    this.fallbackTracks = [];
+    this.fallbackPlaylistId = null;
+    this.fallbackPlaylistName = null;
+    this._nextLogId = 1;
+    this._advanceTimer = null;
+    this._nextFallbackPlayable = null;
+    this._preparingFallback = false;
+    this._prepareFallbackTimer = null;
+    this._actorLastErrorAt = new Map();
+
+    this.generation = 0;
+    this.fallbackGeneration = 0;
+    this.statePath = join(this.dataDir, 'music_state_' + roomId + '.json');
+    this.loadData();
+    try {
+      const state = JSON.parse(readFileSync(this.statePath, 'utf8'));
+      if (Array.isArray(state.queue)) this.queue = state.queue.filter(item => item?.track?.provider === 'qq');
+      const current = state.current;
+      if (current?.track?.provider === 'qq' && !current.isFallback) {
+        this.queue.unshift({
+          uid: current.requestUid || current.uid, track: current.track,
+          requesterKey: current.requesterKey, requesterName: current.requesterName,
+          requesterAvatar: current.requesterAvatar, startedAt: current.startedAt
+        });
+      }
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.warn('[Music] restore', this.roomId, error.message);
+    }
+  }
+
+  loadData() {
+    const histFileName = this.roomId ? `music_history_${this.roomId}.json` : 'music_history.json';
+    const logsFileName = this.roomId ? `music_request_logs_${this.roomId}.json` : 'music_request_logs.json';
+
+    let histPath = join(this.dataDir, histFileName);
+    if (this.roomId === "chat" && !existsSync(histPath)) {
+      histPath = join(this.dataDir, 'music_history.json');
+    }
+    if (existsSync(histPath)) {
+      try {
+        const arr = JSON.parse(readFileSync(histPath, 'utf8'));
+        if (Array.isArray(arr)) {
+          for (const item of arr) {
+            if (item && item.track && item.track.id) {
+              this.historyMap.set(item.track.id, { ...item, track: stableTrack(item.track) });
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[Music:${this.roomId}] Error loading ${histFileName}:`, e.message);
+      }
+    }
+
+    let logsPath = join(this.dataDir, logsFileName);
+    if (this.roomId === "chat" && !existsSync(logsPath)) {
+      logsPath = join(this.dataDir, 'music_request_logs.json');
+    }
+    if (existsSync(logsPath)) {
+      try {
+        const arr = JSON.parse(readFileSync(logsPath, 'utf8'));
+        if (Array.isArray(arr)) {
+          this.historyLogs = arr.filter(item => item?.track).map(item => ({ ...item, track: stableTrack(item.track) }));
+          for (const item of arr) {
+            if (item.id && item.id >= this._nextLogId) {
+              this._nextLogId = item.id + 1;
+            }
+          }
+        }
+      } catch (e) {
+        console.error(`[Music:${this.roomId}] Error loading ${logsFileName}:`, e.message);
+      }
+    }
+  }
+
+  savePlayback() {
+    writeJsonAtomic(this.statePath, {
+      current: this.current && { ...this.current, track: stableTrack(this.current.track) },
+      queue: this.queue.map(item => ({ ...item, track: stableTrack(item.track) }))
+    });
+  }
+
+  resume() {
+    if (this.queue.length || this.fallbackPlaylistId) void this.advanceNext();
+  }
+
+  setFallbackPlaylist(playlistId, tracks, playlistName, { start = true } = {}) {
+    this.fallbackPlaylistId = playlistId;
+    this.fallbackPlaylistName = playlistName;
+    this.fallbackTracks = tracks;
+    this.fallbackGeneration++;
+    this._nextFallbackPlayable = null;
+    clearTimeout(this._prepareFallbackTimer);
+    if (start && (!this.current || this.current.isFallback)) {
+      this.generation++;
+      void this.advanceNext();
+    }
+  }
+
+  saveDataDebounced() {
+    clearTimeout(this._saveTimer);
+    this._saveTimer = setTimeout(() => {
+      const histFileName = this.roomId ? `music_history_${this.roomId}.json` : 'music_history.json';
+      const logsFileName = this.roomId ? `music_request_logs_${this.roomId}.json` : 'music_request_logs.json';
+
+      const histPath = join(this.dataDir, histFileName);
+      const logsPath = join(this.dataDir, logsFileName);
+
+      const histArr = Array.from(this.historyMap.values()).sort(
+        (a, b) => b.lastRequestedAt - a.lastRequestedAt || b.requestCount - a.requestCount
+      ).slice(0, 300);
+
+      const logsArr = this.historyLogs.slice(-500);
+
+      writeJsonAtomic(histPath, histArr);
+      writeJsonAtomic(logsPath, logsArr);
+    }, 2000);
+  }
+
+  getSnapshot(onlineKeys = new Set()) {
+    const requesterOnline = this.current ? onlineKeys.has(this.current.requesterKey) : false;
+    const voteCount = this.current ? this.current.skipVotes.length : 0;
+    const voteThreshold = this.current
+      ? computeVoteThreshold(onlineKeys.size, this.current.isFallback, requesterOnline)
+      : 1;
+
+    const histList = Array.from(this.historyMap.values()).sort(
+      (a, b) => b.lastRequestedAt - a.lastRequestedAt || b.requestCount - a.requestCount
+    ).slice(0, 100);
+
+    const logsList = this.historyLogs.slice(-80).reverse();
+
+    return {
+      current: this.current,
+      queue: this.queue,
+      history: histList,
+      historyLogs: logsList,
+      requesterOnline,
+      voteCount,
+      voteThreshold,
+      skipVoteNames: this.current ? this.current.skipVoteNames || [] : [],
+      serverTime: Date.now()
+    };
+  }
+
+  async enqueueTrack(rawTrack, requester) {
+    const requesterKey = requester.userKey;
+    const requesterName = requester.name;
+    const requesterAvatar = requester.avatar || '';
+    const check = () => {
+      if (this.current?.track.id === rawTrack.id || this.queue.some(item => item.track.id === rawTrack.id)) {
+        return '歌曲已在播放或排队';
+      }
+      if (this.queue.length >= 100 || (!requester.isAdmin &&
+          this.queue.filter(item => item.requesterKey === requesterKey).length >= 10)) {
+        return '待播队列已满，请稍后再点歌';
+      }
+      return null;
+    };
+    const before = check();
+    if (before) return { ok: false, error: before };
+    const playable = await this.resolve(rawTrack);
+    const after = check();
+    if (after) return { ok: false, error: after };
+    if (!playable) return { ok: false, error: '歌曲暂时没有可用音源' };
+    const track = stableTrack(playable);
+
+    // Record into historyMap
+    const now = Date.now();
+    let histEntry = this.historyMap.get(playable.id);
+    if (!histEntry) {
+      histEntry = {
+        track,
+        requestCount: 1,
+        lastRequesterName: requesterName,
+        firstRequestedAt: now,
+        lastRequestedAt: now
+      };
+      this.historyMap.set(playable.id, histEntry);
+    } else {
+      histEntry.requestCount += 1;
+      histEntry.lastRequesterName = requesterName;
+      histEntry.lastRequestedAt = now;
+      histEntry.track = { ...histEntry.track, ...track };
+    }
+
+    // Record into historyLogs
+    const uid = 'q_' + now + '_' + Math.random().toString(36).slice(2, 9);
+    const logEntry = {
+      requestUid: uid,
+      outcome: 'queued',
+      id: this._nextLogId++,
+      track,
+      requesterKey,
+      requesterName,
+      requesterAvatar,
+      requestedAt: now,
+      requestCount: histEntry.requestCount
+    };
+    this.historyLogs.push(logEntry);
+    if (this.historyLogs.length > 500) this.historyLogs.shift();
+    if (this.historyMap.size > 300) {
+      const oldest = [...this.historyMap.entries()].reduce((a, b) => a[1].lastRequestedAt <= b[1].lastRequestedAt ? a : b);
+      this.historyMap.delete(oldest[0]);
+    }
+    this.saveDataDebounced();
+
+    // If nothing playing or currently playing fallback, play immediately!
+    if ((!this.current || this.current.isFallback) && this.queue.length === 0) {
+      clearTimeout(this._advanceTimer);
+      this.playTrack(
+        playable,
+        { userKey: requesterKey, name: requesterName, avatar: requesterAvatar },
+        false, Date.now(), uid
+      );
+      this.markOutcome(uid, 'played');
+      this.onStateChanged();
+      return { ok: true, playImmediately: true, track: playable };
+    }
+
+    // Otherwise add to queue
+    const queueItem = { uid, track, requesterKey, requesterName, requesterAvatar, enqueuedAt: now };
+    this.queue.push(queueItem);
+    this.savePlayback();
+    this.onStateChanged();
+
+    return {
+      ok: true,
+      playImmediately: false,
+      position: this.queue.length,
+      track: playable
+    };
+  }
+
+  markOutcome(uid, outcome) {
+    const entry = this.historyLogs.findLast(log => log.requestUid === uid);
+    if (entry) {
+      entry.outcome = outcome;
+      this.saveDataDebounced();
+    }
+  }
+
+  scheduleAdvance() {
+    clearTimeout(this._advanceTimer);
+    const play = this.current;
+    if (play) this._advanceTimer = setTimeout(() => {
+      if (this.current === play) void this.advanceNext();
+    }, Math.max(0, play.startedAt + (play.durationSec + 2) * 1000 - Date.now()));
+  }
+
+  playTrack(track, requester, isFallback = false, startedAt = Date.now(), requestUid) {
+    this.generation++;
+    this.current = {
+      uid: 'play_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
+      track,
+      requesterKey: requester.userKey,
+      requesterName: requester.name,
+      requesterAvatar: requester.avatar || '',
+      startedAt,
+      durationSec: durationOf(track.durationSec) || 240,
+      isFallback,
+      requestUid,
+      sourceRevision: 0,
+      skipVotes: [],
+      skipVoteNames: []
+    };
+    this.savePlayback();
+    this.scheduleAdvance();
+
+    // Pre-resolve & prefetch the next fallback track while current track plays
+    clearTimeout(this._prepareFallbackTimer);
+    this._prepareFallbackTimer = setTimeout(() => {
+      if (this.queue.length === 0) {
+        void this.prepareNextFallback();
+      }
+    }, 1000);
+  }
+
+  async resolveFallbackTrackPlayable() {
+    if (this.fallbackTracks.length === 0) return null;
+    const tracks = this.fallbackTracks;
+    const candidates = new Set();
+    while (candidates.size < Math.min(5, tracks.length)) {
+      candidates.add(Math.floor(Math.random() * tracks.length));
+    }
+    for (const index of candidates) {
+      const chosen = tracks[index];
+      if (!chosen) continue;
+      try {
+        const track = await this.musicRegistry.resolvePlaylistTrack(chosen);
+        if (!track) continue;
+        const playable = await this.resolve(track);
+        if (playable) return playable;
+      } catch (err) {
+        console.warn(`[Music:${this.roomId}] Error resolving fallback track:`, err.message);
+      }
+    }
+    return null;
+  }
+
+  async prepareNextFallback() {
+    if (this.fallbackTracks.length === 0 || this._nextFallbackPlayable || this._preparingFallback) {
+      return;
+    }
+    this._preparingFallback = true;
+    const generation = this.fallbackGeneration;
+    try {
+      const playable = await this.resolveFallbackTrackPlayable();
+      if (playable && generation === this.fallbackGeneration && !this._nextFallbackPlayable) {
+        this._nextFallbackPlayable = { playable, checkedAt: Date.now() };
+        console.log(`[Music:${this.roomId}] Prefetching next fallback track: ${playable.title}`);
+        this.onPrefetchTrack(playable.streamUrl);
+      }
+    } catch (err) {
+      console.warn(`[Music:${this.roomId}] Error preparing next fallback:`, err.message);
+    } finally {
+      this._preparingFallback = false;
+    }
+  }
+
+  async resolve(track, options) {
+    try {
+      return await this.musicRegistry.resolvePlayable(track, this.serverOrigin, this.signSecret, options);
+    } catch (error) {
+      console.warn('[Music] resolve', this.roomId, track.id, error.message);
+      return null;
+    }
+  }
+
+  advanceNext() {
+    const generation = this.generation;
+    if (this.advancing?.generation === generation) return this.advancing.promise;
+    clearTimeout(this._advanceTimer);
+    const promise = this.selectNext(generation).finally(() => {
+      if (this.advancing?.promise === promise) this.advancing = null;
+    });
+    this.advancing = { generation, promise };
+    return promise;
+  }
+
+  async selectNext(generation) {
+    while (this.queue.length) {
+      const next = this.queue[0];
+      const playable = await this.resolve(next.track);
+      if (generation !== this.generation) return;
+      if (this.queue[0] !== next) continue;
+      this.queue.shift();
+      if (playable) {
+        const duration = durationOf(playable.durationSec) || 240;
+        const startedAt = next.startedAt && Date.now() - next.startedAt < (duration - 2) * 1000
+          ? next.startedAt : Date.now();
+        this.playTrack(playable, {
+          userKey: next.requesterKey, name: next.requesterName, avatar: next.requesterAvatar
+        }, false, startedAt, next.uid);
+        this.markOutcome(next.uid, 'played');
+        this.onStateChanged();
+        return;
+      }
+      this.markOutcome(next.uid, 'unavailable');
+      this.onUnavailable?.(next);
+      this.current = null;
+      this.savePlayback();
+      this.onStateChanged();
+    }
+
+    const fallbackGeneration = this.fallbackGeneration;
+    const prefetched = this._nextFallbackPlayable;
+    this._nextFallbackPlayable = null;
+    const playable = prefetched && Date.now() - prefetched.checkedAt < 60_000
+      ? prefetched.playable : await this.resolveFallbackTrackPlayable();
+    if (generation !== this.generation) return;
+    if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation);
+    if (playable) {
+      this.playTrack(playable, {
+        userKey: 'system:fallback',
+        name: this.fallbackPlaylistName ? this.fallbackPlaylistName + ' (轮播)' : '冷汐点歌台 (轮播)'
+      }, true);
+    } else {
+      this.current = null;
+      this.savePlayback();
+      if (this.fallbackTracks.length) {
+        this._advanceTimer = setTimeout(() => void this.advanceNext(), 30_000);
+      }
+    }
+    this.onStateChanged();
+  }
+
+  skip(actor, onlineCount, listeningCount = 0) {
+    if (!this.current) return { ok: false, error: '当前没有正在播放的歌曲' };
+
+    const isOwner = actor.userKey === this.current.requesterKey;
+    const isAdmin = Boolean(actor.isAdmin);
+    const isFallback = Boolean(this.current.isFallback);
+
+    // 轮播歌单、自己点的歌、站长：随时直接切！
+    // 房间在线人数 <= 2，或者有效听歌人数 <= 2：随时直接切！
+    const canDirect = isFallback || isOwner || isAdmin || onlineCount <= 2 || listeningCount <= 2;
+
+    if (canDirect) {
+      this.advanceNext();
+      return { ok: true, skipped: true };
+    }
+
+    return this.voteSkip(actor, onlineCount, listeningCount);
+  }
+
+  voteSkip(actor, onlineCount, listeningCount = 0) {
+    if (!this.current) return { ok: false, error: '当前没有正在播放的歌曲' };
+
+    // 取消投票 (Toggle)
+    const idx = this.current.skipVotes.indexOf(actor.userKey);
+    if (idx >= 0) {
+      this.current.skipVotes.splice(idx, 1);
+      if (Array.isArray(this.current.skipVoteNames)) {
+        const nameIdx = this.current.skipVoteNames.indexOf(actor.name);
+        if (nameIdx >= 0) this.current.skipVoteNames.splice(nameIdx, 1);
+      }
+      this.onStateChanged();
+      return { ok: true, skipped: false, unvoted: true, votes: this.current.skipVotes.length };
+    }
+
+    // 首次投票
+    this.current.skipVotes.push(actor.userKey);
+    if (!this.current.skipVoteNames) this.current.skipVoteNames = [];
+    this.current.skipVoteNames.push(actor.name);
+
+    const threshold = computeVoteThreshold(onlineCount, this.current.isFallback, true);
+    if (this.current.skipVotes.length >= threshold) {
+      this.advanceNext();
+      return { ok: true, skipped: true };
+    }
+
+    this.onStateChanged();
+    return { ok: true, skipped: false, votes: this.current.skipVotes.length, threshold };
+  }
+
+  removeQueue(uid, actor) {
+    const idx = this.queue.findIndex((q) => q.uid === uid);
+    if (idx < 0) return { ok: false, error: '排队曲目不存在' };
+
+    const item = this.queue[idx];
+    if (item.requesterKey !== actor.userKey && !actor.isAdmin) {
+      return { ok: false, error: '无权移除他人点歌' };
+    }
+
+    this.queue.splice(idx, 1);
+    this.markOutcome(uid, 'cancelled');
+    this.savePlayback();
+    this.onStateChanged();
+    return { ok: true };
+  }
+
+  async playQueued(uid, actor) {
+    if (!actor.isAdmin) return { ok: false, error: '仅站长可执行插播' };
+    const item = this.queue.find(entry => entry.uid === uid);
+    if (!item) return { ok: false, error: '排队曲目不存在' };
+    const playable = await this.resolve(item.track);
+    const index = this.queue.indexOf(item);
+    if (index < 0) return { ok: false, error: '排队曲目已变更' };
+    if (!playable) return { ok: false, error: '歌曲暂时没有可用音源' };
+    this.queue.splice(index, 1);
+    this.playTrack(playable, {
+      userKey: item.requesterKey, name: item.requesterName, avatar: item.requesterAvatar
+    }, false, Date.now(), item.uid);
+    this.markOutcome(uid, 'played');
+    this.onStateChanged();
+    return { ok: true };
+  }
+
+  reportDuration(playUid, value) {
+    const play = this.current;
+    const duration = durationOf(value);
+    if (!play || play.uid !== playUid || !duration || play.measuredDuration) return;
+    if (play.track.durationSec && Math.abs(duration - play.durationSec) > Math.max(15, play.durationSec * 0.25)) return;
+    if (duration < (Date.now() - play.startedAt) / 1000 - 2) return;
+    play.measuredDuration = true;
+    play.durationSec = duration;
+    play.track.durationSec = duration;
+    const history = this.historyMap.get(play.track.id);
+    if (history) history.track.durationSec = duration;
+    this.scheduleAdvance();
+    this.savePlayback();
+    this.saveDataDebounced();
+    this.onStateChanged();
+  }
+
+  async reportError(playUid, actorKey) {
+    const play = this.current;
+    if (!play || play.uid !== playUid || this.recovering === play || play.recoveryAttempted) return;
+    const lastError = this._actorLastErrorAt.get(actorKey) || 0;
+    if (Date.now() - lastError < 12_000) return;
+    this._actorLastErrorAt.delete(actorKey);
+    this._actorLastErrorAt.set(actorKey, Date.now());
+    if (this._actorLastErrorAt.size > 256) this._actorLastErrorAt.delete(this._actorLastErrorAt.keys().next().value);
+    this.recovering = play;
+    const generation = this.generation;
+    try {
+      const playable = await this.resolve(play.track, { fresh: true });
+      if (this.current !== play || generation !== this.generation || this.advancing?.generation === generation) return;
+      play.recoveryAttempted = true;
+      if (playable) {
+        if (playable.streamUrl !== play.track.streamUrl) {
+          play.track = playable;
+          play.sourceRevision++;
+          this.onStateChanged();
+        }
+        return;
+      }
+      if (play.requestUid) this.markOutcome(play.requestUid, 'unavailable');
+      this.onUnavailable?.(play);
+      void this.advanceNext();
+    } finally {
+      if (this.recovering === play) this.recovering = null;
+    }
+  }
+
+  ended(playUid) {
+    const play = this.current;
+    if (play?.uid === playUid && Date.now() - play.startedAt >= Math.max(0, play.durationSec - 3) * 1000) {
+      void this.advanceNext();
+    }
+  }
+
+  getMemberTracks(userKey, beforeId = 0, limit = 50) {
+    let list = this.historyLogs.filter((l) => l.requesterKey === userKey);
+    if (beforeId > 0) {
+      list = list.filter((l) => l.id < beforeId);
+    }
+    const safeLimit = Math.min(100, Math.max(1, limit));
+    const slice = list.slice(-safeLimit).reverse();
+    const hasMore = list.length > slice.length;
+    const nextBeforeId = slice.length > 0 ? slice[slice.length - 1].id : 0;
+
+    return {
+      ok: true,
+      tracks: slice,
+      hasMore,
+      nextBeforeId
+    };
+  }
+}

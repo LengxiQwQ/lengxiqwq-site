@@ -380,7 +380,7 @@ export async function fetchRoomPlaylists(
 	} | null;
 	if (!resp.ok || !json?.ok) {
 		if (resp.status === 404) {
-			throw new Error("歌单接口尚未部署到聊天室后端（请先部署 chat-worker）");
+			throw new Error("聊天室歌单服务暂时不可用");
 		}
 		throw new Error(json?.error || "获取歌单列表失败");
 	}
@@ -538,6 +538,8 @@ export function toEnqueueableTrack(
 	if (item.matchedTrack) {
 		return {
 			...item.matchedTrack,
+			playlistId,
+			position: item.position,
 			cover: item.matchedTrack.cover || item.cover,
 			durationSec: item.matchedTrack.durationSec || item.durationSec,
 		};

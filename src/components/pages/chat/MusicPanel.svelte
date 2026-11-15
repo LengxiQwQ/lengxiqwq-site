@@ -44,7 +44,7 @@ interface Props {
 	currentUser: ChatSessionUser | null;
 	onlineMemberCount: number;
 	onlineMembers?: ChatOnlineMember[];
-	observers?: ChatOnlineMember[];
+	listeningMemberCount?: number;
 	mentionMembers?: ChatMentionCandidate[];
 	clockOffsetMs: number;
 	initialVolume?: number;
@@ -53,7 +53,7 @@ interface Props {
 		keyword: string,
 		options?: { signal?: AbortSignal; page?: number },
 	) => Promise<{ tracks: ChatMusicTrack[]; hasMore: boolean; page: number }>;
-	onEnqueueTrack: (track: ChatMusicTrack) => void;
+	onEnqueueTrack: (track: ChatMusicTrack) => Promise<boolean>;
 	onRemoveQueue: (uid: string) => void;
 	onPlayQueued: (uid: string) => void;
 	isSkippingTrack?: boolean;
@@ -98,7 +98,7 @@ const {
 	currentUser = null,
 	onlineMemberCount = 0,
 	onlineMembers = [],
-	observers = [],
+	listeningMemberCount = 0,
 	mentionMembers = [],
 	clockOffsetMs = 0,
 	initialVolume = 1,
@@ -176,7 +176,10 @@ let isSyncingAudio = false;
 let syncAudioSeq = 0;
 let internalAudioAction = false;
 let lastDriftSeekAt = 0;
-let consecutiveErrorCount = 0;
+let audioStatus = $state<"idle" | "loading" | "playing" | "blocked" | "error">("idle");
+let lastStreamUrl = "";
+let audioWatchdog: number | undefined;
+const listenAction = $derived(audioStatus === "error" ? "重试收听" : isListening ? "停止收听" : "开始收听");
 let playerPaneMode = $state<PlayerPaneMode>("split");
 let lyricsScrolling = $state(false);
 let queueScrolling = $state(false);
@@ -581,10 +584,6 @@ const isOwnRequest = $derived(
 			currentPlay.requesterKey === currentUser.userKey,
 	),
 );
-// 当前在线且未静音的听歌人数（包含登录成员与旁观者中 isMuted === false 的人数）
-const activeListeningCount = $derived(
-	[...onlineMembers, ...observers].filter((m) => m.isMuted === false).length,
-);
 // 能否直接切歌：
 // 1. 冷场轮播歌单：所有人随便切
 // 2. 自己点的歌：自己随便切
@@ -597,7 +596,7 @@ const canDirectSkip = $derived(
 				(isAdmin ||
 					isOwnRequest ||
 					onlineMemberCount <= 2 ||
-					activeListeningCount <= 2))),
+					listeningMemberCount <= 2))),
 );
 const isSoloCoolingDown = $derived(false);
 
@@ -742,9 +741,7 @@ async function loadPlaylists(force = false): Promise<void> {
 	isLoadingPlaylists = true;
 	playlistsError = "";
 	try {
-		const res = await fetchRoomPlaylists(chatServerUrl, roomId, authSeg, {
-			includeTracks: isWalineLoggedIn,
-		});
+		const res = await fetchRoomPlaylists(chatServerUrl, roomId, authSeg);
 		featuredPlaylists = res.featured;
 		myPlaylists = res.mine;
 		membersPlaylists = res.members;
@@ -1151,29 +1148,16 @@ function handleRandomPlayFromPlaylist(detail: PlaylistDetail): void {
 		const track = toEnqueueableTrack(item, detail.id);
 		return !isTrackCurrent(track) && !isTrackQueued(track);
 	});
-	const pool = candidates.length > 0 ? candidates : detail.tracks;
-	if (pool.length === 0) {
+	if (candidates.length === 0) {
 		onNotify?.("歌单内暂无可点播的曲目");
 		return;
 	}
-	const chosen = pool[Math.floor(Math.random() * pool.length)];
+	const chosen = candidates[Math.floor(Math.random() * candidates.length)];
 	if (!chosen) return;
-	const track = toEnqueueableTrack(chosen, detail.id);
 	isRandomizing = true;
-	enqueuingTrackIds.add(track.id);
-	enqueuingTrackIds = new Set(enqueuingTrackIds);
-	window.setTimeout(() => {
-		if (enqueuingTrackIds.has(track.id)) {
-			enqueuingTrackIds.delete(track.id);
-			enqueuingTrackIds = new Set(enqueuingTrackIds);
-		}
-	}, 4000);
-	markPendingAutoUnmuteIfImmediate(track.id);
-	onEnqueueTrack(track);
-	onNotify?.(`已随机点播《${track.title}》`);
-	window.setTimeout(() => {
+	void requestTrack(toEnqueueableTrack(chosen, detail.id)).finally(() => {
 		isRandomizing = false;
-	}, 600);
+	});
 }
 
 function normalizeMatchTitle(raw: string): string {
@@ -1459,7 +1443,7 @@ async function scrollLyricToCenter(index: number, instant = false) {
 }
 
 function updateMediaSessionMetadata() {
-	if (typeof navigator === "undefined" || !("mediaSession" in navigator))
+	if (typeof navigator === "undefined" || !("mediaSession" in navigator) || typeof MediaMetadata === "undefined")
 		return;
 	if (!hasJoinedAudio || !currentPlay) return;
 
@@ -1474,58 +1458,61 @@ function updateMediaSessionMetadata() {
 			? [{ src: coverUrl, sizes: "300x300", type: "image/jpeg" }]
 			: [],
 	});
-	navigator.mediaSession.playbackState = isListening ? "playing" : "paused";
+	navigator.mediaSession.playbackState = audioStatus === "playing" ? "playing" : "paused";
 }
 
 function registerMediaSessionHandlers() {
 	if (typeof navigator === "undefined" || !("mediaSession" in navigator))
 		return;
 
-	navigator.mediaSession.setActionHandler("play", () => {
-		if (!isListening) {
-			void startOrResumeAudio();
-		}
-	});
-	navigator.mediaSession.setActionHandler("pause", () => {
-		muteLocally();
-	});
-	navigator.mediaSession.setActionHandler("stop", () => {
-		muteLocally();
-	});
-	// 禁止系统控件快进/拖拽进度，防止破坏全网电台同步
-	const blockedActions: MediaSessionAction[] = [
-		"seekbackward",
-		"seekforward",
-		"seekto",
-		"previoustrack",
-		"nexttrack",
+	const actions: [MediaSessionAction, MediaSessionActionHandler | null][] = [
+		["play", () => {
+			if (!isListening || audioStatus === "error") startOrResumeAudio();
+		}],
+		["pause", muteLocally],
+		["stop", muteLocally],
+		["seekbackward", null],
+		["seekforward", null],
+		["seekto", null],
+		["previoustrack", null],
+		["nexttrack", null],
 	];
-	for (const action of blockedActions) {
+	for (const [action, handler] of actions) {
 		try {
-			navigator.mediaSession.setActionHandler(action, null);
+			navigator.mediaSession.setActionHandler(action, handler);
 		} catch {
-			// 忽略个别浏览器不支持的 action
+			// Some browser implementations expose only a subset of media actions.
 		}
 	}
 }
 
+function clearAudioWatchdog() {
+	if (audioWatchdog !== undefined) window.clearTimeout(audioWatchdog);
+	audioWatchdog = undefined;
+}
+
+function monitorAudioLoad(playUid: string) {
+	clearAudioWatchdog();
+	audioStatus = "loading";
+	audioWatchdog = window.setTimeout(() => handleTrackPlaybackFailure(playUid), 15_000);
+}
+
 function handleTrackPlaybackFailure(playUid: string) {
-	if (!isListening || !currentPlay || currentPlay.uid !== playUid) return;
-	if (reportedErrorUid === playUid) return;
-	reportedErrorUid = playUid;
-	consecutiveErrorCount += 1;
-	if (consecutiveErrorCount >= 2) {
-		consecutiveErrorCount = 0;
-		muteLocally();
-		onNotify?.("当前浏览器音频加载受限，已暂停收听，请点击开始收听重试");
-		return;
-	}
+	if (!isListening || currentPlay?.uid !== playUid) return;
+	clearAudioWatchdog();
+	audioStatus = "error";
+	updateMediaSessionMetadata();
+	const key = playUid + ":" + (currentPlay.sourceRevision ?? 0);
+	if (reportedErrorUid === key) return;
+	reportedErrorUid = key;
 	onReportError(playUid);
 }
 
 function muteLocally() {
 	cancelPendingAutoplayResume();
-	consecutiveErrorCount = 0;
+	clearAudioWatchdog();
+	audioStatus = "idle";
+	isSyncingAudio = false;
 	syncAudioSeq += 1;
 	isListening = false;
 	listenIntent = false;
@@ -1561,7 +1548,13 @@ function alignPlaybackToRoomTime(el: HTMLAudioElement): void {
 	// 新曲刚开播（< 2.5 秒），若播放头在 0 附近，不强制 Range seek 打断顺畅的流式连接
 	if (clamped >= 2.5 && Math.abs(el.currentTime - clamped) > 1.2) {
 		lastDriftSeekAt = Date.now();
-		el.currentTime = clamped;
+		const seekable = el.seekable;
+		for (let i = 0; i < seekable.length; i += 1) {
+			if (clamped >= seekable.start(i) && clamped <= seekable.end(i)) {
+				el.currentTime = clamped;
+				break;
+			}
+		}
 	}
 }
 
@@ -1629,8 +1622,11 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 			(expectedUid !== undefined && currentPlay?.uid !== expectedUid);
 		if (!isSupersededOrAbort) {
 			if (err instanceof DOMException && err.name === "NotAllowedError") {
+				clearAudioWatchdog();
+				audioStatus = "blocked";
 				isListening = false;
 				el.muted = true;
+				updateMediaSessionMetadata();
 				// 保持房间会话内收听意愿，注册一次性手势监听：用户在页面任意位置交互后立即无缝起播
 				cancelPendingAutoplayResume();
 				pendingAutoplayResumeHandler = () => {
@@ -1662,7 +1658,6 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 function startOrResumeAudio() {
 	if (!audioEl || !currentPlay?.track.streamUrl) return;
 	cancelPendingAutoplayResume();
-	consecutiveErrorCount = 0;
 	const targetUid = currentPlay.uid;
 	if (volume === 0) {
 		volume = 0.5;
@@ -1681,7 +1676,10 @@ function startOrResumeAudio() {
 	const streamUrl = currentPlay.track.streamUrl;
 	if (audioEl.getAttribute("src") !== streamUrl) {
 		audioEl.src = streamUrl;
+	} else if (audioEl.error) {
+		audioEl.load();
 	}
+	monitorAudioLoad(targetUid);
 
 	registerMediaSessionHandlers();
 	updateMediaSessionMetadata();
@@ -1698,7 +1696,7 @@ function startOrResumeAudio() {
 }
 
 function toggleListen() {
-	if (isListening) {
+	if (isListening && audioStatus !== "error") {
 		muteLocally();
 		return;
 	}
@@ -1767,13 +1765,12 @@ function handleVolumeInput(value: number) {
 }
 
 function syncDurationFromAudio() {
-	if (!audioEl || !Number.isFinite(audioEl.duration) || audioEl.duration <= 0) {
+	if (!audioEl || !currentPlay || audioEl.currentSrc !== currentPlay.track.streamUrl || !Number.isFinite(audioEl.duration) || audioEl.duration <= 0) {
 		return;
 	}
 	localDuration = audioEl.duration;
 	if (
 		currentPlay &&
-		currentPlay.durationSec <= 0 &&
 		reportedDurationUid !== currentPlay.uid
 	) {
 		reportedDurationUid = currentPlay.uid;
@@ -1787,6 +1784,11 @@ $effect(() => {
 	const activeRoom = roomId;
 	if (!active) {
 		lastPlayUid = "";
+		lastStreamUrl = "";
+		clearAudioWatchdog();
+		audioStatus = "idle";
+		isSyncingAudio = false;
+		syncAudioSeq += 1;
 		lastRoomId = activeRoom;
 		roomElapsed = 0;
 		localDuration = 0;
@@ -1795,6 +1797,10 @@ $effect(() => {
 		if (audioEl) {
 			internalAudioAction = true;
 			audioEl.pause();
+			if (audioEl.hasAttribute("src")) {
+				audioEl.removeAttribute("src");
+				audioEl.load();
+			}
 			window.setTimeout(() => {
 				internalAudioAction = false;
 			}, 50);
@@ -1803,7 +1809,10 @@ $effect(() => {
 	}
 
 	if (!audioEl) return;
-	if (active.uid === lastPlayUid && activeRoom === lastRoomId) return;
+	const streamUrl = active.track.streamUrl || "";
+	if (active.uid === lastPlayUid && activeRoom === lastRoomId && streamUrl === lastStreamUrl) return;
+	lastStreamUrl = streamUrl;
+	clearAudioWatchdog();
 	lastPlayUid = active.uid;
 	lastRoomId = activeRoom;
 	coverLoadFailed = false;
@@ -1815,7 +1824,7 @@ $effect(() => {
 		pendingAutoUnmuteTrackId &&
 			(pendingAutoUnmuteTrackId === active.track.id ||
 				pendingAutoUnmuteTrackId.startsWith("ext:")) &&
-			Date.now() - pendingAutoUnmuteAt < 12_000 &&
+			Date.now() - pendingAutoUnmuteAt < 30_000 &&
 			currentUser &&
 			active.requesterKey === currentUser.userKey,
 	);
@@ -1827,7 +1836,6 @@ $effect(() => {
 	updateMediaSessionMetadata();
 
 	const targetUid = active.uid;
-	const streamUrl = active.track.streamUrl || "";
 	if (streamUrl && audioEl.getAttribute("src") !== streamUrl) {
 		audioEl.src = streamUrl;
 	}
@@ -1844,6 +1852,7 @@ $effect(() => {
 		window.setTimeout(() => {
 			internalAudioAction = false;
 		}, 50);
+		monitorAudioLoad(targetUid);
 		void seekAndPlayCurrent(audioEl, targetUid);
 	}
 });
@@ -1922,6 +1931,10 @@ async function runSearch(q: string, bypassCache = false) {
 		const res = await onSearchOnline(q, { signal: controller.signal, page: 1 });
 		if (controller.signal.aborted) return;
 		const tracks = dedupeTracksById(res.tracks);
+		if (searchResultCache.size >= 40) {
+			const oldest = searchResultCache.keys().next().value;
+			if (oldest !== undefined) searchResultCache.delete(oldest);
+		}
 		searchResultCache.set(cacheKey, {
 			tracks,
 			hasMore: res.hasMore,
@@ -1955,23 +1968,30 @@ async function loadMoreSearchResults() {
 	const q = submittedSearchQuery;
 	if (!q || isSearching || isLoadingMore || !hasMoreSearchResults) return;
 
-	const nextPage = searchPage + 1;
 	const controller = new AbortController();
 	searchAbortController = controller;
 	isLoadingMore = true;
 	searchError = "";
 
 	try {
-		const res = await onSearchOnline(q, {
-			signal: controller.signal,
-			page: nextPage,
-		});
-		if (controller.signal.aborted || submittedSearchQuery !== q) return;
-		const existingIds = new Set(searchResults.map((t) => t.id));
-		const newTracks = res.tracks.filter((t) => !existingIds.has(t.id));
-		searchResults = [...searchResults, ...newTracks];
-		searchPage = res.page;
-		hasMoreSearchResults = res.hasMore && newTracks.length > 0;
+		// Search results can overlap across pages. Advance the upstream page independently.
+		for (let attempt = 0; attempt < 3 && hasMoreSearchResults; attempt += 1) {
+			const requestedPage = searchPage + 1;
+			const res = await onSearchOnline(q, { signal: controller.signal, page: requestedPage });
+			if (controller.signal.aborted || submittedSearchQuery !== q) return;
+			if (res.page < requestedPage) {
+				hasMoreSearchResults = false;
+				return;
+			}
+			const existingIds = new Set(searchResults.map((track) => track.id));
+			const newTracks = dedupeTracksById(res.tracks).filter((track) => !existingIds.has(track.id));
+			searchPage = res.page;
+			hasMoreSearchResults = res.hasMore;
+			if (newTracks.length > 0) {
+				searchResults = [...searchResults, ...newTracks];
+				return;
+			}
+		}
 	} catch (err) {
 		if (controller.signal.aborted && err instanceof DOMException && err.name === "AbortError") {
 			return;
@@ -1985,8 +2005,8 @@ async function loadMoreSearchResults() {
 	} finally {
 		if (searchAbortController === controller) {
 			searchAbortController = null;
+			isLoadingMore = false;
 		}
-		isLoadingMore = false;
 	}
 }
 
@@ -1998,23 +2018,27 @@ function markPendingAutoUnmuteIfImmediate(songId: string): void {
 	}
 }
 
+async function requestTrack(song: ChatMusicTrack) {
+	if (enqueuingTrackIds.has(song.id)) return;
+	enqueuingTrackIds = new Set([...enqueuingTrackIds, song.id]);
+	markPendingAutoUnmuteIfImmediate(song.id);
+	try {
+		const accepted = await onEnqueueTrack(song);
+		if (!accepted && pendingAutoUnmuteTrackId === song.id) pendingAutoUnmuteTrackId = "";
+	} finally {
+		const next = new Set(enqueuingTrackIds);
+		next.delete(song.id);
+		enqueuingTrackIds = next;
+	}
+}
+
 function handleToggleQueueTrack(song: ChatMusicTrack) {
 	if (isTrackCurrent(song)) return;
 	const existing = findQueuedEntryForSong(song);
 	if (existing) {
-		if (!canRemoveEntry(existing)) return;
-		onRemoveQueue(existing.uid);
+		if (canRemoveEntry(existing)) onRemoveQueue(existing.uid);
 	} else {
-		enqueuingTrackIds.add(song.id);
-		enqueuingTrackIds = new Set(enqueuingTrackIds);
-		window.setTimeout(() => {
-			if (enqueuingTrackIds.has(song.id)) {
-				enqueuingTrackIds.delete(song.id);
-				enqueuingTrackIds = new Set(enqueuingTrackIds);
-			}
-		}, 4000);
-		markPendingAutoUnmuteIfImmediate(song.id);
-		onEnqueueTrack(song);
+		void requestTrack(song);
 	}
 }
 
@@ -2044,7 +2068,7 @@ onMount(() => {
 				(effectiveDuration === 0 || expected < effectiveDuration - 1.5)
 			) {
 				lastDriftSeekAt = Date.now();
-				audioEl.currentTime = expected;
+				alignPlaybackToRoomTime(audioEl);
 			}
 		}
 	}, 250);
@@ -2066,6 +2090,8 @@ onMount(() => {
 
 	return () => {
 		cancelPendingAutoplayResume();
+		clearAudioWatchdog();
+		syncAudioSeq += 1;
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleKeydown);
 		window.clearInterval(roomClock);
@@ -2104,9 +2130,9 @@ const displayedBrowseTracks = $derived(
 
 $effect(() => {
 	onPlaybackStatusChange?.({
-		isListening,
+		isListening: isListening && audioStatus !== "error",
 		listenIntent,
-		isMuted: !isListening || volume <= 0,
+		isMuted: audioStatus !== "playing" || volume <= 0,
 		elapsedSec: Math.floor(roomElapsed),
 		durationSec: effectiveDuration,
 		canDirectSkip,
@@ -2121,7 +2147,6 @@ $effect(() => {
 <aside class="flex flex-col h-full w-full min-h-0 overflow-hidden select-none" aria-label="点歌台">
   <audio
     bind:this={audioEl}
-    src={currentPlay?.track.streamUrl || undefined}
     preload="auto"
     playsinline
     muted={!isListening}
@@ -2129,7 +2154,14 @@ $effect(() => {
     ondurationchange={syncDurationFromAudio}
     oncanplay={syncDurationFromAudio}
     onplaying={() => {
-      consecutiveErrorCount = 0;
+      if (!isListening || !currentPlay || audioEl?.currentSrc !== currentPlay.track.streamUrl) return;
+      clearAudioWatchdog();
+      audioStatus = "playing";
+      syncDurationFromAudio();
+      updateMediaSessionMetadata();
+    }}
+    onwaiting={() => {
+      if (isListening && currentPlay && audioStatus === "playing") monitorAudioLoad(currentPlay.uid);
     }}
     onpause={() => {
       // 自然播完（ended）、曲目切换/校时中或内部主动暂停触发的 pause 不视为硬件暂停，保持收听状态不断开
@@ -2138,10 +2170,13 @@ $effect(() => {
         isSyncingAudio ||
         !isListening ||
         !currentPlay ||
+        audioStatus === "error" ||
         audioEl?.ended
       ) {
         return;
       }
+      clearAudioWatchdog();
+      audioStatus = "idle";
       isListening = false;
       if (audioEl) audioEl.muted = true;
       if (typeof navigator !== "undefined" && "mediaSession" in navigator && hasJoinedAudio) {
@@ -2149,13 +2184,13 @@ $effect(() => {
       }
     }}
     onended={() => {
-      if (currentPlay && reportedEndUid !== currentPlay.uid) {
+      if (currentPlay && audioEl?.currentSrc === currentPlay.track.streamUrl && reportedEndUid !== currentPlay.uid) {
         reportedEndUid = currentPlay.uid;
         onTrackEnded(currentPlay.uid);
       }
     }}
     onerror={() => {
-      if (currentPlay) {
+      if (currentPlay && audioEl?.currentSrc === currentPlay.track.streamUrl) {
         handleTrackPlaybackFailure(currentPlay.uid);
       }
     }}
@@ -2179,10 +2214,10 @@ $effect(() => {
         {isListening && currentPlay
           ? 'bg-(--primary)/14 border-(--primary)/30 text-[var(--chat-accent-text)] hover:bg-(--primary)/22'
           : 'bg-[var(--card-bg)]/60 border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-[var(--card-bg)]/85'}"
-      aria-label={isListening ? "停止收听" : "开始收听"}
+      aria-label={listenAction}
       onclick={toggleListen}
     >
-      {#if isListening && currentPlay}
+      {#if audioStatus === "playing" && currentPlay}
         <span class="chat-eq-bars" aria-hidden="true">
           <span class="chat-eq-bar"></span>
           <span class="chat-eq-bar"></span>
@@ -2193,7 +2228,7 @@ $effect(() => {
         <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
         </svg>
-        <span>{currentPlay ? "静音同步" : "未在播放"}</span>
+        <span>{!currentPlay ? "未在播放" : audioStatus === "loading" ? "正在缓冲" : audioStatus === "error" ? "重试收听" : audioStatus === "blocked" ? "点击开始收听" : "静音同步"}</span>
       {/if}
     </button>
   </div>
@@ -2497,7 +2532,7 @@ $effect(() => {
               type="button"
               disabled={!currentPlay}
               class="hover:text-(--primary) transition-colors p-0.5 rounded-md flex items-center border-none bg-transparent text-inherit cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
-              aria-label={isListening ? "停止收听" : "开始收听"}
+              aria-label={listenAction}
               onclick={toggleListen}
             >
               {#if !isListening || volume === 0}
@@ -2624,7 +2659,7 @@ $effect(() => {
             type="button"
             disabled={!currentPlay}
             class="chat-play-btn {isListening && currentPlay ? 'playing' : ''} justify-self-center shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-            aria-label={isListening ? "停止收听" : "开始收听"}
+            aria-label={listenAction}
             onclick={toggleListen}
           >
             {#if isListening && currentPlay}
@@ -2971,18 +3006,18 @@ $effect(() => {
             {#if searchError}
               <div class="text-center pt-2 text-xs text-red-500">{searchError}</div>
             {/if}
-            {#if submittedSearchQuery && hasMoreSearchResults}
-              <div class="pt-2 flex justify-center">
-                <button
-                  type="button"
-                  class="px-4 py-1.5 rounded-full text-xs border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) hover:border-[var(--primary)]/40 disabled:opacity-50 transition-colors cursor-pointer"
-                  disabled={isLoadingMore}
-                  onclick={() => void loadMoreSearchResults()}
-                >
-                  {isLoadingMore ? "正在加载更多..." : "加载更多结果"}
-                </button>
-              </div>
-            {/if}
+          {/if}
+          {#if !isSearching && submittedSearchQuery && hasMoreSearchResults}
+            <div class="pt-2 flex justify-center">
+              <button
+                type="button"
+                class="px-4 py-1.5 rounded-full text-xs border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) hover:border-[var(--primary)]/40 disabled:opacity-50 transition-colors cursor-pointer"
+                disabled={isLoadingMore}
+                onclick={() => void loadMoreSearchResults()}
+              >
+                {isLoadingMore ? "正在加载更多..." : "加载更多结果"}
+              </button>
+            </div>
           {/if}
         {/if}
       </div>

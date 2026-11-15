@@ -252,6 +252,11 @@ let pinnedUids = $state<string[]>([]);
 let roomTopic = $state<string>("");
 let typingUsers = $state<string[]>([]);
 let musicState = $state<RoomMusicState | null>(null);
+let musicAudience = $state({ onlineCount: 0, listeningCount: 0 });
+const songRequests = new Map<string, {
+	room: string;
+	finish: (ok: boolean) => void;
+}>();
 let isSkippingTrack = $state(false);
 let skipPendingTimer: number | null = null;
 let clockOffsetMs = $state(0);
@@ -507,7 +512,7 @@ function handleSkipTrack() {
 		return;
 	}
 	if (isSkippingTrack) return;
-	if (sendPacket({ type: "music:skip" })) {
+	if (sendPacket({ type: "music:skip", playUid: musicState?.current?.uid })) {
 		startSkipPending();
 	}
 }
@@ -524,7 +529,7 @@ function handleVoteSkip() {
 	const willPass =
 		!hasVoted &&
 		(musicState?.voteCount ?? 0) + 1 >= (musicState?.voteThreshold ?? 2);
-	if (sendPacket({ type: "music:vote_skip" }) && willPass) {
+	if (sendPacket({ type: "music:vote_skip", playUid: musicState?.current?.uid }) && willPass) {
 		startSkipPending();
 	}
 }
@@ -772,6 +777,7 @@ function connectRoom(roomId: string) {
 					totalChatterCount = Math.max(totalChatterCount, packet.mentionMembers.length);
 				}
 				musicState = packet.music;
+				if (packet.musicAudience) musicAudience = packet.musicAudience;
 				pinnedUids = packet.pinnedUids ?? [];
 				roomTopic = packet.topic ?? "";
 				typingUsers = [];
@@ -876,8 +882,6 @@ function connectRoom(roomId: string) {
 												}
 											: {}),
 										skipVotes: remapList(musicState.current.skipVotes) ?? [],
-										errorReports:
-											remapList(musicState.current.errorReports) ?? [],
 									}
 								: null,
 							queue: musicState.queue.map((q) =>
@@ -889,7 +893,7 @@ function connectRoom(roomId: string) {
 										}
 									: q,
 							),
-							historyLogs: musicState.historyLogs.map((h) =>
+							historyLogs: (musicState.historyLogs ?? []).map((h) =>
 								fromSet.has(h.requesterKey)
 									? {
 											...h,
@@ -954,6 +958,7 @@ function connectRoom(roomId: string) {
 			}
 			case "presence:update": {
 				if (packet.roomId === currentRoom) {
+					if (packet.musicAudience) musicAudience = packet.musicAudience;
 					roomOnlineMembers = packet.members.filter(
 						(m) => !m.roomId || m.roomId === currentRoom,
 					);
@@ -1125,6 +1130,17 @@ function connectRoom(roomId: string) {
 				}
 				break;
 			}
+			case "music:request_result": {
+				const pending = songRequests.get(packet.requestId);
+				if (!pending || pending.room !== packet.roomId) break;
+				pending.finish(packet.ok);
+				if (packet.roomId === currentRoom) {
+					if (packet.code === "AUTH_REQUIRED") openAuthModal();
+					else if (!packet.ok) showNotice(packet.error || "点歌失败，请重试");
+					else if (!packet.playImmediately && packet.position) showNotice("已加入待播队列，第 " + packet.position + " 首");
+				}
+				break;
+			}
 			case "music:state": {
 				if (packet.roomId === currentRoom) {
 					const prevUid = musicState?.current?.uid ?? "";
@@ -1244,6 +1260,7 @@ function handleRoomSelect(roomId: string) {
 	lastMarkedServerReadAt = 0;
 	roomOnlineMembers = [];
 	musicState = null;
+	musicAudience = { onlineCount: 0, listeningCount: 0 };
 	clearSkipPending();
 	reconnectAttempt = 0;
 	if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1596,36 +1613,40 @@ async function handleSearchOnline(
 	return searchOnlineMusic(normalizedChatServer, keyword, options);
 }
 
-function handleEnqueueTrack(track: ChatMusicTrack) {
+async function handleEnqueueTrack(track: ChatMusicTrack): Promise<boolean> {
 	if (!currentUser) {
 		openAuthModal();
-		return;
+		return false;
 	}
-	// 每个人点歌上限为 10 首歌（排队中的曲目数，非管理员限制）
-	const userQueuedCount = (musicState?.queue ?? []).filter(
-		(q) => q.requesterKey === currentUser.userKey,
-	).length;
-	if (!currentUser.isAdmin && userQueuedCount >= 10) {
-		showNotice("您排队中的曲目已达 10 首上限，请等待播放后再点歌~");
-		return;
-	}
-	sendPacket({
-		type: "music:enqueue",
-		track: {
-			id: track.id,
-			provider: track.provider || "local",
-			sourceId: track.sourceId || track.id,
-			sourcePlatform: track.sourcePlatform,
-			playlistId: track.playlistId,
-			position: track.position,
-			title: track.title,
-			artist: track.artist,
-			album: track.album,
-			cover: track.cover,
-			url: track.url,
-			lrc: track.lrc,
-			durationSec: track.durationSec ?? 0,
-		},
+	const room = currentRoom;
+	const requestId = crypto.randomUUID();
+	return new Promise<boolean>((resolve) => {
+		const timer = window.setTimeout(() => {
+			finish(false);
+			if (room === currentRoom) showNotice("点歌未收到回应，请先查看待播队列");
+		}, 30_000);
+		const finish = (ok: boolean) => {
+			window.clearTimeout(timer);
+			songRequests.delete(requestId);
+			resolve(ok);
+		};
+		songRequests.set(requestId, { room, finish });
+		if (!sendPacket({
+			type: "music:enqueue",
+			requestId,
+			track: {
+				id: track.id,
+				provider: track.provider,
+				sourceId: track.sourceId,
+				playlistId: track.playlistId,
+				position: track.position,
+				title: track.title,
+				artist: track.artist,
+				album: track.album,
+				cover: track.cover,
+				durationSec: track.durationSec ?? 0,
+			},
+		})) finish(false);
 	});
 }
 
@@ -1848,6 +1869,7 @@ onMount(() => {
 
 	return () => {
 		isUnmounted = true;
+		for (const pending of songRequests.values()) pending.finish(false);
 		if (typeof document !== "undefined") {
 			document.body.classList.remove("is-resizing-chat");
 		}
@@ -2036,9 +2058,9 @@ onMount(() => {
         fallbackTracks={musicTracks}
         musicState={musicState}
         currentUser={currentUser}
-        onlineMemberCount={roomOnlineMembers.length}
+        onlineMemberCount={musicAudience.onlineCount || roomOnlineMembers.length}
+        listeningMemberCount={musicAudience.listeningCount}
         onlineMembers={roomOnlineMembers}
-        observers={observers}
         mentionMembers={mentionMembers}
         clockOffsetMs={clockOffsetMs}
         initialVolume={memoryVolume}

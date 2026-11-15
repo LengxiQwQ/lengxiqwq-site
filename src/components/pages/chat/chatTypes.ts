@@ -276,6 +276,7 @@ export interface MusicHistoryEntry {
 
 export interface MusicHistoryLogEntry {
 	id: number;
+	outcome?: "queued" | "played" | "unavailable" | "cancelled";
 	track: ChatMusicTrack;
 	requesterKey: string;
 	requesterName: string;
@@ -296,7 +297,7 @@ export interface CurrentPlayback {
 	startedAt: number;
 	durationSec: number;
 	skipVotes: string[];
-	errorReports: string[];
+	sourceRevision?: number;
 }
 
 export interface RoomMusicState {

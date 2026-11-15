@@ -39,6 +39,12 @@ export interface RoomInitPacket {
 	totalCount: number;
 	totalChatters?: number;
 	music: RoomMusicState;
+	musicAudience?: MusicAudience;
+}
+
+export interface MusicAudience {
+	onlineCount: number;
+	listeningCount: number;
 }
 
 export type ServerPacket =
@@ -70,6 +76,7 @@ export type ServerPacket =
 			observerCount: number;
 			totalCount: number;
 			totalChatters?: number;
+			musicAudience?: MusicAudience;
 	  }
 	| { type: "chat:message" | "chat:updated"; roomId: string; message: ChatMessageRecord }
 	| {
@@ -82,7 +89,17 @@ export type ServerPacket =
 	| { type: "chat:deleted"; roomId: string; msgUid: string; recalled?: boolean }
 	| { type: "chat:recalled"; roomId: string; msgUid: string }
 	| ({ type: "music:state"; roomId: string } & RoomMusicState)
-	| { type: "playlist:updated"; roomId: string }
+	| {
+			type: "music:request_result";
+			roomId: string;
+			requestId: string;
+			ok: boolean;
+			error?: string;
+			code?: string;
+			position?: number;
+			playImmediately?: boolean;
+	  }
+	| { type: "playlist:updated" | "playlists:updated"; roomId: string }
 	| {
 			type: "error";
 			code?: string;
@@ -741,7 +758,7 @@ export async function searchOnlineMusic(
 	try {
 		const resp = await fetch(
 			`${base}/api/music/search?q=${encodeURIComponent(q)}&limit=${limit}&page=${page}`,
-			{ signal: controller.signal },
+			{ signal: controller.signal, cache: "no-store" },
 		);
 		const data = (await resp.json().catch(() => null)) as {
 			ok?: boolean;
@@ -750,7 +767,7 @@ export async function searchOnlineMusic(
 			page?: number;
 			tracks?: ChatMusicTrack[];
 		} | null;
-		if (!resp.ok || data?.ok === false) {
+		if (!resp.ok || !data?.ok || !Array.isArray(data.tracks)) {
 			throw new Error(data?.error || `搜索请求失败 (${resp.status})`);
 		}
 		const tracks = Array.isArray(data?.tracks) ? data.tracks : [];

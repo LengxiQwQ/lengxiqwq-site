@@ -1,0 +1,908 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -7,8 +7,9 @@
+ import { QQMusicProvider } from './src/music/qq-music.mjs';
+ import { MusicRegistry } from './src/music/registry.mjs';
+ import { verifyStreamProxyToken } from './src/music/stream-signer.mjs';
+-import { handleStreamProxyRequest, prefetchAudio } from './src/music/stream-cache.mjs';
++import { handleStreamProxyRequest, maintainAudioCache, prefetchAudio } from './src/music/stream-cache.mjs';
+ import { MusicManager } from './src/music/music-manager.mjs';
++import { normalizeMusicTrack, readPlaylistJson } from './src/music/music-input.mjs';
+
+ const PORT = 3001;
+ const DATA_DIR = '/opt/chat-server/data';
+@@ -319,6 +320,8 @@
+ let membersStore = loadJsonSafe('members.json', []);
+ let playlistsStore = loadJsonSafe('playlists.json', { featured: [], members: [], mine: [] });
+ let playlistDetailsStore = loadJsonSafe('playlist_details.json', {});
++const roomSettingsExist = existsSync(join(DATA_DIR, 'room_settings.json'));
++const MUSIC_ROOMS = ['chat', 'interconnect'];
+ let roomSettings = loadJsonSafe('room_settings.json', {
+   chat: { featured: [], fallback: null },
+   interconnect: { featured: [], fallback: null }
+@@ -341,7 +344,7 @@
+ }
+
+ // Auto-migrate from older playlists.json if roomSettings is not yet initialized
+-if ((!roomSettings.chat.featured || roomSettings.chat.featured.length === 0) && Array.isArray(playlistsStore.featured) && playlistsStore.featured.length > 0) {
++if (!roomSettingsExist && (!roomSettings.chat.featured || roomSettings.chat.featured.length === 0) && Array.isArray(playlistsStore.featured) && playlistsStore.featured.length > 0) {
+   roomSettings.chat.featured = playlistsStore.featured.map((p) => p.id);
+   const fb = playlistsStore.featured.find((p) => p.isFallback);
+   if (fb) roomSettings.chat.fallback = fb.id;
+@@ -353,7 +356,6 @@
+ function savePlaylistsAtomic() {
+   const allSummaries = getAllPlaylistSummaries();
+   const featuredChatIds = new Set(roomSettings.chat?.featured || []);
+-  const fallbackChatId = roomSettings.chat?.fallback || null;
+   playlistsStore = {
+     ok: true,
+     all: allSummaries,
+@@ -424,6 +426,7 @@
+     onStateChanged: () => {
+       broadcastMusicState('chat');
+     },
++    onUnavailable: (entry) => notifyUnavailable('chat', entry),
+     onPrefetchTrack: (streamUrl) => {
+       prefetchTrackStream(streamUrl);
+     }
+@@ -437,6 +440,7 @@
+     onStateChanged: () => {
+       broadcastMusicState('interconnect');
+     },
++    onUnavailable: (entry) => notifyUnavailable('interconnect', entry),
+     onPrefetchTrack: (streamUrl) => {
+       prefetchTrackStream(streamUrl);
+     }
+@@ -444,37 +448,74 @@
+ };
+
+ function getMusicManager(roomId) {
+-  return musicManagers[roomId] || musicManagers.chat;
+-}
+-
+-function syncFallbackTracksForRoom(roomId) {
++  return musicManagers[roomId];
++}
++
++function notifyUnavailable(roomId, entry) {
++  console.warn('[MusicUnavailable]', roomId, entry.track.id);
++  for (const client of clients) {
++    if (client.readyState === 1 && client.currentRoom === roomId &&
++        client.user?.userKey === entry.requesterKey) {
++      client.send(JSON.stringify({ type: 'error', message: '《' + entry.track.title + '》音源暂时不可用，已跳过' }));
++    }
++  }
++}
++
++function visiblePlaylist(playlist, caller) {
++  return Boolean(playlist && (playlist.isPublic || caller?.isAdmin ||
++    (caller && playlist.ownerKey === caller.userKey)));
++}
++
++function notifyPlaylistUpdates(rooms = MUSIC_ROOMS) {
++  for (const roomId of rooms) broadcastToRoom(roomId, { type: 'playlists:updated', roomId });
++}
++
++function syncFallbackTracksForRoom(roomId, { boot = false, start = true } = {}) {
+   const mgr = musicManagers[roomId];
+-  if (!mgr) return;
+-  const fallbackId = roomSettings[roomId]?.fallback;
+-  if (fallbackId && playlistDetailsStore[fallbackId]) {
+-    const pl = playlistDetailsStore[fallbackId];
+-    mgr.setFallbackPlaylist(fallbackId, pl.tracks || [], pl.title || '冷场轮播');
++  const settings = roomSettings[roomId];
++  const fallback = id => {
++    const playlist = Object.hasOwn(playlistDetailsStore, id) ? playlistDetailsStore[id] : null;
++    return playlist?.isPublic && playlist.tracks?.length ? playlist : null;
++  };
++  if (settings.fallbackDisabled) {
++    mgr.setFallbackPlaylist(null, [], null, { start: !boot && start });
++    return;
++  }
++  const explicit = settings.fallback && fallback(settings.fallback);
++  const featuredId = (settings.featured || []).find(fallback);
++  const featured = featuredId && fallback(featuredId);
++  if (explicit || featured) {
++    const playlist = explicit || featured;
++    mgr.setFallbackPlaylist(explicit ? settings.fallback : featuredId, playlist.tracks, playlist.title, { start: !boot && start });
+   } else {
+-    const featuredIds = roomSettings[roomId]?.featured || [];
+-    let foundTracks = null;
+-    let foundName = '';
+-    for (const fid of featuredIds) {
+-      if (playlistDetailsStore[fid]?.tracks?.length > 0) {
+-        foundTracks = playlistDetailsStore[fid].tracks;
+-        foundName = playlistDetailsStore[fid].title;
+-        break;
+-      }
+-    }
+-    if (foundTracks) {
+-      mgr.setFallbackPlaylist(featuredIds[0], foundTracks, foundName + ' (精选轮播)');
+-    } else {
+-      mgr.loadFallbackTracks();
+-    }
+-  }
+-}
+-
+-syncFallbackTracksForRoom('chat');
+-syncFallbackTracksForRoom('interconnect');
++    const tracks = Object.values(playlistDetailsStore).filter(p => p?.isPublic).flatMap(p => p.tracks || []);
++    mgr.setFallbackPlaylist(null, tracks, null, { start: !boot && start });
++  }
++}
++
++function refreshSharedFallbacks(playlistId) {
++  for (const roomId of MUSIC_ROOMS) {
++    const manager = musicManagers[roomId];
++    const dependsOnPlaylist = manager.fallbackPlaylistId === playlistId ||
++      roomSettings[roomId].featured?.includes(playlistId);
++    if (dependsOnPlaylist || !manager.fallbackPlaylistId) {
++      syncFallbackTracksForRoom(roomId, { start: dependsOnPlaylist });
++    }
++  }
++}
++
++function getRoomMusicAudience(roomId) {
++  const roomClients = [...clients].filter(client => client.currentRoom === roomId && client.readyState === 1);
++  const listeners = new Set(roomClients.filter(client => client.user && client.isMuted === false)
++    .map(client => client.user.userKey));
++  return { onlineCount: roomClients.length, listeningCount: listeners.size };
++}
++
++for (const roomId of MUSIC_ROOMS) {
++  if (!Object.hasOwn(roomSettings, roomId)) roomSettings[roomId] = { featured: [], fallback: null };
++  syncFallbackTracksForRoom(roomId, { boot: true });
++}
++void maintainAudioCache();
+
+ function prefetchTrackStream(streamUrl) {
+   if (!streamUrl || typeof streamUrl !== 'string') return;
+@@ -497,9 +538,6 @@
+       const snap = mgr.getSnapshot(getOnlineUserKeys(rId));
+       if (snap.current?.track?.streamUrl) {
+         prefetchTrackStream(snap.current.track.streamUrl);
+-      }
+-      if (snap.queue?.[0]?.track?.streamUrl) {
+-        prefetchTrackStream(snap.queue[0].track.streamUrl);
+       }
+       broadcastToRoom(rId, {
+         type: 'music:state',
+@@ -1140,6 +1178,7 @@
+   broadcastToRoom(roomId, {
+     type: 'presence:update',
+     roomId,
++    musicAudience: getRoomMusicAudience(roomId),
+     members,
+     observers,
+     mentionMembers,
+@@ -1464,6 +1503,11 @@
+
+     const member = membersStore.find((m) => m.userKey === userKey);
+     const targetRoom = url.searchParams.get('room') || 'chat';
++    if (!MUSIC_ROOMS.includes(targetRoom)) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ ok: false, error: '无效房间' }));
++      return;
++    }
+     const tracksResult = getMusicManager(targetRoom).getMemberTracks(userKey, 0, 50);
+     const userMessages = messagesStore.chat.concat(messagesStore.interconnect).filter((m) => m.userKey === userKey);
+
+@@ -1501,10 +1545,7 @@
+       playlists: getAllPlaylistSummaries()
+         .filter((p) => p.ownerKey === userKey && p.isPublic)
+         .map((p) => {
+-          const isFeatured = Boolean(
+-            roomSettings.chat?.featured?.includes(p.id) ||
+-            roomSettings.interconnect?.featured?.includes(p.id)
+-          );
++          const isFeatured = Boolean(roomSettings[targetRoom]?.featured?.includes(p.id));
+           return {
+             id: p.id,
+             title: p.title,
+@@ -1534,6 +1575,11 @@
+     }
+
+     const targetRoom = url.searchParams.get('room') || 'chat';
++    if (!MUSIC_ROOMS.includes(targetRoom)) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ ok: false, error: '无效房间' }));
++      return;
++    }
+     const result = getMusicManager(targetRoom).getMemberTracks(userKey, beforeId, limit);
+     res.writeHead(200, { 'Content-Type': 'application/json' });
+     res.end(JSON.stringify(result));
+@@ -1597,9 +1643,16 @@
+     return;
+   }
+
++  const playlistRoom = (url.searchParams.get('room') || 'chat').trim().toLowerCase();
++  if (url.pathname.startsWith('/api/playlists') && !MUSIC_ROOMS.includes(playlistRoom)) {
++    res.writeHead(400, { 'Content-Type': 'application/json' });
++    res.end(JSON.stringify({ ok: false, error: '无效房间' }));
++    return;
++  }
++
+   // Playlists Summary: GET /api/playlists
+   if (url.pathname === '/api/playlists' && req.method === 'GET') {
+-    const roomId = (url.searchParams.get('room') || 'chat').trim().toLowerCase();
++    const roomId = playlistRoom;
+     const includeTracks = url.searchParams.get('includeTracks') === '1';
+
+     const authHeader = req.headers.authorization || '';
+@@ -1615,7 +1668,7 @@
+       isFallback: p.id === fallbackId
+     }));
+
+-    const featured = all.filter((p) => p.isFeatured);
++    const featured = all.filter(p => p.isFeatured && visiblePlaylist(p, caller));
+     const mine = caller ? all.filter((p) => p.ownerKey === caller.userKey) : [];
+     const members = caller
+       ? all.filter((p) => p.ownerKey !== caller.userKey && p.isPublic)
+@@ -1624,6 +1677,7 @@
+     const enrichedDetails = {};
+     if (includeTracks) {
+       for (const [pid, d] of Object.entries(playlistDetailsStore)) {
++        if (!visiblePlaylist(d, caller)) continue;
+         enrichedDetails[pid] = {
+           ...d,
+           isFeatured: featuredIds.has(pid),
+@@ -1648,10 +1702,12 @@
+
+   // Playlist Detail: GET /api/playlists/detail
+   if (url.pathname === '/api/playlists/detail' && req.method === 'GET') {
+-    const roomId = (url.searchParams.get('room') || 'chat').trim().toLowerCase();
++    const roomId = playlistRoom;
+     const plId = url.searchParams.get('id');
+-    const detail = playlistDetailsStore[plId];
+-    if (detail) {
++    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
++    const caller = token ? await verifyWalineTokenRemote(token) : null;
++    const detail = Object.hasOwn(playlistDetailsStore, plId) ? playlistDetailsStore[plId] : null;
++    if (visiblePlaylist(detail, caller)) {
+       const featuredIds = new Set(roomSettings[roomId]?.featured || []);
+       const fallbackId = roomSettings[roomId]?.fallback || null;
+       const enriched = {
+@@ -1670,14 +1726,12 @@
+
+   // Update Playlist Flags: POST /api/playlists/flags
+   if (url.pathname === '/api/playlists/flags' && req.method === 'POST') {
+-    const roomId = (url.searchParams.get('room') || 'chat').trim().toLowerCase();
++    const roomId = playlistRoom;
+     if (!roomSettings[roomId]) {
+       roomSettings[roomId] = { featured: [], fallback: null };
+     }
+
+-    let bodyText = '';
+-    req.on('data', (chunk) => { bodyText += chunk; });
+-    req.on('end', async () => {
++    {
+       try {
+         const authHeader = req.headers.authorization || '';
+         const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+@@ -1688,7 +1742,7 @@
+           return;
+         }
+
+-        const body = JSON.parse(bodyText || '{}');
++        const body = await readPlaylistJson(req);
+         const playlistId = body.playlistId;
+         if (!playlistId) {
+           res.writeHead(400, { 'Content-Type': 'application/json' });
+@@ -1718,36 +1772,32 @@
+           return;
+         }
+
+-        // Apply isPublic
+-        if (typeof body.isPublic === 'boolean') {
+-          target.isPublic = body.isPublic;
+-          if (playlistDetailsStore[playlistId]) {
+-            playlistDetailsStore[playlistId].isPublic = body.isPublic;
+-          }
+-        }
+-
+-        // Apply isFeatured
++        const sharedChange = typeof body.isPublic === 'boolean';
++        const nextPublic = sharedChange ? body.isPublic : target.isPublic;
++        if (!nextPublic && (body.isFeatured === true || body.isFallback === true)) {
++          res.writeHead(400, { 'Content-Type': 'application/json' });
++          res.end(JSON.stringify({ ok: false, error: '请先公开歌单，再设为精选或轮播' }));
++          return;
++        }
++        if (sharedChange) {
++          target.isPublic = nextPublic;
++          if (playlistDetailsStore[playlistId]) playlistDetailsStore[playlistId].isPublic = nextPublic;
++          if (!nextPublic) unlinkRoomPlaylist(playlistId);
++        }
++
++        const settings = roomSettings[roomId];
+         if (typeof body.isFeatured === 'boolean') {
+-          if (!roomSettings[roomId].featured) roomSettings[roomId].featured = [];
+-          if (body.isFeatured) {
+-            if (!roomSettings[roomId].featured.includes(playlistId)) {
+-              roomSettings[roomId].featured.push(playlistId);
+-            }
+-          } else {
+-            roomSettings[roomId].featured = roomSettings[roomId].featured.filter((id) => id !== playlistId);
+-          }
+-        }
+-
+-        // Apply isFallback
+-        if (typeof body.isFallback === 'boolean') {
+-          if (body.isFallback) {
+-            roomSettings[roomId].fallback = playlistId;
+-            const plDetail = playlistDetailsStore[playlistId];
+-            getMusicManager(roomId).setFallbackPlaylist(playlistId, plDetail?.tracks || [], target.title);
+-          } else if (roomSettings[roomId].fallback === playlistId) {
+-            roomSettings[roomId].fallback = null;
+-            getMusicManager(roomId).clearFallbackPlaylist(playlistId);
+-          }
++          const featured = new Set(settings.featured || []);
++          if (body.isFeatured) featured.add(playlistId);
++          else featured.delete(playlistId);
++          settings.featured = [...featured];
++        }
++        if (body.isFallback === true) {
++          settings.fallback = playlistId;
++          settings.fallbackDisabled = false;
++        } else if (body.isFallback === false && settings.fallback === playlistId) {
++          settings.fallback = null;
++          settings.fallbackDisabled = true;
+         }
+
+         target.updatedAt = Date.now();
+@@ -1766,29 +1816,26 @@
+           isFallback: playlistId === fallbackId
+         };
+
+-        broadcastToRoom(roomId, {
+-          type: 'playlists:updated',
+-          roomId
+-        });
++        if (sharedChange) refreshSharedFallbacks(playlistId);
++        if (wantsAdminFlag) syncFallbackTracksForRoom(roomId);
++        notifyPlaylistUpdates(sharedChange ? MUSIC_ROOMS : [roomId]);
+
+         res.writeHead(200, { 'Content-Type': 'application/json' });
+         res.end(JSON.stringify({ ok: true, playlist: updatedSummary }));
+       } catch (err) {
+         console.error('[PlaylistFlags] Error:', err.message);
+-        res.writeHead(400, { 'Content-Type': 'application/json' });
++        res.writeHead(err.statusCode || 400, { 'Content-Type': 'application/json' });
+         res.end(JSON.stringify({ ok: false, error: '请求处理失败' }));
+       }
+-    });
++    }
+     return;
+   }
+
+   // Import Playlist: POST /api/playlists/import
+   if (url.pathname === '/api/playlists/import' && req.method === 'POST') {
+-    const roomId = (url.searchParams.get('room') || 'chat').trim().toLowerCase();
+-
+-    let bodyText = '';
+-    req.on('data', (chunk) => { bodyText += chunk; });
+-    req.on('end', async () => {
++    const roomId = playlistRoom;
++
++    {
+       try {
+         const authHeader = req.headers.authorization || '';
+         const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+@@ -1799,7 +1846,7 @@
+           return;
+         }
+
+-        const body = JSON.parse(bodyText || '{}');
++        const body = await readPlaylistJson(req);
+         const title = (body.title || '').trim().slice(0, 80);
+         if (!title) {
+           res.writeHead(400, { 'Content-Type': 'application/json' });
+@@ -1808,13 +1855,15 @@
+         }
+
+         const tracks = Array.isArray(body.tracks) ? body.tracks : [];
+-        if (tracks.length === 0) {
++        if (tracks.length === 0 || tracks.length > 5000) {
+           res.writeHead(400, { 'Content-Type': 'application/json' });
+-          res.end(JSON.stringify({ ok: false, error: '歌单内没有曲目' }));
++          res.end(JSON.stringify({ ok: false, error: '歌单曲目须在 1 到 5000 首之间' }));
+           return;
+         }
+
+-        const id = 'pl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
++        const previous = body.sourceUrl && getAllPlaylistSummaries().find(p =>
++          p.ownerKey === caller.userKey && p.sourceUrl === body.sourceUrl && p.platform === (body.platform || 'external'));
++        const id = previous?.id || ('pl_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+         const now = Date.now();
+
+         const formattedTracks = tracks.map((t, idx) => ({
+@@ -1827,7 +1876,7 @@
+           cover: t.cover || t.coverUrl || body.coverUrl || '',
+           durationSec: Number(t.durationSec) || 0,
+           sourceUrl: t.sourceUrl || '',
+-          matchedTrack: t.matchedTrack || null
++          matchedTrack: normalizeMusicTrack(t.matchedTrack)
+         }));
+
+         const summary = {
+@@ -1842,10 +1891,10 @@
+           creator: body.creator || caller.name,
+           trackCount: formattedTracks.length,
+           retrievalMode: body.retrievalMode === 'preview' ? 'preview' : 'full',
+-          isPublic: true,
++          isPublic: previous?.isPublic ?? true,
+           isFeatured: false,
+           isFallback: false,
+-          createdAt: now,
++          createdAt: previous?.createdAt ?? now,
+           updatedAt: now
+         };
+
+@@ -1854,7 +1903,9 @@
+           tracks: formattedTracks
+         };
+
+-        if (!Array.isArray(playlistsStore)) {
++        if (previous) {
++          Object.assign(previous, summary);
++        } else if (!Array.isArray(playlistsStore)) {
+           if (!playlistsStore.all) playlistsStore.all = getAllPlaylistSummaries();
+           playlistsStore.all.push(summary);
+         } else {
+@@ -1863,26 +1914,29 @@
+         playlistDetailsStore[id] = detail;
+
+         savePlaylistsAtomic();
+-        broadcastToRoom(roomId, { type: 'playlists:updated', roomId });
++        refreshSharedFallbacks(id);
++        notifyPlaylistUpdates();
+
+         res.writeHead(200, { 'Content-Type': 'application/json' });
+-        res.end(JSON.stringify({ ok: true, playlist: summary, updatedExisting: false }));
++        res.end(JSON.stringify({ ok: true, playlist: {
++          ...summary,
++          isFeatured: (roomSettings[roomId].featured || []).includes(id),
++          isFallback: roomSettings[roomId].fallback === id
++        }, updatedExisting: Boolean(previous) }));
+       } catch (err) {
+         console.error('[PlaylistImport] Error:', err.message);
+-        res.writeHead(400, { 'Content-Type': 'application/json' });
++        res.writeHead(err.statusCode || 400, { 'Content-Type': 'application/json' });
+         res.end(JSON.stringify({ ok: false, error: '导入失败' }));
+       }
+-    });
++    }
+     return;
+   }
+
+   // Refresh Playlist: POST /api/playlists/refresh
+   if (url.pathname === '/api/playlists/refresh' && req.method === 'POST') {
+-    const roomId = (url.searchParams.get('room') || 'chat').trim().toLowerCase();
+-
+-    let bodyText = '';
+-    req.on('data', (chunk) => { bodyText += chunk; });
+-    req.on('end', async () => {
++    const roomId = playlistRoom;
++
++    {
+       try {
+         const authHeader = req.headers.authorization || '';
+         const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+@@ -1893,7 +1947,7 @@
+           return;
+         }
+
+-        const body = JSON.parse(bodyText || '{}');
++        const body = await readPlaylistJson(req);
+         const playlistId = body.playlistId;
+         const plPayload = body.playlist;
+         if (!playlistId || !plPayload) {
+@@ -1917,6 +1971,11 @@
+         }
+
+         const rawTracks = Array.isArray(plPayload.tracks) ? plPayload.tracks : [];
++        if (!rawTracks.length || rawTracks.length > 5000) {
++          res.writeHead(400, { 'Content-Type': 'application/json' });
++          res.end(JSON.stringify({ ok: false, error: '刷新结果的曲目数量无效，已保留原歌单' }));
++          return;
++        }
+         const formattedTracks = rawTracks.map((t, idx) => ({
+           position: typeof t.position === 'number' ? t.position : idx,
+           sourcePlatform: t.sourcePlatform || plPayload.platform || target.platform,
+@@ -1927,7 +1986,7 @@
+           cover: t.cover || t.coverUrl || plPayload.coverUrl || target.coverUrl,
+           durationSec: Number(t.durationSec) || 0,
+           sourceUrl: t.sourceUrl || '',
+-          matchedTrack: t.matchedTrack || null
++          matchedTrack: normalizeMusicTrack(t.matchedTrack)
+         }));
+
+         target.title = (plPayload.title || target.title).slice(0, 80);
+@@ -1941,12 +2000,9 @@
+           tracks: formattedTracks
+         };
+
+-        if (roomSettings[roomId]?.fallback === playlistId) {
+-          getMusicManager(roomId).setFallbackPlaylist(playlistId, formattedTracks, target.title);
+-        }
+-
+         savePlaylistsAtomic();
+-        broadcastToRoom(roomId, { type: 'playlists:updated', roomId });
++        refreshSharedFallbacks(playlistId);
++        notifyPlaylistUpdates();
+
+         const featuredIds = new Set(roomSettings[roomId]?.featured || []);
+         const fallbackId = roomSettings[roomId]?.fallback || null;
+@@ -1961,20 +2017,29 @@
+         }));
+       } catch (err) {
+         console.error('[PlaylistRefresh] Error:', err.message);
+-        res.writeHead(400, { 'Content-Type': 'application/json' });
++        res.writeHead(err.statusCode || 400, { 'Content-Type': 'application/json' });
+         res.end(JSON.stringify({ ok: false, error: '刷新失败' }));
+       }
+-    });
++    }
+     return;
++  }
++
++  function unlinkRoomPlaylist(playlistId) {
++    for (const id of MUSIC_ROOMS) {
++      const settings = roomSettings[id];
++      if (settings.fallback === playlistId) {
++        settings.fallback = null;
++        settings.fallbackDisabled = true;
++      }
++      settings.featured = (settings.featured || []).filter(item => item !== playlistId);
++    }
+   }
+
+   // Delete Playlist: POST /api/playlists/delete
+   if (url.pathname === '/api/playlists/delete' && req.method === 'POST') {
+-    const roomId = (url.searchParams.get('room') || 'chat').trim().toLowerCase();
+-
+-    let bodyText = '';
+-    req.on('data', (chunk) => { bodyText += chunk; });
+-    req.on('end', async () => {
++    const roomId = playlistRoom;
++
++    {
+       try {
+         const authHeader = req.headers.authorization || '';
+         const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+@@ -1985,7 +2050,7 @@
+           return;
+         }
+
+-        const body = JSON.parse(bodyText || '{}');
++        const body = await readPlaylistJson(req);
+         const playlistId = body.playlistId;
+         if (!playlistId) {
+           res.writeHead(400, { 'Content-Type': 'application/json' });
+@@ -2025,42 +2090,40 @@
+         }
+         delete playlistDetailsStore[playlistId];
+
+-        for (const rId of Object.keys(roomSettings)) {
+-          if (roomSettings[rId].fallback === playlistId) {
+-            roomSettings[rId].fallback = null;
+-            getMusicManager(rId).clearFallbackPlaylist(playlistId);
+-          }
+-          if (Array.isArray(roomSettings[rId].featured)) {
+-            roomSettings[rId].featured = roomSettings[rId].featured.filter((id) => id !== playlistId);
+-          }
+-        }
++        unlinkRoomPlaylist(playlistId);
+
+         savePlaylistsAtomic();
+-        broadcastToRoom(roomId, { type: 'playlists:updated', roomId });
++        refreshSharedFallbacks(playlistId);
++        notifyPlaylistUpdates();
+
+         res.writeHead(200, { 'Content-Type': 'application/json' });
+         res.end(JSON.stringify({ ok: true }));
+       } catch (err) {
+         console.error('[PlaylistDelete] Error:', err.message);
+-        res.writeHead(400, { 'Content-Type': 'application/json' });
++        res.writeHead(err.statusCode || 400, { 'Content-Type': 'application/json' });
+         res.end(JSON.stringify({ ok: false, error: '删除失败' }));
+       }
+-    });
++    }
+     return;
+   }
+
+   // Music Search: GET /api/music/search
+-  if (url.pathname === '/api/music/search') {
++  if (url.pathname === '/api/music/search' && req.method === 'GET') {
+     const q = (url.searchParams.get('q') || '').trim();
++    if (q.length > 120) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ ok: false, error: '搜索关键词过长' }));
++      return;
++    }
+     if (!q) {
+       res.writeHead(200, { 'Content-Type': 'application/json' });
+       res.end(JSON.stringify({ ok: true, providers: musicRegistry.listProviders(), tracks: [] }));
+       return;
+     }
+     const limit = Math.min(30, Math.max(1, Number.parseInt(url.searchParams.get('limit') || '30', 10) || 30));
+-    const page = Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1);
++    const page = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1));
+     try {
+-      const tracks = await musicRegistry.search(q, limit, undefined, page);
++      const { tracks, hasMore } = await musicRegistry.search(q, limit, undefined, page);
+       res.writeHead(200, {
+         'Content-Type': 'application/json; charset=utf-8',
+         'Cache-Control': 'public, max-age=60'
+@@ -2070,7 +2133,7 @@
+         providers: musicRegistry.listProviders(),
+         page,
+         limit,
+-        hasMore: tracks.length >= limit,
++        hasMore: page < 100 && hasMore,
+         tracks
+       }));
+     } catch (err) {
+@@ -2115,7 +2178,7 @@
+   }
+
+   // Music Stream Proxy: GET /api/music/stream
+-  if (url.pathname === '/api/music/stream') {
++  if (url.pathname === '/api/music/stream' && ['GET', 'HEAD'].includes(req.method)) {
+     const token = url.searchParams.get('token') || '';
+     const verified = verifyStreamProxyToken(token, STREAM_SIGN_SECRET);
+     if (!verified) {
+@@ -2361,11 +2424,15 @@
+ const wss = new WebSocketServer({ server, path: '/ws' });
+
+ wss.on('connection', async (ws, req) => {
+-  clients.add(ws);
+   ws.user = null;
+
+   const reqUrl = new URL(req.url, 'http://localhost');
+   const roomId = reqUrl.searchParams.get('room') || 'interconnect';
++  if (!MUSIC_ROOMS.includes(roomId)) {
++    ws.close(1008, 'invalid room');
++    return;
++  }
++  clients.add(ws);
+   ws.currentRoom = roomId;
+
+   const forwarded = req.headers['x-forwarded-for'];
+@@ -2493,6 +2560,7 @@
+     observerCount: getOnlineObservers().length,
+     totalCount,
+     totalChatters: mentionMembers.length,
++    musicAudience: getRoomMusicAudience(roomId),
+     music: getMusicManager(roomId).getSnapshot(getOnlineUserKeys(roomId))
+   }));
+
+@@ -2509,6 +2577,10 @@
+
+       // Switch room dynamically
+       if (packet.type === 'room:switch' && packet.roomId) {
++        if (!MUSIC_ROOMS.includes(packet.roomId)) {
++          ws.send(JSON.stringify({ type: 'error', message: '无效房间' }));
++          return;
++        }
+         ws.currentRoom = packet.roomId;
+         if (ws.spectatorSession && !ws.spectatorSession.roomsVisited.includes(packet.roomId)) {
+           ws.spectatorSession.roomsVisited.push(packet.roomId);
+@@ -2567,6 +2639,7 @@
+           observerCount: switchObserverCount,
+           totalCount: switchTotalCount,
+           totalChatters: switchMentionMembers.length,
++          musicAudience: getRoomMusicAudience(ws.currentRoom),
+           music: getMusicManager(ws.currentRoom).getSnapshot(getOnlineUserKeys(ws.currentRoom))
+         }));
+         broadcastPresenceAll();
+@@ -2656,13 +2729,6 @@
+         ws.isMuted = nextMuted;
+         if (ws.spectatorSession && !nextMuted) {
+           ws.spectatorSession.listenedMusic = true;
+-        }
+-        if (ws.user && ws.user.userKey) {
+-          for (const c of clients) {
+-            if (c.user && c.user.userKey === ws.user.userKey) {
+-              c.isMuted = nextMuted;
+-            }
+-          }
+         }
+         broadcastPresenceAll();
+         return;
+@@ -2745,40 +2811,47 @@
+
+       // Music WebSocket commands
+       if (packet.type === 'music:enqueue') {
+-        if (!ws.user) {
+-          ws.send(JSON.stringify({ type: 'error', code: 'AUTH_REQUIRED', message: '请先填写昵称或登录后再点歌' }));
++        const requestedRoom = ws.currentRoom;
++        const actor = ws.user;
++        const requestId = typeof packet.requestId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(packet.requestId)
++          ? packet.requestId : null;
++        const reply = result => {
++          if (ws.readyState !== 1) return;
++          if (requestId) ws.send(JSON.stringify({
++            type: 'music:request_result', roomId: requestedRoom, requestId,
++            ok: result.ok, error: result.error, code: result.code,
++            position: result.position, playImmediately: result.playImmediately
++          }));
++          else if (!result.ok) ws.send(JSON.stringify({ type: 'error', code: result.code, message: result.error }));
++        };
++        if (!actor) {
++          reply({ ok: false, code: 'AUTH_REQUIRED', error: '请先填写昵称或登录后再点歌' });
+           return;
+         }
+-        let track = packet.track;
+-        if (track?.provider === 'external') {
+-          const playlist = typeof track.playlistId === 'string' && Object.hasOwn(playlistDetailsStore, track.playlistId)
+-            ? playlistDetailsStore[track.playlistId]
+-            : null;
+-          const item = playlist?.tracks?.find((song) => song.position === track.position);
+-          if (!item) {
+-            ws.send(JSON.stringify({ type: 'error', message: '歌单曲目不存在' }));
++        if (ws.pendingSongRequest) {
++          reply({ ok: false, error: '上一首点歌还在处理中，请稍候' });
++          return;
++        }
++        ws.pendingSongRequest = true;
++        try {
++          const input = packet.track;
++          let track;
++          if (input?.playlistId || input?.provider === 'external') {
++            const list = typeof input.playlistId === 'string' && Object.hasOwn(playlistDetailsStore, input.playlistId)
++              ? playlistDetailsStore[input.playlistId] : null;
++            const item = visiblePlaylist(list, actor) && Number.isSafeInteger(input.position)
++              ? list.tracks?.find(song => song.position === input.position) : null;
++            if (item) track = normalizeMusicTrack(await musicRegistry.resolvePlaylistTrack(item));
++          } else {
++            track = normalizeMusicTrack(input);
++          }
++          if (!track) {
++            reply({ ok: false, error: '未找到可信的可播放版本' });
+             return;
+           }
+-          try {
+-            track = await musicRegistry.resolvePlaylistTrack(item);
+-          } catch {
+-            track = null;
+-          }
+-          if (!track) {
+-            ws.send(JSON.stringify({ type: 'error', message: '曲库中没有找到可信的可播版本' }));
+-            return;
+-          }
+-        }
+-        const targetMgr = getMusicManager(ws.currentRoom || 'chat');
+-        const roomOnlineCount = Array.from(clients).filter(c => c.currentRoom === (ws.currentRoom || 'chat')).length;
+-        const res = await targetMgr.enqueueTrack(
+-          track,
+-          ws.user,
+-          getOnlineUserKeys(ws.currentRoom || 'chat')
+-        );
+-        if (!res.ok) {
+-          ws.send(JSON.stringify({ type: 'error', message: res.error }));
+-        } else {
++          const result = await getMusicManager(requestedRoom).enqueueTrack(track, actor);
++          reply(result);
++          if (!result.ok) return;
+           // Broadcast song request notification to the active room
+           const sysMsg = {
+             id: Date.now(),
+@@ -2792,68 +2865,57 @@
+             badgeType: 'tag',
+             customBadges: [],
+             isAdmin: false,
+-            content: `${ws.user.name} 点播了《${track.title}》`,
++            content: `${actor.name} 点播了《${track.title}》`,
+             attachments: [],
+             mentions: [],
+             mentionKeys: [],
+             replyTo: null,
+             createdAt: Date.now()
+           };
+-          if (!messagesStore[ws.currentRoom]) messagesStore[ws.currentRoom] = [];
+-          messagesStore[ws.currentRoom].push(sysMsg);
++          if (!messagesStore[requestedRoom]) messagesStore[requestedRoom] = [];
++          messagesStore[requestedRoom].push(sysMsg);
+           saveStoreDebounced();
+-          broadcastToRoom(ws.currentRoom, { type: 'chat:message', roomId: ws.currentRoom, message: sysMsg });
++          broadcastToRoom(requestedRoom, { type: 'chat:message', roomId: requestedRoom, message: sysMsg });
++        } catch (err) {
++          console.warn('[MusicRequest]', requestedRoom, err.message);
++          reply({ ok: false, error: '点歌暂时失败，请稍后重试' });
++        } finally {
++          ws.pendingSongRequest = false;
+         }
+         return;
+       }
+
+-      const targetMgr = getMusicManager(ws.currentRoom || 'chat');
+-      const roomClients = Array.from(clients).filter(c => c.currentRoom === (ws.currentRoom || 'chat'));
+-      const roomOnlineCount = roomClients.length;
+-      const listeningKeys = new Set();
+-      for (const c of roomClients) {
+-        if (c.user && c.isMuted === false) {
+-          listeningKeys.add(c.user.userKey);
+-        }
+-      }
+-      const listeningCount = listeningKeys.size;
+-
+-      if (packet.type === 'music:skip') {
+-        if (!ws.user) return;
+-        targetMgr.skip(ws.user, roomOnlineCount, listeningCount);
+-        return;
+-      }
+-
+-      if (packet.type === 'music:vote_skip') {
+-        if (!ws.user) return;
+-        targetMgr.voteSkip(ws.user, roomOnlineCount, listeningCount);
+-        return;
+-      }
+-
+-      if (packet.type === 'music:remove') {
+-        if (!ws.user) return;
+-        targetMgr.removeQueue(packet.uid, ws.user);
+-        return;
+-      }
+-
+-      if (packet.type === 'music:play_queued') {
+-        if (!ws.user) return;
+-        targetMgr.playQueued(packet.uid, ws.user);
+-        return;
+-      }
+-
+-      if (packet.type === 'music:report_duration') {
+-        targetMgr.reportDuration(packet.playUid, Number(packet.durationSec) || 0);
+-        return;
+-      }
+-
+-      if (packet.type === 'music:ended') {
+-        targetMgr.ended(packet.playUid);
+-        return;
+-      }
+-
+-      if (packet.type === 'music:report_error') {
+-        targetMgr.reportError(packet.playUid, ws.user?.userKey || 'unknown');
++      if (typeof packet.type === 'string' && packet.type.startsWith('music:')) {
++        const targetMgr = getMusicManager(ws.currentRoom);
++        const actor = ws.user;
++        if (packet.type === 'music:report_duration') {
++          targetMgr.reportDuration(packet.playUid, packet.durationSec);
++          return;
++        }
++        if (packet.type === 'music:ended') {
++          if (ws.isMuted === false) targetMgr.ended(packet.playUid);
++          return;
++        }
++        if (packet.type === 'music:report_error') {
++          await targetMgr.reportError(packet.playUid, actor?.userKey || 'anonymous');
++          return;
++        }
++        if (!actor) return;
++        let result;
++        if (packet.type === 'music:skip' || packet.type === 'music:vote_skip') {
++          if (packet.playUid && packet.playUid !== targetMgr.current?.uid) return;
++          const { onlineCount, listeningCount } = getRoomMusicAudience(ws.currentRoom);
++          result = packet.type === 'music:skip'
++            ? targetMgr.skip(actor, onlineCount, listeningCount)
++            : targetMgr.voteSkip(actor, onlineCount, listeningCount);
++        } else if (packet.type === 'music:remove') {
++          result = targetMgr.removeQueue(packet.uid, actor);
++        } else if (packet.type === 'music:play_queued') {
++          result = await targetMgr.playQueued(packet.uid, actor);
++        }
++        if (result?.ok === false && ws.readyState === 1) {
++          ws.send(JSON.stringify({ type: 'error', message: result.error }));
++        }
+         return;
+       }
+
+@@ -4435,6 +4497,7 @@
+
+ server.listen(PORT, async () => {
+   console.log(`[ChatServer] Enterprise Dual-Room & Music Matrix Gateway listening on port ${PORT}`);
++  for (const manager of Object.values(musicManagers)) manager.resume();
+   await primeMatrixRoomMembers();
+   await ensureMatrixAdminProfile();
+   syncMatrix();
