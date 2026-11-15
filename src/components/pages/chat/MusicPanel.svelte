@@ -1885,6 +1885,17 @@ function submitSearch(bypassCache = false) {
 	void runSearch(q, bypassCache);
 }
 
+function dedupeTracksById(tracks: ChatMusicTrack[]): ChatMusicTrack[] {
+	const seen = new Set<string>();
+	const result: ChatMusicTrack[] = [];
+	for (const track of tracks) {
+		if (!track?.id || seen.has(track.id)) continue;
+		seen.add(track.id);
+		result.push(track);
+	}
+	return result;
+}
+
 async function runSearch(q: string, bypassCache = false) {
 	searchAbortController?.abort();
 	const controller = new AbortController();
@@ -1910,13 +1921,14 @@ async function runSearch(q: string, bypassCache = false) {
 	try {
 		const res = await onSearchOnline(q, { signal: controller.signal, page: 1 });
 		if (controller.signal.aborted) return;
+		const tracks = dedupeTracksById(res.tracks);
 		searchResultCache.set(cacheKey, {
-			tracks: res.tracks,
+			tracks,
 			hasMore: res.hasMore,
 			fetchedAt: Date.now(),
 		});
 		if (submittedSearchQuery === q) {
-			searchResults = res.tracks;
+			searchResults = tracks;
 			searchPage = res.page;
 			hasMoreSearchResults = res.hasMore;
 			searchError = "";
@@ -2087,7 +2099,7 @@ export function openPlayerTab(): void {
 }
 
 const displayedBrowseTracks = $derived(
-	submittedSearchQuery ? searchResults : fallbackTracks,
+	dedupeTracksById(submittedSearchQuery ? searchResults : fallbackTracks),
 );
 
 $effect(() => {
