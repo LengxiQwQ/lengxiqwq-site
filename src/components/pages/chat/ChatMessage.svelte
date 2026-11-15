@@ -12,6 +12,7 @@ import type { ChatMessageRecord, ChatUserDetailSeed } from "./chatTypes";
 import LottieSticker from "./LottieSticker.svelte";
 import {
 	formatChatReplyPreview,
+	formatStickerAttachmentAlt,
 	parseChatSegments,
 	type StickerItem,
 } from "./stickerLoader";
@@ -594,7 +595,8 @@ function formatReactionTooltip(users: string[]): string {
             <img
               src={att.url}
               loading="lazy"
-              alt={att.name || "贴纸"}
+              alt={formatStickerAttachmentAlt(att.name)}
+              title={formatStickerAttachmentAlt(att.name)}
               decoding="async"
               class="chat-sticker-large single"
             />
@@ -771,7 +773,8 @@ function formatReactionTooltip(users: string[]): string {
         >
           <img
             src={att.url}
-            alt={att.name || "贴纸"}
+            alt={formatStickerAttachmentAlt(att.name)}
+            title={formatStickerAttachmentAlt(att.name)}
             loading="lazy"
             decoding="async"
             class="chat-sticker-large {message.attachments.length === 1 ? 'single' : ''}"

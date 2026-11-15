@@ -209,6 +209,33 @@ export function resolveExternalOrLocalSticker(
 	if (stickerTokenMatch) {
 		const id = stickerTokenMatch[1];
 		const fallbackName = id.split("/").pop() || "贴纸";
+		const qfaceStatic = /^qqface\/static\/([a-z0-9_-]+)$/i.exec(id);
+		if (qfaceStatic) {
+			return {
+				code: token,
+				name: qfaceStatic[1],
+				url: `https://fastly.jsdelivr.net/gh/koishijs/QFace@master/public/static/${encodeURIComponent(qfaceStatic[1])}.png`,
+				category: "sticker",
+			};
+		}
+		const qfaceGif = /^qqface\/gif\/([a-z0-9_-]+)$/i.exec(id);
+		if (qfaceGif) {
+			return {
+				code: token,
+				name: qfaceGif[1],
+				url: `https://fastly.jsdelivr.net/gh/koishijs/QFace@master/public/gif/${encodeURIComponent(qfaceGif[1])}.gif`,
+				category: "qq",
+			};
+		}
+		const qfaceAsset = /^qqface\/assets\/(.+)$/i.exec(id);
+		if (qfaceAsset) {
+			return {
+				code: token,
+				name: fallbackName,
+				url: `https://fastly.jsdelivr.net/gh/koishijs/QFace@master/public/assets/${qfaceAsset[1]}`,
+				category: "sticker",
+			};
+		}
 		return {
 			code: token,
 			name: fallbackName,
@@ -409,4 +436,21 @@ export function formatChatReplyPreview(
 		return hasImage ? "[图片]" : "[消息]";
 	}
 	return hasImage ? `[图片] ${readable}` : readable;
+}
+
+export function formatStickerAttachmentAlt(rawName?: string): string {
+	const text = (rawName || "").trim();
+	if (!text) return "贴纸";
+	const lottieMatch =
+		/^\[lottie:([a-z0-9-]+)\]$/i.exec(text) ||
+		/^:lottie_([a-z0-9-]+):$/i.exec(text);
+	if (lottieMatch) {
+		const key = lottieMatch[1].toLowerCase();
+		return LOTTIE_LABELS[key] || lottieMatch[1];
+	}
+	const stickerMatch = /^\[sticker:([a-z0-9/_-]+)\]$/i.exec(text);
+	if (stickerMatch) {
+		return stickerMatch[1].split("/").pop() || "贴纸";
+	}
+	return text;
 }
