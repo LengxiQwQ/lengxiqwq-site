@@ -1852,6 +1852,41 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transform: scale(1.06);
 }
 
+.chat-sticker--lottie {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 1.75rem;
+	height: 1.75rem;
+	margin: 0 0.1rem;
+	vertical-align: middle;
+}
+
+.chat-sticker--lottie.is-large {
+	width: 3.5rem;
+	height: 3.5rem;
+	margin: 0.06rem 0.14rem;
+}
+
+div.chat-sticker-large {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 5.5rem;
+	height: 5.5rem;
+}
+
+div.chat-sticker-large.single {
+	width: 7.5rem;
+	height: 7.5rem;
+}
+
+.chat-sticker--lottie svg,
+div.chat-sticker-large svg {
+	width: 100% !important;
+	height: 100% !important;
+}
+
 .chat-mention-pill {
 	display: inline-block;
 	padding: 0 0.35rem;

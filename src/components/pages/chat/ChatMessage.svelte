@@ -9,6 +9,7 @@ import { resolveExternalOrigin } from "./chatClient";
 import type { InterconnectSite } from "./chatConfig";
 import { openChatImageLightbox } from "./chatLightbox";
 import type { ChatMessageRecord, ChatUserDetailSeed } from "./chatTypes";
+import LottieSticker from "./LottieSticker.svelte";
 import {
 	formatChatReplyPreview,
 	parseChatSegments,
@@ -28,6 +29,7 @@ interface Props {
 	canEdit?: boolean;
 	canDelete?: boolean;
 	stickerMap: Map<string, StickerItem>;
+	chatServerUrl?: string;
 	interconnectSites?: InterconnectSite[];
 	userNameMap?: Map<string, string>;
 	onRecall?: (msgUid: string) => void;
@@ -55,6 +57,7 @@ const {
 	canEdit = false,
 	canDelete = false,
 	stickerMap,
+	chatServerUrl,
 	interconnectSites = [],
 	userNameMap = new Map(),
 	onRecall,
@@ -143,8 +146,9 @@ const stickerSegments = $derived(
 	segments.filter((seg) => seg.kind === "sticker"),
 );
 const isStickerOnly = $derived(
-	message.source !== "matrix" &&
 	message.attachments.length === 0 &&
+		stickerSegments.length > 0 &&
+		stickerSegments.length <= 3 &&
 		stickerSegments.some((seg) => seg.category === "sticker") &&
 		segments.every(
 			(seg) =>
@@ -152,6 +156,19 @@ const isStickerOnly = $derived(
 				(seg.kind === "text" && seg.text.trim() === ""),
 		),
 );
+const isStickerAttachmentOnly = $derived.by(() => {
+	if (message.content.trim().length > 0) return false;
+	if (
+		!message.attachments ||
+		message.attachments.length === 0 ||
+		message.attachments.length > 3
+	) {
+		return false;
+	}
+	return message.attachments.every(
+		(a) => a.type === "image" && Boolean(a.isSticker),
+	);
+});
 
 const formattedTime = $derived.by(() => {
 	if (!message.createdAt) return "";
@@ -564,7 +581,25 @@ function formatReactionTooltip(users: string[]): string {
   {#if message.attachments && message.attachments.length > 0}
     <div class="flex flex-col gap-2 mt-2">
       {#each message.attachments as att (att.url)}
-        {#if att.type === "image"}
+        {#if att.type === "image" && att.isSticker}
+          <a
+            href={att.url}
+            data-chat-image={att.url}
+            class="inline-block cursor-zoom-in"
+            onclick={(e) => {
+              e.preventDefault();
+              void openChatImageLightbox(att.url, e.currentTarget);
+            }}
+          >
+            <img
+              src={att.url}
+              loading="lazy"
+              alt={att.name || "贴纸"}
+              decoding="async"
+              class="chat-sticker-large single"
+            />
+          </a>
+        {:else if att.type === "image"}
           <a
             href={att.url}
             data-chat-image={att.url}
@@ -687,6 +722,66 @@ function formatReactionTooltip(users: string[]): string {
   {/if}
 {/snippet}
 
+{#snippet renderStickerOnlyBody(alignEnd: boolean)}
+  <div class="flex flex-col {alignEnd ? 'items-end' : 'items-start'} gap-1">
+    {#if message.replyTo}
+      {@render replyQuoteBlock()}
+    {/if}
+    <div class="chat-sticker-only-wrap {alignEnd ? 'justify-end' : 'justify-start'}">
+      {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
+        {#if seg.lottie}
+          <LottieSticker
+            name={seg.lottie}
+            alt={seg.alt}
+            className={seg.category === "sticker"
+              ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
+              : `chat-sticker chat-sticker--lottie chat-sticker--${seg.category}`}
+            chatServerUrl={chatServerUrl}
+          />
+        {:else}
+          <img
+            src={seg.url}
+            alt={seg.alt}
+            decoding="async"
+            class={seg.category === "sticker"
+              ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
+              : `chat-sticker chat-sticker--${seg.category}`}
+          />
+        {/if}
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
+{#snippet renderStickerAttachmentOnlyBody(alignEnd: boolean)}
+  <div class="flex flex-col {alignEnd ? 'items-end' : 'items-start'} gap-1">
+    {#if message.replyTo}
+      {@render replyQuoteBlock()}
+    {/if}
+    <div class="chat-sticker-only-wrap {alignEnd ? 'justify-end' : 'justify-start'}">
+      {#each message.attachments as att (att.url)}
+        <a
+          href={att.url}
+          data-chat-image={att.url}
+          class="block cursor-zoom-in"
+          onclick={(e) => {
+            e.preventDefault();
+            void openChatImageLightbox(att.url, e.currentTarget);
+          }}
+        >
+          <img
+            src={att.url}
+            alt={att.name || "贴纸"}
+            loading="lazy"
+            decoding="async"
+            class="chat-sticker-large {message.attachments.length === 1 ? 'single' : ''}"
+          />
+        </a>
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
 {#if message.kind === "system"}
   <div class="w-full flex justify-center my-1.5">
     <div class="chat-system-msg">
@@ -752,23 +847,9 @@ function formatReactionTooltip(users: string[]): string {
         {@render renderFloatingActions(true)}
 
         {#if isStickerOnly}
-          <div class="flex flex-col items-end gap-1">
-            {#if message.replyTo}
-              {@render replyQuoteBlock()}
-            {/if}
-            <div class="chat-sticker-only-wrap justify-end">
-              {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
-                <img
-                  src={seg.url}
-                  alt={seg.alt}
-                  decoding="async"
-                  class={seg.category === "sticker"
-                    ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
-                    : `chat-sticker chat-sticker--${seg.category}`}
-                />
-              {/each}
-            </div>
-          </div>
+          {@render renderStickerOnlyBody(true)}
+        {:else if isStickerAttachmentOnly}
+          {@render renderStickerAttachmentOnlyBody(true)}
         {:else}
           <div class="chat-bubble chat-bubble-self">
             {#if message.replyTo}
@@ -780,6 +861,7 @@ function formatReactionTooltip(users: string[]): string {
                 stickerMap={stickerMap}
                 mentions={message.mentions}
                 currentUserName={currentUserName}
+                chatServerUrl={chatServerUrl}
               />
             {/if}
 
@@ -852,23 +934,9 @@ function formatReactionTooltip(users: string[]): string {
         {@render renderFloatingActions(false)}
 
         {#if isStickerOnly}
-          <div class="flex flex-col items-start gap-1">
-            {#if message.replyTo}
-              {@render replyQuoteBlock()}
-            {/if}
-            <div class="chat-sticker-only-wrap justify-start">
-              {#each stickerSegments as seg, idx (`${idx}-${seg.code}`)}
-                <img
-                  src={seg.url}
-                  alt={seg.alt}
-                  decoding="async"
-                  class={seg.category === "sticker"
-                    ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
-                    : `chat-sticker chat-sticker--${seg.category}`}
-                />
-              {/each}
-            </div>
-          </div>
+          {@render renderStickerOnlyBody(false)}
+        {:else if isStickerAttachmentOnly}
+          {@render renderStickerAttachmentOnlyBody(false)}
         {:else}
           <div class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''}">
             {#if message.replyTo}
@@ -880,6 +948,7 @@ function formatReactionTooltip(users: string[]): string {
                 stickerMap={stickerMap}
                 mentions={message.mentions}
                 currentUserName={currentUserName}
+                chatServerUrl={chatServerUrl}
               />
             {/if}
 

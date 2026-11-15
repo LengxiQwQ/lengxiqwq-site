@@ -8,6 +8,7 @@ import {
 	parseChatMarkdown,
 	restoreTextSegments,
 } from "./chatMarkdown";
+import LottieSticker from "./LottieSticker.svelte";
 import type { StickerItem } from "./stickerLoader";
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
 	stickerMap: Map<string, StickerItem>;
 	mentions?: string[];
 	currentUserName?: string;
+	chatServerUrl?: string;
 }
 
 const {
@@ -22,6 +24,7 @@ const {
 	stickerMap,
 	mentions = [],
 	currentUserName = "",
+	chatServerUrl,
 }: Props = $props();
 
 const ast: ChatMarkdownAst = $derived(
@@ -108,7 +111,16 @@ function getInlineChildren(token: Token): Token[] | undefined {
       {:else}
         {#each restoreTextSegments((tok as Tokens.Text).text, ast) as seg, sIdx (`${sIdx}-${seg.kind}`)}
           {#if seg.kind === "sticker"}
-            <img src={seg.url} alt={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
+            {#if seg.lottie}
+              <LottieSticker
+                name={seg.lottie}
+                alt={seg.alt}
+                className="chat-sticker chat-sticker--lottie {seg.category === 'sticker' ? 'is-large' : ''}"
+                chatServerUrl={chatServerUrl}
+              />
+            {:else}
+              <img src={seg.url} alt={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
+            {/if}
           {:else if seg.kind === "mention"}
             <span class="chat-mention-pill {isSelfMentionTarget(seg.target) ? 'self' : ''}">{seg.text}</span>
           {:else}

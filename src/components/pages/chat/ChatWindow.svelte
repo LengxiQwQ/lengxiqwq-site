@@ -1991,6 +1991,7 @@ function removePendingImage(index: number) {
               canEdit={canEdit}
               canDelete={canDelete}
               stickerMap={stickerMap}
+              chatServerUrl={chatServerUrl}
               interconnectSites={interconnectSites}
               userNameMap={userNameMap}
               onRecall={onRecallMessage}

@@ -1,5 +1,10 @@
 import { marked, type Token } from "marked";
-import type { ChatContentSegment, StickerItem } from "./stickerLoader";
+import {
+	buildChatTokenRegex,
+	type ChatContentSegment,
+	resolveExternalOrLocalSticker,
+	type StickerItem,
+} from "./stickerLoader";
 
 export interface ChatMarkdownAst {
 	tokens: Token[];
@@ -9,24 +14,6 @@ export interface ChatMarkdownAst {
 
 const CODE_SPLIT_RE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`)/g;
 const PLACEHOLDER_RE = /\uE000(STK|MNT)(\d+)\uE001/g;
-
-function escapeRegexLiteral(text: string): string {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function buildMentionRegex(mentions: string[]): RegExp {
-	const clean = Array.from(
-		new Set(mentions.map((m) => m.trim()).filter(Boolean)),
-	).sort((a, b) => b.length - a.length);
-
-	if (clean.length > 0) {
-		return new RegExp(
-			`(:[A-Za-z0-9_.-]+_[^:\\s<>"]+?:|@(?:${clean.map(escapeRegexLiteral).join("|")})|@[^\\s@]{1,16})`,
-			"g",
-		);
-	}
-	return /(:[A-Za-z0-9_.-]+_[^:\s<>"']+?:|@[^\s@]{1,16})/g;
-}
 
 export function isSafeLinkUrl(raw?: string): string {
 	const trimmed = (raw || "").trim();
@@ -78,7 +65,7 @@ export function parseChatMarkdown(
 		return { tokens: [], stickers, mentions: mentionEntries };
 	}
 
-	const tokenMatcher = buildMentionRegex(mentions);
+	const tokenMatcher = buildChatTokenRegex(mentions);
 	const parts = content.split(CODE_SPLIT_RE);
 
 	const protectedContent = parts
@@ -87,19 +74,16 @@ export function parseChatMarkdown(
 			if (idx % 2 === 1) return part;
 			tokenMatcher.lastIndex = 0;
 			return part.replace(tokenMatcher, (token) => {
-				if (token.startsWith(":") && token.endsWith(":")) {
-					const sticker = stickerMap.get(token);
-					if (sticker) {
-						const slot = stickers.length;
-						stickers.push(sticker);
-						return `\uE000STK${slot}\uE001`;
-					}
-					return token;
-				}
 				if (token.startsWith("@") && token.length > 1) {
 					const slot = mentionEntries.length;
 					mentionEntries.push({ text: token, target: token.slice(1) });
 					return `\uE000MNT${slot}\uE001`;
+				}
+				const sticker = resolveExternalOrLocalSticker(token, stickerMap);
+				if (sticker) {
+					const slot = stickers.length;
+					stickers.push(sticker);
+					return `\uE000STK${slot}\uE001`;
 				}
 				return token;
 			});
@@ -139,6 +123,7 @@ export function restoreTextSegments(
 					url: sticker.url,
 					alt: sticker.name,
 					category: sticker.category,
+					...(sticker.lottie ? { lottie: sticker.lottie } : {}),
 				});
 			}
 		} else if (kind === "MNT") {
