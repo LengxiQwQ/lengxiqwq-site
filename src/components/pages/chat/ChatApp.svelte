@@ -79,7 +79,8 @@ let currentRoom = $state(rooms[0]?.id || "chat");
 let connectionState = $state<ConnectionState>("idle");
 let isWindowFocused = $state(true);
 let isIdleAway = $state(false);
-const isEffectiveFocused = $derived(isWindowFocused && !isIdleAway);
+let isPointerAway = $state(false);
+const isEffectiveFocused = $derived(isWindowFocused && !isIdleAway && !isPointerAway);
 let currentUser = $state<ChatSessionUser | null>(null);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
 let observers = $state<ChatOnlineMember[]>([]);
@@ -1810,11 +1811,56 @@ onMount(() => {
 		}
 	}, 30000);
 
-	const IDLE_AWAY_MS = 3 * 60 * 1000;
+	const IDLE_AWAY_MS = 60 * 1000;
+	const POINTER_OUT_AWAY_MS = 5 * 1000;
 	let idleAwayTimer: number | null = null;
+	let pointerOutTimer: number | null = null;
+	let isPointerInWindow = true;
 	let lastActivityResetAt = 0;
+	let lastMouseX = -1;
+	let lastMouseY = -1;
 
-	const resetIdleTimer = () => {
+	const clearPointerOutTimer = () => {
+		if (pointerOutTimer !== null) {
+			window.clearTimeout(pointerOutTimer);
+			pointerOutTimer = null;
+		}
+	};
+
+	const schedulePointerOutAway = () => {
+		clearPointerOutTimer();
+		if (isPointerInWindow || isPointerAway) return;
+		pointerOutTimer = window.setTimeout(() => {
+			if (!isPointerInWindow) {
+				isPointerAway = true;
+			}
+		}, POINTER_OUT_AWAY_MS);
+	};
+
+	const resetIdleTimer = (event?: Event) => {
+		if (event instanceof MouseEvent && event.type === "mousemove") {
+			if (
+				lastMouseX >= 0 &&
+				Math.abs(event.clientX - lastMouseX) + Math.abs(event.clientY - lastMouseY) < 4
+			) {
+				return;
+			}
+			lastMouseX = event.clientX;
+			lastMouseY = event.clientY;
+			isPointerInWindow = true;
+			clearPointerOutTimer();
+			if (isPointerAway) isPointerAway = false;
+		} else if (
+			event &&
+			(event.type === "pointerdown" ||
+				event.type === "keydown" ||
+				event.type === "wheel" ||
+				event.type === "touchstart")
+		) {
+			if (isPointerAway) isPointerAway = false;
+			if (!isPointerInWindow) schedulePointerOutAway();
+		}
+
 		const now = Date.now();
 		if (isIdleAway) {
 			isIdleAway = false;
@@ -1828,18 +1874,33 @@ onMount(() => {
 		}, IDLE_AWAY_MS);
 	};
 
+	const handlePointerEnter = () => {
+		isPointerInWindow = true;
+		isPointerAway = false;
+		clearPointerOutTimer();
+		resetIdleTimer();
+	};
+
+	const handlePointerLeave = () => {
+		isPointerInWindow = false;
+		schedulePointerOutAway();
+	};
+
 	const syncFocusState = () => {
 		const focused =
 			!document.hidden &&
 			(typeof document.hasFocus !== "function" || document.hasFocus());
 		isWindowFocused = focused;
 		if (focused) {
+			isPointerAway = false;
 			resetIdleTimer();
 		}
 	};
 
 	const handleWindowFocus = () => {
 		isWindowFocused = true;
+		isPointerAway = false;
+		clearPointerOutTimer();
 		resetIdleTimer();
 	};
 
@@ -1857,7 +1918,10 @@ onMount(() => {
 		} else {
 			isWindowFocused =
 				typeof document.hasFocus === "function" ? document.hasFocus() : true;
-			if (isWindowFocused) resetIdleTimer();
+			if (isWindowFocused) {
+				isPointerAway = false;
+				resetIdleTimer();
+			}
 			if (baseDocumentTitle && document.title !== baseDocumentTitle) {
 				document.title = baseDocumentTitle;
 			}
@@ -1873,6 +1937,8 @@ onMount(() => {
 	};
 	syncFocusState();
 	document.addEventListener("visibilitychange", handleVisibility);
+	document.addEventListener("mouseenter", handlePointerEnter);
+	document.addEventListener("mouseleave", handlePointerLeave);
 	window.addEventListener("focus", handleWindowFocus);
 	window.addEventListener("blur", handleWindowBlur);
 	window.addEventListener("pagehide", handlePageHide);
@@ -1889,7 +1955,10 @@ onMount(() => {
 		window.clearInterval(memberTimer);
 		window.clearInterval(playlistTimer);
 		if (idleAwayTimer !== null) window.clearTimeout(idleAwayTimer);
+		clearPointerOutTimer();
 		document.removeEventListener("visibilitychange", handleVisibility);
+		document.removeEventListener("mouseenter", handlePointerEnter);
+		document.removeEventListener("mouseleave", handlePointerLeave);
 		window.removeEventListener("focus", handleWindowFocus);
 		window.removeEventListener("blur", handleWindowBlur);
 		window.removeEventListener("pagehide", handlePageHide);

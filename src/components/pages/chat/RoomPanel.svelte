@@ -489,6 +489,7 @@ function formatOfflineTime(ts?: number): string {
           customBadges: member.customBadges,
           isAdmin: member.isAdmin,
           online: isOnline,
+          isFocused,
           status: member.status,
           bio: isExternal ? (member.bio || `来自 ${origin?.siteName || "互联茶室"}`) : member.bio,
           location: member.location,
@@ -600,6 +601,7 @@ function formatOfflineTime(ts?: number): string {
               </svg>
             </div>
             <span
+              title={isFocused ? "在线" : "离开"}
               class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
             ></span>
           </div>
