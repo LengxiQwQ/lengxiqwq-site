@@ -220,6 +220,9 @@ const externalOrigin = $derived.by(() => {
 			name: message.name,
 			source: message.source,
 			badge: message.badge,
+			site: message.site,
+			siteUrl: message.siteUrl,
+			url: message.url,
 		},
 		interconnectSites,
 	);
@@ -347,6 +350,8 @@ function handleAvatarClick() {
 			name: message.name,
 			avatar: message.avatar,
 			url: message.url,
+			site: message.site,
+			siteUrl: message.siteUrl,
 			badge: roleBadge?.label || message.badge,
 			badgeType: roleBadge?.type || message.badgeType,
 			customBadges: message.customBadges,

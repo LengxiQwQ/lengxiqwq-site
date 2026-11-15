@@ -548,8 +548,17 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 		const isExt = isExternalMatrixIdentity(m);
 		if (isExt && !allowExternal) continue;
 		const cleanName = isExt
-			? resolveExternalOrigin({ name: m.name, userKey: m.userKey }, interconnectSites)
-					.cleanName || m.name
+			? resolveExternalOrigin(
+					{
+						name: m.name,
+						userKey: m.userKey,
+						badge: m.badge,
+						site: m.site,
+						siteUrl: m.siteUrl,
+						url: m.url,
+					},
+					interconnectSites,
+				).cleanName || m.name
 			: m.name;
 		map.set(m.userKey, isExt ? { ...m, name: cleanName } : m);
 	}
@@ -558,8 +567,17 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 		const isExt = isExternalMatrixIdentity(m);
 		if (isExt && !allowExternal) continue;
 		const cleanName = isExt
-			? resolveExternalOrigin({ name: m.name, userKey: m.userKey }, interconnectSites)
-					.cleanName || m.name
+			? resolveExternalOrigin(
+					{
+						name: m.name,
+						userKey: m.userKey,
+						badge: m.badge,
+						site: m.site,
+						siteUrl: m.siteUrl,
+						url: m.url,
+					},
+					interconnectSites,
+				).cleanName || m.name
 			: m.name;
 		const prev = map.get(m.userKey);
 		map.set(m.userKey, {
@@ -567,6 +585,9 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 			authType: m.authType,
 			name: cleanName,
 			avatar: m.avatar,
+			url: m.url,
+			site: m.site,
+			siteUrl: m.siteUrl,
 			badge: m.badge,
 			badgeType: m.badgeType,
 			isAdmin: m.isAdmin,
@@ -1370,7 +1391,14 @@ function selectMentionCandidate(candidate: ChatMentionCandidate) {
 		candidate.userKey === "room"
 			? "所有人"
 			: resolveExternalOrigin(
-					{ name: candidate.name, userKey: candidate.userKey },
+					{
+						name: candidate.name,
+						userKey: candidate.userKey,
+						badge: candidate.badge,
+						site: candidate.site,
+						siteUrl: candidate.siteUrl,
+						url: candidate.url,
+					},
 					interconnectSites,
 				).cleanName || candidate.name;
 	const inserted = `@${cleanName} `;
@@ -2253,7 +2281,7 @@ function removePendingImage(index: number) {
           {#each filteredMentionCandidates as person, idx (person.userKey)}
             {@const isRoomMention = person.userKey === "room"}
             {@const isExt = !isRoomMention && isExternalMatrixIdentity(person)}
-            {@const extOrigin = isExt ? resolveExternalOrigin({ name: person.name, userKey: person.userKey }, interconnectSites) : null}
+            {@const extOrigin = isExt ? resolveExternalOrigin({ name: person.name, userKey: person.userKey, badge: person.badge, site: person.site, siteUrl: person.siteUrl, url: person.url }, interconnectSites) : null}
             {@const displayPersonName = extOrigin?.cleanName || person.name}
             {@const personBadgeLabel = isRoomMention
               ? "全员"

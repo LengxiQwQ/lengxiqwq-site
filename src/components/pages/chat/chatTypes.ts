@@ -49,6 +49,8 @@ export interface ChatSessionUser {
 	name: string;
 	avatar: string;
 	url: string;
+	site?: string;
+	siteUrl?: string;
 	badge: string;
 	badgeType: BadgeType;
 	customBadges?: ChatCustomBadge[];
@@ -83,6 +85,8 @@ export interface ChatOnlineMember extends ChatSessionUser {
 	isFocused?: boolean;
 	/** 在线检测来源（local=本站实时WS，matrix=对方站点正规Matrix状态，fallback=未上报在线状态仅依据近期发言兜底） */
 	presenceMode?: ChatPresenceMode;
+	site?: string;
+	siteUrl?: string;
 	visitCount?: number;
 	firstSeenAt?: number;
 	totalDurationSec?: number;
@@ -109,6 +113,8 @@ export interface ChatUserDetailSeed {
 	connectedAt?: number;
 	isFocused?: boolean;
 	presenceMode?: ChatPresenceMode;
+	site?: string;
+	siteUrl?: string;
 	isMuted?: boolean;
 	disconnectedAt?: number;
 	durationFormatted?: string;
@@ -157,6 +163,8 @@ export interface ChatUserDetailProfile {
 	name: string;
 	avatar: string;
 	url: string;
+	site?: string;
+	siteUrl?: string;
 	badge: string;
 	badgeType: BadgeType;
 	customBadges?: ChatCustomBadge[];
@@ -201,6 +209,8 @@ export interface ChatMentionCandidate {
 	online: boolean;
 	isFocused?: boolean;
 	presenceMode?: ChatPresenceMode;
+	site?: string;
+	siteUrl?: string;
 	status?: string;
 	bio?: string;
 	location?: string;
@@ -259,6 +269,8 @@ export interface ChatMessageRecord {
 	name: string;
 	avatar: string;
 	url: string;
+	site?: string;
+	siteUrl?: string;
 	badge: string;
 	badgeType: BadgeType;
 	customBadges?: ChatCustomBadge[];

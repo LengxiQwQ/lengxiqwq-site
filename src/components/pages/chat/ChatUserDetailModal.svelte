@@ -85,13 +85,24 @@ let localVisibleLimit = $state(TRACK_PAGE_SIZE);
 let trackTab = $state<"recent" | "top">("recent");
 let bodyContainerEl: HTMLDivElement | null = $state(null);
 let lockedMinHeight = $state(0);
+const relayOriginInfo = $derived.by(() => {
+	const raw = seed?.userKey || "";
+	const match = raw.match(/#relay:([^:#]+):([^#]+)$/i);
+	if (!match) return null;
+	return {
+		siteKey: match[1],
+		userId: match[2],
+	};
+});
+
 const matrixUserId = $derived.by(() => {
 	if (!seed?.userKey) return "";
-	if (seed.userKey.startsWith("matrix:")) {
-		return seed.userKey.slice("matrix:".length);
+	const base = seed.userKey.split("#")[0] || seed.userKey;
+	if (base.startsWith("matrix:")) {
+		return base.slice("matrix:".length);
 	}
-	if (seed.userKey.startsWith("@") && seed.userKey.includes(":")) {
-		return seed.userKey;
+	if (base.startsWith("@") && base.includes(":")) {
+		return base;
 	}
 	return "";
 });
@@ -690,7 +701,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
   {/snippet}
 
   {#if (matrixUserId || isExternalUser) && seed}
-    {@const origin = resolveExternalOrigin({ name: seed.name, userKey: seed.userKey }, interconnectSites)}
+    {@const origin = resolveExternalOrigin({ name: seed.name, userKey: seed.userKey, badge: seed.badge, site: seed.site, siteUrl: seed.siteUrl, url: seed.url }, interconnectSites)}
     {@const cleanName = origin.cleanName || seed.name}
     {@const matchedSite = origin.site}
     {@const userMessages = messages.filter((m) => m.kind === "user" && m.userKey === seed.userKey)}
@@ -783,7 +794,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             {/if}
             <div class="min-w-0">
               <div class="font-bold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
-                {matchedSite?.name || origin.siteName}
+                {origin.siteName || matchedSite?.name}
               </div>
               <div class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
                 {matchedSite?.desc || `来自 ${origin.siteName} 互联聊天节点`}
@@ -832,7 +843,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
 
         <div class="mt-2.5 pt-2 border-t border-[var(--chat-divider-color)]/60 text-[0.6875rem] text-[var(--chat-meta-color)] space-y-1">
           <div class="flex items-center justify-between gap-2">
-            <span class="shrink-0">Matrix 账号:</span>
+            <span class="shrink-0">{relayOriginInfo ? "代发节点:" : "Matrix 账号:"}</span>
             <a
               href={`https://matrix.to/#/${encodeURIComponent(matrixUserId || seed.userKey)}`}
               target="_blank"
@@ -842,6 +853,12 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               {matrixUserId || seed.userKey}
             </a>
           </div>
+          {#if relayOriginInfo && !relayOriginInfo.userId.startsWith("n_")}
+            <div class="flex items-center justify-between gap-2">
+              <span class="shrink-0">原站用户 ID:</span>
+              <span class="truncate">{relayOriginInfo.userId}</span>
+            </div>
+          {/if}
           {#if origin.host}
             <div class="flex items-center justify-between gap-2">
               <span class="shrink-0">中继节点:</span>
@@ -1241,7 +1258,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             {@const isExternalProfile = Boolean(isExternalUser || matrixUserId || isExternalMatrixIdentity(profile))}
             {@const mentionDisabled = isExternalProfile && roomId !== "interconnect"}
             {@const mentionDisplayName = isExternalProfile
-              ? resolveExternalOrigin({ name: profile.name, userKey: profile.userKey }, interconnectSites).cleanName || profile.name
+              ? resolveExternalOrigin({ name: profile.name, userKey: profile.userKey, badge: profile.badge, site: profile.site, siteUrl: profile.siteUrl, url: profile.url }, interconnectSites).cleanName || profile.name
               : profile.name}
             <button
               type="button"
