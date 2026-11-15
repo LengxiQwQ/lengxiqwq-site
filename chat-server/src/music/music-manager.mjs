@@ -52,14 +52,12 @@ export class MusicManager {
 
     this.generation = 0;
     this.fallbackGeneration = 0;
-    this.resumeFallback = false;
     this.statePath = join(this.dataDir, 'music_state_' + roomId + '.json');
     this.loadData();
     try {
       const state = JSON.parse(readFileSync(this.statePath, 'utf8'));
       if (Array.isArray(state.queue)) this.queue = state.queue.filter(item => item?.track?.provider === 'qq');
       const current = state.current;
-      this.resumeFallback = current?.isFallback === true;
       if (current?.track?.provider === 'qq' && !current.isFallback) {
         this.queue.unshift({
           uid: current.requestUid || current.uid, track: current.track,
@@ -124,16 +122,13 @@ export class MusicManager {
   }
 
   resume() {
-    const shouldResume = this.queue.length || this.fallbackPlaylistId ||
-      (this.resumeFallback && this.fallbackTracks.length);
-    this.resumeFallback = false;
-    if (shouldResume) return this.advanceNext();
+    if (this.queue.length || this.fallbackTracks.length) return this.advanceNext();
   }
 
-  setFallbackPlaylist(playlistId, tracks, playlistName, { start = true } = {}) {
+  setFallbackPlaylist(playlistId, tracks, playlistName, { start = true, all = false } = {}) {
     this.fallbackPlaylistId = playlistId;
     this.fallbackPlaylistName = playlistName;
-    this.fallbackTracks = tracks;
+    this.fallbackTracks = playlistId || all ? tracks : [];
     this.fallbackGeneration++;
     this.preparedFallback = null;
     if (start && (!this.current || this.current.isFallback)) {
@@ -451,7 +446,7 @@ export class MusicManager {
     if (playable) {
       this.playTrack(playable, {
         userKey: 'system:fallback',
-        name: this.fallbackPlaylistName ? this.fallbackPlaylistName + ' (轮播)' : '冷汐点歌台 (轮播)'
+        name: this.fallbackPlaylistName + ' (轮播)'
       }, true);
     } else {
       this.current = null;

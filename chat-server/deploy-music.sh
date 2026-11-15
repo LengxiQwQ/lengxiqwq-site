@@ -11,11 +11,14 @@ install_dir=/opt/chat-server
 original_gateway=7dedc85b56284e1141507c23e419a3c3d6065100592ff4201fb070492d8b70a1
 integrated_gateway=79852271e948d9bd83dfa2cd0603605f7d0e07eaeb4d2c3e031bd7a09bbfb2cf
 observer_gateway=bd12bd1d9b76b6a65ec4d64b72abed1c07fb550d6f724d4dcda07ce3362911ba
+explicit_fallback_gateway=2d8a5c8ca9f3d89ccad9177e1f80581da6f0bd1f705eacab613952e0af4528fe
+matrix_gateway=15e80a6902cf8d0f7ffcdd8b95782d2fc426f024821f95af52c9fafa23ebe5a1
+matrix_fallback_gateway=723462d37191c4c6e0c6cbd2bb0b4576cb2d9d93d8676979cea2627059eca209
 exec 9>/opt/chat-server-music-deploy.lock
 flock -n 9
 
 actual_gateway=$(sha256sum "$install_dir/server.mjs" | awk '{print $1}')
-if [[ "$actual_gateway" != "$original_gateway" && "$actual_gateway" != "$integrated_gateway" && "$actual_gateway" != "$observer_gateway" ]]; then
+if [[ "$actual_gateway" != "$original_gateway" && "$actual_gateway" != "$integrated_gateway" && "$actual_gateway" != "$observer_gateway" && "$actual_gateway" != "$explicit_fallback_gateway" && "$actual_gateway" != "$matrix_gateway" && "$actual_gateway" != "$matrix_fallback_gateway" ]]; then
   echo "Gateway version changed. Rebase the integration patch before deployment." >&2
   exit 1
 fi
@@ -29,9 +32,13 @@ cp -a "$release_dir/src" "$candidate/src"
     git apply --check "$release_dir/gateway-music.patch"
     git apply "$release_dir/gateway-music.patch"
   fi
-  if [[ "$actual_gateway" != "$observer_gateway" ]]; then
+  if [[ "$actual_gateway" == "$original_gateway" || "$actual_gateway" == "$integrated_gateway" ]]; then
     git apply --check "$release_dir/observer-id.patch"
     git apply "$release_dir/observer-id.patch"
+  fi
+  if [[ "$actual_gateway" != "$explicit_fallback_gateway" && "$actual_gateway" != "$matrix_fallback_gateway" ]]; then
+    git apply --check "$release_dir/explicit-fallback.patch"
+    git apply "$release_dir/explicit-fallback.patch"
   fi
   node --check server.mjs
   for file in src/music/*.mjs; do node --check "$file"; done

@@ -72,108 +72,6 @@ const {
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
 const LAST_ROOM_STORAGE_KEY = "lengxi_chat_last_room";
 
-const DEFAULT_LEFT_WIDTH = 335;
-const DEFAULT_RIGHT_WIDTH = 380;
-const MIN_LEFT_WIDTH = 280;
-const MAX_LEFT_WIDTH = 480;
-const MIN_RIGHT_WIDTH = 340;
-const MAX_RIGHT_WIDTH = 540;
-const MIN_CENTER_WIDTH = 480;
-
-const LEFT_WIDTH_KEY = "lengxi_chat_left_panel_width";
-const RIGHT_WIDTH_KEY = "lengxi_chat_right_panel_width";
-
-let leftPanelWidth = $state(DEFAULT_LEFT_WIDTH);
-let rightPanelWidth = $state(DEFAULT_RIGHT_WIDTH);
-let isDraggingResizer = $state<"left" | "right" | null>(null);
-let stageContainerEl = $state<HTMLElement | null>(null);
-
-function handleStartResizeLeft(event: PointerEvent) {
-	if (typeof window === "undefined" || window.innerWidth < 768) return;
-	event.preventDefault();
-	isDraggingResizer = "left";
-	document.body.classList.add("is-resizing-chat");
-
-	const onPointerMove = (e: PointerEvent) => {
-		if (!stageContainerEl) return;
-		const rect = stageContainerEl.getBoundingClientRect();
-		const stageWidth = rect.width;
-		let targetWidth = e.clientX - rect.left;
-		targetWidth = Math.max(MIN_LEFT_WIDTH, Math.min(MAX_LEFT_WIDTH, targetWidth));
-		if (stageWidth - targetWidth - rightPanelWidth < MIN_CENTER_WIDTH) {
-			targetWidth = Math.max(MIN_LEFT_WIDTH, stageWidth - rightPanelWidth - MIN_CENTER_WIDTH);
-		}
-		leftPanelWidth = Math.round(targetWidth);
-	};
-
-	const onPointerUp = () => {
-		isDraggingResizer = null;
-		document.body.classList.remove("is-resizing-chat");
-		window.removeEventListener("pointermove", onPointerMove);
-		window.removeEventListener("pointerup", onPointerUp);
-		try {
-			localStorage.setItem(LEFT_WIDTH_KEY, String(leftPanelWidth));
-		} catch {
-			// Ignore
-		}
-	};
-
-	window.addEventListener("pointermove", onPointerMove);
-	window.addEventListener("pointerup", onPointerUp);
-}
-
-function handleStartResizeRight(event: PointerEvent) {
-	if (typeof window === "undefined" || window.innerWidth < 768) return;
-	event.preventDefault();
-	isDraggingResizer = "right";
-	document.body.classList.add("is-resizing-chat");
-
-	const onPointerMove = (e: PointerEvent) => {
-		if (!stageContainerEl) return;
-		const rect = stageContainerEl.getBoundingClientRect();
-		const stageWidth = rect.width;
-		let targetWidth = rect.right - e.clientX;
-		targetWidth = Math.max(MIN_RIGHT_WIDTH, Math.min(MAX_RIGHT_WIDTH, targetWidth));
-		if (stageWidth - leftPanelWidth - targetWidth < MIN_CENTER_WIDTH) {
-			targetWidth = Math.max(MIN_RIGHT_WIDTH, stageWidth - leftPanelWidth - MIN_CENTER_WIDTH);
-		}
-		rightPanelWidth = Math.round(targetWidth);
-	};
-
-	const onPointerUp = () => {
-		isDraggingResizer = null;
-		document.body.classList.remove("is-resizing-chat");
-		window.removeEventListener("pointermove", onPointerMove);
-		window.removeEventListener("pointerup", onPointerUp);
-		try {
-			localStorage.setItem(RIGHT_WIDTH_KEY, String(rightPanelWidth));
-		} catch {
-			// Ignore
-		}
-	};
-
-	window.addEventListener("pointermove", onPointerMove);
-	window.addEventListener("pointerup", onPointerUp);
-}
-
-function handleResetLeftWidth() {
-	leftPanelWidth = DEFAULT_LEFT_WIDTH;
-	try {
-		localStorage.removeItem(LEFT_WIDTH_KEY);
-	} catch {
-		// Ignore
-	}
-}
-
-function handleResetRightWidth() {
-	rightPanelWidth = DEFAULT_RIGHT_WIDTH;
-	try {
-		localStorage.removeItem(RIGHT_WIDTH_KEY);
-	} catch {
-		// Ignore
-	}
-}
-
 let activeTab = $state<"room" | "chat" | "music">("chat");
 let currentRoom = $state(rooms[0]?.id || "chat");
 let connectionState = $state<ConnectionState>("idle");
@@ -1795,19 +1693,6 @@ onMount(() => {
 		}
 	});
 
-	try {
-		const savedLeft = Number(localStorage.getItem(LEFT_WIDTH_KEY));
-		if (savedLeft >= MIN_LEFT_WIDTH && savedLeft <= MAX_LEFT_WIDTH) {
-			leftPanelWidth = savedLeft;
-		}
-		const savedRight = Number(localStorage.getItem(RIGHT_WIDTH_KEY));
-		if (savedRight >= MIN_RIGHT_WIDTH && savedRight <= MAX_RIGHT_WIDTH) {
-			rightPanelWidth = savedRight;
-		}
-	} catch {
-		// Ignore
-	}
-
 	hasAppMounted = true;
 
 	if (typeof window !== "undefined" && "Notification" in window) {
@@ -1898,9 +1783,6 @@ onMount(() => {
 	return () => {
 		isUnmounted = true;
 		for (const pending of songRequests.values()) pending.finish(false);
-		if (typeof document !== "undefined") {
-			document.body.classList.remove("is-resizing-chat");
-		}
 		window.clearInterval(presenceTimer);
 		window.clearInterval(memberTimer);
 		window.clearInterval(playlistTimer);
@@ -1924,12 +1806,8 @@ onMount(() => {
 });
 </script>
 
-<div class="flex flex-col h-full w-full min-h-0 {isDraggingResizer ? 'select-none pointer-events-none' : ''}">
-  <div
-    bind:this={stageContainerEl}
-    class="chat-mobile-stage flex flex-1 min-h-0 gap-0"
-    style="--chat-left-panel-width: {leftPanelWidth}px; --chat-right-panel-width: {rightPanelWidth}px;"
-  >
+<div class="flex flex-col h-full w-full min-h-0">
+  <div class="chat-mobile-stage flex flex-1 min-h-0 gap-0">
     <div class="chat-panel chat-panel-left {activeTab === 'room' ? 'mobile-active' : ''}">
       <RoomPanel
         rooms={rooms}
@@ -1955,19 +1833,6 @@ onMount(() => {
         onLogout={handleLogout}
         onToggleDesktopNotification={handleToggleDesktopNotification}
       />
-    </div>
-
-    <!-- 左侧可拖拽分割条 -->
-    <div
-      role="separator"
-      tabindex="0"
-      aria-orientation="vertical"
-      aria-label="拖拽调整左侧边栏宽度，双击恢复默认"
-      class="chat-resizer chat-resizer-left {isDraggingResizer === 'left' ? 'is-active' : ''}"
-      onpointerdown={handleStartResizeLeft}
-      ondblclick={handleResetLeftWidth}
-    >
-      <div class="chat-resizer-handle" aria-hidden="true"></div>
     </div>
 
     <div class="chat-panel-center relative flex flex-col min-w-0 min-h-0 {activeTab === 'chat' ? 'mobile-active' : ''}">
@@ -2058,19 +1923,6 @@ onMount(() => {
         sites={interconnectSites}
         onClose={() => (showInterconnect = false)}
       />
-    </div>
-
-    <!-- 右侧可拖拽分割条 -->
-    <div
-      role="separator"
-      tabindex="0"
-      aria-orientation="vertical"
-      aria-label="拖拽调整右侧边栏宽度，双击恢复默认"
-      class="chat-resizer chat-resizer-right {isDraggingResizer === 'right' ? 'is-active' : ''}"
-      onpointerdown={handleStartResizeRight}
-      ondblclick={handleResetRightWidth}
-    >
-      <div class="chat-resizer-handle" aria-hidden="true"></div>
     </div>
 
     <div class="chat-panel chat-panel-right {activeTab === 'music' ? 'mobile-active' : ''}">

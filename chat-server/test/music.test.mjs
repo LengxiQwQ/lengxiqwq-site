@@ -187,7 +187,7 @@ test('concurrent skip and fallback warm-up share one resolver', async t => {
   assert.equal(mgr.current.track.sourceId, 'fallback');
 });
 
-test('an active room-wide fallback pool resumes after a restart without starting an idle room', async t => {
+test('a historic implicit fallback does not resume, while an explicitly selected playlist does', async t => {
   const registry = {
     resolvePlaylistTrack: async item => item,
     resolvePlayable: async item => playable(item)
@@ -195,10 +195,11 @@ test('an active room-wide fallback pool resumes after a restart without starting
   const before = await manager(t, registry, 'interconnect');
   before.playTrack(playable(track('radio')), { userKey: 'system:fallback', name: 'Radio' }, true);
   const restored = await manager(t, registry, 'interconnect', before.dataDir);
-  const idle = await manager(t, registry, 'chat', before.dataDir);
-  for (const room of [restored, idle]) room.setFallbackPlaylist(null, [track('radio')], null, { start: false });
+  restored.setFallbackPlaylist(null, [track('radio')], null, { start: false });
   await restored.resume();
-  await idle.resume();
+  assert.equal(restored.current, null);
+  restored.setFallbackPlaylist('selected', [track('radio')], 'Selected', { start: false });
+  await restored.resume();
   assert.equal(restored.current.track.sourceId, 'radio');
-  assert.equal(idle.current, null);
+  assert.equal(restored.current.requesterName, 'Selected (轮播)');
 });

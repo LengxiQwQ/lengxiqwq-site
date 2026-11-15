@@ -356,7 +356,13 @@ export interface PlaylistDetail extends PlaylistSummary {
 	tracks: PlaylistTrackItem[];
 }
 
+export type RoomRotation =
+	| { mode: "off" }
+	| { mode: "all" }
+	| { mode: "playlist"; playlistId: string };
+
 export interface PlaylistsResponse {
+	rotation?: RoomRotation;
 	featured: PlaylistSummary[];
 	mine: PlaylistSummary[];
 	members: PlaylistSummary[];

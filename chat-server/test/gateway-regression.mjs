@@ -22,6 +22,9 @@ try {
   const origin = 'http://127.0.0.1:' + port;
   await mkdir(data);
   await cp(join(release, 'src'), join(dir, 'src'), { recursive: true });
+  if (process.env.CHAT_GATEWAY_MATRIX_SOURCE) {
+    await cp(process.env.CHAT_GATEWAY_MATRIX_SOURCE, join(dir, 'src', 'matrix'), { recursive: true });
+  }
   await symlink(testModules, join(dir, 'node_modules'), 'junction');
   let source = (await readFile(docs, 'utf8'))
     .replace(/^(const (?:[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*)) = .*$/gm, "$1 = 'fixture';")
@@ -109,10 +112,44 @@ try {
   assert.equal((await request('/api/playlists?room=interconnect',null,'admin')).body.mine[0].id,playlistId);
   assert.equal((await request('/api/playlists/import?room=interconnect', playlist, 'admin')).body.updatedExisting,true);
 
+  const featuredOnly = open('chat');
+  assert.equal((await featuredOnly.take(p=>p.type==='room:init')).music.current, null);
+  const sharedOnly = open('interconnect');
+  assert.equal((await sharedOnly.take(p=>p.type==='room:init')).music.current, null);
+  const selected = { mode: 'playlist', playlistId };
+  assert.equal((await request('/api/playlists/rotation?room=chat', selected, 'user')).code, 403);
+  assert.equal((await request('/api/playlists/rotation?room=chat', { mode: 'playlist', playlistId: 'missing' }, 'admin')).code, 400);
+  assert.deepEqual((await request('/api/playlists/rotation?room=chat', selected, 'admin')).body.rotation, selected);
+  const radio = await chat.take(p=>p.type==='music:state' && p.current?.isFallback);
+  assert.equal(radio.current.requesterName, 'Shared (轮播)');
+  assert.equal((await request('/api/playlists/flags?room=chat', { playlistId, isFeatured:false }, 'admin')).body.playlist.isFallback,true);
+  assert.deepEqual((await request('/api/playlists/rotation?room=chat', { mode: 'off' }, 'admin')).body.rotation, { mode: 'off' });
+  await chat.take(p=>p.type==='music:state' && p.current===null);
+
   assert.equal((await request('/api/playlists/flags?room=chat',{playlistId,isPublic:false},'admin')).code,200);
   assert.equal((await request('/api/playlists/detail?room=chat&id='+playlistId)).code,404);
   assert.equal((await request('/api/playlists/detail?room=interconnect&id='+playlistId,null,'admin')).code,200);
   assert.equal((await request('/api/playlists?room=chat&includeTracks=1')).body.details[playlistId],undefined);
+  assert.equal((await request('/api/playlists/rotation?room=chat', selected, 'admin')).code, 400);
+  const otherPlaylist = {
+    ...playlist, title: 'Public songs', sourceUrl: 'https://y.qq.com/public-songs',
+    tracks: [{ ...playlist.tracks[0], sourceTrackId: 'publicSong' }]
+  };
+  const publicList = await request('/api/playlists/import?room=interconnect', otherPlaylist, 'admin');
+  assert.equal(publicList.code, 200);
+  assert.deepEqual((await request('/api/playlists/rotation?room=chat', { mode: 'all' }, 'admin')).body.rotation, { mode: 'all' });
+  const allRadio = await chat.take(packet => packet.type === 'music:state' && packet.current?.requesterName === '全部公开歌单 (轮播)');
+  assert.equal(allRadio.current.track.sourceId, 'publicSong');
+  assert.deepEqual((await request('/api/playlists?room=interconnect')).body.rotation, { mode: 'off' });
+  const roomSettings = JSON.parse(await readFile(join(data, 'room_settings.json'), 'utf8'));
+  assert.equal(roomSettings.chat.fallbackAll, true);
+  assert.notEqual(roomSettings.interconnect.fallbackAll, true);
+  const hidden = await request('/api/playlists/flags?room=interconnect', { playlistId: publicList.body.playlist.id, isPublic: false }, 'admin');
+  assert.equal(hidden.code, 200);
+  const afterUnshare = open('chat');
+  assert.equal((await afterUnshare.take(packet => packet.type === 'room:init')).music.current, null);
+  assert.deepEqual((await request('/api/playlists?room=chat')).body.rotation, { mode: 'all' });
+  await request('/api/playlists/rotation?room=chat', { mode: 'off' }, 'admin');
 
   tea.send({type:'music:enqueue',requestId:'slow-case',track:{provider:'qq',sourceId:'slow',title:'Slow',durationSec:180}});
   tea.send({type:'room:switch',roomId:'chat'});
@@ -150,6 +187,8 @@ try {
   const otherRoom = open('chat');
   const otherState = await otherRoom.take(packet => packet.type === 'room:init');
   assert.notEqual(otherState.music.current?.uid, requesterState.current.uid);
+  tea.send({ type: 'music:skip', playUid: requesterState.current.uid });
+  await listener.take(packet => packet.type === 'music:state' && packet.current === null);
   const page=await request('/api/music/search?q=one&limit=30&page=2');
   assert.equal(page.body.tracks.length,1);
   assert.equal(page.body.hasMore,true);

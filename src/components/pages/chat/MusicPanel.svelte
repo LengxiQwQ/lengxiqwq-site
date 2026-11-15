@@ -14,6 +14,7 @@ import type {
 	PlaylistTrackItem,
 	QueueEntry,
 	RoomMusicState,
+	RoomRotation,
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import type { ChatMusicTrack } from "./musicTypes";
@@ -28,6 +29,7 @@ import {
 	refreshSavedPlaylist,
 	resolvePlaylistFromPlaylistOut,
 	saveImportedPlaylist,
+	saveRoomRotation,
 	toEnqueueableTrack,
 	type UserPlaylistCandidate,
 	updatePlaylistFlags,
@@ -284,6 +286,28 @@ const memberPlaylistGroups = $derived.by(() => {
 	}
 	return [...groups.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 });
+let rotation = $state<RoomRotation | null>(null);
+let rotationExpanded = $state(false);
+let rotationMode = $state<RoomRotation["mode"]>("off");
+let rotationPlaylistId = $state("");
+let rotationSaving = $state(false);
+let rotationError = $state("");
+const rotationChoices = $derived(
+	[...new Map([...featuredPlaylists, ...myPlaylists, ...membersPlaylists]
+		.filter((playlist) => playlist.isPublic && playlist.trackCount > 0)
+		.map((playlist) => [playlist.id, playlist])).values()],
+);
+const rotationLabel = $derived.by(() => {
+	const setting = rotation;
+	if (setting?.mode === "all") return "全部公开歌单";
+	if (setting?.mode === "playlist") {
+		return rotationChoices.find((playlist) => playlist.id === setting.playlistId)?.title ?? "指定歌单";
+	}
+	return "已关闭";
+});
+const canSaveRotation = $derived(
+	rotationMode !== "playlist" || rotationChoices.some((playlist) => playlist.id === rotationPlaylistId),
+);
 let isLoadingPlaylists = $state(false);
 let playlistsError = $state("");
 let selectedPlaylist = $state<PlaylistDetail | null>(null);
@@ -747,6 +771,7 @@ async function loadPlaylists(force = false): Promise<void> {
 		featuredPlaylists = res.featured;
 		myPlaylists = res.mine;
 		membersPlaylists = res.members;
+		rotation = res.rotation ?? null;
 		const now = Date.now();
 		if (res.details) {
 			for (const [pid, detail] of Object.entries(res.details)) {
@@ -1043,9 +1068,38 @@ async function handleRefreshPlaylist(playlist: PlaylistSummary): Promise<void> {
 	}
 }
 
+function toggleRotationSettings() {
+	if (rotationSaving || !rotation) return;
+	rotationExpanded = !rotationExpanded;
+	if (rotationExpanded) {
+		rotationMode = rotation.mode;
+		rotationPlaylistId = rotation.mode === "playlist" ? rotation.playlistId : "";
+		rotationError = "";
+	}
+}
+
+async function handleSaveRotation() {
+	if (rotationSaving || !canSaveRotation || !isWalineLoggedIn || !currentUser?.isAdmin) return;
+	const setting: RoomRotation = rotationMode === "playlist"
+		? { mode: "playlist", playlistId: rotationPlaylistId }
+		: { mode: rotationMode };
+	rotationSaving = true;
+	rotationError = "";
+	try {
+		rotation = await saveRoomRotation(chatServerUrl, roomId, walineToken, setting);
+		rotationExpanded = false;
+		onNotify?.("已保存本房间的轮播设置");
+		await loadPlaylists(true);
+	} catch (error) {
+		rotationError = error instanceof Error ? error.message : "保存失败，请重试";
+	} finally {
+		rotationSaving = false;
+	}
+}
+
 async function handleTogglePlaylistFlag(
 	playlist: PlaylistSummary,
-	flag: "isPublic" | "isFeatured" | "isFallback",
+	flag: "isPublic" | "isFeatured",
 ): Promise<void> {
 	if (!walineToken || isUpdatingFlagsId) return;
 	if (flag === "isPublic" && !canManagePlaylist(playlist)) return;
@@ -1055,12 +1109,7 @@ async function handleTogglePlaylistFlag(
 		const nextFlags =
 			flag === "isPublic"
 				? { isPublic: !playlist.isPublic }
-				: flag === "isFeatured"
-					? {
-							isFeatured: !playlist.isFeatured,
-							isFallback: playlist.isFeatured ? false : playlist.isFallback,
-						}
-					: { isFallback: !playlist.isFallback };
+				: { isFeatured: !playlist.isFeatured };
 		const updated = await updatePlaylistFlags(
 			chatServerUrl,
 			roomId,
@@ -1088,12 +1137,6 @@ async function handleTogglePlaylistFlag(
 				updated.isFeatured
 					? `已将《${updated.title}》设为房间精选`
 					: `已取消《${updated.title}》的房间精选`,
-			);
-		} else if (flag === "isFallback") {
-			onNotify?.(
-				updated.isFallback
-					? `已将《${updated.title}》设为冷场轮播歌单`
-					: `已取消《${updated.title}》的冷场轮播`,
 			);
 		}
 		invalidatePlaylistCaches(playlist.id);
@@ -3489,26 +3532,6 @@ $effect(() => {
                     </span>
                   </div>
 
-                  <div class="chat-playlist-action-wrap">
-                    <button
-                      type="button"
-                      disabled={isUpdatingFlagsId === selectedPlaylist.id}
-                      class="chat-playlist-icon-btn {selectedPlaylist.isFallback ? 'is-active' : ''}"
-                      aria-label={selectedPlaylist.isFallback ? "取消冷场轮播" : "设为冷场轮播"}
-                      onclick={() => selectedPlaylist && handleTogglePlaylistFlag(selectedPlaylist, "isFallback")}
-                    >
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <circle cx="12" cy="12" r="2" />
-                        <path d="M16.24 7.76a6 6 0 0 1 0 8.49" />
-                        <path d="M7.76 16.24a6 6 0 0 1 0-8.49" />
-                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                        <path d="M4.93 19.07a10 10 0 0 1 0-14.14" />
-                      </svg>
-                    </button>
-                    <span class="chat-playlist-tooltip" role="tooltip">
-                      {selectedPlaylist.isFallback ? "取消冷场轮播" : "设为冷场轮播"}
-                    </span>
-                  </div>
                 {/if}
 
                 {#if isOwnPlaylist(selectedPlaylist)}
@@ -3589,6 +3612,56 @@ $effect(() => {
       <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scrollbar-stable px-3 pb-4 pt-2 space-y-3">
         {#if playlistsError}
           <div class="text-xs text-red-500 px-1">{playlistsError}</div>
+        {/if}
+
+        {#if rotation}
+          <section aria-label="冷场轮播" class="space-y-2 border-b border-[var(--chat-divider-color)] pb-3">
+            <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <div class="flex min-w-0 flex-1 items-baseline gap-2">
+                <h3 class="m-0 shrink-0 text-xs font-bold text-[var(--deep-text)]">冷场轮播</h3>
+                <span class="truncate text-xs text-[var(--chat-meta-color)]" title={rotationLabel}>{rotationLabel}</span>
+              </div>
+              {#if isWalineLoggedIn && currentUser?.isAdmin}
+                <button type="button" class="chat-queue-icon-btn w-auto! min-h-8 px-2 text-xs shrink-0"
+                  aria-expanded={rotationExpanded} disabled={rotationSaving} onclick={toggleRotationSettings}>
+                  {rotationExpanded ? "收起设置" : "轮播设置"}
+                </button>
+              {/if}
+            </div>
+            {#if rotationExpanded && isWalineLoggedIn && currentUser?.isAdmin}
+              <form class="space-y-2" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>
+                <div class="flex flex-wrap items-center gap-2">
+                  <label for="chat-rotation-mode" class="text-xs text-[var(--deep-text)]">轮播方式</label>
+                  <select id="chat-rotation-mode" class="chat-playlist-input min-w-0 flex-1"
+                    bind:value={rotationMode} disabled={rotationSaving}>
+                    <option value="off">关闭</option>
+                    <option value="all">全部公开歌单</option>
+                    <option value="playlist">指定歌单</option>
+                  </select>
+                </div>
+                {#if rotationMode === "playlist"}
+                  <div class="flex flex-wrap items-center gap-2">
+                    <label for="chat-rotation-playlist" class="text-xs text-[var(--deep-text)]">公开歌单</label>
+                    <select id="chat-rotation-playlist" class="chat-playlist-input min-w-0 flex-1"
+                      bind:value={rotationPlaylistId} disabled={rotationSaving || rotationChoices.length === 0}>
+                      <option value="" disabled>{rotationChoices.length === 0 ? "没有可选的公开歌单" : "请选择歌单"}</option>
+                      {#each rotationChoices as playlist (playlist.id)}
+                        <option value={playlist.id}>{playlist.title} · {playlist.ownerName}</option>
+                      {/each}
+                    </select>
+                  </div>
+                {/if}
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <p class="m-0 flex-1 text-xs text-[var(--chat-meta-color)]">仅作用于当前房间，待播队列优先。</p>
+                  <button type="submit" disabled={rotationSaving || !canSaveRotation}
+                    class="shrink-0 rounded-lg border-none bg-(--primary) px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">
+                    {rotationSaving ? "保存中" : "保存"}
+                  </button>
+                </div>
+                {#if rotationError}<p role="alert" class="m-0 text-xs text-red-500">{rotationError}</p>{/if}
+              </form>
+            {/if}
+          </section>
         {/if}
 
         <!-- 段落 1：房间精选（可折叠） -->

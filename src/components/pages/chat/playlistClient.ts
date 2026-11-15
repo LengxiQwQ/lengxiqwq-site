@@ -5,6 +5,7 @@ import type {
 	PlaylistSummary,
 	PlaylistsResponse,
 	PlaylistTrackItem,
+	RoomRotation,
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
 
@@ -376,6 +377,7 @@ export async function fetchRoomPlaylists(
 		mine?: PlaylistSummary[];
 		members?: PlaylistSummary[];
 		details?: Record<string, PlaylistDetail>;
+		rotation?: RoomRotation;
 		error?: string;
 	} | null;
 	if (!resp.ok || !json?.ok) {
@@ -388,11 +390,39 @@ export async function fetchRoomPlaylists(
 		featured: Array.isArray(json.featured) ? json.featured : [],
 		mine: Array.isArray(json.mine) ? json.mine : [],
 		members: Array.isArray(json.members) ? json.members : [],
+		rotation: json.rotation,
 		details:
 			json.details && typeof json.details === "object"
 				? json.details
 				: undefined,
 	};
+}
+
+export async function saveRoomRotation(
+	chatServerUrl: string,
+	roomId: string,
+	walineToken: string,
+	rotation: RoomRotation,
+): Promise<RoomRotation> {
+	const base = normalizeServerUrl(chatServerUrl);
+	const response = await fetch(
+		`${base}/api/playlists/rotation?room=${encodeURIComponent(roomId)}`,
+		{
+			method: "POST",
+			headers: buildAuthHeaders(walineToken, true),
+			body: JSON.stringify(rotation),
+			signal: AbortSignal.timeout(10_000),
+		},
+	);
+	const result = (await response.json().catch(() => null)) as {
+		ok?: boolean;
+		error?: string;
+		rotation?: RoomRotation;
+	} | null;
+	if (!response.ok || !result?.ok || !result.rotation) {
+		throw new Error(result?.error || "保存轮播设置失败，请重试");
+	}
+	return result.rotation;
 }
 
 export async function fetchPlaylistDetail(

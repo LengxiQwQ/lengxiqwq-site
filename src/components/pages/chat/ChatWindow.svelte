@@ -368,8 +368,8 @@ function isChatPaneFocused(): boolean {
 		return true;
 	}
 	if (document.hidden) return false;
-	const isMobile = window.matchMedia("(max-width: 767px)").matches;
-	return !isMobile || isChatTabActive;
+	const usesPanelTabs = window.matchMedia("(width < 768px)").matches;
+	return !usesPanelTabs || isChatTabActive;
 }
 
 function isMusicNoticeMessage(msg: ChatMessageRecord): boolean {

@@ -1,0 +1,164 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -470,36 +470,51 @@
+   for (const roomId of rooms) broadcastToRoom(roomId, { type: 'playlists:updated', roomId });
+ }
+
+-function syncFallbackTracksForRoom(roomId, { boot = false, start = true } = {}) {
+-  const mgr = musicManagers[roomId];
++function roomRotation(roomId) {
+   const settings = roomSettings[roomId];
+-  const fallback = id => {
+-    const playlist = Object.hasOwn(playlistDetailsStore, id) ? playlistDetailsStore[id] : null;
+-    return playlist?.isPublic && playlist.tracks?.length ? playlist : null;
+-  };
+-  if (settings.fallbackDisabled) {
+-    mgr.setFallbackPlaylist(null, [], null, { start: !boot && start });
+-    return;
+-  }
+-  const explicit = settings.fallback && fallback(settings.fallback);
+-  const featuredId = (settings.featured || []).find(fallback);
+-  const featured = featuredId && fallback(featuredId);
+-  if (explicit || featured) {
+-    const playlist = explicit || featured;
+-    mgr.setFallbackPlaylist(explicit ? settings.fallback : featuredId, playlist.tracks, playlist.title, { start: !boot && start });
+-  } else {
+-    const tracks = Object.values(playlistDetailsStore).filter(p => p?.isPublic).flatMap(p => p.tracks || []);
+-    mgr.setFallbackPlaylist(null, tracks, null, { start: !boot && start });
+-  }
++  if (settings.fallbackAll === true) return { mode: 'all' };
++  return settings.fallback ? { mode: 'playlist', playlistId: settings.fallback } : { mode: 'off' };
++}
++
++function publicRotationPlaylist(id) {
++  const playlist = typeof id === 'string' && Object.hasOwn(playlistDetailsStore, id)
++    ? playlistDetailsStore[id] : null;
++  return playlist?.isPublic && playlist.tracks?.length ? playlist : null;
++}
++
++function getPublicRotationTracks() {
++  const tracks = new Map();
++  for (const id of Object.keys(playlistDetailsStore)) {
++    for (const track of publicRotationPlaylist(id)?.tracks || []) {
++      const qqId = track.matchedTrack?.sourceId || (track.sourcePlatform === 'qqmusic' && track.sourceTrackId);
++      const key = qqId ? JSON.stringify(['qq', qqId]) :
++        JSON.stringify([track.sourcePlatform, track.sourceTrackId, track.title, track.artist]);
++      if (!tracks.has(key)) tracks.set(key, track);
++    }
++  }
++  return [...tracks.values()];
++}
++
++function syncFallbackTracksForRoom(roomId, { boot = false, refresh = false } = {}) {
++  const setting = roomRotation(roomId);
++  const manager = musicManagers[roomId];
++  const all = setting.mode === 'all';
++  const playlist = setting.mode === 'playlist' ? publicRotationPlaylist(setting.playlistId) : null;
++  const tracks = all ? getPublicRotationTracks() : playlist?.tracks || [];
++  const keepPlaying = refresh && all && manager.current?.isFallback && tracks.length;
++  manager.setFallbackPlaylist(
++    playlist ? setting.playlistId : null,
++    tracks,
++    all ? '全部公开歌单' : playlist?.title || null,
++    { start: !boot && !keepPlaying, all }
++  );
+ }
+
+ function refreshSharedFallbacks(playlistId) {
+   for (const roomId of MUSIC_ROOMS) {
+-    const manager = musicManagers[roomId];
+-    const dependsOnPlaylist = manager.fallbackPlaylistId === playlistId ||
+-      roomSettings[roomId].featured?.includes(playlistId);
+-    if (dependsOnPlaylist || !manager.fallbackPlaylistId) {
+-      syncFallbackTracksForRoom(roomId, { start: dependsOnPlaylist });
++    const setting = roomRotation(roomId);
++    if (setting.mode === 'all' || setting.playlistId === playlistId || musicManagers[roomId].fallbackPlaylistId === playlistId) {
++      syncFallbackTracksForRoom(roomId, { refresh: true });
+     }
+   }
+ }
+@@ -1650,6 +1665,47 @@
+     return;
+   }
+
++  // Cold-room rotation is independent of featured status and playlist visibility.
++  if (url.pathname === '/api/playlists/rotation' && req.method === 'POST') {
++    try {
++      const caller = await verifyWalineTokenRemote((req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim());
++      if (!caller?.isAdmin) {
++        res.writeHead(caller ? 403 : 401, { 'Content-Type': 'application/json' });
++        res.end(JSON.stringify({ ok: false, error: '仅站长可修改房间轮播设置' }));
++        return;
++      }
++      const body = await readPlaylistJson(req);
++      const { mode, playlistId } = body || {};
++      if (!['off', 'all', 'playlist'].includes(mode) || (mode === 'playlist' && !publicRotationPlaylist(playlistId))) {
++        res.writeHead(400, { 'Content-Type': 'application/json' });
++        res.end(JSON.stringify({ ok: false, error: '请选择有效的轮播方式和公开歌单' }));
++        return;
++      }
++      const current = roomRotation(playlistRoom);
++      if (mode !== current.mode || (mode === 'playlist' && playlistId !== current.playlistId)) {
++        const previous = roomSettings[playlistRoom];
++        roomSettings[playlistRoom] = { ...previous, fallbackAll: mode === 'all', fallback: mode === 'playlist' ? playlistId : null };
++        try {
++          const path = join(DATA_DIR, 'room_settings.json');
++          const tmp = path + '.rotation.tmp';
++          writeFileSync(tmp, JSON.stringify(roomSettings, null, 2), { encoding: 'utf8', mode: 0o600 });
++          renameSync(tmp, path);
++        } catch (error) {
++          roomSettings[playlistRoom] = previous;
++          throw error;
++        }
++        syncFallbackTracksForRoom(playlistRoom);
++        notifyPlaylistUpdates([playlistRoom]);
++      }
++      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
++      res.end(JSON.stringify({ ok: true, rotation: roomRotation(playlistRoom) }));
++    } catch (error) {
++      res.writeHead(error.statusCode || 400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ ok: false, error: '保存轮播设置失败' }));
++    }
++    return;
++  }
++
+   // Playlists Summary: GET /api/playlists
+   if (url.pathname === '/api/playlists' && req.method === 'GET') {
+     const roomId = playlistRoom;
+@@ -1695,6 +1751,7 @@
+       featured,
+       mine,
+       members,
++      rotation: roomRotation(roomId),
+       ...(includeTracks ? { details: enrichedDetails } : {})
+     }));
+     return;
+@@ -1794,10 +1851,9 @@
+         }
+         if (body.isFallback === true) {
+           settings.fallback = playlistId;
+-          settings.fallbackDisabled = false;
++          settings.fallbackAll = false;
+         } else if (body.isFallback === false && settings.fallback === playlistId) {
+           settings.fallback = null;
+-          settings.fallbackDisabled = true;
+         }
+
+         target.updatedAt = Date.now();
+@@ -1817,7 +1873,7 @@
+         };
+
+         if (sharedChange) refreshSharedFallbacks(playlistId);
+-        if (wantsAdminFlag) syncFallbackTracksForRoom(roomId);
++        if (!sharedChange && typeof body.isFallback === 'boolean') syncFallbackTracksForRoom(roomId);
+         notifyPlaylistUpdates(sharedChange ? MUSIC_ROOMS : [roomId]);
+
+         res.writeHead(200, { 'Content-Type': 'application/json' });
+@@ -2029,7 +2085,6 @@
+       const settings = roomSettings[id];
+       if (settings.fallback === playlistId) {
+         settings.fallback = null;
+-        settings.fallbackDisabled = true;
+       }
+       settings.featured = (settings.featured || []).filter(item => item !== playlistId);
+     }

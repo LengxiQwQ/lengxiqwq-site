@@ -279,85 +279,15 @@ html[data-chat-page] .chat-panel {
 	box-shadow: none;
 }
 
-/* 三栏宽度与接缝分割 */
-.chat-panel-left {
+.chat-panel-left,
+.chat-panel-right {
 	background: var(--skin-rail) !important;
-	width: var(--chat-left-panel-width, 335px) !important;
-	flex-shrink: 0;
 }
 
 .chat-panel-center {
 	background: var(--skin-surface) !important;
-	border-left: none !important;
-	border-right: none !important;
 	flex: 1;
 	min-width: 0;
-}
-
-.chat-panel-right {
-	background: var(--skin-rail) !important;
-	width: var(--chat-right-panel-width, 380px) !important;
-	flex-shrink: 0;
-}
-
-/* 侧边栏可拖动调整分割条 */
-.chat-resizer {
-	position: relative;
-	width: 1px;
-	height: 100%;
-	background: var(--skin-line);
-	cursor: col-resize;
-	flex-shrink: 0;
-	z-index: 25;
-	touch-action: none;
-	user-select: none;
-	transition: background-color 150ms ease;
-}
-
-/* 扩展 10px 鼠标抓取热区 */
-.chat-resizer::after {
-	content: "";
-	position: absolute;
-	top: 0;
-	bottom: 0;
-	left: -5px;
-	right: -5px;
-	z-index: 26;
-}
-
-.chat-resizer-handle {
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	transform: translate(-50%, -50%);
-	width: 4px;
-	height: 36px;
-	border-radius: 9999px;
-	background: var(--primary);
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 150ms ease, transform 150ms ease;
-	z-index: 27;
-}
-
-.chat-resizer:hover,
-.chat-resizer.is-active {
-	background: var(--primary) !important;
-}
-
-.chat-resizer:hover .chat-resizer-handle,
-.chat-resizer.is-active .chat-resizer-handle {
-	opacity: 0.95;
-	transform: translate(-50%, -50%) scaleY(1.1);
-}
-
-body.is-resizing-chat {
-	cursor: col-resize !important;
-	user-select: none !important;
-}
-
-body.is-resizing-chat * {
-	user-select: none !important;
 }
 
 .chat-panel-header {
@@ -1513,21 +1443,38 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 /* ==========================================================================
    9. 响应式断点适配
    ========================================================================== */
-@media (min-width: 768px) and (max-width: 1200px) {
-	.chat-panel-left {
-		width: var(--chat-left-panel-width, 280px) !important;
+@media (width >= 768px) {
+	.chat-mobile-stage {
+		--chat-left-panel-width: 335px;
+		--chat-right-panel-width: 380px;
 	}
+
+	.chat-panel-left {
+		width: var(--chat-left-panel-width);
+		flex-shrink: 0;
+	}
+
+	.chat-panel-center {
+		border-inline: 1px solid var(--skin-line);
+	}
+
 	.chat-panel-right {
-		width: var(--chat-right-panel-width, 320px) !important;
+		width: var(--chat-right-panel-width);
+		flex-shrink: 0;
 	}
 }
 
-/* 移动端（< 768px）：整屏工作台 + 底部实底 Tab 切换 */
-@media (max-width: 767px) {
-	.chat-resizer {
-		display: none !important;
+/* 中等宽度窗口及横屏大平板使用原拖拽下限。 */
+@media (768px <= width <= 1200px),
+	(1200px < width <= 1366px) and (hover: none) and (pointer: coarse) {
+	.chat-mobile-stage {
+		--chat-left-panel-width: 280px;
+		--chat-right-panel-width: 340px;
 	}
+}
 
+/* 窄屏（< 768px）：整屏工作台 + 底部 Tab 切换 */
+@media (width < 768px) {
 	.chat-page-container {
 		padding: 0 !important;
 		flex-direction: column;
@@ -1624,7 +1571,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	}
 }
 
-@media (min-width: 768px) {
+@media (width >= 768px) {
 	.chat-mobile-tabs,
 	.chat-mobile-global-player {
 		display: none !important;
