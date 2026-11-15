@@ -232,11 +232,21 @@ export interface ChatReplyRef {
 	isRecalled?: boolean;
 }
 
+export interface ChatReadReceipt {
+	userKey: string;
+	name: string;
+	avatar?: string;
+	msgUid: string;
+	ts: number;
+}
+
 export interface ChatMessageRecord {
 	source?: "matrix";
 	id: number;
 	msgUid: string;
 	kind: "user" | "system" | "poll";
+	msgType?: "text" | "emote" | "notice";
+	isEncryptedPlaceholder?: boolean;
 	userKey: string;
 	name: string;
 	avatar: string;

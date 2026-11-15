@@ -5,11 +5,18 @@ import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
-import { uploadChatImage, uploadChatMedia } from "./chatClient";
+import {
+	isExternalMatrixIdentity,
+	isMentionedForUser,
+	resolveExternalOrigin,
+	uploadChatImage,
+	uploadChatMedia,
+} from "./chatClient";
 import type {
 	ChatMentionCandidate,
 	ChatMessageRecord,
 	ChatOnlineMember,
+	ChatReadReceipt,
 	ChatSessionUser,
 	ChatUserDetailSeed,
 	ImageAttachment,
@@ -63,10 +70,13 @@ interface Props {
 	pinnedUids?: string[];
 	roomTopic?: string;
 	typingUsers?: string[];
+	readReceipts?: Record<string, ChatReadReceipt[]>;
 	onReaction?: (msgUid: string, key: string) => void;
 	onEditMessage?: (msgUid: string, content: string) => void;
 	onPinMessage?: (msgUid: string, unpin?: boolean) => void;
 	onVotePoll?: (pollUid: string, answerId: string) => void;
+	onEndPoll?: (pollUid: string) => void;
+	onSetTopic?: (topic: string) => void;
 	onOpenPollModal?: () => void;
 	onCreatePoll?: (
 		question: string,
@@ -132,10 +142,13 @@ const {
 	pinnedUids = [],
 	roomTopic = "",
 	typingUsers = [],
+	readReceipts = {},
 	onReaction,
 	onEditMessage,
 	onPinMessage,
 	onVotePoll,
+	onEndPoll,
+	onSetTopic,
 	onOpenPollModal,
 	onCreatePoll,
 	onTyping,
@@ -249,6 +262,8 @@ let showMentionHistory = $state(false);
 let unreadMentionUids = $state<string[]>([]);
 let alertBannerUid = $state<string | null>(null);
 let highlightedMsgUid = $state("");
+let editingTopic = $state(false);
+let topicDraft = $state("");
 
 let unreadBarDismissed = $state(false);
 let isUnreadDividerInView = $state(false);
@@ -469,20 +484,7 @@ const orderedStickerPacks = $derived.by(() => {
 });
 
 function isMentionedToMe(msg: ChatMessageRecord): boolean {
-	if (
-		!currentUser ||
-		msg.kind !== "user" ||
-		msg.userKey === currentUser.userKey
-	) {
-		return false;
-	}
-	if (Array.isArray(msg.mentionKeys) && msg.mentionKeys.length > 0) {
-		return msg.mentionKeys.includes(currentUser.userKey);
-	}
-	const myName = currentUser.name.trim().toLowerCase();
-	return Boolean(
-		myName && msg.mentions.some((m) => m.trim().toLowerCase() === myName),
-	);
+	return isMentionedForUser(msg, currentUser);
 }
 
 function isReplyToMe(msg: ChatMessageRecord): boolean {
@@ -526,39 +528,44 @@ function formatOfflineTime(ts?: number): string {
 }
 
 const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
+	const allowExternal = roomId === "interconnect";
 	const map = new Map<string, ChatMentionCandidate>();
+	if (currentUser?.isAdmin) {
+		map.set("room", {
+			userKey: "room",
+			authType: "waline",
+			name: "所有人",
+			avatar: "",
+			badge: "全员提醒",
+			badgeType: "host",
+			isAdmin: false,
+			online: true,
+			lastSeenAt: Date.now(),
+		});
+	}
 	for (const m of mentionMembers) {
 		if (!m.userKey || m.userKey === currentUser?.userKey) continue;
-		// 站外跨 Matrix 成员暂不支持提及，排除出 @ 自动补全
-		if (
-			m.userKey.startsWith("matrix:") ||
-			(m.userKey.startsWith("@") && m.userKey.includes(":")) ||
-			m.badge === "互联茶友" ||
-			m.badge === "Detached" ||
-			m.badge === "听雨" ||
-			m.badge === "GBK"
-		) {
-			continue;
-		}
-		map.set(m.userKey, m);
+		const isExt = isExternalMatrixIdentity(m);
+		if (isExt && !allowExternal) continue;
+		const cleanName = isExt
+			? resolveExternalOrigin({ name: m.name, userKey: m.userKey }, interconnectSites)
+					.cleanName || m.name
+			: m.name;
+		map.set(m.userKey, isExt ? { ...m, name: cleanName } : m);
 	}
 	for (const m of onlineMembers) {
 		if (!m.userKey || m.userKey === currentUser?.userKey) continue;
-		if (
-			m.userKey.startsWith("matrix:") ||
-			(m.userKey.startsWith("@") && m.userKey.includes(":")) ||
-			m.badge === "互联茶友" ||
-			m.badge === "Detached" ||
-			m.badge === "听雨" ||
-			m.badge === "GBK"
-		) {
-			continue;
-		}
+		const isExt = isExternalMatrixIdentity(m);
+		if (isExt && !allowExternal) continue;
+		const cleanName = isExt
+			? resolveExternalOrigin({ name: m.name, userKey: m.userKey }, interconnectSites)
+					.cleanName || m.name
+			: m.name;
 		const prev = map.get(m.userKey);
 		map.set(m.userKey, {
 			userKey: m.userKey,
 			authType: m.authType,
-			name: m.name,
+			name: cleanName,
 			avatar: m.avatar,
 			badge: m.badge,
 			badgeType: m.badgeType,
@@ -568,6 +575,8 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 		});
 	}
 	return Array.from(map.values()).sort((a, b) => {
+		if (a.userKey === "room") return -1;
+		if (b.userKey === "room") return 1;
 		if (a.online !== b.online) return a.online ? -1 : 1;
 		if (a.online && b.online) {
 			if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
@@ -586,9 +595,15 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 const filteredMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 	const q = mentionQuery.trim().toLowerCase();
 	if (!q) return mergedMentionCandidates;
-	return mergedMentionCandidates.filter((c) =>
-		c.name.toLowerCase().includes(q),
-	);
+	return mergedMentionCandidates.filter((c) => {
+		if (c.userKey === "room") {
+			return "room".includes(q) || "all".includes(q) || "所有人".includes(q);
+		}
+		return (
+			c.name.toLowerCase().includes(q) ||
+			c.userKey.toLowerCase().includes(q)
+		);
+	});
 });
 
 const unreadMentionSet = $derived(new Set(unreadMentionUids));
@@ -1054,6 +1069,13 @@ $effect(() => {
 				}
 			}
 
+			if (isChatPaneFocused() && isStickyAtBottom) {
+				const latestIncoming = liveIncoming[liveIncoming.length - 1];
+				if (latestIncoming) {
+					onMarkRead?.(latestIncoming.createdAt);
+				}
+			}
+
 			if (isStickyAtBottom && !targetMessageUid) {
 				void scrollToBottom();
 			} else if (!isStickyAtBottom) {
@@ -1262,11 +1284,16 @@ $effect(() => {
 $effect(() => {
 	if (mentionEvent && mentionEvent.seq !== lastMentionSeq) {
 		lastMentionSeq = mentionEvent.seq;
+		const cleanMentionName =
+			resolveExternalOrigin(
+				{ name: mentionEvent.name, userKey: mentionEvent.userKey },
+				interconnectSites,
+			).cleanName || mentionEvent.name;
 		if (mentionEvent.userKey) {
-			addSelectedMentionKey(mentionEvent.name, mentionEvent.userKey);
+			addSelectedMentionKey(cleanMentionName, mentionEvent.userKey);
 		}
 		insertAtCursor(
-			`${inputText && !inputText.endsWith(" ") ? " " : ""}@${mentionEvent.name} `,
+			`${inputText && !inputText.endsWith(" ") ? " " : ""}@${cleanMentionName} `,
 		);
 	}
 });
@@ -1318,9 +1345,16 @@ function selectMentionCandidate(candidate: ChatMentionCandidate) {
 			? inputText.slice(0, triggerIdx)
 			: inputText.slice(0, caret);
 	const suffix = inputText.slice(caret);
-	const inserted = `@${candidate.name} `;
+	const cleanName =
+		candidate.userKey === "room"
+			? "所有人"
+			: resolveExternalOrigin(
+					{ name: candidate.name, userKey: candidate.userKey },
+					interconnectSites,
+				).cleanName || candidate.name;
+	const inserted = `@${cleanName} `;
 	inputText = `${prefix}${inserted}${suffix}`;
-	addSelectedMentionKey(candidate.name, candidate.userKey);
+	addSelectedMentionKey(cleanName, candidate.userKey);
 	mentionMenuOpen = false;
 	mentionTriggerStart = -1;
 	mentionQuery = "";
@@ -1343,6 +1377,14 @@ function collectMentionKeys(content: string): string[] {
 				keys.add(key);
 			}
 		}
+	}
+	if (
+		currentUser?.isAdmin &&
+		(lower.includes("@room") ||
+			lower.includes("@all") ||
+			lower.includes("@所有人"))
+	) {
+		keys.add("room");
 	}
 	return Array.from(keys);
 }
@@ -1590,13 +1632,54 @@ function removePendingImage(index: number) {
   {/if}
   <!-- 顶栏 -->
   <div class="chat-panel-header">
-    <div class="flex items-center gap-2 min-w-0">
+    <div class="flex items-center gap-2 min-w-0 flex-1">
       <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
         # {roomName}
       </span>
-      <span class="text-xs text-[var(--chat-meta-color)] truncate hidden sm:inline">
-        · {effectiveSubtitle}
-      </span>
+      {#if editingTopic && currentUser?.isAdmin}
+        <form
+          class="hidden sm:flex items-center gap-1 min-w-0 flex-1 max-w-md"
+          onsubmit={(e) => {
+            e.preventDefault();
+            if (topicDraft.trim()) onSetTopic?.(topicDraft.trim());
+            editingTopic = false;
+          }}
+        >
+          <input
+            type="text"
+            maxlength="160"
+            class="chat-topic-input flex-1 min-w-0 px-2 py-0.5 text-xs rounded-md bg-black/5 dark:bg-white/10 text-[var(--deep-text)] dark:text-white/90 border border-[var(--chat-divider-color)] outline-none focus:border-[var(--primary)]"
+            bind:value={topicDraft}
+            placeholder="输入房间主题..."
+            onkeydown={(e) => {
+              if (e.key === "Escape") editingTopic = false;
+            }}
+          />
+          <button type="submit" class="px-1.5 py-0.5 rounded text-[11px] bg-[var(--primary)] text-white hover:opacity-90">保存</button>
+          <button type="button" class="px-1.5 py-0.5 rounded text-[11px] text-[var(--chat-meta-color)] hover:bg-black/5 dark:hover:bg-white/10" onclick={() => (editingTopic = false)}>取消</button>
+        </form>
+      {:else}
+        <span class="text-xs text-[var(--chat-meta-color)] truncate hidden sm:inline">
+          · {effectiveSubtitle}
+        </span>
+        {#if currentUser?.isAdmin && onSetTopic}
+          <button
+            type="button"
+            class="hidden sm:inline-flex items-center justify-center w-5 h-5 rounded text-[var(--chat-meta-color)] hover:text-[var(--primary)] hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
+            title="编辑房间主题"
+            aria-label="编辑房间主题"
+            onclick={() => {
+              topicDraft = effectiveSubtitle;
+              editingTopic = true;
+            }}
+          >
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 20h9" />
+              <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+            </svg>
+          </button>
+        {/if}
+      {/if}
     </div>
     <div class="flex items-center gap-1.5 shrink-0">
       {#if currentUser && mentionsToMe.length > 0}
@@ -1994,6 +2077,7 @@ function removePendingImage(index: number) {
               chatServerUrl={chatServerUrl}
               interconnectSites={interconnectSites}
               userNameMap={userNameMap}
+              readReceipts={readReceipts[msg.msgUid] || []}
               onRecall={onRecallMessage}
               onDelete={onDeleteMessage}
               onReply={msg.kind === "user" ? handleStartReply : undefined}
@@ -2005,6 +2089,7 @@ function removePendingImage(index: number) {
               onPin={onPinMessage}
               onReaction={onReaction}
               onVotePoll={onVotePoll}
+              onEndPoll={onEndPoll}
               onJumpToMessage={handleJumpToReply}
               onOpenUserProfile={onOpenUserProfile}
               onMention={onMentionUser}
@@ -2145,16 +2230,26 @@ function removePendingImage(index: number) {
           </div>
         {:else}
           {#each filteredMentionCandidates as person, idx (person.userKey)}
-            {@const personBadgeLabel = person.isAdmin
-              ? "站长"
-              : person.authType === "waline"
-                ? "认证"
-                : "访客"}
-            {@const personBadgeType = person.isAdmin
+            {@const isRoomMention = person.userKey === "room"}
+            {@const isExt = !isRoomMention && isExternalMatrixIdentity(person)}
+            {@const extOrigin = isExt ? resolveExternalOrigin({ name: person.name, userKey: person.userKey }, interconnectSites) : null}
+            {@const displayPersonName = extOrigin?.cleanName || person.name}
+            {@const personBadgeLabel = isRoomMention
+              ? "全员"
+              : person.isAdmin
+                ? "站长"
+                : isExt
+                  ? (extOrigin?.siteName || person.badge || "互联茶友")
+                  : person.authType === "waline"
+                    ? "认证"
+                    : "访客"}
+            {@const personBadgeType = isRoomMention || person.isAdmin
               ? "host"
-              : person.authType === "waline"
-                ? "accent"
-                : "tag"}
+              : isExt
+                ? "tag"
+                : person.authType === "waline"
+                  ? "accent"
+                  : "tag"}
             <button
               type="button"
               role="option"
@@ -2168,13 +2263,19 @@ function removePendingImage(index: number) {
             >
               <div class="flex items-center gap-2 min-w-0 flex-1">
                 <div class="relative shrink-0">
-                  <ChatAvatar
-                    src={person.avatar}
-                    name={person.name}
-                    size="xs"
-                    grayscale={!person.online}
-                    mutedTone={!person.online}
-                  />
+                  {#if isRoomMention}
+                    <div class="w-5 h-5 rounded-full bg-[var(--primary)]/15 text-[var(--primary)] flex items-center justify-center text-[10px] font-bold">
+                      @
+                    </div>
+                  {:else}
+                    <ChatAvatar
+                      src={person.avatar}
+                      name={displayPersonName}
+                      size="xs"
+                      grayscale={!person.online}
+                      mutedTone={!person.online}
+                    />
+                  {/if}
                   {#if person.online}
                     <span
                       class="chat-ac-status-dot online"
@@ -2183,7 +2284,7 @@ function removePendingImage(index: number) {
                   {/if}
                 </div>
                 <span class="text-xs font-medium truncate text-[var(--deep-text)] dark:text-white/90">
-                  {person.name}
+                  {displayPersonName}
                 </span>
                 <span class="chat-role-badge chat-role-badge--{personBadgeType} scale-90 origin-left">
                   {personBadgeLabel}
@@ -2197,7 +2298,7 @@ function removePendingImage(index: number) {
                 {/if}
               </div>
               <span class="text-[10px] shrink-0 {person.online ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[var(--chat-meta-color)] opacity-75'}">
-                {person.online ? "在线" : formatOfflineTime(person.lastSeenAt)}
+                {isRoomMention ? "全房提醒" : person.online ? "在线" : formatOfflineTime(person.lastSeenAt)}
               </span>
             </button>
           {/each}

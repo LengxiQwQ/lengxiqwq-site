@@ -3,7 +3,7 @@ import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import Icon from "@/components/common/Icon.svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
-import { resolveExternalOrigin } from "./chatClient";
+import { isExternalMatrixIdentity, resolveExternalOrigin } from "./chatClient";
 import type {
 	ChatMentionCandidate,
 	ChatOnlineMember,
@@ -90,17 +90,12 @@ const notificationIcon = $derived(
 		: "material-symbols:notifications-off-outline-rounded",
 );
 
-function isExternalMember(member: { userKey?: string; badge?: string }): boolean {
-	if (!member) return false;
-	const key = member.userKey || "";
-	return (
-		key.startsWith("matrix:") ||
-		(key.startsWith("@") && key.includes(":")) ||
-		member.badge === "互联茶友" ||
-		member.badge === "Detached" ||
-		member.badge === "听雨" ||
-		member.badge === "GBK"
-	);
+function isExternalMember(member: {
+	source?: string;
+	userKey?: string;
+	badge?: string;
+}): boolean {
+	return isExternalMatrixIdentity(member);
 }
 
 /** 互联茶室模式：本站在线成员（全站通用） */

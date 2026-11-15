@@ -5,8 +5,10 @@ import ChatModal from "./ChatModal.svelte";
 import {
 	fetchUserDetailProfile,
 	fetchUserDetailTracks,
+	isExternalMatrixIdentity,
 	readStoredWalineToken,
 	resolveExternalOrigin,
+	sanitizeChatUrl,
 	saveMemberBadges,
 } from "./chatClient";
 import type {
@@ -97,17 +99,7 @@ const matrixUserId = $derived.by(() => {
 const isExternalUser = $derived.by(() => {
 	if (matrixUserId) return true;
 	if (!seed?.userKey) return false;
-	const key = seed.userKey;
-	if (key.startsWith("matrix:") || (key.startsWith("@") && key.includes(":"))) return true;
-	if (
-		seed.badge === "互联茶友" ||
-		seed.badge === "Detached" ||
-		seed.badge === "听雨" ||
-		seed.badge === "GBK"
-	) {
-		return true;
-	}
-	return false;
+	return isExternalMatrixIdentity(seed);
 });
 
 const isSpectator = $derived.by(() => {
@@ -1194,14 +1186,15 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             {/if}
           </div>
 
-          {#if profile.url}
+          {@const safeProfileUrl = sanitizeChatUrl(profile.url, false)}
+          {#if safeProfileUrl}
             <a
-              href={profile.url}
+              href={safeProfileUrl}
               target="_blank"
               rel="noopener noreferrer"
               class="chat-user-detail-subcard flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-[var(--chat-accent-text)] hover:border-(--primary)/50 transition-colors no-underline"
             >
-              <span class="truncate">{profile.url}</span>
+              <span class="truncate">{safeProfileUrl}</span>
               <span class="text-[10px] shrink-0 opacity-85">访问主页 ↗</span>
             </a>
           {/if}
@@ -1221,22 +1214,26 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               编辑我的资料
             </button>
           {:else}
-            {@const isExternalProfile = Boolean(isExternalUser || matrixUserId || profile.userKey?.startsWith("matrix:") || profile.userKey?.startsWith("@") || profile.badge === "互联茶友")}
+            {@const isExternalProfile = Boolean(isExternalUser || matrixUserId || isExternalMatrixIdentity(profile))}
+            {@const mentionDisabled = isExternalProfile && roomId !== "interconnect"}
+            {@const mentionDisplayName = isExternalProfile
+              ? resolveExternalOrigin({ name: profile.name, userKey: profile.userKey }, interconnectSites).cleanName || profile.name
+              : profile.name}
             <button
               type="button"
-              disabled={isExternalProfile}
-              class="{isExternalProfile ? 'bg-black/5 dark:bg-white/5 text-[var(--chat-meta-color)] opacity-50 cursor-not-allowed select-none' : 'chat-send-btn'} flex-1 h-9! rounded-xl! text-xs! truncate px-3!"
-              aria-label={isExternalProfile ? "暂不支持跨站提及站外茶友" : `在聊天中 @${profile.name}`}
+              disabled={mentionDisabled}
+              class="{mentionDisabled ? 'bg-black/5 dark:bg-white/5 text-[var(--chat-meta-color)] opacity-50 cursor-not-allowed select-none' : 'chat-send-btn'} flex-1 h-9! rounded-xl! text-xs! truncate px-3!"
+              aria-label={mentionDisabled ? "仅可在互联茶室中提及站外茶友" : `在聊天中 @${mentionDisplayName}`}
               onclick={() => {
-                if (isExternalProfile) return;
+                if (mentionDisabled) return;
                 onClose();
-                onMention(profile.name, profile.userKey);
+                onMention(mentionDisplayName, profile.userKey);
               }}
             >
-              {#if isExternalProfile}
-                @ 暂不支持提及
+              {#if mentionDisabled}
+                @ 仅互联茶室可用
               {:else}
-                @ {profile.name}
+                @ {mentionDisplayName}
               {/if}
             </button>
           {/if}

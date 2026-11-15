@@ -5,10 +5,18 @@ let activeGlobalVoiceStop: (() => void) | null = null;
 <script lang="ts">
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
-import { resolveExternalOrigin } from "./chatClient";
+import {
+	isExternalMatrixIdentity,
+	resolveExternalOrigin,
+	sanitizeChatUrl,
+} from "./chatClient";
 import type { InterconnectSite } from "./chatConfig";
 import { openChatImageLightbox } from "./chatLightbox";
-import type { ChatMessageRecord, ChatUserDetailSeed } from "./chatTypes";
+import type {
+	ChatMessageRecord,
+	ChatReadReceipt,
+	ChatUserDetailSeed,
+} from "./chatTypes";
 import LottieSticker from "./LottieSticker.svelte";
 import {
 	formatChatReplyPreview,
@@ -33,6 +41,7 @@ interface Props {
 	chatServerUrl?: string;
 	interconnectSites?: InterconnectSite[];
 	userNameMap?: Map<string, string>;
+	readReceipts?: ChatReadReceipt[];
 	onRecall?: (msgUid: string) => void;
 	onDelete?: (msgUid: string) => void;
 	onReply?: (message: ChatMessageRecord) => void;
@@ -40,6 +49,7 @@ interface Props {
 	onPin?: (msgUid: string, unpin?: boolean) => void;
 	onReaction?: (msgUid: string, key: string) => void;
 	onVotePoll?: (pollUid: string, answerId: string) => void;
+	onEndPoll?: (pollUid: string) => void;
 	onJumpToMessage?: (msgUid: string) => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onMention?: (name: string, userKey?: string) => void;
@@ -61,6 +71,7 @@ const {
 	chatServerUrl,
 	interconnectSites = [],
 	userNameMap = new Map(),
+	readReceipts = [],
 	onRecall,
 	onDelete,
 	onReply,
@@ -68,6 +79,7 @@ const {
 	onPin,
 	onReaction,
 	onVotePoll,
+	onEndPoll,
 	onJumpToMessage,
 	onOpenUserProfile,
 	onMention,
@@ -197,13 +209,7 @@ const isFromOurServer = $derived(
 const isExternal = $derived(
 	!isSelf &&
 		!isFromOurServer &&
-		(message.source === "matrix" ||
-			message.userKey.startsWith("matrix:") ||
-			(message.userKey.startsWith("@") && message.userKey.includes(":")) ||
-			message.badge === "互联茶友" ||
-			message.badge === "Detached" ||
-			message.badge === "听雨" ||
-			message.badge === "GBK"),
+		isExternalMatrixIdentity(message),
 );
 
 const externalOrigin = $derived.by(() => {
@@ -228,10 +234,28 @@ const senderDisplayName = $derived.by(() => {
 
 const effectiveSenderUrl = $derived.by(() => {
 	if (isFromOurServer || isSelf) return "https://lengxiqwq.com";
-	if (externalOrigin?.site?.url) return externalOrigin.site.url;
-	if (message.url && !message.url.includes("matrix.lengxiqwq.com")) return message.url;
-	return externalOrigin?.site?.url || "";
+	if (externalOrigin?.site?.url) {
+		return sanitizeChatUrl(externalOrigin.site.url, false);
+	}
+	if (message.url && !message.url.includes("matrix.lengxiqwq.com")) {
+		return sanitizeChatUrl(message.url, false);
+	}
+	return sanitizeChatUrl(externalOrigin?.site?.url, false);
 });
+
+const safeAttachments = $derived.by(() =>
+	(message.attachments || [])
+		.map((att) => ({ ...att, url: sanitizeChatUrl(att.url, true) }))
+		.filter((att) => Boolean(att.url)),
+);
+
+const canRoomHighlight = $derived(
+	Boolean(
+		message.isAdmin ||
+			message.mentionKeys?.includes("room") ||
+			message.mentionKeys?.includes("@room"),
+	),
+);
 
 const roleBadge = $derived.by(() => {
 	if (isExternal) return null;
@@ -345,7 +369,10 @@ function formatReactionTooltip(users: string[]): string {
 			const match = cleanKey.match(/^@([^:]+):(.+)$/);
 			if (match) {
 				const [, uName] = match;
-				const origin = resolveExternalOrigin(cleanKey, interconnectSites);
+				const origin = resolveExternalOrigin(
+					{ name: "", userKey: cleanKey },
+					interconnectSites,
+				);
 				return origin?.siteName ? `${uName} (${origin.siteName})` : uName;
 			}
 			return cleanKey;
@@ -579,9 +606,9 @@ function formatReactionTooltip(users: string[]): string {
 {/snippet}
 
 {#snippet renderAttachmentsBlock()}
-  {#if message.attachments && message.attachments.length > 0}
+  {#if safeAttachments.length > 0}
     <div class="flex flex-col gap-2 mt-2">
-      {#each message.attachments as att (att.url)}
+      {#each safeAttachments as att (att.url)}
         {#if att.type === "image" && att.isSticker}
           <a
             href={att.url}
@@ -714,13 +741,48 @@ function formatReactionTooltip(users: string[]): string {
           </button>
         {/each}
       </div>
-      <div class="mt-2 text-[0.6875rem] text-[var(--chat-meta-color)] flex justify-between">
+      <div class="mt-2 text-[0.6875rem] text-[var(--chat-meta-color)] flex items-center justify-between gap-2">
         <span>共 {totalVotes} 票</span>
         {#if poll.ended}
           <span class="text-red-400">投票已截止</span>
+        {:else if (isAdmin || isSelf) && onEndPoll}
+          <button
+            type="button"
+            class="text-[0.6875rem] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 hover:text-red-400 transition-colors cursor-pointer"
+            onclick={() => onEndPoll(message.msgUid)}
+          >
+            结束投票
+          </button>
         {/if}
       </div>
     </div>
+  {/if}
+{/snippet}
+
+{#snippet renderReadReceipts()}
+  {@const readers = readReceipts.filter((r) => r.userKey !== currentUserKey && r.userKey !== message.userKey)}
+  {#if readers.length > 0}
+    {@const shown = readers.slice(0, 4)}
+    {@const restCount = readers.length - shown.length}
+    <span
+      class="inline-flex items-center -space-x-1 ml-1 select-none"
+      title={`已读：${readers.map((r) => r.name).join("、")}`}
+      aria-label={`已读：${readers.map((r) => r.name).join("、")}`}
+    >
+      {#each shown as reader (reader.userKey)}
+        <span class="inline-flex rounded-full ring-1 ring-[var(--card-bg)] overflow-hidden">
+          <ChatAvatar
+            src={reader.avatar}
+            name={reader.name}
+            size="xs"
+            class="w-3.5! h-3.5! text-[8px]!"
+          />
+        </span>
+      {/each}
+      {#if restCount > 0}
+        <span class="text-[0.625rem] text-[var(--chat-meta-color)] pl-1.5 tabular-nums">+{restCount}</span>
+      {/if}
+    </span>
   {/if}
 {/snippet}
 
@@ -761,7 +823,7 @@ function formatReactionTooltip(users: string[]): string {
       {@render replyQuoteBlock()}
     {/if}
     <div class="chat-sticker-only-wrap {alignEnd ? 'justify-end' : 'justify-start'}">
-      {#each message.attachments as att (att.url)}
+      {#each safeAttachments as att (att.url)}
         <a
           href={att.url}
           data-chat-image={att.url}
@@ -777,7 +839,7 @@ function formatReactionTooltip(users: string[]): string {
             title={formatStickerAttachmentAlt(att.name)}
             loading="lazy"
             decoding="async"
-            class="chat-sticker-large {message.attachments.length === 1 ? 'single' : ''}"
+            class="chat-sticker-large {safeAttachments.length === 1 ? 'single' : ''}"
           />
         </a>
       {/each}
@@ -859,13 +921,19 @@ function formatReactionTooltip(users: string[]): string {
               {@render replyQuoteBlock()}
             {/if}
             {#if message.content.trim().length > 0}
-              <ChatMarkdownContent
-                content={message.content}
-                stickerMap={stickerMap}
-                mentions={message.mentions}
-                currentUserName={currentUserName}
-                chatServerUrl={chatServerUrl}
-              />
+              <div class={message.msgType === "emote" ? "italic opacity-90" : message.isEncryptedPlaceholder ? "opacity-75 text-xs" : ""}>
+                {#if message.msgType === "emote"}
+                  <span class="font-medium mr-1">* {externalOrigin?.cleanName || message.name}</span>
+                {/if}
+                <ChatMarkdownContent
+                  content={message.content}
+                  stickerMap={stickerMap}
+                  mentions={message.mentions}
+                  currentUserName={currentUserName}
+                  canRoomHighlight={canRoomHighlight}
+                  chatServerUrl={chatServerUrl}
+                />
+              </div>
             {/if}
 
             {@render renderAttachmentsBlock()}
@@ -884,6 +952,7 @@ function formatReactionTooltip(users: string[]): string {
           {#if message.isEdited}
             <span class="text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
           {/if}
+          {@render renderReadReceipts()}
         </div>
       {/if}
     </div>
@@ -946,13 +1015,19 @@ function formatReactionTooltip(users: string[]): string {
               {@render replyQuoteBlock()}
             {/if}
             {#if message.content.trim().length > 0}
-              <ChatMarkdownContent
-                content={message.content}
-                stickerMap={stickerMap}
-                mentions={message.mentions}
-                currentUserName={currentUserName}
-                chatServerUrl={chatServerUrl}
-              />
+              <div class={message.msgType === "emote" ? "italic opacity-90" : message.isEncryptedPlaceholder ? "opacity-75 text-xs" : ""}>
+                {#if message.msgType === "emote"}
+                  <span class="font-medium mr-1">* {externalOrigin?.cleanName || message.name}</span>
+                {/if}
+                <ChatMarkdownContent
+                  content={message.content}
+                  stickerMap={stickerMap}
+                  mentions={message.mentions}
+                  currentUserName={currentUserName}
+                  canRoomHighlight={canRoomHighlight}
+                  chatServerUrl={chatServerUrl}
+                />
+              </div>
             {/if}
 
             {@render renderAttachmentsBlock()}
@@ -971,6 +1046,7 @@ function formatReactionTooltip(users: string[]): string {
           {#if message.isEdited}
             <span class="text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
           {/if}
+          {@render renderReadReceipts()}
         </div>
       {/if}
     </div>

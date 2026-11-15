@@ -4,6 +4,7 @@ import type {
 	ChatMentionCandidate,
 	ChatMessageRecord,
 	ChatOnlineMember,
+	ChatReadReceipt,
 	ChatSessionUser,
 	ChatUserDetailProfile,
 	ChatUserTracksPage,
@@ -28,10 +29,14 @@ export interface RoomInitPacket {
 	self: ChatSessionUser | null;
 	mergedGuestHistory?: boolean;
 	messages: ChatMessageRecord[];
+	oldestHistoryId?: number;
 	hasMoreHistory?: boolean;
 	lastReadAt?: number;
 	unreadCount?: number;
 	unreadUserCount?: number;
+	pinnedUids?: string[];
+	topic?: string;
+	readReceipts?: Record<string, ChatReadReceipt[]>;
 	members: ChatOnlineMember[];
 	observers?: ChatOnlineMember[];
 	mentionMembers?: ChatMentionCandidate[];
@@ -83,11 +88,51 @@ export type ServerPacket =
 			type: "chat:history_batch";
 			roomId: string;
 			messages: ChatMessageRecord[];
+			oldestHistoryId?: number;
 			hasMoreHistory: boolean;
 			jumpTarget?: boolean;
 	  }
 	| { type: "chat:deleted"; roomId: string; msgUid: string; recalled?: boolean }
 	| { type: "chat:recalled"; roomId: string; msgUid: string }
+	| {
+			type: "chat:reaction_updated";
+			roomId: string;
+			msgUid: string;
+			key: string;
+			reactions: Record<string, string[]>;
+	  }
+	| {
+			type: "chat:edited";
+			roomId: string;
+			msgUid: string;
+			content: string;
+			mentions?: string[];
+			mentionKeys?: string[];
+			isEdited?: boolean;
+			editedAt?: number;
+	  }
+	| { type: "chat:pinned_update"; roomId: string; pinnedUids: string[] }
+	| { type: "chat:topic_update"; roomId: string; topic: string }
+	| {
+			type: "chat:typing";
+			roomId: string;
+			userKey?: string;
+			userName?: string;
+			users?: string[];
+			typing?: boolean;
+	  }
+	| {
+			type: "chat:poll_updated";
+			roomId: string;
+			msgUid: string;
+			votes: Record<string, string[]>;
+			ended?: boolean;
+	  }
+	| {
+			type: "chat:receipt_update";
+			roomId: string;
+			reader: ChatReadReceipt;
+	  }
 	| ({ type: "music:state"; roomId: string } & RoomMusicState)
 	| {
 			type: "music:request_result";
@@ -1147,6 +1192,96 @@ export interface ExternalOriginInfo {
 	siteName: string;
 	site?: InterconnectSite;
 	host: string;
+}
+
+export function isExternalMatrixIdentity(entry: {
+	source?: string;
+	userKey?: string;
+	badge?: string;
+}): boolean {
+	if (!entry) return false;
+	const key = (entry.userKey || "").trim();
+	const badge = (entry.badge || "").trim();
+	return (
+		entry.source === "matrix" ||
+		key.startsWith("matrix:") ||
+		(key.startsWith("@") && key.includes(":")) ||
+		badge === "互联茶友" ||
+		badge === "Detached" ||
+		badge === "听雨" ||
+		badge === "GBK" ||
+		badge === "Somoe"
+	);
+}
+
+function hasAsciiControlChars(value: string): boolean {
+	for (let i = 0; i < value.length; i += 1) {
+		const code = value.charCodeAt(i);
+		if (code < 32 || code === 127) return true;
+	}
+	return false;
+}
+
+export function sanitizeChatUrl(
+	rawUrl?: string,
+	allowRelative = true,
+): string {
+	const trimmed = (rawUrl || "").trim();
+	if (!trimmed || hasAsciiControlChars(trimmed)) return "";
+	if (allowRelative && trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+		return trimmed;
+	}
+	try {
+		const parsed = new URL(trimmed);
+		return parsed.protocol === "https:" || parsed.protocol === "http:"
+			? trimmed
+			: "";
+	} catch {
+		return "";
+	}
+}
+
+export function isMentionedForUser(
+	msg: ChatMessageRecord,
+	user: ChatSessionUser | null,
+): boolean {
+	if (!user || msg.kind !== "user" || msg.userKey === user.userKey) {
+		return false;
+	}
+	const keys = new Set<string>([user.userKey]);
+	if (user.isAdmin) {
+		keys.add("waline:1");
+		keys.add("@lengxiqwq:matrix.lengxiqwq.com");
+		keys.add("matrix:@lengxiqwq:matrix.lengxiqwq.com");
+	}
+	const hasVerifiedRoomKey =
+		Array.isArray(msg.mentionKeys) &&
+		(msg.mentionKeys.includes("room") || msg.mentionKeys.includes("@room"));
+	if (Array.isArray(msg.mentionKeys)) {
+		if (
+			msg.mentionKeys.some(
+				(k) => keys.has(k) || k === "room" || k === "@room",
+			)
+		) {
+			return true;
+		}
+	}
+	const myName = (user.name || "").trim().toLowerCase();
+	const canTriggerRoomMention = Boolean(msg.isAdmin || hasVerifiedRoomKey);
+	return Boolean(
+		Array.isArray(msg.mentions) &&
+			msg.mentions.some((m) => {
+				const lower = m.trim().toLowerCase();
+				if (myName && lower === myName) return true;
+				if (
+					canTriggerRoomMention &&
+					(lower === "room" || lower === "all" || m.trim() === "所有人")
+				) {
+					return true;
+				}
+				return false;
+			}),
+	);
 }
 
 export function resolveExternalOrigin(

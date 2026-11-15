@@ -13,6 +13,7 @@ import {
 	clearGuestAuth,
 	clearWalineAuth,
 	consumeUrlWalineToken,
+	isMentionedForUser,
 	normalizeServerUrl,
 	openWalineLoginPopup,
 	readStoredWalineToken,
@@ -28,6 +29,7 @@ import type {
 	ChatMessageRecord,
 	ChatOnlineMember,
 	ChatProfileDraft,
+	ChatReadReceipt,
 	ChatSessionUser,
 	ChatSpectatorRecord,
 	ChatUserDetailSeed,
@@ -145,6 +147,7 @@ function mergeRoomMessages(
 	);
 }
 let hasMoreHistory = $state(false);
+let oldestHistoryId = $state(0);
 let isLoadingHistory = $state(false);
 let sessionUnreadSince = $state(0);
 let serverUnreadCount = $state(0);
@@ -153,6 +156,7 @@ let unreadJumpSeq = $state(0);
 let pinnedUids = $state<string[]>([]);
 let roomTopic = $state<string>("");
 let typingUsers = $state<string[]>([]);
+let readReceipts = $state<Record<string, ChatReadReceipt[]>>({});
 let musicState = $state<RoomMusicState | null>(null);
 let musicAudience = $state({ onlineCount: 0, listeningCount: 0 });
 const songRequests = new Map<string, {
@@ -510,7 +514,7 @@ function triggerDesktopNotification(roomId: string, message: ChatMessageRecord) 
 
 	const roomMeta = rooms.find((r) => r.id === roomId);
 	const roomTitle = roomMeta?.name ? `#${roomMeta.name}` : `#${roomId}`;
-	const senderName = message.userName || "未知用户";
+	const senderName = message.name || "未知用户";
 	const title = `${roomTitle} · ${senderName}`;
 
 	let body = (message.content || "")
@@ -532,7 +536,7 @@ function triggerDesktopNotification(roomId: string, message: ChatMessageRecord) 
 		body = `${body.slice(0, 97)}...`;
 	}
 
-	const avatarUrl = resolveChatAvatarUrl(message.userAvatar);
+	const avatarUrl = resolveChatAvatarUrl(message.avatar);
 	const icon = avatarUrl || "/favicon.ico";
 
 	try {
@@ -693,8 +697,11 @@ function connectRoom(roomId: string) {
 				}
 				musicState = packet.music;
 				if (packet.musicAudience) musicAudience = packet.musicAudience;
+				oldestHistoryId =
+					packet.oldestHistoryId ?? packet.messages[0]?.id ?? 0;
 				pinnedUids = packet.pinnedUids ?? [];
 				roomTopic = packet.topic ?? "";
+				readReceipts = packet.readReceipts ?? {};
 				typingUsers = [];
 				clearSkipPending();
 				if (!hasClockSample) clockOffsetMs = packet.music.serverTime - Date.now();
@@ -708,6 +715,17 @@ function connectRoom(roomId: string) {
 				if (packet.roomId === currentRoom) {
 					isLoadingHistory = false;
 					hasMoreHistory = Boolean(packet.hasMoreHistory);
+					if (
+						packet.oldestHistoryId &&
+						(!oldestHistoryId || packet.oldestHistoryId < oldestHistoryId)
+					) {
+						oldestHistoryId = packet.oldestHistoryId;
+					} else if (
+						packet.messages[0]?.id &&
+						(!oldestHistoryId || packet.messages[0].id < oldestHistoryId)
+					) {
+						oldestHistoryId = packet.messages[0].id;
+					}
 					if (packet.messages.length > 0) {
 						const existingIds = new Set(messages.map((m) => m.msgUid));
 						const prepended = packet.messages.filter(
@@ -916,15 +934,7 @@ function connectRoom(roomId: string) {
 						messages = [...messages, packet.message];
 						if (
 							document.hidden &&
-							currentUser &&
-							packet.message.kind === "user" &&
-							packet.message.userKey !== currentUser.userKey &&
-							(packet.message.mentionKeys &&
-							packet.message.mentionKeys.length > 0
-								? packet.message.mentionKeys.includes(currentUser.userKey)
-								: packet.message.mentions.some(
-										(n) => n.toLowerCase() === currentUser?.name.toLowerCase(),
-									))
+							isMentionedForUser(packet.message, currentUser)
 						) {
 							if (!baseDocumentTitle) baseDocumentTitle = document.title;
 							document.title = `[有人@你] ${baseDocumentTitle}`;
@@ -994,11 +1004,26 @@ function connectRoom(roomId: string) {
 			}
 			case "chat:edited": {
 				if (packet.roomId === currentRoom) {
-					messages = messages.map((m) =>
-						m.msgUid === packet.msgUid
-							? { ...m, content: packet.content, isEdited: true, editedAt: packet.editedAt }
-							: m,
-					);
+					const editedPreview = packet.content.replace(/\s+/g, " ").trim().slice(0, 120);
+					messages = messages.map((m) => {
+						if (m.msgUid === packet.msgUid) {
+							return {
+								...m,
+								content: packet.content,
+								mentions: packet.mentions ?? m.mentions,
+								mentionKeys: packet.mentionKeys ?? m.mentionKeys,
+								isEdited: true,
+								editedAt: packet.editedAt,
+							};
+						}
+						if (m.replyTo && m.replyTo.msgUid === packet.msgUid) {
+							return {
+								...m,
+								replyTo: { ...m.replyTo, content: editedPreview },
+							};
+						}
+						return m;
+					});
 				}
 				break;
 			}
@@ -1052,6 +1077,19 @@ function connectRoom(roomId: string) {
 								}
 							: m,
 					);
+				}
+				break;
+			}
+			case "chat:receipt_update": {
+				if (packet.roomId === currentRoom && packet.reader?.msgUid && packet.reader?.userKey) {
+					const nextMap: Record<string, ChatReadReceipt[]> = {};
+					for (const [uid, list] of Object.entries(readReceipts)) {
+						const filtered = list.filter((r) => r.userKey !== packet.reader.userKey);
+						if (filtered.length > 0) nextMap[uid] = filtered;
+					}
+					const targetList = nextMap[packet.reader.msgUid] || [];
+					nextMap[packet.reader.msgUid] = [packet.reader, ...targetList];
+					readReceipts = nextMap;
 				}
 				break;
 			}
@@ -1178,7 +1216,12 @@ function handleRoomSelect(roomId: string) {
 	}
 	messages = roomMessageCache.get(roomId) ?? [];
 	hasMoreHistory = false;
+	oldestHistoryId = 0;
 	isLoadingHistory = false;
+	pinnedUids = [];
+	roomTopic = "";
+	readReceipts = {};
+	typingUsers = [];
 	sessionUnreadSince = 0;
 	serverUnreadCount = 0;
 	serverUnreadUserCount = 0;
@@ -1449,7 +1492,7 @@ function handleSendMessage(
 }
 
 function handleLoadHistory(sinceCreatedAt = 0, jumpTarget = false) {
-	const oldestId = messages[0]?.id ?? 0;
+	const oldestId = oldestHistoryId || (messages[0]?.id ?? 0);
 	if (!oldestId || isLoadingHistory) return;
 	isLoadingHistory = true;
 	const ok = sendPacket({
@@ -1507,6 +1550,21 @@ function handleVotePoll(pollUid: string, answerId: string) {
 		return;
 	}
 	sendPacket({ type: "chat:poll_vote", pollUid, answerId });
+}
+
+function handleEndPoll(pollUid: string) {
+	if (!currentUser) {
+		openAuthModal();
+		return;
+	}
+	sendPacket({ type: "chat:poll_end", pollUid });
+}
+
+function handleSetTopic(topic: string) {
+	if (!currentUser?.isAdmin) return;
+	const clean = topic.trim();
+	if (!clean) return;
+	sendPacket({ type: "chat:set_topic", topic: clean });
 }
 
 function handleCreatePoll(
@@ -1577,10 +1635,11 @@ async function handleEnqueueTrack(track: ChatMusicTrack): Promise<boolean> {
 
 async function refreshGlobalPresence() {
 	if (!normalizedChatServer || isUnmounted) return;
+	const reqRoom = currentRoom;
 	try {
 		const separator = normalizedChatServer.includes("?") ? "&" : "?";
 		const response = await fetch(
-			`${normalizedChatServer}/api/presence${separator}_t=${Date.now()}`,
+			`${normalizedChatServer}/api/presence${separator}room=${encodeURIComponent(reqRoom)}&_t=${Date.now()}`,
 			{ cache: "no-store" },
 		);
 		if (!response.ok) return;
@@ -1589,7 +1648,7 @@ async function refreshGlobalPresence() {
 			observers?: ChatObserverItem[];
 			totalCount: number;
 		};
-		if (!isUnmounted && Array.isArray(data.members)) {
+		if (!isUnmounted && currentRoom === reqRoom && Array.isArray(data.members)) {
 			hasGlobalPresence = true;
 			const currentKey = currentUser?.userKey;
 			onlineMembers = data.members.map((m) => {
@@ -1888,10 +1947,13 @@ onMount(() => {
           pinnedUids={pinnedUids}
           roomTopic={roomTopic}
           typingUsers={typingUsers}
+          readReceipts={readReceipts}
           onReaction={handleReaction}
           onEditMessage={handleEditMessage}
           onPinMessage={handlePinMessage}
           onVotePoll={handleVotePoll}
+          onEndPoll={handleEndPoll}
+          onSetTopic={handleSetTopic}
           onOpenPollModal={() => (showPollCreateModal = true)}
           onCreatePoll={handleCreatePoll}
           onTyping={handleTyping}

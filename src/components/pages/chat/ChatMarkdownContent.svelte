@@ -16,6 +16,7 @@ interface Props {
 	stickerMap: Map<string, StickerItem>;
 	mentions?: string[];
 	currentUserName?: string;
+	canRoomHighlight?: boolean;
 	chatServerUrl?: string;
 }
 
@@ -24,6 +25,7 @@ const {
 	stickerMap,
 	mentions = [],
 	currentUserName = "",
+	canRoomHighlight = false,
 	chatServerUrl,
 }: Props = $props();
 
@@ -32,8 +34,15 @@ const ast: ChatMarkdownAst = $derived(
 );
 
 function isSelfMentionTarget(target: string): boolean {
+	const cleaned = target.trim().toLowerCase();
+	if (
+		canRoomHighlight &&
+		(cleaned === "room" || cleaned === "all" || target.trim() === "所有人")
+	) {
+		return true;
+	}
 	if (!currentUserName) return false;
-	return target.trim().toLowerCase() === currentUserName.trim().toLowerCase();
+	return cleaned === currentUserName.trim().toLowerCase();
 }
 
 function getInlineChildren(token: Token): Token[] | undefined {
