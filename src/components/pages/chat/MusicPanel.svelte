@@ -34,6 +34,7 @@ import {
 } from "./playlistClient";
 
 interface Props {
+	audioEl: HTMLAudioElement | null;
 	roomId: string;
 	chatServerUrl?: string;
 	playlistOutApiUrl?: string;
@@ -88,6 +89,7 @@ interface LyricLine {
 }
 
 const {
+	audioEl,
 	roomId,
 	chatServerUrl = "",
 	playlistOutApiUrl = DEFAULT_PLAYLISTOUT_API_URL,
@@ -178,6 +180,7 @@ let internalAudioAction = false;
 let lastDriftSeekAt = 0;
 let audioStatus = $state<"idle" | "loading" | "playing" | "blocked" | "error">("idle");
 let lastStreamUrl = "";
+let lyricRequest: AbortController | undefined;
 let audioWatchdog: number | undefined;
 const listenAction = $derived(audioStatus === "error" ? "重试收听" : isListening ? "停止收听" : "开始收听");
 let playerPaneMode = $state<PlayerPaneMode>("split");
@@ -313,7 +316,6 @@ let lyrics = $state<LyricLine[]>([]);
 let lyricsStatus = $state<"idle" | "loading" | "ready" | "empty">("idle");
 let activeLyricIndex = $state(-1);
 
-let audioEl: HTMLAudioElement | null = $state(null);
 let lyricsContainer: HTMLDivElement | null = $state(null);
 
 let lyricFetchSeq = 0;
@@ -1358,6 +1360,7 @@ function parseLrc(raw: string): LyricLine[] {
 }
 
 async function loadLyricsForUrl(lrcUrl?: string) {
+	lyricRequest?.abort();
 	lyricFetchSeq += 1;
 	const reqId = lyricFetchSeq;
 	activeLyricIndex = -1;
@@ -1379,8 +1382,10 @@ async function loadLyricsForUrl(lrcUrl?: string) {
 	lyricsStatus = "loading";
 	lyrics = [];
 
+	const request = new AbortController();
+	lyricRequest = request;
 	try {
-		const resp = await fetch(lrcUrl);
+		const resp = await fetch(lrcUrl, { signal: request.signal });
 		if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 		const text = await resp.text();
 		if (reqId !== lyricFetchSeq) return;
@@ -1390,9 +1395,11 @@ async function loadLyricsForUrl(lrcUrl?: string) {
 		lyricsStatus = parsed.length > 0 ? "ready" : "empty";
 		syncLyricIndex(roomElapsed, true);
 	} catch {
-		if (reqId !== lyricFetchSeq) return;
+		if (request.signal.aborted || reqId !== lyricFetchSeq) return;
 		lyrics = [];
 		lyricsStatus = "empty";
+	} finally {
+		if (lyricRequest === request) lyricRequest = undefined;
 	}
 }
 
@@ -1542,15 +1549,16 @@ function computeClampedTarget(el: HTMLAudioElement): number {
 	return Math.min(target, maxSeek);
 }
 
-function alignPlaybackToRoomTime(el: HTMLAudioElement): void {
+function alignPlaybackToRoomTime(el: HTMLAudioElement, startingPlayback = false): void {
 	if (el.readyState < 1) return;
 	const clamped = computeClampedTarget(el);
 	// 新曲刚开播（< 2.5 秒），若播放头在 0 附近，不强制 Range seek 打断顺畅的流式连接
 	if (clamped >= 2.5 && Math.abs(el.currentTime - clamped) > 1.2) {
-		lastDriftSeekAt = Date.now();
-		const seekable = el.seekable;
+		// Let a freshly started song use the buffered start without a new network read.
+		const seekable = startingPlayback && clamped < 5 ? el.buffered : el.seekable;
 		for (let i = 0; i < seekable.length; i += 1) {
 			if (clamped >= seekable.start(i) && clamped <= seekable.end(i)) {
+				lastDriftSeekAt = Date.now();
 				el.currentTime = clamped;
 				break;
 			}
@@ -1566,7 +1574,7 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 
 		if (el.readyState >= 1) {
 			// 情况 1：静音阶段已预加载好元数据 -> 同一同步调用栈内直接对齐时间并调用 play()，不等待 seeked
-			alignPlaybackToRoomTime(el);
+			alignPlaybackToRoomTime(el, true);
 			el.volume = volume;
 			playPromise = el.play();
 			await playPromise;
@@ -1601,7 +1609,7 @@ async function seekAndPlayCurrent(el: HTMLAudioElement, expectedUid?: string) {
 				return;
 			}
 			if (el.readyState >= 1) {
-				alignPlaybackToRoomTime(el);
+				alignPlaybackToRoomTime(el, true);
 			}
 			await playPromise;
 		}
@@ -1792,6 +1800,8 @@ $effect(() => {
 		lastRoomId = activeRoom;
 		roomElapsed = 0;
 		localDuration = 0;
+		lyricRequest?.abort();
+		lyricFetchSeq += 1;
 		lyrics = [];
 		lyricsStatus = "empty";
 		if (audioEl) {
@@ -2067,7 +2077,6 @@ onMount(() => {
 				drift > 2.5 &&
 				(effectiveDuration === 0 || expected < effectiveDuration - 1.5)
 			) {
-				lastDriftSeekAt = Date.now();
 				alignPlaybackToRoomTime(audioEl);
 			}
 		}
@@ -2091,6 +2100,7 @@ onMount(() => {
 	return () => {
 		cancelPendingAutoplayResume();
 		clearAudioWatchdog();
+		lyricRequest?.abort();
 		syncAudioSeq += 1;
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleKeydown);
@@ -2106,8 +2116,9 @@ onMount(() => {
 		if (queueScrollHideTimer !== null) {
 			window.clearTimeout(queueScrollHideTimer);
 		}
-		if (audioEl) {
+		if (audioEl && audioEl.getAttribute("src") === lastStreamUrl) {
 			internalAudioAction = true;
+			audioEl.muted = true;
 			audioEl.pause();
 		}
 		if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
@@ -2123,6 +2134,49 @@ export function toggleListenControl(): void {
 export function openPlayerTab(): void {
 	activeTab = "player";
 }
+
+$effect(() => {
+	const element = audioEl;
+	if (!element) return;
+	const onPlaying = () => {
+		if (!isListening || !currentPlay || element.currentSrc !== currentPlay.track.streamUrl) return;
+		clearAudioWatchdog();
+		audioStatus = "playing";
+		syncDurationFromAudio();
+		updateMediaSessionMetadata();
+	};
+	const onWaiting = () => {
+		if (isListening && currentPlay && audioStatus === "playing") monitorAudioLoad(currentPlay.uid);
+	};
+	const onPause = () => {
+		// Internal pauses, seeking and the end of a track keep the listener's intent.
+		if (internalAudioAction || isSyncingAudio || !isListening || !currentPlay ||
+			audioStatus === "error" || element.ended) return;
+		clearAudioWatchdog();
+		audioStatus = "idle";
+		isListening = false;
+		element.muted = true;
+		updateMediaSessionMetadata();
+	};
+	const onEnded = () => {
+		if (currentPlay && element.currentSrc === currentPlay.track.streamUrl && reportedEndUid !== currentPlay.uid) {
+			reportedEndUid = currentPlay.uid;
+			onTrackEnded(currentPlay.uid);
+		}
+	};
+	const onError = () => {
+		if (currentPlay && element.currentSrc === currentPlay.track.streamUrl) handleTrackPlaybackFailure(currentPlay.uid);
+	};
+	const events: [string, EventListener][] = [
+		["loadedmetadata", syncDurationFromAudio], ["durationchange", syncDurationFromAudio],
+		["canplay", syncDurationFromAudio], ["playing", onPlaying], ["waiting", onWaiting],
+		["pause", onPause], ["ended", onEnded], ["error", onError],
+	];
+	for (const [event, listener] of events) element.addEventListener(event, listener);
+	return () => {
+		for (const [event, listener] of events) element.removeEventListener(event, listener);
+	};
+});
 
 const displayedBrowseTracks = $derived(
 	dedupeTracksById(submittedSearchQuery ? searchResults : fallbackTracks),
@@ -2145,57 +2199,6 @@ $effect(() => {
 </script>
 
 <aside class="flex flex-col h-full w-full min-h-0 overflow-hidden select-none" aria-label="点歌台">
-  <audio
-    bind:this={audioEl}
-    preload="auto"
-    playsinline
-    muted={!isListening}
-    onloadedmetadata={syncDurationFromAudio}
-    ondurationchange={syncDurationFromAudio}
-    oncanplay={syncDurationFromAudio}
-    onplaying={() => {
-      if (!isListening || !currentPlay || audioEl?.currentSrc !== currentPlay.track.streamUrl) return;
-      clearAudioWatchdog();
-      audioStatus = "playing";
-      syncDurationFromAudio();
-      updateMediaSessionMetadata();
-    }}
-    onwaiting={() => {
-      if (isListening && currentPlay && audioStatus === "playing") monitorAudioLoad(currentPlay.uid);
-    }}
-    onpause={() => {
-      // 自然播完（ended）、曲目切换/校时中或内部主动暂停触发的 pause 不视为硬件暂停，保持收听状态不断开
-      if (
-        internalAudioAction ||
-        isSyncingAudio ||
-        !isListening ||
-        !currentPlay ||
-        audioStatus === "error" ||
-        audioEl?.ended
-      ) {
-        return;
-      }
-      clearAudioWatchdog();
-      audioStatus = "idle";
-      isListening = false;
-      if (audioEl) audioEl.muted = true;
-      if (typeof navigator !== "undefined" && "mediaSession" in navigator && hasJoinedAudio) {
-        navigator.mediaSession.playbackState = "paused";
-      }
-    }}
-    onended={() => {
-      if (currentPlay && audioEl?.currentSrc === currentPlay.track.streamUrl && reportedEndUid !== currentPlay.uid) {
-        reportedEndUid = currentPlay.uid;
-        onTrackEnded(currentPlay.uid);
-      }
-    }}
-    onerror={() => {
-      if (currentPlay && audioEl?.currentSrc === currentPlay.track.streamUrl) {
-        handleTrackPlaybackFailure(currentPlay.uid);
-      }
-    }}
-  ></audio>
-
   <!-- 顶栏标题 -->
   <div class="chat-panel-header">
     <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 flex items-center gap-2">

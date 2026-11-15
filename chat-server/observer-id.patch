@@ -1,0 +1,20 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -1130,7 +1130,7 @@
+   for (const client of clients) {
+     if (!client.user && client.readyState === 1) {
+       if (!client.observerId) {
+-        client.observerId = 'spectator_' + Buffer.from((client.clientIp || '') + '_' + (client.connectedAt || Date.now()) + '_' + Math.random().toString(36).slice(2, 6)).toString('base64url').slice(0, 10);
++        client.observerId = 'spectator_' + randomBytes(12).toString('base64url');
+       }
+       const session = client.spectatorSession;
+       const visitCount = session?.visitCount || 1;
+@@ -2446,7 +2446,7 @@
+   ws.isMuted = true;
+   ws.connectedAt = Date.now();
+   ws.userAgent = req.headers['user-agent'] || '';
+-  ws.observerId = 'spectator_' + Buffer.from(cleanIp + '_' + ws.connectedAt + '_' + Math.random().toString(36).slice(2, 6)).toString('base64url').slice(0, 10);
++  ws.observerId = 'spectator_' + randomBytes(12).toString('base64url');
+
+   const visitorIdParam = reqUrl.searchParams.get('visitorId');
+   const visitorKey = getSpectatorVisitorKey(visitorIdParam, cleanIp, ws.userAgent);

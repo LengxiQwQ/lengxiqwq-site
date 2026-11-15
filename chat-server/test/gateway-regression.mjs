@@ -84,6 +84,15 @@ try {
     });
     return { code: response.status, body: await response.json() };
   };
+  const anonA = open('chat');
+  await anonA.take(packet => packet.type === 'room:init');
+  const anonB = open('chat');
+  const visitorState = await anonB.take(packet => packet.type === 'room:init');
+  assert.equal(visitorState.observers.length, 2);
+  assert.equal(new Set(visitorState.observers.map(observer => observer.userKey)).size, 2);
+  anonA.socket.close();
+  anonB.socket.close();
+
   const tea = open('interconnect', 'user');
   const chat = open('chat', 'admin');
   await Promise.all([tea.take(p=>p.type==='room:init'),chat.take(p=>p.type==='room:init')]);
@@ -124,10 +133,27 @@ try {
   assert.equal(audio.status,206);
   assert.equal(audio.headers.get('content-type'),'audio/mpeg');
   assert.equal(Buffer.from(await audio.arrayBuffer()).subarray(0,3).toString(),'ID3');
+  const listener = open('interconnect');
+  await listener.take(packet => packet.type === 'room:init');
+  tea.send({
+    type: 'music:enqueue', requestId: 'next-song',
+    track: { provider: 'qq', sourceId: 'next', title: 'Next', durationSec: 180 }
+  });
+  const queued = await tea.take(packet => packet.type === 'music:request_result' && packet.requestId === 'next-song');
+  assert.equal(queued.position, 1);
+  tea.send({ type: 'music:skip', playUid: back.music.current.uid });
+  const isNext = packet => packet.type === 'music:state' && packet.current?.track.sourceId === 'next';
+  const [requesterState, listenerState] = await Promise.all([tea.take(isNext), listener.take(isNext)]);
+  assert.equal(requesterState.current.uid, listenerState.current.uid);
+  assert.equal(requesterState.current.startedAt, listenerState.current.startedAt);
+  assert.equal(requesterState.current.track.streamUrl, listenerState.current.track.streamUrl);
+  const otherRoom = open('chat');
+  const otherState = await otherRoom.take(packet => packet.type === 'room:init');
+  assert.notEqual(otherState.music.current?.uid, requesterState.current.uid);
   const page=await request('/api/music/search?q=one&limit=30&page=2');
   assert.equal(page.body.tracks.length,1);
   assert.equal(page.body.hasMore,true);
-  console.log('PASS gateway HTTP/WS: shared and private playlists, room-specific features/history, switch during enqueue, stream, search');
+  console.log('PASS gateway HTTP/WS: unique visitors, shared/private playlists, isolated rooms, synchronized skip, stream and search');
 } finally {
   for (const socket of sockets) socket.close();
   if (server) {

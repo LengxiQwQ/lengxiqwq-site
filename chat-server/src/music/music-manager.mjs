@@ -45,19 +45,21 @@ export class MusicManager {
     this.fallbackPlaylistName = null;
     this._nextLogId = 1;
     this._advanceTimer = null;
-    this._nextFallbackPlayable = null;
-    this._preparingFallback = false;
+    this.preparedFallback = null;
+    this.preparedQueue = null;
     this._prepareFallbackTimer = null;
     this._actorLastErrorAt = new Map();
 
     this.generation = 0;
     this.fallbackGeneration = 0;
+    this.resumeFallback = false;
     this.statePath = join(this.dataDir, 'music_state_' + roomId + '.json');
     this.loadData();
     try {
       const state = JSON.parse(readFileSync(this.statePath, 'utf8'));
       if (Array.isArray(state.queue)) this.queue = state.queue.filter(item => item?.track?.provider === 'qq');
       const current = state.current;
+      this.resumeFallback = current?.isFallback === true;
       if (current?.track?.provider === 'qq' && !current.isFallback) {
         this.queue.unshift({
           uid: current.requestUid || current.uid, track: current.track,
@@ -122,7 +124,10 @@ export class MusicManager {
   }
 
   resume() {
-    if (this.queue.length || this.fallbackPlaylistId) void this.advanceNext();
+    const shouldResume = this.queue.length || this.fallbackPlaylistId ||
+      (this.resumeFallback && this.fallbackTracks.length);
+    this.resumeFallback = false;
+    if (shouldResume) return this.advanceNext();
   }
 
   setFallbackPlaylist(playlistId, tracks, playlistName, { start = true } = {}) {
@@ -130,11 +135,12 @@ export class MusicManager {
     this.fallbackPlaylistName = playlistName;
     this.fallbackTracks = tracks;
     this.fallbackGeneration++;
-    this._nextFallbackPlayable = null;
-    clearTimeout(this._prepareFallbackTimer);
+    this.preparedFallback = null;
     if (start && (!this.current || this.current.isFallback)) {
       this.generation++;
       void this.advanceNext();
+    } else if (this.current && !this.queue.length) {
+      void this.prepareNext();
     }
   }
 
@@ -262,6 +268,7 @@ export class MusicManager {
     // Otherwise add to queue
     const queueItem = { uid, track, requesterKey, requesterName, requesterAvatar, enqueuedAt: now };
     this.queue.push(queueItem);
+    if (this.queue[0] === queueItem) void this.prepareNext(playable);
     this.savePlayback();
     this.onStateChanged();
 
@@ -283,10 +290,18 @@ export class MusicManager {
 
   scheduleAdvance() {
     clearTimeout(this._advanceTimer);
+    clearTimeout(this._refreshPreparedTimer);
     const play = this.current;
-    if (play) this._advanceTimer = setTimeout(() => {
+    if (!play) return;
+    const remaining = Math.max(0, play.startedAt + (play.durationSec + 2) * 1000 - Date.now());
+    this._advanceTimer = setTimeout(() => {
       if (this.current === play) void this.advanceNext();
-    }, Math.max(0, play.startedAt + (play.durationSec + 2) * 1000 - Date.now()));
+    }, remaining);
+    if (remaining > 30_000) {
+      this._refreshPreparedTimer = setTimeout(() => {
+        if (this.current === play) void this.prepareNext(undefined, true);
+      }, remaining - 25_000);
+    }
   }
 
   playTrack(track, requester, isFallback = false, startedAt = Date.now(), requestUid) {
@@ -308,13 +323,9 @@ export class MusicManager {
     this.savePlayback();
     this.scheduleAdvance();
 
-    // Pre-resolve & prefetch the next fallback track while current track plays
+    // Warm the current song first and then the next choice for this room.
     clearTimeout(this._prepareFallbackTimer);
-    this._prepareFallbackTimer = setTimeout(() => {
-      if (this.queue.length === 0) {
-        void this.prepareNextFallback();
-      }
-    }, 1000);
+    this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 300);
   }
 
   async resolveFallbackTrackPlayable() {
@@ -339,24 +350,45 @@ export class MusicManager {
     return null;
   }
 
-  async prepareNextFallback() {
-    if (this.fallbackTracks.length === 0 || this._nextFallbackPlayable || this._preparingFallback) {
+  async prepareNext(resolved, refresh = false) {
+    if (!this.current) return;
+    const queued = this.queue[0];
+    const slot = queued ? 'preparedQueue' : 'preparedFallback';
+    const key = queued?.uid ?? this.fallbackGeneration;
+    const previous = this[slot]?.key === key ? this[slot] : null;
+    if (previous) {
+      if (!refresh || !previous.checkedAt) return;
+      const usable = await this.usePrepared(previous);
+      if (usable && this[slot] === previous) {
+        this.onPrefetchTrack(usable.streamUrl);
+        return;
+      }
+    }
+    if (queued ? this.queue[0] !== queued : (this.queue.length || this.fallbackGeneration !== key)) return;
+    if (!queued && !this.fallbackTracks.length) return;
+
+    const record = { key };
+    this[slot] = record;
+    record.pending = Promise.resolve(resolved || (queued
+      ? this.resolve(queued.track)
+      : previous?.playable ? this.resolve(previous.playable) : this.resolveFallbackTrackPlayable()));
+    const playable = await record.pending;
+    if (this[slot] !== record) return;
+    if (!playable) {
+      this[slot] = null;
       return;
     }
-    this._preparingFallback = true;
-    const generation = this.fallbackGeneration;
-    try {
-      const playable = await this.resolveFallbackTrackPlayable();
-      if (playable && generation === this.fallbackGeneration && !this._nextFallbackPlayable) {
-        this._nextFallbackPlayable = { playable, checkedAt: Date.now() };
-        console.log(`[Music:${this.roomId}] Prefetching next fallback track: ${playable.title}`);
-        this.onPrefetchTrack(playable.streamUrl);
-      }
-    } catch (err) {
-      console.warn(`[Music:${this.roomId}] Error preparing next fallback:`, err.message);
-    } finally {
-      this._preparingFallback = false;
-    }
+    record.playable = playable;
+    record.checkedAt = Date.now();
+    if (queued || !this.queue.length) this.onPrefetchTrack(playable.streamUrl);
+  }
+
+  async usePrepared(record) {
+    if (!record) return null;
+    if (!record.checkedAt) return await record.pending;
+    if (Date.now() - record.checkedAt < 60_000) return record.playable;
+    const cached = await this.musicRegistry.isCached?.(record.playable, this.signSecret).catch(() => false);
+    return cached ? record.playable : null;
   }
 
   async resolve(track, options) {
@@ -372,6 +404,8 @@ export class MusicManager {
     const generation = this.generation;
     if (this.advancing?.generation === generation) return this.advancing.promise;
     clearTimeout(this._advanceTimer);
+    clearTimeout(this._refreshPreparedTimer);
+    clearTimeout(this._prepareFallbackTimer);
     const promise = this.selectNext(generation).finally(() => {
       if (this.advancing?.promise === promise) this.advancing = null;
     });
@@ -382,10 +416,12 @@ export class MusicManager {
   async selectNext(generation) {
     while (this.queue.length) {
       const next = this.queue[0];
-      const playable = await this.resolve(next.track);
+      const prepared = this.preparedQueue?.key === next.uid ? this.preparedQueue : null;
+      const playable = await this.usePrepared(prepared) || await this.resolve(next.track);
       if (generation !== this.generation) return;
       if (this.queue[0] !== next) continue;
       this.queue.shift();
+      this.preparedQueue = null;
       if (playable) {
         const duration = durationOf(playable.durationSec) || 240;
         const startedAt = next.startedAt && Date.now() - next.startedAt < (duration - 2) * 1000
@@ -405,10 +441,11 @@ export class MusicManager {
     }
 
     const fallbackGeneration = this.fallbackGeneration;
-    const prefetched = this._nextFallbackPlayable;
-    this._nextFallbackPlayable = null;
-    const playable = prefetched && Date.now() - prefetched.checkedAt < 60_000
-      ? prefetched.playable : await this.resolveFallbackTrackPlayable();
+    const prepared = this.preparedFallback?.key === fallbackGeneration ? this.preparedFallback : null;
+    this.preparedFallback = null;
+    const known = await this.usePrepared(prepared) ||
+      (prepared?.playable ? await this.resolve(prepared.playable) : null);
+    const playable = known || await this.resolveFallbackTrackPlayable();
     if (generation !== this.generation) return;
     if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation);
     if (playable) {
@@ -486,6 +523,10 @@ export class MusicManager {
 
     this.queue.splice(idx, 1);
     this.markOutcome(uid, 'cancelled');
+    if (idx === 0) {
+      this.preparedQueue = null;
+      void this.prepareNext();
+    }
     this.savePlayback();
     this.onStateChanged();
     return { ok: true };
@@ -495,11 +536,13 @@ export class MusicManager {
     if (!actor.isAdmin) return { ok: false, error: '仅站长可执行插播' };
     const item = this.queue.find(entry => entry.uid === uid);
     if (!item) return { ok: false, error: '排队曲目不存在' };
-    const playable = await this.resolve(item.track);
+    const prepared = this.preparedQueue?.key === uid ? this.preparedQueue : null;
+    const playable = await this.usePrepared(prepared) || await this.resolve(item.track);
     const index = this.queue.indexOf(item);
     if (index < 0) return { ok: false, error: '排队曲目已变更' };
     if (!playable) return { ok: false, error: '歌曲暂时没有可用音源' };
     this.queue.splice(index, 1);
+    if (index === 0) this.preparedQueue = null;
     this.playTrack(playable, {
       userKey: item.requesterKey, name: item.requesterName, avatar: item.requesterAvatar
     }, false, Date.now(), item.uid);
@@ -519,7 +562,7 @@ export class MusicManager {
     play.track.durationSec = duration;
     const history = this.historyMap.get(play.track.id);
     if (history) history.track.durationSec = duration;
-    this.scheduleAdvance();
+    if (this.advancing?.generation !== this.generation) this.scheduleAdvance();
     this.savePlayback();
     this.saveDataDebounced();
     this.onStateChanged();

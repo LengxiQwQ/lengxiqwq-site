@@ -1,4 +1,5 @@
-import { signStreamProxyUrl } from './stream-signer.mjs';
+import { signStreamProxyUrl, verifyStreamProxyToken } from './stream-signer.mjs';
+import { hasCachedAudio } from './stream-cache.mjs';
 import { normalizeMusicTrack } from './music-input.mjs';
 
 export class MusicRegistry {
@@ -89,6 +90,12 @@ export class MusicRegistry {
       streamUrl: signStreamProxyUrl(base, source.url, signSecret, 'https://y.qq.com/', source.mimeType),
       lrcUrl: base + '/api/music/lyric?provider=' + provider.id + '&id=' + encodeURIComponent(id)
     };
+  }
+
+  async isCached(track, secret) {
+    const token = new URL(track.streamUrl).searchParams.get('token');
+    const verified = verifyStreamProxyToken(token, secret);
+    return Boolean(verified && await hasCachedAudio(verified.url));
   }
 
   async getLyric(providerId, sourceId) {

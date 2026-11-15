@@ -181,6 +181,10 @@ let isWindowFocused = $state(true);
 let currentUser = $state<ChatSessionUser | null>(null);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
 let observers = $state<ChatOnlineMember[]>([]);
+function uniqueObservers(list: ChatOnlineMember[]): ChatOnlineMember[] {
+	return [...new Map(list.map(observer => [observer.userKey, observer])).values()];
+}
+
 let spectatorHistory = $state<ChatSpectatorRecord[]>([]);
 let roomOnlineMembers = $state<ChatOnlineMember[]>([]);
 let hasGlobalPresence = false;
@@ -260,6 +264,9 @@ const songRequests = new Map<string, {
 let isSkippingTrack = $state(false);
 let skipPendingTimer: number | null = null;
 let clockOffsetMs = $state(0);
+let hasClockSample = false;
+const pendingClockPings = new WeakMap<WebSocket, { wall: number; monotonic: number }>();
+let chatAudio: HTMLAudioElement | null = $state(null);
 let noticeText = $state("");
 let targetMessageUid = $state("");
 let showInterconnect = $state(false);
@@ -663,6 +670,16 @@ function getFixedRoleBadge(user: ChatSessionUser): string {
 	return user.authType === "waline" ? "认证" : "访客";
 }
 
+function sampleRoomClock(socket: WebSocket | null) {
+	if (socket?.readyState !== WebSocket.OPEN || pendingClockPings.has(socket)) return;
+	const sample = { wall: Date.now(), monotonic: performance.now() };
+	pendingClockPings.set(socket, sample);
+	socket.send(JSON.stringify({ type: "ping" }));
+	window.setTimeout(() => {
+		if (pendingClockPings.get(socket) === sample) pendingClockPings.delete(socket);
+	}, 5000);
+}
+
 function connectRoom(roomId: string) {
 	if (isUnmounted) return;
 	if (reconnectTimer !== null) {
@@ -766,7 +783,7 @@ function connectRoom(roomId: string) {
 					(m) => !m.roomId || m.roomId === packet.roomId,
 				);
 				onlineMembers = packet.members;
-				observers = packet.observers ?? [];
+				observers = uniqueObservers(packet.observers ?? []);
 				if (typeof packet.totalCount === "number" && packet.totalCount > 0) {
 					totalOnlineCount = packet.totalCount;
 				}
@@ -782,7 +799,8 @@ function connectRoom(roomId: string) {
 				roomTopic = packet.topic ?? "";
 				typingUsers = [];
 				clearSkipPending();
-				clockOffsetMs = packet.music.serverTime - Date.now();
+				if (!hasClockSample) clockOffsetMs = packet.music.serverTime - Date.now();
+				sampleRoomClock(socket);
 				if (packet.mergedGuestHistory) {
 					showNotice("已自动合并同邮箱的历史访客记录至当前账号");
 				}
@@ -808,7 +826,16 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "pong": {
-				clockOffsetMs = packet.serverTime - Date.now();
+				const sent = pendingClockPings.get(socket);
+				pendingClockPings.delete(socket);
+				if (!sent) break;
+				const rtt = performance.now() - sent.monotonic;
+				if (rtt > 1000 || Math.abs(Date.now() - sent.wall - rtt) > 100) break;
+				const offset = packet.serverTime - sent.wall - rtt / 2;
+				clockOffsetMs = !hasClockSample || Math.abs(offset - clockOffsetMs) > 1000
+					? offset
+					: clockOffsetMs * 0.75 + offset * 0.25;
+				hasClockSample = true;
 				break;
 			}
 			case "auth:result": {
@@ -964,7 +991,7 @@ function connectRoom(roomId: string) {
 					);
 					onlineMembers = packet.members;
 					if (packet.observers) {
-						observers = packet.observers;
+						observers = uniqueObservers(packet.observers);
 					}
 					if (
 						typeof packet.totalCount === "number" &&
@@ -1148,7 +1175,7 @@ function connectRoom(roomId: string) {
 					if (!nextUid || nextUid !== prevUid) {
 						clearSkipPending();
 					}
-					clockOffsetMs = packet.serverTime - Date.now();
+					if (!hasClockSample) clockOffsetMs = packet.serverTime - Date.now();
 					musicState = {
 						current: packet.current,
 						queue: packet.queue,
@@ -1674,7 +1701,7 @@ async function refreshGlobalPresence() {
 				return m;
 			});
 			if (Array.isArray(data.observers)) {
-				observers = data.observers;
+				observers = uniqueObservers(data.observers);
 			}
 			totalOnlineCount = data.totalCount;
 		}
@@ -1820,6 +1847,7 @@ onMount(() => {
 	const presenceTimer = window.setInterval(() => {
 		if (!document.hidden) {
 			void refreshGlobalPresence();
+			sampleRoomClock(ws);
 		}
 	}, 15000);
 	const memberTimer = window.setInterval(() => {
@@ -1857,7 +1885,7 @@ onMount(() => {
 			void refreshMemberDirectory();
 			void refreshSpectatorHistory();
 			if (ws && ws.readyState === WebSocket.OPEN) {
-				ws.send(JSON.stringify({ type: "ping" }));
+				sampleRoomClock(ws);
 			} else if (!ws && !isUnmounted) {
 				connectRoom(currentRoom);
 			}
@@ -2046,9 +2074,11 @@ onMount(() => {
     </div>
 
     <div class="chat-panel chat-panel-right {activeTab === 'music' ? 'mobile-active' : ''}">
+      <audio bind:this={chatAudio} preload="auto" playsinline muted></audio>
       {#key currentRoom}
       <MusicPanel
         bind:this={musicPanelRef}
+        audioEl={chatAudio}
         roomId={currentRoom}
         chatServerUrl={normalizedChatServer}
         playlistOutApiUrl={playlistOutApiUrl}

@@ -49,6 +49,13 @@ async function openCached(files) {
   }
 }
 
+export async function hasCachedAudio(url) {
+  const cached = await openCached(paths(url));
+  if (!cached) return false;
+  await cached.file.close();
+  return true;
+}
+
 async function trimCache() {
   const entries = await fs.readdir(directory, { withFileTypes: true });
   const files = (await Promise.all(entries

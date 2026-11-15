@@ -22,7 +22,7 @@ async function manager(t, registry, roomId = 'chat', dataDir) {
   }
   const mgr = new MusicManager({ roomId, dataDir, musicRegistry: registry, serverOrigin: origin });
   t.after(() => {
-    for (const timer of [mgr._advanceTimer, mgr._prepareFallbackTimer, mgr._saveTimer]) clearTimeout(timer);
+    for (const timer of [mgr._advanceTimer, mgr._prepareFallbackTimer, mgr._refreshPreparedTimer, mgr._saveTimer]) clearTimeout(timer);
   });
   return mgr;
 }
@@ -64,6 +64,8 @@ test('source failure advances only the affected room and persisted queue keeps i
   assert.match(chat.current.track.streamUrl, /\?renewed$/);
   chat.current.recoveryAttempted = false;
   fail = true;
+  // The queued source has aged out and is missing from disk.
+  chat.preparedQueue.checkedAt = Date.now() - 61_000;
   await chat.reportError(uid, 'another-listener');
   await chat.advancing.promise;
   assert.equal(chat.current.track.sourceId, 'third');
@@ -120,7 +122,7 @@ test('cached proxy supports prefix, suffix, clamping, HEAD and invalid range', a
   const dir = await mkdtemp(join(tmpdir(), 'cache-test-'));
   process.env.CHAT_MUSIC_CACHE_DIR = dir;
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const { handleStreamProxyRequest } = await import('../src/music/stream-cache.mjs');
+  const { handleStreamProxyRequest } = await import('../src/music/stream-cache.mjs?range-fixture');
   const url = 'https://ws.stream.qqmusic.qq.com/example';
   const key = createHash('sha256').update(url).digest('hex').slice(0, 32);
   const bytes = Buffer.alloc(2048, 42);
@@ -146,4 +148,57 @@ test('cached proxy supports prefix, suffix, clamping, HEAD and invalid range', a
   const head = await fetch(address, { method: 'HEAD' });
   assert.equal(head.headers.get('content-type'), 'audio/mpeg');
   assert.equal(head.headers.get('content-length'), '2048');
+});
+
+test('warm queue head can switch after the resolver cache expires without another upstream call', async t => {
+  const calls = [];
+  const warmed = [];
+  const registry = {
+    resolvePlayable: async item => { calls.push(item.sourceId); return playable(item); },
+    isCached: async () => true
+  };
+  const mgr = await manager(t, registry);
+  mgr.onPrefetchTrack = url => warmed.push(url);
+  await mgr.enqueueTrack(track('first'), actor);
+  await mgr.enqueueTrack(track('next'), actor);
+  await mgr.enqueueTrack(track('third'), actor);
+  assert.deepEqual(warmed, [origin + '/audio/next']);
+  mgr.preparedQueue.checkedAt = Date.now() - 120_000;
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.sourceId, 'next');
+  assert.equal(calls.filter(id => id === 'next').length, 1);
+});
+
+test('concurrent skip and fallback warm-up share one resolver', async t => {
+  const mgr = await manager(t, { resolvePlayable: async item => playable(item) });
+  await mgr.enqueueTrack(track('first'), actor);
+  mgr.fallbackTracks = [track('fallback')];
+  let release;
+  let resolves = 0;
+  mgr.resolveFallbackTrackPlayable = () => {
+    resolves++;
+    return new Promise(resolve => { release = resolve; });
+  };
+  const preparing = mgr.prepareNext();
+  const skipping = mgr.advanceNext();
+  release(playable(track('fallback')));
+  await Promise.all([preparing, skipping]);
+  assert.equal(resolves, 1);
+  assert.equal(mgr.current.track.sourceId, 'fallback');
+});
+
+test('an active room-wide fallback pool resumes after a restart without starting an idle room', async t => {
+  const registry = {
+    resolvePlaylistTrack: async item => item,
+    resolvePlayable: async item => playable(item)
+  };
+  const before = await manager(t, registry, 'interconnect');
+  before.playTrack(playable(track('radio')), { userKey: 'system:fallback', name: 'Radio' }, true);
+  const restored = await manager(t, registry, 'interconnect', before.dataDir);
+  const idle = await manager(t, registry, 'chat', before.dataDir);
+  for (const room of [restored, idle]) room.setFallbackPlaylist(null, [track('radio')], null, { start: false });
+  await restored.resume();
+  await idle.resume();
+  assert.equal(restored.current.track.sourceId, 'radio');
+  assert.equal(idle.current, null);
 });

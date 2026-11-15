@@ -8,12 +8,14 @@ fi
 
 release_dir=$(cd "$(dirname "$0")" && pwd)
 install_dir=/opt/chat-server
-expected_gateway=7dedc85b56284e1141507c23e419a3c3d6065100592ff4201fb070492d8b70a1
+original_gateway=7dedc85b56284e1141507c23e419a3c3d6065100592ff4201fb070492d8b70a1
+integrated_gateway=79852271e948d9bd83dfa2cd0603605f7d0e07eaeb4d2c3e031bd7a09bbfb2cf
+observer_gateway=bd12bd1d9b76b6a65ec4d64b72abed1c07fb550d6f724d4dcda07ce3362911ba
 exec 9>/opt/chat-server-music-deploy.lock
 flock -n 9
 
 actual_gateway=$(sha256sum "$install_dir/server.mjs" | awk '{print $1}')
-if [[ "$actual_gateway" != "$expected_gateway" ]]; then
+if [[ "$actual_gateway" != "$original_gateway" && "$actual_gateway" != "$integrated_gateway" && "$actual_gateway" != "$observer_gateway" ]]; then
   echo "Gateway version changed. Rebase the integration patch before deployment." >&2
   exit 1
 fi
@@ -23,8 +25,14 @@ cp -p "$install_dir/server.mjs" "$candidate/server.mjs"
 cp -a "$release_dir/src" "$candidate/src"
 (
   cd "$candidate"
-  git apply --check "$release_dir/gateway-music.patch"
-  git apply "$release_dir/gateway-music.patch"
+  if [[ "$actual_gateway" == "$original_gateway" ]]; then
+    git apply --check "$release_dir/gateway-music.patch"
+    git apply "$release_dir/gateway-music.patch"
+  fi
+  if [[ "$actual_gateway" != "$observer_gateway" ]]; then
+    git apply --check "$release_dir/observer-id.patch"
+    git apply "$release_dir/observer-id.patch"
+  fi
   node --check server.mjs
   for file in src/music/*.mjs; do node --check "$file"; done
 )
@@ -39,7 +47,9 @@ backup=$(mktemp -d "$install_dir/.music-release.XXXXXXXX")
 echo "Rollback copy: $backup"
 cp -p "$install_dir/server.mjs" "$backup/server.mjs"
 cp -a "$install_dir/src/music" "$backup/music"
-node "$release_dir/capture-playback.mjs" "$install_dir/data"
+if [[ "$actual_gateway" == "$original_gateway" ]]; then
+  node "$release_dir/capture-playback.mjs" "$install_dir/data"
+fi
 
 rollback() {
   local status=$?
