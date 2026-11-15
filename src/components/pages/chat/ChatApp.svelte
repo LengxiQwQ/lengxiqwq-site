@@ -12,6 +12,7 @@ import {
 	buildWsUrl,
 	clearGuestAuth,
 	clearWalineAuth,
+	consumeUrlWalineToken,
 	normalizeServerUrl,
 	openWalineLoginPopup,
 	readStoredWalineToken,
@@ -1727,6 +1728,21 @@ onMount(() => {
 	baseDocumentTitle = document.title;
 	currentAuth = resolveInitialAuth();
 	walineToken = currentAuth?.kind === "waline" ? currentAuth.token : "";
+
+	void consumeUrlWalineToken(walineServerUrl).then((res) => {
+		if (res?.token) {
+			if (!isUnmounted && (currentAuth?.kind !== "waline" || currentAuth.token !== res.token)) {
+				handleAuthenticated({ kind: "waline", token: res.token });
+			}
+			return;
+		}
+		if (!isUnmounted && currentAuth?.kind === "waline" && !readStoredWalineToken()) {
+			clearWalineAuth();
+			currentAuth = resolveInitialAuth();
+			walineToken = currentAuth?.kind === "waline" ? currentAuth.token : "";
+			connectRoom(currentRoom);
+		}
+	});
 
 	try {
 		const savedLeft = Number(localStorage.getItem(LEFT_WIDTH_KEY));

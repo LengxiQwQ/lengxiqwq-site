@@ -980,6 +980,84 @@ const config = {
 
     let walineIdlePreloadTimer = null;
     let walineIdleCallbackId = null;
+    let walineTokenConsumePromise = null;
+
+    function getWalineTokenFromUrl() {
+      try {
+        const tk = new URLSearchParams(window.location.search).get("token");
+        return tk ? tk.trim() : "";
+      } catch (_) {
+        return "";
+      }
+    }
+
+    async function consumeUrlWalineToken() {
+      const urlToken = getWalineTokenFromUrl();
+      if (!urlToken) return;
+      if (walineTokenConsumePromise) {
+        return walineTokenConsumePromise;
+      }
+
+      const serverURL =
+        config && config.serverURL
+          ? String(config.serverURL).replace(/\/+$/, "")
+          : "";
+      if (!serverURL) return;
+
+      walineTokenConsumePromise = (async () => {
+        try {
+          const resp = await fetch(`${serverURL}/api/token`, {
+            headers: { Authorization: `Bearer ${urlToken}` },
+          });
+          const res = await resp.json().catch(() => null);
+          if (resp.ok && res && res.errno === 0 && res.data && res.data.objectId) {
+            const userPayload = { ...res.data, token: urlToken };
+            const serialized = JSON.stringify(userPayload);
+            try {
+              localStorage.setItem("WALINE_USER", serialized);
+              localStorage.setItem("TOKEN", urlToken);
+              if (res.data.type === "administrator") {
+                localStorage.setItem("WALINE_ADMIN_TOKEN", urlToken);
+              } else {
+                localStorage.removeItem("WALINE_ADMIN_TOKEN");
+              }
+              const meta = {
+                nick: res.data.display_name || "",
+                mail: res.data.email || "",
+                link: res.data.url || "",
+              };
+              localStorage.setItem("WALINE_USER_META", JSON.stringify(meta));
+              window.dispatchEvent(
+                new StorageEvent("storage", {
+                  key: "WALINE_USER",
+                  newValue: serialized,
+                  storageArea: localStorage,
+                }),
+              );
+            } catch (_) {}
+          }
+        } catch (err) {
+          console.warn("[Waline] Failed to consume URL token:", err);
+        } finally {
+          try {
+            const cleanUrl = new URL(window.location.href);
+            cleanUrl.searchParams.delete("token");
+            window.history.replaceState(
+              null,
+              "",
+              cleanUrl.pathname +
+                (cleanUrl.searchParams.toString()
+                  ? `?${cleanUrl.searchParams.toString()}`
+                  : "") +
+                cleanUrl.hash,
+            );
+          } catch (_) {}
+          walineTokenConsumePromise = null;
+        }
+      })();
+
+      return walineTokenConsumePromise;
+    }
 
     function cancelIdlePreload() {
       if (walineIdleCallbackId && "cancelIdleCallback" in window) {
@@ -997,14 +1075,21 @@ const config = {
       const el = document.getElementById("waline");
       if (!el) return;
 
+      const hasAuthReturnToken = Boolean(getWalineTokenFromUrl());
       const currentPath = getCurrentPath();
       if (el.getAttribute("data-initialized-path") === currentPath) {
-        scrollToHashTarget();
+        if (hasAuthReturnToken) {
+          consumeUrlWalineToken().then(() => {
+            scrollToHashTarget();
+          });
+        } else {
+          scrollToHashTarget();
+        }
         return;
       }
 
-      // 1. 如果带有锚点或直接定位目标（邮件通知、最新评论点击或外链评论定位），0 延迟即刻拉起！
-      if (hasTargetAnchor()) {
+      // 1. 如果带有锚点或直接定位目标，或携带登录回跳 token，0 延迟即刻拉起！
+      if (hasTargetAnchor() || hasAuthReturnToken) {
         cancelIdlePreload();
         const targetId = getTargetCommentId();
         if (targetId) {
@@ -1012,7 +1097,7 @@ const config = {
             sessionStorage.setItem("waline-target-comment", targetId);
           } catch (_) {}
         }
-        triggerLoadAndInit();
+        triggerLoadAndInit(hasAuthReturnToken);
         return;
       }
 
@@ -1041,15 +1126,26 @@ const config = {
 
     const setupViewportLazyLoad = setupSmartCommentLoad;
 
-    function triggerLoadAndInit() {
+    async function triggerLoadAndInit(scrollToBox = false) {
+      const shouldScrollToBox = scrollToBox === true;
       cancelIdlePreload();
-      loadWalineResources()
-        .then(() => {
-          initWaline();
-        })
-        .catch((err) => {
-          console.error("[Waline] Failed to load local Waline resources:", err);
-        });
+      try {
+        await consumeUrlWalineToken();
+        await loadWalineResources();
+        initWaline();
+        if (shouldScrollToBox && !getTargetCommentId()) {
+          const commentBox =
+            document.getElementById("post-comments") ||
+            document.getElementById("waline");
+          if (commentBox) {
+            setTimeout(() => {
+              commentBox.scrollIntoView({ behavior: "smooth", block: "start" });
+            }, 180);
+          }
+        }
+      } catch (err) {
+        console.error("[Waline] Failed to load local Waline resources:", err);
+      }
     }
 
     let activeScrollController = null;
@@ -1409,6 +1505,19 @@ const config = {
         triggerLoadAndInit();
         if (e && e.detail && e.detail.id) {
           scrollToHashTarget(e.detail.id);
+        }
+      });
+
+      // 评论区退出登录时同步清理聊天室共用 Token
+      document.addEventListener("click", (e) => {
+        const target = e.target;
+        if (target && target.closest && target.closest("#waline .wl-logout-btn")) {
+          setTimeout(() => {
+            try {
+              localStorage.removeItem("TOKEN");
+              localStorage.removeItem("WALINE_ADMIN_TOKEN");
+            } catch (_) {}
+          }, 0);
         }
       });
     }

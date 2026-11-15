@@ -143,22 +143,62 @@ export function buildWsUrl(
 	return `${wsBase}/ws?${params.toString()}`;
 }
 
-export function readStoredWalineToken(): string {
-	if (typeof localStorage === "undefined") return "";
+export function isMobileLikeBrowser(): boolean {
+	if (typeof navigator === "undefined") return false;
+	const ua = navigator.userAgent || "";
+	return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|MicroMessenger|QQ\//i.test(
+		ua,
+	);
+}
+
+function dispatchWalineUserStorageEvent(
+	newValue: string | null,
+	oldValue: string | null,
+): void {
+	if (typeof window === "undefined" || typeof StorageEvent === "undefined") {
+		return;
+	}
 	try {
-		const rawUser = localStorage.getItem("WALINE_USER");
-		if (rawUser) {
-			const parsed = JSON.parse(rawUser) as { token?: unknown };
-			if (typeof parsed.token === "string" && parsed.token.trim()) {
-				return parsed.token.trim();
-			}
-		}
-		const adminToken = localStorage.getItem("WALINE_ADMIN_TOKEN");
-		if (adminToken?.trim()) return adminToken.trim();
-		const token = localStorage.getItem("TOKEN");
-		if (token?.trim()) return token.trim();
+		window.dispatchEvent(
+			new StorageEvent("storage", {
+				key: "WALINE_USER",
+				newValue,
+				oldValue,
+				storageArea: localStorage,
+			}),
+		);
 	} catch {
-		// Ignore invalid localStorage
+		// Ignore synthetic StorageEvent errors
+	}
+}
+
+export function readStoredWalineToken(): string {
+	if (typeof localStorage !== "undefined") {
+		try {
+			const rawUser = localStorage.getItem("WALINE_USER");
+			if (rawUser) {
+				const parsed = JSON.parse(rawUser) as { token?: unknown };
+				if (typeof parsed.token === "string" && parsed.token.trim()) {
+					return parsed.token.trim();
+				}
+			}
+			const adminToken = localStorage.getItem("WALINE_ADMIN_TOKEN");
+			if (adminToken?.trim()) return adminToken.trim();
+			const token = localStorage.getItem("TOKEN");
+			if (token?.trim()) return token.trim();
+		} catch {
+			// Ignore invalid localStorage
+		}
+	}
+	if (typeof window !== "undefined") {
+		try {
+			const urlToken = new URLSearchParams(window.location.search)
+				.get("token")
+				?.trim();
+			if (urlToken) return urlToken;
+		} catch {
+			// Ignore invalid URL
+		}
 	}
 	return "";
 }
@@ -176,11 +216,23 @@ export function persistWalineAuth(userData: {
 }): void {
 	if (typeof localStorage === "undefined") return;
 	try {
-		localStorage.setItem("WALINE_USER", JSON.stringify(userData));
+		const prevValue = localStorage.getItem("WALINE_USER");
+		const serialized = JSON.stringify(userData);
+		localStorage.setItem("WALINE_USER", serialized);
 		localStorage.setItem("TOKEN", userData.token);
 		if (userData.type === "administrator" || userData.type === "admin") {
 			localStorage.setItem("WALINE_ADMIN_TOKEN", userData.token);
+		} else {
+			localStorage.removeItem("WALINE_ADMIN_TOKEN");
 		}
+		if (userData.display_name || userData.email || userData.url) {
+			persistWalineCommentMeta({
+				nickname: userData.display_name || "",
+				email: userData.email || "",
+				url: userData.url || "",
+			});
+		}
+		dispatchWalineUserStorageEvent(serialized, prevValue);
 	} catch {
 		// Ignore storage limits
 	}
@@ -189,12 +241,98 @@ export function persistWalineAuth(userData: {
 export function clearWalineAuth(): void {
 	if (typeof localStorage === "undefined") return;
 	try {
+		const prevValue = localStorage.getItem("WALINE_USER");
 		localStorage.removeItem("WALINE_USER");
 		localStorage.removeItem("WALINE_ADMIN_TOKEN");
 		localStorage.removeItem("TOKEN");
+		dispatchWalineUserStorageEvent(null, prevValue);
 	} catch {
 		// Ignore
 	}
+}
+
+export async function consumeUrlWalineToken(
+	walineServerUrl: string,
+): Promise<{ token: string } | null> {
+	if (typeof window === "undefined") return null;
+	let urlToken = "";
+	try {
+		const currentUrl = new URL(window.location.href);
+		urlToken = currentUrl.searchParams.get("token")?.trim() || "";
+		if (!urlToken) return null;
+		currentUrl.searchParams.delete("token");
+		window.history.replaceState(
+			null,
+			"",
+			currentUrl.pathname +
+				(currentUrl.searchParams.toString()
+					? `?${currentUrl.searchParams.toString()}`
+					: "") +
+				currentUrl.hash,
+		);
+	} catch {
+		return null;
+	}
+
+	try {
+		localStorage.setItem("TOKEN", urlToken);
+	} catch {
+		// Ignore storage limits
+	}
+
+	const base = normalizeServerUrl(walineServerUrl);
+	if (!base) {
+		return { token: urlToken };
+	}
+
+	try {
+		const resp = await fetch(`${base}/api/token`, {
+			headers: { Authorization: `Bearer ${urlToken}` },
+		});
+		const payload = (await resp.json().catch(() => null)) as {
+			errno?: number;
+			data?: {
+				display_name?: string;
+				email?: string;
+				type?: string;
+				avatar?: string;
+				url?: string;
+				label?: string;
+				objectId?: string | number;
+				mailMd5?: string;
+			};
+		} | null;
+
+		if (
+			resp.ok &&
+			payload &&
+			payload.errno === 0 &&
+			payload.data &&
+			payload.data.objectId !== undefined
+		) {
+			persistWalineAuth({
+				token: urlToken,
+				display_name: payload.data.display_name,
+				email: payload.data.email,
+				type: payload.data.type,
+				avatar: payload.data.avatar,
+				url: payload.data.url,
+				label: payload.data.label,
+				objectId: payload.data.objectId,
+				mailMd5: payload.data.mailMd5,
+			});
+			return { token: urlToken };
+		}
+
+		if (resp.status === 401 || (payload && payload.errno !== 0)) {
+			clearWalineAuth();
+			return null;
+		}
+	} catch {
+		// Keep TOKEN so WS handshake or later fetch can still use it on transient network errors
+	}
+
+	return { token: urlToken };
 }
 
 export function readStoredGuestToken(): string {
@@ -401,7 +539,12 @@ export function openWalineLoginPopup(
 		Math.floor((window.innerHeight - height) / 2 + (window.screenY || 0)),
 	);
 
-	const loginUrl = `${base}/ui/login?lng=zh-CN`;
+	const loginUrl = `${base}/ui/login?lng=zh-CN&redirect=${encodeURIComponent(window.location.href)}`;
+	if (isMobileLikeBrowser()) {
+		window.location.href = loginUrl;
+		return () => {};
+	}
+
 	const popup = window.open(
 		loginUrl,
 		"waline_chat_login",
@@ -409,6 +552,10 @@ export function openWalineLoginPopup(
 	);
 
 	if (!popup) {
+		if (typeof navigator !== "undefined" && navigator.maxTouchPoints > 1) {
+			window.location.href = loginUrl;
+			return () => {};
+		}
 		onBlocked?.();
 		onCancel?.();
 		return () => {};
@@ -417,7 +564,30 @@ export function openWalineLoginPopup(
 	let finished = false;
 	const cleanup = () => {
 		window.removeEventListener("message", onMessage);
+		window.removeEventListener("storage", onStorageOrVisible);
+		document.removeEventListener("visibilitychange", onStorageOrVisible);
 		window.clearInterval(pollTimer);
+	};
+
+	const checkStoredFallback = () => {
+		if (finished) return false;
+		const maybeToken = readStoredWalineToken();
+		if (maybeToken && maybeToken !== initialToken) {
+			finished = true;
+			cleanup();
+			try {
+				if (!popup.closed) popup.close();
+			} catch {
+				// Ignore close failure
+			}
+			onSuccess(maybeToken);
+			return true;
+		}
+		return false;
+	};
+
+	const onStorageOrVisible = () => {
+		checkStoredFallback();
 	};
 
 	const onMessage = (event: MessageEvent) => {
@@ -467,17 +637,15 @@ export function openWalineLoginPopup(
 	};
 
 	window.addEventListener("message", onMessage);
+	window.addEventListener("storage", onStorageOrVisible);
+	document.addEventListener("visibilitychange", onStorageOrVisible);
 
 	const pollTimer = window.setInterval(() => {
+		if (checkStoredFallback()) return;
 		if (popup.closed && !finished) {
 			finished = true;
 			cleanup();
-			const maybeToken = readStoredWalineToken();
-			if (maybeToken && maybeToken !== initialToken) {
-				onSuccess(maybeToken);
-			} else {
-				onCancel?.();
-			}
+			onCancel?.();
 		}
 	}, 600);
 
