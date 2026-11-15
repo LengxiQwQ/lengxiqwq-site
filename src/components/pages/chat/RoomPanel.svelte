@@ -461,7 +461,7 @@ function formatOfflineTime(ts?: number): string {
     {@const presenceMode = member.presenceMode}
     {@const isFallbackOnline = isOnline && isExternal && presenceMode === "fallback"}
     {@const dotClass = isFallbackOnline ? "chat-online-dot--fallback" : isFocused ? "" : "chat-online-dot--away"}
-    {@const dotTitle = isFallbackOnline ? "兜底在线（对方站点未上报在线状态，仅依据近期发言判定，约 8 分钟无发言自动离线）" : isFocused ? "在线" : "离开"}
+    {@const dotTitle = isFallbackOnline ? "在线" : isFocused ? "在线" : "离开"}
     {@const origin = isExternal ? resolveExternalOrigin(member, interconnectSites) : null}
     {@const displayName = origin ? origin.cleanName : member.name}
     {@const siteName = origin?.siteName || "外部站点"}
@@ -469,12 +469,10 @@ function formatOfflineTime(ts?: number): string {
     {@const subtitle = isExternal
       ? (isOnline
           ? (member.status && member.status !== "在线" && member.status !== "离开"
-              ? `${member.status.trim()} · 来自：${siteName}${isFallbackOnline ? " · 兜底" : ""}`
-              : isFallbackOnline
-                ? `来自：${siteName} · 兜底在线`
-                : isFocused
-                  ? `来自：${siteName}`
-                  : `离开 · 来自：${siteName}`)
+              ? `${member.status.trim()} · 来自：${siteName}`
+              : isFallbackOnline || isFocused
+                ? `来自：${siteName}`
+                : `离开 · 来自：${siteName}`)
           : (offlineTime === "离线" ? `来自：${siteName}` : `来自：${siteName} · ${offlineTime}`))
       : (isOnline
           ? formatOnlineLine(member as ChatOnlineMember, isFocused)

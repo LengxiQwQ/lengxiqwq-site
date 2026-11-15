@@ -760,7 +760,7 @@ function formatReactionTooltip(users: string[]): string {
 {/snippet}
 
 {#snippet renderReadReceipts()}
-  {@const readers = readReceipts.filter((r) => r.userKey !== currentUserKey && r.userKey !== message.userKey)}
+  {@const readers = readReceipts.filter((r) => r.userKey === currentUserKey || r.userKey !== message.userKey)}
   {#if readers.length > 0}
     {@const shown = readers.slice(0, 4)}
     {@const restCount = readers.length - shown.length}

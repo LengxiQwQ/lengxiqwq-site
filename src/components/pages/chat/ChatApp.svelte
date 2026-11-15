@@ -1812,7 +1812,7 @@ onMount(() => {
 	}, 30000);
 
 	const IDLE_AWAY_MS = 60 * 1000;
-	const POINTER_OUT_AWAY_MS = 5 * 1000;
+	const POINTER_OUT_AWAY_MS = 800;
 	let idleAwayTimer: number | null = null;
 	let pointerOutTimer: number | null = null;
 	let isPointerInWindow = true;
@@ -1936,6 +1936,14 @@ onMount(() => {
 		}
 	};
 	syncFocusState();
+	const focusSyncTimer = window.setInterval(() => {
+		if (!document.hidden && typeof document.hasFocus === "function") {
+			const focused = document.hasFocus();
+			if (!focused && isWindowFocused) {
+				isWindowFocused = false;
+			}
+		}
+	}, 800);
 	document.addEventListener("visibilitychange", handleVisibility);
 	document.addEventListener("mouseenter", handlePointerEnter);
 	document.addEventListener("mouseleave", handlePointerLeave);
@@ -1954,6 +1962,7 @@ onMount(() => {
 		window.clearInterval(presenceTimer);
 		window.clearInterval(memberTimer);
 		window.clearInterval(playlistTimer);
+		window.clearInterval(focusSyncTimer);
 		if (idleAwayTimer !== null) window.clearTimeout(idleAwayTimer);
 		clearPointerOutTimer();
 		document.removeEventListener("visibilitychange", handleVisibility);

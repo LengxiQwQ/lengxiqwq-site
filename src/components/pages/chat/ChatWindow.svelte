@@ -708,11 +708,13 @@ function handleMessageScroll() {
 		messages.length > 0 &&
 		isChatPaneFocused()
 	) {
+		const latestTs = messages[messages.length - 1].createdAt;
 		writeLastSeenAt(
 			roomId,
 			currentUser.userKey,
-			messages[messages.length - 1].createdAt,
+			latestTs,
 		);
+		onMarkRead?.(latestTs);
 	}
 
 	// 向上滚动到接近顶部时自动触发加载更早历史消息
@@ -1092,6 +1094,23 @@ $effect(() => {
 	if (replyingTo && !msgs.some((m) => m.msgUid === replyingTo?.msgUid)) {
 		replyingTo = null;
 	}
+});
+
+$effect(() => {
+	if (!currentUser || targetMessageUid || !isChatPaneFocused() || !isStickyAtBottom) {
+		return;
+	}
+	let latestMsg: ChatMessageData | undefined;
+	for (let i = visibleMessages.length - 1; i >= 0; i--) {
+		const m = visibleMessages[i];
+		if (m.kind === "user" && !m.recalled) {
+			latestMsg = m;
+			break;
+		}
+	}
+	if (!latestMsg) return;
+	writeLastSeenAt(roomId, currentUser.userKey, latestMsg.createdAt);
+	onMarkRead?.(latestMsg.createdAt);
 });
 
 $effect(() => {
@@ -2315,7 +2334,7 @@ function removePendingImage(index: number) {
                       ? 'text-amber-600 dark:text-amber-400'
                       : 'text-emerald-600 dark:text-emerald-400'}"
                 >
-                  {mentionFallbackLabel ? "兜底在线" : mentionAwayLabel ? "离开" : "在线"}
+                  {mentionAwayLabel ? "离开" : "在线"}
                 </span>
               {:else}
                 <span class="text-[10px] shrink-0 text-[var(--chat-meta-color)] opacity-75">

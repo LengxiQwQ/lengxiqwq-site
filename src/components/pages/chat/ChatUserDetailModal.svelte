@@ -712,7 +712,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               {@const extPresenceMode = onlineMatch?.presenceMode ?? profile?.presenceMode ?? seed.presenceMode}
               {@const isExtFallback = extPresenceMode === "fallback"}
               <span
-                title={isExtFallback ? "兜底在线（对方站点未上报在线状态，仅依据近期发言判定）" : extModalFocused ? "在线" : "离开"}
+                title={isExtFallback ? "在线" : extModalFocused ? "在线" : "离开"}
                 class="chat-online-dot {isExtFallback ? 'chat-online-dot--fallback' : extModalFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
               ></span>
             {/if}
@@ -733,10 +733,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               {#if !isOnline}
                 <span>{formatLastSeen(lastSeenAt)}</span>
                 <span>·</span>
-              {:else if (onlineMatch?.presenceMode ?? profile?.presenceMode ?? seed.presenceMode) === "fallback"}
-                <span>兜底在线（近期发言）</span>
-                <span>·</span>
-              {:else if (onlineMatch ? onlineMatch.isFocused === false : profile?.isFocused === false)}
+              {:else if (onlineMatch?.presenceMode ?? profile?.presenceMode ?? seed.presenceMode) !== "fallback" && (onlineMatch ? onlineMatch.isFocused === false : profile?.isFocused === false)}
                 <span>离开</span>
                 <span>·</span>
               {/if}
@@ -1146,7 +1143,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               />
               {#if profileIsOnline}
                 <span
-                  title={profileIsFallback ? "兜底在线（对方站点未上报在线状态，仅依据近期发言判定）" : profileIsFocused ? "在线" : "离开"}
+                  title={profileIsFallback ? "在线" : profileIsFocused ? "在线" : "离开"}
                   class="chat-online-dot {profileIsFallback ? 'chat-online-dot--fallback' : profileIsFocused ? '' : 'chat-online-dot--away'} w-3! h-3! absolute bottom-0 right-0 border-2 border-white dark:border-neutral-900"
                 ></span>
               {:else}
@@ -1174,7 +1171,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 {/if}
               </div>
               <div class="text-[11px] text-[var(--chat-meta-color)] mt-0.5 truncate flex items-center gap-1.5 flex-wrap">
-                <span>{profileIsOnline ? (profileIsFallback ? "兜底在线" : profileIsFocused ? "在线" : "离开") : formatLastSeen(profile.lastSeenAt)}</span>
+                <span>{profileIsOnline ? (profileIsFallback || profileIsFocused ? "在线" : "离开") : formatLastSeen(profile.lastSeenAt)}</span>
 
                 {#if cleanCustomStatus(profile.status)}
                   <span class="opacity-40 select-none">·</span>
@@ -1413,7 +1410,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
             <span class="text-[11px] text-[var(--chat-meta-color)]">最近活跃</span>
             <span class="text-[11px] font-bold tabular-nums truncate {profileIsOnline ? (profileIsFallback ? 'text-[var(--chat-meta-color)]' : profileIsFocused ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400') : 'text-[var(--deep-text)]'}">
-              {profileIsOnline ? (profileIsFallback ? "兜底在线" : profileIsFocused ? formatActiveStat(true, profile.lastSeenAt) : "离开") : formatActiveStat(false, profile.lastSeenAt)}
+              {profileIsOnline ? (profileIsFallback || profileIsFocused ? formatActiveStat(true, profile.lastSeenAt) : "离开") : formatActiveStat(false, profile.lastSeenAt)}
             </span>
           </div>
         </div>
