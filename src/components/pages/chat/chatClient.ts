@@ -1327,9 +1327,10 @@ export function resolveExternalOrigin(
 	const host = hostMatch ? hostMatch[1].toLowerCase() : "";
 
 	let matchedSite: InterconnectSite | undefined;
-	const explicitSite = (member.site || "").trim();
-	const explicitSiteUrl = (member.siteUrl || "").trim();
 	const genericBadges = new Set(["互联茶友", "茶友", "站长", "访客", "认证"]);
+	const rawExplicitSite = (member.site || "").trim();
+	const explicitSite = genericBadges.has(rawExplicitSite) ? "" : rawExplicitSite;
+	const explicitSiteUrl = (member.siteUrl || "").trim();
 	const explicitBadge =
 		member.badge && !genericBadges.has(member.badge.trim())
 			? member.badge.trim()
@@ -1449,22 +1450,33 @@ export function resolveExternalOrigin(
 		}
 	}
 
+	const hostSiteName = host.includes("gbk.ink")
+		? "GBK.ink"
+		: host.includes("somoe.xyz")
+			? "Somoe 茶室"
+			: host.includes("rainzt.cn")
+				? "听雨茶室"
+				: host.includes("yybb.us")
+					? "Aiovtue"
+					: host.includes("detached.online")
+						? "Detached 茶室"
+						: "";
+
+	const isRealRelay = Boolean(
+		relaySiteKey ||
+			explicitSiteUrl ||
+			baseUserKey.toLowerCase().includes("@aiprate:matrix.rainzt.cn") ||
+			(explicitSite &&
+				!hostSiteName?.toLowerCase().includes(explicitSite.toLowerCase())),
+	);
+
 	const siteName =
-		explicitSite ||
 		matchedSite?.name ||
+		(isRealRelay ? explicitSite : hostSiteName || explicitSite) ||
 		siteFromSuffix ||
-		explicitBadge ||
-		(host.includes("gbk.ink")
-			? "GBK.ink"
-			: host.includes("somoe.xyz")
-				? "Somoe 茶室"
-				: host.includes("rainzt.cn")
-					? "听雨茶室"
-					: host.includes("yybb.us")
-						? "Aiovtue"
-						: host.includes("detached.online")
-							? "Detached 茶室"
-							: host || "外部站点");
+		(isRealRelay ? explicitBadge : hostSiteName || explicitBadge) ||
+		host ||
+		"外部站点";
 
 	return {
 		cleanName: cleanName || rawName,

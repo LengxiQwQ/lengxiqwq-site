@@ -36,14 +36,11 @@ let backdropPointerDown = false;
 
 function placeBackdrop(node: HTMLDivElement) {
 	if (!portalToChatPage) return;
-	const parent = node.parentNode;
-	const placeholder = document.createComment("chat modal");
-	parent?.insertBefore(placeholder, node);
-	const target = document.getElementById("chat-page");
-	target?.appendChild(node);
+	const target = document.getElementById("chat-page") ?? document.body;
+	target.appendChild(node);
 	return {
 		destroy() {
-			if (placeholder.parentNode) placeholder.replaceWith(node);
+			node.remove();
 		},
 	};
 }

@@ -290,9 +290,18 @@ const memberPlaylistGroups = $derived.by(() => {
 let rotation = $state<RoomRotation | null>(null);
 let rotationExpanded = $state(false);
 let rotationMode = $state<RoomRotation["mode"]>("off");
-let rotationPlaylistId = $state("");
+let rotationPlaylistIds = $state<string[]>([]);
 let rotationSaving = $state(false);
 let rotationError = $state("");
+function normalizeRotationPlaylistIds(setting: RoomRotation | null): string[] {
+	if (setting?.mode !== "playlist") return [];
+	const raw = Array.isArray(setting.playlistIds)
+		? setting.playlistIds
+		: setting.playlistId
+			? [setting.playlistId]
+			: [];
+	return [...new Set(raw.filter((id) => typeof id === "string" && id.trim().length > 0))];
+}
 const rotationChoices = $derived(
 	[...new Map([...featuredPlaylists, ...myPlaylists, ...membersPlaylists]
 		.filter((playlist) => playlist.isPublic && playlist.trackCount > 0)
@@ -302,12 +311,20 @@ const rotationLabel = $derived.by(() => {
 	const setting = rotation;
 	if (setting?.mode === "all") return "全部公开歌单";
 	if (setting?.mode === "playlist") {
-		return rotationChoices.find((playlist) => playlist.id === setting.playlistId)?.title ?? "指定歌单";
+		const titles = normalizeRotationPlaylistIds(setting)
+			.map((id) => rotationChoices.find((playlist) => playlist.id === id)?.title)
+			.filter((title): title is string => Boolean(title));
+		if (titles.length === 1) return titles[0];
+		if (titles.length > 1) return `${titles[0]} 等 ${titles.length} 个歌单`;
+		return "指定歌单";
 	}
 	return "已关闭";
 });
+const validSelectedRotationIds = $derived(
+	rotationPlaylistIds.filter((id) => rotationChoices.some((playlist) => playlist.id === id)),
+);
 const canSaveRotation = $derived(
-	rotationMode !== "playlist" || rotationChoices.some((playlist) => playlist.id === rotationPlaylistId),
+	rotationMode !== "playlist" || validSelectedRotationIds.length > 0,
 );
 let isLoadingPlaylists = $state(false);
 let playlistsError = $state("");
@@ -1074,15 +1091,23 @@ function toggleRotationSettings() {
 	rotationExpanded = !rotationExpanded;
 	if (rotationExpanded) {
 		rotationMode = rotation.mode;
-		rotationPlaylistId = rotation.mode === "playlist" ? rotation.playlistId : "";
+		rotationPlaylistIds = normalizeRotationPlaylistIds(rotation);
 		rotationError = "";
 	}
 }
 
+function toggleRotationPlaylist(playlistId: string) {
+	if (rotationSaving) return;
+	rotationPlaylistIds = rotationPlaylistIds.includes(playlistId)
+		? rotationPlaylistIds.filter((id) => id !== playlistId)
+		: [...rotationPlaylistIds, playlistId];
+}
+
 async function handleSaveRotation() {
 	if (rotationSaving || !canSaveRotation || !isWalineLoggedIn || !currentUser?.isAdmin) return;
+	const selectedIds = validSelectedRotationIds;
 	const setting: RoomRotation = rotationMode === "playlist"
-		? { mode: "playlist", playlistId: rotationPlaylistId }
+		? { mode: "playlist", playlistIds: selectedIds, playlistId: selectedIds[0] }
 		: { mode: rotationMode };
 	rotationSaving = true;
 	rotationError = "";
@@ -3933,22 +3958,36 @@ $effect(() => {
 
   <ChatModal open={rotationExpanded && isWalineLoggedIn && Boolean(currentUser?.isAdmin)}
     title="冷场轮播设置" subtitle="仅作用于当前房间，待播队列优先" size="md"
-    portalToChatPage
+    portalToChatPage topPriority
     onClose={() => { if (!rotationSaving) rotationExpanded = false; }}>
     <form class="flex flex-col min-h-0 p-4 gap-3" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>
       <fieldset class="border-0 p-0 m-0 flex flex-wrap gap-x-4 gap-y-2" disabled={rotationSaving}>
         <legend class="text-xs font-semibold text-[var(--deep-text)] mb-2">轮播方式</legend>
         <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="off" bind:group={rotationMode} />关闭</label>
         <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="all" bind:group={rotationMode} />全部公开歌单</label>
-        <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="playlist" bind:group={rotationMode} />指定歌单</label>
+        <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="playlist" bind:group={rotationMode} />指定歌单（可多选）</label>
       </fieldset>
       {#if rotationMode === "playlist"}
         <fieldset class="border-0 p-0 m-0 min-h-0" disabled={rotationSaving}>
-          <legend class="text-xs font-semibold text-[var(--deep-text)] mb-2">选择公开歌单</legend>
+          <div class="flex items-center justify-between gap-2 mb-2">
+            <legend class="text-xs font-semibold text-[var(--deep-text)] p-0">
+              选择公开歌单
+              {#if rotationChoices.length > 0}
+                <span class="font-normal text-[var(--chat-meta-color)]">（已选 {validSelectedRotationIds.length}/{rotationChoices.length}）</span>
+              {/if}
+            </legend>
+            {#if rotationChoices.length > 1}
+              <div class="flex items-center gap-1.5 text-[11px]">
+                <button type="button" class="rounded px-1.5 py-0.5 border border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]" onclick={() => rotationPlaylistIds = rotationChoices.map((playlist) => playlist.id)}>全选</button>
+                <button type="button" class="rounded px-1.5 py-0.5 border border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]" onclick={() => rotationPlaylistIds = []}>清空</button>
+              </div>
+            {/if}
+          </div>
           <div class="max-h-[min(45vh,24rem)] overflow-y-auto custom-scrollbar space-y-2 pr-1">
             {#each rotationChoices as playlist (playlist.id)}
-              <label class="flex items-center gap-2.5 p-2 rounded-xl border cursor-pointer transition-colors {rotationPlaylistId === playlist.id ? 'border-(--primary) bg-(--primary)/10' : 'border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 hover:bg-[var(--card-bg)]/80'}">
-                <input type="radio" name="rotation-playlist" value={playlist.id} bind:group={rotationPlaylistId} class="shrink-0" />
+              {@const isSelected = rotationPlaylistIds.includes(playlist.id)}
+              <label class="flex items-center gap-2.5 p-2 rounded-xl border cursor-pointer transition-colors {isSelected ? 'border-(--primary) bg-(--primary)/10' : 'border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 hover:bg-[var(--card-bg)]/80'}">
+                <input type="checkbox" checked={isSelected} onchange={() => toggleRotationPlaylist(playlist.id)} class="shrink-0 accent-(--primary)" />
                 <span class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
                   {#if playlist.coverUrl}<img src={playlist.coverUrl} alt="" loading="lazy" class="w-full h-full object-cover" />{:else}<span class="text-sm text-(--primary)">♪</span>{/if}
                 </span>

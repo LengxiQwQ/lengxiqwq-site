@@ -389,7 +389,7 @@ export interface PlaylistDetail extends PlaylistSummary {
 export type RoomRotation =
 	| { mode: "off" }
 	| { mode: "all" }
-	| { mode: "playlist"; playlistId: string };
+	| { mode: "playlist"; playlistIds: string[]; playlistId?: string };
 
 export interface PlaylistsResponse {
 	rotation?: RoomRotation;
