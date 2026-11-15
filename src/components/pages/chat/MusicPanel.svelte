@@ -1947,6 +1947,7 @@ async function loadMoreSearchResults() {
 	const controller = new AbortController();
 	searchAbortController = controller;
 	isLoadingMore = true;
+	searchError = "";
 
 	try {
 		const res = await onSearchOnline(q, {
@@ -1961,6 +1962,9 @@ async function loadMoreSearchResults() {
 		hasMoreSearchResults = res.hasMore && newTracks.length > 0;
 	} catch (err) {
 		if (controller.signal.aborted && err instanceof DOMException && err.name === "AbortError") {
+			return;
+		}
+		if (controller.signal.aborted && controller.signal.reason !== "timeout") {
 			return;
 		}
 		if (submittedSearchQuery === q) {
