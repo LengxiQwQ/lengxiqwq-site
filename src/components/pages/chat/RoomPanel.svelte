@@ -1,6 +1,6 @@
 <script lang="ts">
-import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import Icon from "@/components/common/Icon.svelte";
+import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import { isExternalMatrixIdentity, resolveExternalOrigin } from "./chatClient";
@@ -458,6 +458,10 @@ function formatOfflineTime(ts?: number): string {
     {@const roleBadge = resolveMemberRoleBadge(member)}
     {@const muted = isOnline ? isMemberMuted(member as ChatOnlineMember) : false}
     {@const isFocused = isOnline ? isMemberFocused(member as ChatOnlineMember) : false}
+    {@const presenceMode = member.presenceMode}
+    {@const isFallbackOnline = isOnline && isExternal && presenceMode === "fallback"}
+    {@const dotClass = isFallbackOnline ? "chat-online-dot--fallback" : isFocused ? "" : "chat-online-dot--away"}
+    {@const dotTitle = isFallbackOnline ? "兜底在线（对方站点未上报在线状态，仅依据近期发言判定，约 8 分钟无发言自动离线）" : isFocused ? "在线" : "离开"}
     {@const origin = isExternal ? resolveExternalOrigin(member, interconnectSites) : null}
     {@const displayName = origin ? origin.cleanName : member.name}
     {@const siteName = origin?.siteName || "外部站点"}
@@ -465,10 +469,12 @@ function formatOfflineTime(ts?: number): string {
     {@const subtitle = isExternal
       ? (isOnline
           ? (member.status && member.status !== "在线" && member.status !== "离开"
-              ? `${member.status.trim()} · 来自：${siteName}`
-              : isFocused
-                ? `来自：${siteName}`
-                : `离开 · 来自：${siteName}`)
+              ? `${member.status.trim()} · 来自：${siteName}${isFallbackOnline ? " · 兜底" : ""}`
+              : isFallbackOnline
+                ? `来自：${siteName} · 兜底在线`
+                : isFocused
+                  ? `来自：${siteName}`
+                  : `离开 · 来自：${siteName}`)
           : (offlineTime === "离线" ? `来自：${siteName}` : `来自：${siteName} · ${offlineTime}`))
       : (isOnline
           ? formatOnlineLine(member as ChatOnlineMember, isFocused)
@@ -490,6 +496,7 @@ function formatOfflineTime(ts?: number): string {
           isAdmin: member.isAdmin,
           online: isOnline,
           isFocused,
+          presenceMode,
           status: member.status,
           bio: isExternal ? (member.bio || `来自 ${origin?.siteName || "互联茶室"}`) : member.bio,
           location: member.location,
@@ -506,8 +513,8 @@ function formatOfflineTime(ts?: number): string {
           />
           {#if isOnline}
             <span
-              title={isFocused ? "在线" : "离开"}
-              class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
+              title={dotTitle}
+              class="chat-online-dot {dotClass} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
             ></span>
           {/if}
         </div>
@@ -732,10 +739,17 @@ function formatOfflineTime(ts?: number): string {
             name={currentUser.name}
             size="md"
           />
-          <span
-            title={isWindowFocused ? "在线" : "离开"}
-            class="chat-online-dot {isWindowFocused ? '' : 'chat-online-dot--away'} absolute bottom-0 right-0 border-2 border-white/80 dark:border-neutral-900/80"
-          ></span>
+          {#if connectionState === "connected"}
+            <span
+              title={isWindowFocused ? "在线" : "离开"}
+              class="chat-online-dot {isWindowFocused ? '' : 'chat-online-dot--away'} absolute bottom-0 right-0 border-2 border-white/80 dark:border-neutral-900/80"
+            ></span>
+          {:else}
+            <span
+              title={connLabel}
+              class="chat-online-dot chat-online-dot--fallback absolute bottom-0 right-0 border-2 border-white/80 dark:border-neutral-900/80"
+            ></span>
+          {/if}
         </div>
         <div class="flex flex-col min-w-0 flex-1">
           <div class="flex items-center gap-1.5 min-w-0">

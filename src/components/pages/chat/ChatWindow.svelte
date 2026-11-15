@@ -571,6 +571,8 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 			badgeType: m.badgeType,
 			isAdmin: m.isAdmin,
 			online: true,
+			isFocused: m.isFocused,
+			presenceMode: m.presenceMode,
 			lastSeenAt: prev?.lastSeenAt ?? Date.now(),
 		});
 	}
@@ -2277,8 +2279,10 @@ function removePendingImage(index: number) {
                     />
                   {/if}
                   {#if person.online}
+                    {@const mentionFallback = !isRoomMention && person.presenceMode === "fallback"}
+                    {@const mentionAway = !isRoomMention && !mentionFallback && person.isFocused === false}
                     <span
-                      class="chat-ac-status-dot online"
+                      class="chat-ac-status-dot {mentionFallback ? 'fallback' : mentionAway ? 'away' : 'online'}"
                       aria-hidden="true"
                     ></span>
                   {/if}
@@ -2297,9 +2301,27 @@ function removePendingImage(index: number) {
                   {/each}
                 {/if}
               </div>
-              <span class="text-[10px] shrink-0 {person.online ? 'text-emerald-600 dark:text-emerald-400 font-medium' : 'text-[var(--chat-meta-color)] opacity-75'}">
-                {isRoomMention ? "全房提醒" : person.online ? "在线" : formatOfflineTime(person.lastSeenAt)}
-              </span>
+              {#if isRoomMention}
+                <span class="text-[10px] shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
+                  全房提醒
+                </span>
+              {:else if person.online}
+                {@const mentionFallbackLabel = person.presenceMode === "fallback"}
+                {@const mentionAwayLabel = !mentionFallbackLabel && person.isFocused === false}
+                <span
+                  class="text-[10px] shrink-0 font-medium {mentionFallbackLabel
+                    ? 'text-[var(--chat-meta-color)]'
+                    : mentionAwayLabel
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-emerald-600 dark:text-emerald-400'}"
+                >
+                  {mentionFallbackLabel ? "兜底在线" : mentionAwayLabel ? "离开" : "在线"}
+                </span>
+              {:else}
+                <span class="text-[10px] shrink-0 text-[var(--chat-meta-color)] opacity-75">
+                  {formatOfflineTime(person.lastSeenAt)}
+                </span>
+              {/if}
             </button>
           {/each}
         {/if}

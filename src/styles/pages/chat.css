@@ -777,6 +777,19 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	box-shadow: 0 0 0 1.5px rgba(24, 24, 27, 0.9);
 }
 
+.chat-online-dot--fallback {
+	background: #9ca3af !important;
+	box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.9);
+	animation: none !important;
+	opacity: 1 !important;
+}
+
+:is(.dark, [data-theme="dark"]) .chat-online-dot--fallback,
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) .chat-online-dot--fallback {
+	background: #71717a !important;
+	box-shadow: 0 0 0 1.5px rgba(24, 24, 27, 0.9);
+}
+
 @keyframes chat-pulse-glow {
 	0%, 100% {
 		opacity: 1;
@@ -2555,8 +2568,22 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	background: #10b981;
 }
 
+.chat-ac-status-dot.away {
+	background: #eab308;
+}
+
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-ac-status-dot.away {
+	background: #f59e0b;
+}
+
+.chat-ac-status-dot.fallback,
 .chat-ac-status-dot.offline {
 	background: #9ca3af;
+}
+
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-ac-status-dot.fallback,
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-ac-status-dot.offline {
+	background: #71717a;
 }
 
 /* ─── 聊天气泡 Markdown 排版样式 ─────────────────────────── */

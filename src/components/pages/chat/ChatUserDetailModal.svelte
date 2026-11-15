@@ -290,6 +290,7 @@ const fallbackData = $derived.by<{
 			isAdmin,
 			online: Boolean(onlineMatch ?? seed.online),
 			isFocused: onlineMatch ? onlineMatch.isFocused !== false : (seed.isFocused !== false),
+			presenceMode: onlineMatch?.presenceMode ?? seed.presenceMode,
 			status: cleanCustomStatus(
 				onlineMatch?.status || selfUser?.status || seed.status,
 			),
@@ -505,6 +506,7 @@ $effect(() => {
 			location: liveOnline?.location || cachedEntry.profile.location,
 			online: Boolean(liveOnline ?? currentSeed.online),
 			isFocused: liveOnline ? liveOnline.isFocused !== false : cachedEntry.profile.isFocused,
+			presenceMode: liveOnline?.presenceMode ?? cachedEntry.profile.presenceMode ?? currentSeed.presenceMode,
 		};
 		remoteProfile = mergedProfile;
 		remoteTracks = mergedProfile.recentTracks ?? [];
@@ -707,9 +709,11 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             <ChatAvatar src={seed.avatar} name={cleanName} size="lg" />
             {#if isOnline}
               {@const extModalFocused = onlineMatch ? onlineMatch.isFocused !== false : (profile?.isFocused !== false)}
+              {@const extPresenceMode = onlineMatch?.presenceMode ?? profile?.presenceMode ?? seed.presenceMode}
+              {@const isExtFallback = extPresenceMode === "fallback"}
               <span
-                title={extModalFocused ? "在线" : "离开"}
-                class="chat-online-dot {extModalFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
+                title={isExtFallback ? "兜底在线（对方站点未上报在线状态，仅依据近期发言判定）" : extModalFocused ? "在线" : "离开"}
+                class="chat-online-dot {isExtFallback ? 'chat-online-dot--fallback' : extModalFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
               ></span>
             {/if}
           </div>
@@ -728,6 +732,12 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             <div class="flex items-center gap-1.5 text-xs text-[var(--chat-meta-color)] mt-0.5 flex-wrap">
               {#if !isOnline}
                 <span>{formatLastSeen(lastSeenAt)}</span>
+                <span>·</span>
+              {:else if (onlineMatch?.presenceMode ?? profile?.presenceMode ?? seed.presenceMode) === "fallback"}
+                <span>兜底在线（近期发言）</span>
+                <span>·</span>
+              {:else if (onlineMatch ? onlineMatch.isFocused === false : profile?.isFocused === false)}
+                <span>离开</span>
                 <span>·</span>
               {/if}
               <span>Matrix 联邦中继</span>
@@ -1115,6 +1125,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
     {@const liveProfileOnline = onlineMembers.find((m) => m.userKey === profile.userKey)}
     {@const profileIsOnline = Boolean(liveProfileOnline ?? profile.online)}
     {@const profileIsFocused = liveProfileOnline ? liveProfileOnline.isFocused !== false : (profile.isFocused !== false)}
+    {@const profilePresenceMode = liveProfileOnline?.presenceMode ?? profile.presenceMode}
+    {@const profileIsFallback = profileIsOnline && profilePresenceMode === "fallback"}
     <!-- 主体：手机端单流平滑滚动，平板/桌面端 42%:58% 左右双栏独立滚动且高度随内容自适应 -->
     <div
       bind:this={bodyContainerEl}
@@ -1134,8 +1146,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               />
               {#if profileIsOnline}
                 <span
-                  title={profileIsFocused ? "在线" : "离开"}
-                  class="chat-online-dot {profileIsFocused ? '' : 'chat-online-dot--away'} w-3! h-3! absolute bottom-0 right-0 border-2 border-white dark:border-neutral-900"
+                  title={profileIsFallback ? "兜底在线（对方站点未上报在线状态，仅依据近期发言判定）" : profileIsFocused ? "在线" : "离开"}
+                  class="chat-online-dot {profileIsFallback ? 'chat-online-dot--fallback' : profileIsFocused ? '' : 'chat-online-dot--away'} w-3! h-3! absolute bottom-0 right-0 border-2 border-white dark:border-neutral-900"
                 ></span>
               {:else}
                 <span
@@ -1162,7 +1174,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 {/if}
               </div>
               <div class="text-[11px] text-[var(--chat-meta-color)] mt-0.5 truncate flex items-center gap-1.5 flex-wrap">
-                <span>{profileIsOnline ? (profileIsFocused ? "在线" : "离开") : formatLastSeen(profile.lastSeenAt)}</span>
+                <span>{profileIsOnline ? (profileIsFallback ? "兜底在线" : profileIsFocused ? "在线" : "离开") : formatLastSeen(profile.lastSeenAt)}</span>
 
                 {#if cleanCustomStatus(profile.status)}
                   <span class="opacity-40 select-none">·</span>
@@ -1400,8 +1412,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           </div>
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
             <span class="text-[11px] text-[var(--chat-meta-color)]">最近活跃</span>
-            <span class="text-[11px] font-bold tabular-nums truncate {profile.online ? 'text-emerald-600 dark:text-emerald-400' : 'text-[var(--deep-text)]'}">
-              {formatActiveStat(profile.online, profile.lastSeenAt)}
+            <span class="text-[11px] font-bold tabular-nums truncate {profileIsOnline ? (profileIsFallback ? 'text-[var(--chat-meta-color)]' : profileIsFocused ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400') : 'text-[var(--deep-text)]'}">
+              {profileIsOnline ? (profileIsFallback ? "兜底在线" : profileIsFocused ? formatActiveStat(true, profile.lastSeenAt) : "离开") : formatActiveStat(false, profile.lastSeenAt)}
             </span>
           </div>
         </div>

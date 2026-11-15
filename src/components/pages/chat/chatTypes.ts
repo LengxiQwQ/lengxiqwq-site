@@ -1,6 +1,7 @@
 import type { ChatMusicTrack } from "./musicTypes";
 
 export type BadgeType = "host" | "accent" | "tag";
+export type ChatPresenceMode = "local" | "matrix" | "fallback" | "offline";
 
 export interface ChatCustomBadge {
 	text: string;
@@ -80,6 +81,8 @@ export interface ChatOnlineMember extends ChatSessionUser {
 	isMuted?: boolean;
 	/** 浏览器/窗口是否处于焦点中（离开焦点或切出页面时为 false） */
 	isFocused?: boolean;
+	/** 在线检测来源（local=本站实时WS，matrix=对方站点正规Matrix状态，fallback=未上报在线状态仅依据近期发言兜底） */
+	presenceMode?: ChatPresenceMode;
 	visitCount?: number;
 	firstSeenAt?: number;
 	totalDurationSec?: number;
@@ -105,6 +108,7 @@ export interface ChatUserDetailSeed {
 	device?: string;
 	connectedAt?: number;
 	isFocused?: boolean;
+	presenceMode?: ChatPresenceMode;
 	isMuted?: boolean;
 	disconnectedAt?: number;
 	durationFormatted?: string;
@@ -159,6 +163,7 @@ export interface ChatUserDetailProfile {
 	isAdmin: boolean;
 	online: boolean;
 	isFocused?: boolean;
+	presenceMode?: ChatPresenceMode;
 	status: string;
 	bio: string;
 	location?: string;
@@ -195,6 +200,7 @@ export interface ChatMentionCandidate {
 	isAdmin: boolean;
 	online: boolean;
 	isFocused?: boolean;
+	presenceMode?: ChatPresenceMode;
 	status?: string;
 	bio?: string;
 	location?: string;
