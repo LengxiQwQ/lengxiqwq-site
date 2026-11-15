@@ -289,6 +289,7 @@ const fallbackData = $derived.by<{
 				[],
 			isAdmin,
 			online: Boolean(onlineMatch ?? seed.online),
+			isFocused: onlineMatch ? onlineMatch.isFocused !== false : (seed.isFocused !== false),
 			status: cleanCustomStatus(
 				onlineMatch?.status || selfUser?.status || seed.status,
 			),
@@ -503,6 +504,7 @@ $effect(() => {
 			bio: liveOnline?.bio ?? cachedEntry.profile.bio,
 			location: liveOnline?.location || cachedEntry.profile.location,
 			online: Boolean(liveOnline ?? currentSeed.online),
+			isFocused: liveOnline ? liveOnline.isFocused !== false : cachedEntry.profile.isFocused,
 		};
 		remoteProfile = mergedProfile;
 		remoteTracks = mergedProfile.recentTracks ?? [];
@@ -704,8 +706,10 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           <div class="relative shrink-0">
             <ChatAvatar src={seed.avatar} name={cleanName} size="lg" />
             {#if isOnline}
+              {@const extModalFocused = onlineMatch ? onlineMatch.isFocused !== false : (profile?.isFocused !== false)}
               <span
-                class="chat-online-dot {profile?.isFocused !== false ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
+                title={extModalFocused ? "在线" : "离开"}
+                class="chat-online-dot {extModalFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
               ></span>
             {/if}
           </div>
@@ -1108,6 +1112,9 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
     </div>
   {:else if profile}
     {@const safeProfileUrl = sanitizeChatUrl(profile.url, false)}
+    {@const liveProfileOnline = onlineMembers.find((m) => m.userKey === profile.userKey)}
+    {@const profileIsOnline = Boolean(liveProfileOnline ?? profile.online)}
+    {@const profileIsFocused = liveProfileOnline ? liveProfileOnline.isFocused !== false : (profile.isFocused !== false)}
     <!-- 主体：手机端单流平滑滚动，平板/桌面端 42%:58% 左右双栏独立滚动且高度随内容自适应 -->
     <div
       bind:this={bodyContainerEl}
@@ -1125,9 +1132,17 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 name={profile.name}
                 size="lg"
               />
-              <span
-                class="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-neutral-900 {profile.online ? 'bg-emerald-500' : 'bg-neutral-400'}"
-              ></span>
+              {#if profileIsOnline}
+                <span
+                  title={profileIsFocused ? "在线" : "离开"}
+                  class="chat-online-dot {profileIsFocused ? '' : 'chat-online-dot--away'} w-3! h-3! absolute bottom-0 right-0 border-2 border-white dark:border-neutral-900"
+                ></span>
+              {:else}
+                <span
+                  title="离线"
+                  class="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-neutral-900 bg-neutral-400"
+                ></span>
+              {/if}
             </div>
 
             <div class="min-w-0 flex-1">
@@ -1147,7 +1162,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 {/if}
               </div>
               <div class="text-[11px] text-[var(--chat-meta-color)] mt-0.5 truncate flex items-center gap-1.5 flex-wrap">
-                <span>{profile.online ? "在线" : formatLastSeen(profile.lastSeenAt)}</span>
+                <span>{profileIsOnline ? (profileIsFocused ? "在线" : "离开") : formatLastSeen(profile.lastSeenAt)}</span>
 
                 {#if cleanCustomStatus(profile.status)}
                   <span class="opacity-40 select-none">·</span>

@@ -3933,6 +3933,7 @@ $effect(() => {
 
   <ChatModal open={rotationExpanded && isWalineLoggedIn && Boolean(currentUser?.isAdmin)}
     title="冷场轮播设置" subtitle="仅作用于当前房间，待播队列优先" size="md"
+    portalToChatPage
     onClose={() => { if (!rotationSaving) rotationExpanded = false; }}>
     <form class="flex flex-col min-h-0 p-4 gap-3" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>
       <fieldset class="border-0 p-0 m-0 flex flex-wrap gap-x-4 gap-y-2" disabled={rotationSaving}>

@@ -10,6 +10,7 @@ interface Props {
 	fillHeightOnDesktop?: boolean;
 	lockedMinHeight?: number;
 	topPriority?: boolean;
+	portalToChatPage?: boolean;
 	onClose: () => void;
 	headerExtra?: Snippet;
 	children: Snippet;
@@ -24,6 +25,7 @@ const {
 	fillHeightOnDesktop = false,
 	lockedMinHeight = 0,
 	topPriority = false,
+	portalToChatPage = false,
 	onClose,
 	headerExtra,
 	children,
@@ -31,6 +33,20 @@ const {
 
 let backdropEl: HTMLDivElement | null = $state(null);
 let backdropPointerDown = false;
+
+function placeBackdrop(node: HTMLDivElement) {
+	if (!portalToChatPage) return;
+	const parent = node.parentNode;
+	const placeholder = document.createComment("chat modal");
+	parent?.insertBefore(placeholder, node);
+	const target = document.getElementById("chat-page");
+	target?.appendChild(node);
+	return {
+		destroy() {
+			if (placeholder.parentNode) placeholder.replaceWith(node);
+		},
+	};
+}
 
 $effect(() => {
 	if (!open) return;
@@ -66,6 +82,7 @@ const sizeClass = $derived(
 {#if open}
   <div
     bind:this={backdropEl}
+    use:placeBackdrop
     class="chat-modal-backdrop {topPriority ? 'chat-modal-backdrop--top' : ''}"
     role="presentation"
     onpointerdown={handlePointerDown}

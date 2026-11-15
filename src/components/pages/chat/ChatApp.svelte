@@ -78,6 +78,8 @@ let activeTab = $state<"room" | "chat" | "music">("chat");
 let currentRoom = $state(rooms[0]?.id || "chat");
 let connectionState = $state<ConnectionState>("idle");
 let isWindowFocused = $state(true);
+let isIdleAway = $state(false);
+const isEffectiveFocused = $derived(isWindowFocused && !isIdleAway);
 let currentUser = $state<ChatSessionUser | null>(null);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
 let observers = $state<ChatOnlineMember[]>([]);
@@ -237,11 +239,11 @@ $effect(() => {
 		lastReportedFocusKey = "";
 		return;
 	}
-	const key = `${currentRoom}:${userKey}:${isWindowFocused ? 1 : 0}`;
+	const key = `${currentRoom}:${userKey}:${isEffectiveFocused ? 1 : 0}`;
 	if (key === lastReportedFocusKey) return;
 	if (ws && ws.readyState === WebSocket.OPEN) {
 		lastReportedFocusKey = key;
-		ws.send(JSON.stringify({ type: "presence:focus", isFocused: isWindowFocused }));
+		ws.send(JSON.stringify({ type: "presence:focus", isFocused: isEffectiveFocused }));
 	}
 });
 
@@ -1808,11 +1810,44 @@ onMount(() => {
 		}
 	}, 30000);
 
+	const IDLE_AWAY_MS = 3 * 60 * 1000;
+	let idleAwayTimer: number | null = null;
+	let lastActivityResetAt = 0;
+
+	const resetIdleTimer = () => {
+		const now = Date.now();
+		if (isIdleAway) {
+			isIdleAway = false;
+		} else if (now - lastActivityResetAt < 1000) {
+			return;
+		}
+		lastActivityResetAt = now;
+		if (idleAwayTimer !== null) window.clearTimeout(idleAwayTimer);
+		idleAwayTimer = window.setTimeout(() => {
+			isIdleAway = true;
+		}, IDLE_AWAY_MS);
+	};
+
+	const syncFocusState = () => {
+		const focused =
+			!document.hidden &&
+			(typeof document.hasFocus !== "function" || document.hasFocus());
+		isWindowFocused = focused;
+		if (focused) {
+			resetIdleTimer();
+		}
+	};
+
 	const handleWindowFocus = () => {
 		isWindowFocused = true;
+		resetIdleTimer();
 	};
 
 	const handleWindowBlur = () => {
+		isWindowFocused = false;
+	};
+
+	const handlePageHide = () => {
 		isWindowFocused = false;
 	};
 
@@ -1822,6 +1857,7 @@ onMount(() => {
 		} else {
 			isWindowFocused =
 				typeof document.hasFocus === "function" ? document.hasFocus() : true;
+			if (isWindowFocused) resetIdleTimer();
 			if (baseDocumentTitle && document.title !== baseDocumentTitle) {
 				document.title = baseDocumentTitle;
 			}
@@ -1835,9 +1871,16 @@ onMount(() => {
 			}
 		}
 	};
+	syncFocusState();
 	document.addEventListener("visibilitychange", handleVisibility);
 	window.addEventListener("focus", handleWindowFocus);
 	window.addEventListener("blur", handleWindowBlur);
+	window.addEventListener("pagehide", handlePageHide);
+	window.addEventListener("mousemove", resetIdleTimer, { passive: true });
+	window.addEventListener("pointerdown", resetIdleTimer, { passive: true });
+	window.addEventListener("keydown", resetIdleTimer, { passive: true });
+	window.addEventListener("wheel", resetIdleTimer, { passive: true });
+	window.addEventListener("touchstart", resetIdleTimer, { passive: true });
 
 	return () => {
 		isUnmounted = true;
@@ -1845,9 +1888,16 @@ onMount(() => {
 		window.clearInterval(presenceTimer);
 		window.clearInterval(memberTimer);
 		window.clearInterval(playlistTimer);
+		if (idleAwayTimer !== null) window.clearTimeout(idleAwayTimer);
 		document.removeEventListener("visibilitychange", handleVisibility);
 		window.removeEventListener("focus", handleWindowFocus);
 		window.removeEventListener("blur", handleWindowBlur);
+		window.removeEventListener("pagehide", handlePageHide);
+		window.removeEventListener("mousemove", resetIdleTimer);
+		window.removeEventListener("pointerdown", resetIdleTimer);
+		window.removeEventListener("keydown", resetIdleTimer);
+		window.removeEventListener("wheel", resetIdleTimer);
+		window.removeEventListener("touchstart", resetIdleTimer);
 		cancelWalinePopup?.();
 		if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
@@ -1880,7 +1930,7 @@ onMount(() => {
         currentUser={currentUser}
         selfMuted={mobilePlaybackStatus.isMuted}
         connectionState={connectionState}
-        isWindowFocused={isWindowFocused}
+        isWindowFocused={isEffectiveFocused}
         interconnectSites={interconnectSites}
         desktopNotificationEnabled={desktopNotificationEnabled}
         desktopNotificationPermission={desktopNotificationPermission}

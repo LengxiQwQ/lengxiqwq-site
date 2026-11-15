@@ -158,6 +158,7 @@ export interface ChatUserDetailProfile {
 	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	online: boolean;
+	isFocused?: boolean;
 	status: string;
 	bio: string;
 	location?: string;
@@ -193,6 +194,7 @@ export interface ChatMentionCandidate {
 	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	online: boolean;
+	isFocused?: boolean;
 	status?: string;
 	bio?: string;
 	location?: string;

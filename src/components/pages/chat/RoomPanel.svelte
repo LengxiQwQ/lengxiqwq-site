@@ -184,7 +184,7 @@ const roomNameById = $derived(
 );
 
 /** 在线成员的副标题：状态 · 当前所在房间 */
-function formatOnlineLine(member: ChatOnlineMember): string {
+function formatOnlineLine(member: ChatOnlineMember, isFocused = true): string {
 	const targetRoomId = member.roomId || "chat";
 	const roomName =
 		roomNameById.get(targetRoomId) ||
@@ -193,8 +193,13 @@ function formatOnlineLine(member: ChatOnlineMember): string {
 			: targetRoomId === "chat"
 				? "闲聊"
 				: targetRoomId);
+	const rawStatus = member.status ? member.status.trim() : "";
 	const status =
-		member.status && member.status !== "在线" ? member.status.trim() : "在线";
+		rawStatus && rawStatus !== "在线" && rawStatus !== "离开"
+			? rawStatus
+			: isFocused
+				? "在线"
+				: "离开";
 	return `${status} · ${roomName}`;
 }
 
@@ -459,10 +464,14 @@ function formatOfflineTime(ts?: number): string {
     {@const offlineTime = isOnline ? "" : formatOfflineTime((member as ChatMentionCandidate).lastSeenAt)}
     {@const subtitle = isExternal
       ? (isOnline
-          ? (member.status && member.status !== "在线" ? `${member.status.trim()} · 来自：${siteName}` : `来自：${siteName}`)
+          ? (member.status && member.status !== "在线" && member.status !== "离开"
+              ? `${member.status.trim()} · 来自：${siteName}`
+              : isFocused
+                ? `来自：${siteName}`
+                : `离开 · 来自：${siteName}`)
           : (offlineTime === "离线" ? `来自：${siteName}` : `来自：${siteName} · ${offlineTime}`))
       : (isOnline
-          ? formatOnlineLine(member as ChatOnlineMember)
+          ? formatOnlineLine(member as ChatOnlineMember, isFocused)
           : offlineTime)}
     <button
       type="button"
@@ -496,6 +505,7 @@ function formatOfflineTime(ts?: number): string {
           />
           {#if isOnline}
             <span
+              title={isFocused ? "在线" : "离开"}
               class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
             ></span>
           {/if}
@@ -721,6 +731,7 @@ function formatOfflineTime(ts?: number): string {
             size="md"
           />
           <span
+            title={isWindowFocused ? "在线" : "离开"}
             class="chat-online-dot {isWindowFocused ? '' : 'chat-online-dot--away'} absolute bottom-0 right-0 border-2 border-white/80 dark:border-neutral-900/80"
           ></span>
         </div>
