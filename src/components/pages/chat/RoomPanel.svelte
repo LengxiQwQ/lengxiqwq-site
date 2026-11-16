@@ -6,7 +6,11 @@ import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
-import { isExternalMatrixIdentity, resolveExternalOrigin } from "./chatClient";
+import {
+	getLocalSiteName,
+	isExternalMatrixIdentity,
+	resolveExternalOrigin,
+} from "./chatClient";
 import type {
 	ChatMentionCandidate,
 	ChatOnlineMember,
@@ -94,7 +98,7 @@ const visibleSpectatorHistory = $derived(
 
 /** 互联房间（跨站联邦聊天）的房间 id */
 const INTERCONNECT_ROOM_IDS = new Set(["interconnect"]);
-const LOCAL_SITE_NAME = "冷汐的杂货铺";
+const localSiteName = $derived(getLocalSiteName(interconnectSites));
 /** 互联房间内是否在成员副标题中显示在线/自定义状态（保留逻辑以便后续按需开启） */
 const SHOW_STATUS_IN_INTERCONNECT = false;
 
@@ -581,8 +585,8 @@ function formatOfflineTime(ts?: number): string {
           : (isOnline
               ? (SHOW_STATUS_IN_INTERCONNECT
                   ? formatOnlineLine(member as ChatOnlineMember, isFocused)
-                  : `来自：${LOCAL_SITE_NAME}`)
-              : (offlineTime === "离线" ? `来自：${LOCAL_SITE_NAME}` : `来自：${LOCAL_SITE_NAME} · ${offlineTime}`)))
+                  : `来自：${localSiteName}`)
+              : (offlineTime === "离线" ? `来自：${localSiteName}` : `来自：${localSiteName} · ${offlineTime}`)))
       : (isOnline
           ? formatOnlineLine(member as ChatOnlineMember, isFocused)
           : offlineTime)}

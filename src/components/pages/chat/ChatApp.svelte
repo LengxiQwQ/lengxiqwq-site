@@ -171,6 +171,14 @@ function mergeRoomMessages(
 let hasMoreHistory = $state(false);
 let oldestHistoryId = $state(0);
 let isLoadingHistory = $state(false);
+let historyLoadTimeoutTimer: number | null = null;
+
+function clearHistoryLoadTimer() {
+	if (historyLoadTimeoutTimer !== null) {
+		window.clearTimeout(historyLoadTimeoutTimer);
+		historyLoadTimeoutTimer = null;
+	}
+}
 let sessionUnreadSince = $state(0);
 let serverUnreadCount = $state(0);
 let serverUnreadUserCount = $state(0);
@@ -869,6 +877,7 @@ function connectRoom(roomId: string) {
 					Boolean(packet.hasMoreHistory),
 				);
 				hasMoreHistory = Boolean(packet.hasMoreHistory);
+				clearHistoryLoadTimer();
 				isLoadingHistory = false;
 				const userKey = packet.self?.userKey || "guest";
 				const localSeen = readUserLastSeen(packet.roomId, userKey);
@@ -905,7 +914,7 @@ function connectRoom(roomId: string) {
 				musicState = packet.music;
 				if (packet.musicAudience) musicAudience = packet.musicAudience;
 				oldestHistoryId =
-					packet.oldestHistoryId ?? packet.messages[0]?.id ?? 0;
+					messages[0]?.id ?? packet.oldestHistoryId ?? 0;
 				pinnedUids = packet.pinnedUids ?? [];
 				roomTopic = packet.topic ?? "";
 				if (packet.roomAvatars || typeof packet.roomAvatar === "string") {
@@ -929,27 +938,24 @@ function connectRoom(roomId: string) {
 			}
 			case "chat:history_batch": {
 				if (packet.roomId === currentRoom) {
+					clearHistoryLoadTimer();
 					isLoadingHistory = false;
 					hasMoreHistory = Boolean(packet.hasMoreHistory);
-					if (
-						packet.oldestHistoryId &&
-						(!oldestHistoryId || packet.oldestHistoryId < oldestHistoryId)
-					) {
-						oldestHistoryId = packet.oldestHistoryId;
-					} else if (
-						packet.messages[0]?.id &&
-						(!oldestHistoryId || packet.messages[0].id < oldestHistoryId)
-					) {
-						oldestHistoryId = packet.messages[0].id;
-					}
 					if (packet.messages.length > 0) {
 						const existingIds = new Set(messages.map((m) => m.msgUid));
 						const prepended = packet.messages.filter(
 							(m) => !existingIds.has(m.msgUid),
 						);
 						if (prepended.length > 0) {
-							messages = [...prepended, ...messages];
+							messages = [...prepended, ...messages].sort(
+								(a, b) => a.createdAt - b.createdAt,
+							);
 						}
+					}
+					if (messages.length > 0) {
+						oldestHistoryId = messages[0].id;
+					} else if (packet.oldestHistoryId) {
+						oldestHistoryId = packet.oldestHistoryId;
 					}
 					if (packet.jumpTarget) {
 						unreadJumpSeq += 1;
@@ -1441,6 +1447,7 @@ function handleRoomSelect(roomId: string) {
 	messages = roomMessageCache.get(roomId) ?? [];
 	hasMoreHistory = false;
 	oldestHistoryId = 0;
+	clearHistoryLoadTimer();
 	isLoadingHistory = false;
 	pinnedUids = [];
 	roomTopic = "";
@@ -1719,16 +1726,28 @@ function handleSendMessage(
 }
 
 function handleLoadHistory(sinceCreatedAt = 0, jumpTarget = false) {
-	const oldestId = oldestHistoryId || (messages[0]?.id ?? 0);
-	if (!oldestId || isLoadingHistory) return;
+	if (isLoadingHistory) return;
+	const oldestMsg = messages[0];
+	const oldestId = oldestMsg?.id || oldestHistoryId || 0;
+	const beforeUid = oldestMsg?.msgUid || "";
+	const beforeCreatedAt = oldestMsg?.createdAt || 0;
+	if (!beforeUid && !oldestId) return;
 	isLoadingHistory = true;
+	clearHistoryLoadTimer();
+	historyLoadTimeoutTimer = window.setTimeout(() => {
+		isLoadingHistory = false;
+		historyLoadTimeoutTimer = null;
+	}, 10000);
 	const ok = sendPacket({
 		type: "chat:load_history",
 		beforeId: oldestId,
+		beforeUid: beforeUid || undefined,
+		beforeCreatedAt: beforeCreatedAt > 0 ? beforeCreatedAt : undefined,
 		sinceCreatedAt: sinceCreatedAt > 0 ? sinceCreatedAt : undefined,
 		jumpTarget,
 	});
 	if (!ok) {
+		clearHistoryLoadTimer();
 		isLoadingHistory = false;
 	}
 }
@@ -2282,6 +2301,7 @@ onMount(() => {
 			}
 		}
 		isUnmounted = true;
+		clearHistoryLoadTimer();
 		for (const pending of songRequests.values()) pending.finish(false);
 		window.clearInterval(presenceTimer);
 		window.clearInterval(memberTimer);

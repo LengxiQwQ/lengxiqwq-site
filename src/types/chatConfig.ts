@@ -54,6 +54,8 @@ export interface InterconnectSite {
 	url: string;
 	desc?: string;
 	isSelf?: boolean;
+	/** 可选的旧域名、Matrix 节点域或简称别名（用于统一归属到当前标准站点名） */
+	aliases?: string[];
 }
 
 export interface ChatConfig {

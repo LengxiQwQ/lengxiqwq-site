@@ -7,6 +7,7 @@ import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import {
+	hasExplicitRoomMentionText,
 	isExternalMatrixIdentity,
 	resolveExternalOrigin,
 	sanitizeChatUrl,
@@ -42,6 +43,7 @@ interface Props {
 	chatServerUrl?: string;
 	interconnectSites?: InterconnectSite[];
 	userNameMap?: Map<string, string>;
+	userProfileMap?: Map<string, ChatUserDetailSeed>;
 	readReceipts?: ChatReadReceipt[];
 	onRecall?: (msgUid: string) => void;
 	onDelete?: (msgUid: string) => void;
@@ -83,6 +85,7 @@ const {
 	chatServerUrl,
 	interconnectSites = [],
 	userNameMap = new Map(),
+	userProfileMap = new Map(),
 	readReceipts = [],
 	onRecall,
 	onDelete,
@@ -99,8 +102,10 @@ const {
 }: Props = $props();
 
 let showQuickReaction = $state(false);
+let showMoreActions = $state(false);
 let copySuccess = $state(false);
 let reactionEl = $state<HTMLElement | null>(null);
+let moreActionsEl = $state<HTMLElement | null>(null);
 let bubbleW = $state(0);
 let bubbleH = $state(0);
 
@@ -159,7 +164,7 @@ async function handleCopy(e: MouseEvent) {
 }
 
 $effect(() => {
-	if (!showQuickReaction) return;
+	if (!showQuickReaction && !showMoreActions) return;
 	function handleOutside(e: PointerEvent) {
 		const target = e.target as Node | null;
 		if (
@@ -169,6 +174,14 @@ $effect(() => {
 			!reactionEl.contains(target)
 		) {
 			showQuickReaction = false;
+		}
+		if (
+			showMoreActions &&
+			moreActionsEl &&
+			target &&
+			!moreActionsEl.contains(target)
+		) {
+			showMoreActions = false;
 		}
 	}
 	window.addEventListener("pointerdown", handleOutside, { capture: true });
@@ -314,9 +327,10 @@ const safeAttachments = $derived.by(() =>
 
 const canRoomHighlight = $derived(
 	Boolean(
-		message.isAdmin ||
-			message.mentionKeys?.includes("room") ||
-			message.mentionKeys?.includes("@room"),
+		hasExplicitRoomMentionText(message.content) &&
+			(message.isAdmin ||
+				message.mentionKeys?.includes("room") ||
+				message.mentionKeys?.includes("@room")),
 	),
 );
 
@@ -424,36 +438,81 @@ function handleAvatarClick() {
 	}
 }
 
-function formatReactionTooltip(users: string[]): string {
-	if (!users || users.length === 0) return "";
-	const names = users.map((key) => {
-		if (currentUserKey && key === currentUserKey) return "你";
-		if (userNameMap.has(key)) return userNameMap.get(key)!;
+interface ReactionUserItem {
+	userKey: string;
+	displayName: string;
+	isMe: boolean;
+	seed: ChatUserDetailSeed;
+}
+
+function resolveUserProfileSeed(
+	key: string,
+	fallbackName?: string,
+	fallbackAvatar?: string,
+): { displayName: string; isMe: boolean; seed: ChatUserDetailSeed } {
+	const isMe = Boolean(currentUserKey && key === currentUserKey);
+	const profile =
+		userProfileMap.get(key) ||
+		(key.startsWith("matrix:")
+			? userProfileMap.get(key.slice(7))
+			: userProfileMap.get(`matrix:${key}`));
+	let resolvedFallback = fallbackName || userNameMap.get(key) || "";
+	if (!resolvedFallback) {
 		if (key.startsWith("matrix:") || (key.startsWith("@") && key.includes(":"))) {
 			const cleanKey = key.replace(/^matrix:/, "");
 			const match = cleanKey.match(/^@([^:]+):(.+)$/);
-			if (match) {
-				const [, uName] = match;
-				const origin = resolveExternalOrigin(
-					{ name: "", userKey: cleanKey },
-					interconnectSites,
-				);
-				return origin?.siteName ? `${uName} (${origin.siteName})` : uName;
-			}
-			return cleanKey;
+			resolvedFallback = match ? match[1] : cleanKey;
+		} else if (key.startsWith("waline:") || key.startsWith("guest:")) {
+			resolvedFallback = key.split(":")[1] || key;
+		} else {
+			resolvedFallback = key;
 		}
-		if (key.startsWith("waline:") || key.startsWith("guest:")) {
-			return key.split(":")[1] || key;
-		}
-		return key;
-	});
-
-	const uniqueNames = [...new Set(names)];
-
-	if (uniqueNames.length <= 3) {
-		return uniqueNames.join("、");
 	}
-	return `${uniqueNames.slice(0, 3).join("、")} 等 ${uniqueNames.length} 人`;
+	const isExt = isExternalMatrixIdentity(key);
+	const baseName = profile?.name || resolvedFallback || "成员";
+	const origin = isExt
+		? resolveExternalOrigin(
+				{ name: baseName, userKey: key, site: profile?.site, siteUrl: profile?.siteUrl, url: profile?.url },
+				interconnectSites,
+			)
+		: null;
+	const displayName = origin?.siteName
+		? `${origin.cleanName || baseName} (${origin.siteName})`
+		: baseName;
+
+	const seed: ChatUserDetailSeed = profile
+		? {
+				...profile,
+				userKey: profile.userKey || key,
+				name: origin?.cleanName || baseName,
+				avatar: profile.avatar || fallbackAvatar,
+			}
+		: {
+				userKey: key,
+				name: origin?.cleanName || baseName,
+				avatar: fallbackAvatar,
+				authType: isExt
+					? undefined
+					: key.startsWith("waline:")
+						? "waline"
+						: key.startsWith("guest:")
+							? "guest"
+							: undefined,
+			};
+	return { displayName, isMe, seed };
+}
+
+function resolveReactionUsers(users: string[]): ReactionUserItem[] {
+	if (!users || users.length === 0) return [];
+	const seen = new Set<string>();
+	const list: ReactionUserItem[] = [];
+	for (const key of users) {
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		const { displayName, isMe, seed } = resolveUserProfileSeed(key);
+		list.push({ userKey: key, displayName, isMe, seed });
+	}
+	return list;
 }
 
 let pointerStartPos: { x: number; y: number; time: number } | null = null;
@@ -536,6 +595,23 @@ function handleBubblePointerUp(e: PointerEvent) {
 }
 </script>
 
+{#snippet renderBubbleBg(mirrored: boolean)}
+  {#if bubblePath}
+    <svg
+      class="chat-bubble-bg"
+      viewBox="0 0 {bubbleW} {bubbleH}"
+      style="width: {bubbleW}px; height: {bubbleH}px;"
+      shape-rendering="geometricPrecision"
+      aria-hidden="true"
+    >
+      <g transform={mirrored ? `translate(${bubbleW} 0) scale(-1 1)` : undefined}>
+        <path class="chat-bubble-shadow" transform="translate(0 1)" d={bubblePath} />
+        <path class="chat-bubble-shape" d={bubblePath} />
+      </g>
+    </svg>
+  {/if}
+{/snippet}
+
 {#snippet replyQuoteBlock()}
   {#if message.replyTo}
     <button
@@ -558,22 +634,29 @@ function handleBubblePointerUp(e: PointerEvent) {
 {/snippet}
 
 {#snippet renderFloatingActions(isSelfMsg: boolean)}
-  {#if onReaction || onReply || (message.content && message.content.trim()) || (onEdit && canEdit && !message.replyTo?.isRecalled) || (isAdmin && onPin) || (canRecall && onRecall) || (canDelete && onDelete)}
+  {@const canCopy = Boolean(message.content && message.content.trim())}
+  {@const canEditMsg = Boolean(onEdit && canEdit && !message.replyTo?.isRecalled)}
+  {@const canPinMsg = Boolean(isAdmin && onPin)}
+  {@const canRecallMsg = Boolean(canRecall && onRecall)}
+  {@const canDeleteMsg = Boolean(canDelete && onDelete)}
+  {@const hasMoreActions = canCopy || canEditMsg || canPinMsg || canRecallMsg || canDeleteMsg}
+  {#if onReaction || onReply || hasMoreActions}
     <div
-      class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction ? 'is-active' : ''}"
+      class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction || showMoreActions ? 'is-active' : ''}"
       role="toolbar"
       aria-label="消息快捷操作"
     >
       <!-- 快捷表情反应 -->
       {#if onReaction}
         <div class="relative inline-flex items-center" bind:this={reactionEl}>
-          <ChatTooltip text="表情回应" disabled={showQuickReaction}>
+          <ChatTooltip text="表情回应" disabled={showQuickReaction || showMoreActions}>
             <button
               type="button"
               class="chat-action-icon-btn {showQuickReaction ? 'active' : ''}"
               aria-label="表情回应"
               onclick={(e) => {
                 e.stopPropagation();
+                showMoreActions = false;
                 showQuickReaction = !showQuickReaction;
               }}
             >
@@ -609,13 +692,15 @@ function handleBubblePointerUp(e: PointerEvent) {
 
       <!-- 快捷回复 -->
       {#if onReply}
-        <ChatTooltip text="回复">
+        <ChatTooltip text="回复" disabled={showMoreActions}>
           <button
             type="button"
             class="chat-action-icon-btn"
             aria-label="回复消息"
             onclick={(e) => {
               e.stopPropagation();
+              showQuickReaction = false;
+              showMoreActions = false;
               onReply?.(message);
             }}
           >
@@ -627,107 +712,127 @@ function handleBubblePointerUp(e: PointerEvent) {
         </ChatTooltip>
       {/if}
 
-      <!-- 复制内容 -->
-      {#if message.content && message.content.trim()}
-        <ChatTooltip text={copySuccess ? "已复制 ✓" : "复制"}>
-          <button
-            type="button"
-            class="chat-action-icon-btn {copySuccess ? 'text-emerald-500' : ''}"
-            aria-label="复制内容"
-            onclick={handleCopy}
-          >
-            {#if copySuccess}
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polyline points="20 6 9 17 4 12" />
+      <!-- 收纳更多操作（点击展开） -->
+      {#if hasMoreActions}
+        <div class="relative inline-flex items-center" bind:this={moreActionsEl}>
+          <ChatTooltip text="更多操作" disabled={showMoreActions || showQuickReaction}>
+            <button
+              type="button"
+              class="chat-action-icon-btn {showMoreActions ? 'active' : ''}"
+              aria-label="更多操作"
+              aria-expanded={showMoreActions}
+              onclick={(e) => {
+                e.stopPropagation();
+                showQuickReaction = false;
+                showMoreActions = !showMoreActions;
+              }}
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="1.75" />
+                <circle cx="12" cy="12" r="1.75" />
+                <circle cx="19" cy="12" r="1.75" />
               </svg>
-            {:else}
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-              </svg>
-            {/if}
-          </button>
-        </ChatTooltip>
-      {/if}
+            </button>
+          </ChatTooltip>
 
-      <!-- 编辑消息 -->
-      {#if onEdit && canEdit && !message.replyTo?.isRecalled}
-        <ChatTooltip text="编辑">
-          <button
-            type="button"
-            class="chat-action-icon-btn"
-            aria-label="编辑消息"
-            onclick={(e) => {
-              e.stopPropagation();
-              onEdit?.(message);
-            }}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-            </svg>
-          </button>
-        </ChatTooltip>
-      {/if}
+          {#if showMoreActions}
+            <div class="chat-more-actions-popover {isSelfMsg ? 'self-popover' : 'other-popover'}" role="menu" aria-label="更多消息操作">
+              {#if canCopy}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="chat-more-action-item {copySuccess ? 'text-emerald-500' : ''}"
+                  onclick={(e) => {
+                    void handleCopy(e);
+                    showMoreActions = false;
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                  </svg>
+                  <span>{copySuccess ? "已复制" : "复制内容"}</span>
+                </button>
+              {/if}
 
-      <!-- 置顶 / 取消置顶 -->
-      {#if isAdmin && onPin}
-        <ChatTooltip text={isPinned ? "取消置顶" : "置顶"}>
-          <button
-            type="button"
-            class="chat-action-icon-btn {isPinned ? 'text-[var(--skin-accent)]' : ''}"
-            aria-label={isPinned ? "取消置顶" : "置顶消息"}
-            onclick={(e) => {
-              e.stopPropagation();
-              onPin?.(message.msgUid, isPinned);
-            }}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <line x1="12" y1="17" x2="12" y2="22" />
-              <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
-            </svg>
-          </button>
-        </ChatTooltip>
-      {/if}
+              {#if canEditMsg}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="chat-more-action-item"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    showMoreActions = false;
+                    onEdit?.(message);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                  </svg>
+                  <span>编辑消息</span>
+                </button>
+              {/if}
 
-      <!-- 撤回消息 -->
-      {#if canRecall && onRecall}
-        <ChatTooltip text="撤回">
-          <button
-            type="button"
-            class="chat-action-icon-btn hover:text-[var(--primary)]"
-            aria-label="撤回消息"
-            onclick={(e) => {
-              e.stopPropagation();
-              onRecall?.(message.msgUid);
-            }}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="1 4 1 10 7 10" />
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-            </svg>
-          </button>
-        </ChatTooltip>
-      {/if}
+              {#if canPinMsg}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="chat-more-action-item {isPinned ? 'text-[var(--skin-accent)]' : ''}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    showMoreActions = false;
+                    onPin?.(message.msgUid, isPinned);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="12" y1="17" x2="12" y2="22" />
+                    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+                  </svg>
+                  <span>{isPinned ? "取消置顶" : "置顶消息"}</span>
+                </button>
+              {/if}
 
-      <!-- 删除消息 -->
-      {#if canDelete && onDelete}
-        <ChatTooltip text="删除">
-          <button
-            type="button"
-            class="chat-action-icon-btn hover:text-red-500"
-            aria-label="删除消息"
-            onclick={(e) => {
-              e.stopPropagation();
-              onDelete?.(message.msgUid);
-            }}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 6h18" />
-              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-            </svg>
-          </button>
-        </ChatTooltip>
+              {#if canRecallMsg}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="chat-more-action-item"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    showMoreActions = false;
+                    onRecall?.(message.msgUid);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                  <span>撤回消息</span>
+                </button>
+              {/if}
+
+              {#if canDeleteMsg}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="chat-more-action-item text-red-500 hover:text-red-500"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    showMoreActions = false;
+                    onDelete?.(message.msgUid);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 6h18" />
+                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                  </svg>
+                  <span>删除消息</span>
+                </button>
+              {/if}
+            </div>
+          {/if}
+        </div>
       {/if}
     </div>
   {/if}
@@ -739,18 +844,57 @@ function handleBubblePointerUp(e: PointerEvent) {
     <div class="chat-reaction-pills {alignEnd ? 'justify-end' : 'justify-start'}">
       {#each reactionEntries as [emoji, users] (emoji)}
         {@const isMine = Boolean(currentUserKey && users.includes(currentUserKey))}
-        {@const tooltipText = formatReactionTooltip(users)}
-        <button
-          type="button"
-          class="chat-reaction-pill {isMine ? 'is-active' : ''}"
-          onclick={() => onReaction?.(message.msgUid, emoji)}
-        >
-          <span>{emoji}</span>
-          <span class="text-[0.6875rem] font-medium opacity-85">{users.length}</span>
-          {#if tooltipText}
-            <span class="chat-reaction-tooltip" role="tooltip">{tooltipText}</span>
+        {@const reactionUsers = resolveReactionUsers(users)}
+        <div class="chat-reaction-item">
+          <button
+            type="button"
+            class="chat-reaction-pill {isMine ? 'is-active' : ''}"
+            onclick={() => onReaction?.(message.msgUid, emoji)}
+          >
+            <span>{emoji}</span>
+            <span class="text-[0.6875rem] font-medium opacity-85">{users.length}</span>
+          </button>
+          {#if reactionUsers.length > 0}
+            <div
+              class="chat-read-receipts-popover chat-reaction-popover {alignEnd ? 'align-right' : 'align-left'}"
+              role="dialog"
+              aria-label={`${emoji} 回应成员`}
+            >
+              <div class="text-[0.6875rem] font-semibold text-[var(--deep-text)] dark:text-white/90 px-1 pb-1 mb-1 border-b border-[var(--chat-divider-color)] flex items-center justify-between gap-2">
+                <span class="flex items-center gap-1">
+                  <span>{emoji}</span>
+                  <span>回应成员</span>
+                </span>
+                <span class="text-[0.625rem] font-normal text-[var(--chat-meta-color)] tabular-nums">{reactionUsers.length} 人</span>
+              </div>
+              <div class="chat-read-receipts-list custom-scrollbar space-y-0.5">
+                {#each reactionUsers as item (item.userKey)}
+                  <button
+                    type="button"
+                    class="chat-reaction-user-btn"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      onOpenUserProfile?.(item.seed);
+                    }}
+                  >
+                    <ChatAvatar
+                      src={item.seed.avatar}
+                      name={item.seed.name}
+                      size="xs"
+                      class="w-4! h-4! text-[9px]!"
+                    />
+                    <span class="truncate flex-1 text-left">
+                      {item.displayName}{item.isMe ? " (你)" : ""}
+                    </span>
+                    <svg class="w-3 h-3 shrink-0 opacity-45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="m9 18 6-6-6-6" />
+                    </svg>
+                  </button>
+                {/each}
+              </div>
+            </div>
           {/if}
-        </button>
+        </div>
       {/each}
     </div>
   {/if}
@@ -942,17 +1086,30 @@ function handleBubblePointerUp(e: PointerEvent) {
           <span>已读成员</span>
           <span class="text-[0.625rem] font-normal text-[var(--chat-meta-color)] tabular-nums">{readers.length} 人</span>
         </div>
-        <div class="chat-read-receipts-list custom-scrollbar space-y-1">
+        <div class="chat-read-receipts-list custom-scrollbar space-y-0.5">
           {#each readers as reader (reader.userKey)}
-            <div class="flex items-center gap-1.5 px-1 py-0.5 rounded text-[0.75rem] text-[var(--deep-text)] dark:text-white/85">
+            {@const resolved = resolveUserProfileSeed(reader.userKey, reader.name, reader.avatar)}
+            <button
+              type="button"
+              class="chat-reaction-user-btn"
+              onclick={(e) => {
+                e.stopPropagation();
+                onOpenUserProfile?.(resolved.seed);
+              }}
+            >
               <ChatAvatar
-                src={reader.avatar}
-                name={reader.name}
+                src={resolved.seed.avatar}
+                name={resolved.seed.name}
                 size="xs"
                 class="w-4! h-4! text-[8px]! shrink-0"
               />
-              <span class="truncate">{reader.name}</span>
-            </div>
+              <span class="truncate flex-1 text-left">
+                {resolved.displayName}{resolved.isMe ? " (你)" : ""}
+              </span>
+              <svg class="w-3 h-3 shrink-0 opacity-45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+            </button>
           {/each}
         </div>
       </div>
@@ -1100,20 +1257,7 @@ function handleBubblePointerUp(e: PointerEvent) {
             use:trackBubbleBox
             class="chat-bubble chat-bubble-self {bubblePath ? 'chat-bubble-svg-ready' : ''}"
           >
-            {#if bubblePath}
-              <svg
-                class="chat-bubble-bg"
-                viewBox="0 0 {bubbleW} {bubbleH}"
-                style="width: {bubbleW}px; height: {bubbleH}px;"
-                shape-rendering="geometricPrecision"
-                aria-hidden="true"
-              >
-                <g transform="translate({bubbleW} 0) scale(-1 1)">
-                  <path class="chat-bubble-shadow" transform="translate(0 1)" d={bubblePath} />
-                  <path class="chat-bubble-shape" d={bubblePath} />
-                </g>
-              </svg>
-            {/if}
+            {@render renderBubbleBg(true)}
             {#if message.replyTo}
               {@render replyQuoteBlock()}
             {/if}
@@ -1217,18 +1361,7 @@ function handleBubblePointerUp(e: PointerEvent) {
             use:trackBubbleBox
             class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''} {bubblePath ? 'chat-bubble-svg-ready' : ''}"
           >
-            {#if bubblePath}
-              <svg
-                class="chat-bubble-bg"
-                viewBox="0 0 {bubbleW} {bubbleH}"
-                style="width: {bubbleW}px; height: {bubbleH}px;"
-                shape-rendering="geometricPrecision"
-                aria-hidden="true"
-              >
-                <path class="chat-bubble-shadow" transform="translate(0 1)" d={bubblePath} />
-                <path class="chat-bubble-shape" d={bubblePath} />
-              </svg>
-            {/if}
+            {@render renderBubbleBg(false)}
             {#if message.replyTo}
               {@render replyQuoteBlock()}
             {/if}

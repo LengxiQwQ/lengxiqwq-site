@@ -1198,6 +1198,13 @@ export function sanitizeChatUrl(
 	}
 }
 
+const EXPLICIT_ROOM_MENTION_RE =
+	/(?:^|[^A-Za-z0-9._+-])@(?:room|all|所有人|全体成员)(?=$|[\s,，。、！!？?：:；;()[\]{}<>"'~`’”）】》」』])/i;
+
+export function hasExplicitRoomMentionText(content?: string): boolean {
+	return Boolean(content && EXPLICIT_ROOM_MENTION_RE.test(content));
+}
+
 export function isMentionedForUser(
 	msg: ChatMessageRecord,
 	user: ChatSessionUser | null,
@@ -1211,20 +1218,24 @@ export function isMentionedForUser(
 		keys.add("@lengxiqwq:matrix.lengxiqwq.com");
 		keys.add("matrix:@lengxiqwq:matrix.lengxiqwq.com");
 	}
+	const hasExplicitRoomText = hasExplicitRoomMentionText(msg.content);
 	const hasVerifiedRoomKey =
+		hasExplicitRoomText &&
 		Array.isArray(msg.mentionKeys) &&
 		(msg.mentionKeys.includes("room") || msg.mentionKeys.includes("@room"));
 	if (Array.isArray(msg.mentionKeys)) {
 		if (
 			msg.mentionKeys.some(
-				(k) => keys.has(k) || k === "room" || k === "@room",
+				(k) => keys.has(k) || (hasVerifiedRoomKey && (k === "room" || k === "@room")),
 			)
 		) {
 			return true;
 		}
 	}
 	const myName = (user.name || "").trim().toLowerCase();
-	const canTriggerRoomMention = Boolean(msg.isAdmin || hasVerifiedRoomKey);
+	const canTriggerRoomMention = Boolean(
+		hasVerifiedRoomKey || (msg.isAdmin && hasExplicitRoomText),
+	);
 	return Boolean(
 		Array.isArray(msg.mentions) &&
 			msg.mentions.some((m) => {
@@ -1241,6 +1252,53 @@ export function isMentionedForUser(
 	);
 }
 
+export function getLocalSiteName(sites: InterconnectSite[] = []): string {
+	return sites.find((s) => s.isSelf)?.name?.trim() || "本站";
+}
+
+function extractHostname(rawUrl?: string): string {
+	const trimmed = (rawUrl || "").trim();
+	if (!trimmed) return "";
+	try {
+		return new URL(trimmed).hostname.toLowerCase();
+	} catch {
+		return "";
+	}
+}
+
+function matchSiteByHostname(
+	rawHost: string,
+	sites: InterconnectSite[],
+): InterconnectSite | undefined {
+	const clean = rawHost.trim().toLowerCase();
+	if (!clean) return undefined;
+	for (const site of sites) {
+		if (site.isSelf && clean.includes("lengxiqwq.com")) {
+			return site;
+		}
+		const siteHost = extractHostname(site.url);
+		if (siteHost) {
+			if (clean.includes(siteHost) || siteHost.includes(clean)) {
+				return site;
+			}
+			const hostParts = clean.split(".").slice(-2).join(".");
+			const siteParts = siteHost.split(".").slice(-2).join(".");
+			if (hostParts && hostParts === siteParts) {
+				return site;
+			}
+		}
+		if (Array.isArray(site.aliases)) {
+			for (const alias of site.aliases) {
+				const cleanAlias = alias.trim().toLowerCase();
+				if (cleanAlias && (clean.includes(cleanAlias) || cleanAlias.includes(clean))) {
+					return site;
+				}
+			}
+		}
+	}
+	return undefined;
+}
+
 function matchSiteByHint(
 	hint: string,
 	sites: InterconnectSite[],
@@ -1250,18 +1308,15 @@ function matchSiteByHint(
 	for (const s of sites) {
 		const name = (s.name || "").toLowerCase();
 		const owner = (s.owner || "").toLowerCase();
-		let siteHost = "";
-		try {
-			siteHost = new URL(s.url).hostname.toLowerCase();
-		} catch {
-			// invalid URL
-		}
+		const siteHost = extractHostname(s.url);
+		const aliases = Array.isArray(s.aliases)
+			? s.aliases.map((a) => a.trim().toLowerCase()).filter(Boolean)
+			: [];
 		if (
 			(name && (name.includes(clean) || clean.includes(name))) ||
 			(owner && (owner.includes(clean) || clean.includes(owner))) ||
 			(siteHost && (siteHost.includes(clean) || clean.includes(siteHost))) ||
-			(clean === "aiovtue" &&
-				(name.includes("雪") || owner.includes("雪") || siteHost.includes("yybb.us")))
+			aliases.some((a) => a.includes(clean) || clean.includes(a))
 		) {
 			return s;
 		}
@@ -1277,23 +1332,8 @@ function matchSiteByUrl(
 	if (!trimmed || trimmed.includes("matrix.to/") || trimmed.includes("lengxiqwq.com")) {
 		return undefined;
 	}
-	try {
-		const targetHost = new URL(trimmed).hostname.toLowerCase();
-		if (!targetHost) return undefined;
-		for (const site of sites) {
-			try {
-				const siteHost = new URL(site.url).hostname.toLowerCase();
-				if (targetHost.includes(siteHost) || siteHost.includes(targetHost)) {
-					return site;
-				}
-			} catch {
-				// invalid URL
-			}
-		}
-	} catch {
-		// invalid URL
-	}
-	return undefined;
+	const targetHost = extractHostname(trimmed);
+	return targetHost ? matchSiteByHostname(targetHost, sites) : undefined;
 }
 
 export function resolveExternalOrigin(
@@ -1367,65 +1407,21 @@ export function resolveExternalOrigin(
 			explicitBadge.toLowerCase() === "aiovtue" ||
 			baseUserKey.toLowerCase().includes("@aiprate:matrix.rainzt.cn");
 		if (isAiovtueRelay) {
-			matchedSite =
-				matchSiteByHint("aiovtue", sites) || {
-					name: "AIOVTUE-雪",
-					owner: "AIOVTUE-雪",
-					avatar: "https://daily.yybb.us/owo/snow/snow-03.webp",
-					url: explicitSiteUrl || "https://chat.yybb.us/",
-					desc: "雨滴会记录生命中的每一个瞬间",
-				};
-		} else {
-			const fallbackRelayName = explicitSite || explicitBadge || relaySiteKey;
-			if (fallbackRelayName) {
-				matchedSite = {
-					name: fallbackRelayName,
-					owner: fallbackRelayName,
-					url: explicitSiteUrl || (member.url && !member.url.includes("matrix.to/") ? member.url : ""),
-					desc: `来自 ${fallbackRelayName} 互联聊天节点`,
-				};
-			}
+			matchedSite = matchSiteByHint("aiovtue", sites);
 		}
 	}
 
-	// 3. 普通独立 Matrix 账号：按用户 Matrix 域名匹配站点
+	// 3. 普通独立 Matrix 账号：按用户 Matrix 域名（含配置 aliases）匹配站点
 	if (!matchedSite && !hasExplicitRelaySite && host) {
-		for (const site of sites) {
-			try {
-				const siteUrl = new URL(site.url);
-				const siteHost = siteUrl.hostname.toLowerCase();
-				if (host.includes(siteHost) || siteHost.includes(host)) {
-					matchedSite = site;
-					break;
-				}
-				const hostParts = host.split(".").slice(-2).join(".");
-				const siteParts = siteHost.split(".").slice(-2).join(".");
-				if (hostParts && hostParts === siteParts) {
-					matchedSite = site;
-					break;
-				}
-			} catch {
-				// invalid URL
-			}
-		}
+		matchedSite = matchSiteByHostname(host, sites);
 	}
 
-	if (!hasExplicitRelaySite && host.includes("lengxiqwq.com")) {
-		matchedSite = {
-			name: "冷汐的杂货铺",
-			owner: "冷汐OωO",
-			url: "https://lengxiqwq.com",
-			avatar: "https://avatars.githubusercontent.com/u/97082679?v=4",
-			desc: "冷汐的个人网站",
-		};
+	if (!matchedSite && !hasExplicitRelaySite && host.includes("lengxiqwq.com")) {
+		matchedSite = sites.find((s) => s.isSelf);
 	}
 
 	if (!matchedSite && siteFromSuffix) {
-		matchedSite = sites.find(
-			(s) =>
-				s.name.includes(siteFromSuffix) ||
-				siteFromSuffix.includes(s.name),
-		);
+		matchedSite = matchSiteByHint(siteFromSuffix, sites);
 	}
 
 	if (!matchedSite && !hasExplicitRelaySite) {
@@ -1453,32 +1449,18 @@ export function resolveExternalOrigin(
 		}
 	}
 
-	const hostSiteName = host.includes("gbk.ink")
-		? "GBK.ink"
-		: host.includes("somoe.xyz")
-			? "Somoe Home"
-			: host.includes("rainzt.cn")
-				? "朝朝听雨"
-				: host.includes("yybb.us")
-					? "AIOVTUE-雪"
-					: host.includes("detached.online")
-						? "Detached"
-						: "";
-
-	const isRealRelay = Boolean(
-		relaySiteKey ||
-			explicitSiteUrl ||
-			baseUserKey.toLowerCase().includes("@aiprate:matrix.rainzt.cn") ||
-			(explicitSite &&
-				!hostSiteName?.toLowerCase().includes(explicitSite.toLowerCase())),
-	);
+	// 未知站点：优先提取用户网站或 Matrix 节点的服务器域名
+	const unknownServerHost =
+		extractHostname(explicitSiteUrl) ||
+		(!member.url?.includes("matrix.to/") ? extractHostname(member.url) : "") ||
+		host;
 
 	const siteName =
 		matchedSite?.name ||
-		(isRealRelay ? explicitSite : hostSiteName || explicitSite) ||
+		unknownServerHost ||
 		siteFromSuffix ||
-		(isRealRelay ? explicitBadge : hostSiteName || explicitBadge) ||
-		host ||
+		explicitSite ||
+		explicitBadge ||
 		"外部站点";
 
 	return {

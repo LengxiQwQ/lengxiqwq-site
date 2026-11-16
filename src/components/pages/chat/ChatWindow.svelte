@@ -374,6 +374,7 @@ let historyScrollAnchor: {
 	firstMsgUid: string;
 	prevScrollHeight: number;
 	prevScrollTop: number;
+	manualClick: boolean;
 } | null = null;
 let topSentinelEl: HTMLDivElement | null = $state(null);
 
@@ -735,6 +736,110 @@ const filteredMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 
 const unreadMentionSet = $derived(new Set(unreadMentionUids));
 
+const userProfileMap = $derived.by<Map<string, ChatUserDetailSeed>>(() => {
+	const map = new Map<string, ChatUserDetailSeed>();
+	const mergeSeed = (seed: ChatUserDetailSeed) => {
+		if (!seed.userKey) return;
+		const prev = map.get(seed.userKey);
+		const merged: ChatUserDetailSeed = {
+			userKey: seed.userKey,
+			name: seed.name || prev?.name || "",
+			avatar: seed.avatar || prev?.avatar,
+			url: seed.url || prev?.url,
+			site: seed.site || prev?.site,
+			siteUrl: seed.siteUrl || prev?.siteUrl,
+			badge: seed.badge || prev?.badge,
+			badgeType: seed.badgeType || prev?.badgeType,
+			isAdmin: seed.isAdmin ?? prev?.isAdmin,
+			authType: seed.authType || prev?.authType,
+		};
+		map.set(seed.userKey, merged);
+		if (seed.userKey.startsWith("matrix:")) {
+			map.set(seed.userKey.slice(7), merged);
+		} else if (seed.userKey.startsWith("@") && seed.userKey.includes(":")) {
+			map.set(`matrix:${seed.userKey}`, merged);
+		}
+	};
+
+	for (const m of messages) {
+		if (m.userKey && m.name) {
+			mergeSeed({
+				userKey: m.userKey,
+				name: m.name,
+				avatar: m.avatar,
+				url: m.url,
+				site: m.site,
+				siteUrl: m.siteUrl,
+				badge: m.badge,
+				badgeType: m.badgeType,
+				isAdmin: m.isAdmin,
+				authType:
+					m.source === "matrix" || m.userKey.startsWith("matrix:") || m.userKey.startsWith("@")
+						? undefined
+						: m.userKey.startsWith("waline:")
+							? "waline"
+							: "guest",
+			});
+		}
+	}
+	for (const m of mentionMembers) {
+		if (m.userKey && m.name) {
+			mergeSeed({
+				userKey: m.userKey,
+				name: m.name,
+				avatar: m.avatar,
+				url: m.url,
+				site: m.site,
+				siteUrl: m.siteUrl,
+				isAdmin: m.isAdmin,
+			});
+		}
+	}
+	for (const m of onlineMembers) {
+		if (m.userKey && m.name) {
+			mergeSeed({
+				userKey: m.userKey,
+				name: m.name,
+				avatar: m.avatar,
+				url: m.url,
+				site: m.site,
+				siteUrl: m.siteUrl,
+				badge: m.badge,
+				badgeType: m.badgeType,
+				isAdmin: m.isAdmin,
+				authType: m.authType,
+			});
+		}
+	}
+	for (const m of roomOnlineMembers) {
+		if (m.userKey && m.name) {
+			mergeSeed({
+				userKey: m.userKey,
+				name: m.name,
+				avatar: m.avatar,
+				url: m.url,
+				site: m.site,
+				siteUrl: m.siteUrl,
+				badge: m.badge,
+				badgeType: m.badgeType,
+				isAdmin: m.isAdmin,
+				authType: m.authType,
+			});
+		}
+	}
+	if (currentUser?.userKey && currentUser?.name) {
+		mergeSeed({
+			userKey: currentUser.userKey,
+			name: currentUser.name,
+			avatar: currentUser.avatar,
+			url: currentUser.url,
+			isAdmin: currentUser.isAdmin,
+			authType: currentUser.authType,
+		});
+	}
+	return map;
+});
+
 const userNameMap = $derived.by<Map<string, string>>(() => {
 	const map = new Map<string, string>();
 	if (currentUser?.userKey && currentUser?.name) {
@@ -879,7 +984,42 @@ async function scrollToBottom(smooth = false) {
 	});
 }
 
+let jumpSeq = 0;
+
+function smoothScrollContainerTo(
+	container: HTMLElement,
+	targetTop: number,
+	seq: number,
+): Promise<boolean> {
+	const startTop = container.scrollTop;
+	const delta = targetTop - startTop;
+	if (Math.abs(delta) <= 8) return Promise.resolve(true);
+
+	const duration = Math.min(520, Math.max(260, Math.round(Math.abs(delta) * 0.22)));
+	return new Promise((resolve) => {
+		const startTime = performance.now();
+		const step = (now: number) => {
+			if (seq !== jumpSeq) {
+				resolve(false);
+				return;
+			}
+			const elapsed = now - startTime;
+			const progress = Math.min(1, elapsed / duration);
+			const eased = 1 - (1 - progress) ** 3;
+			container.scrollTop = startTop + delta * eased;
+			if (progress < 1) {
+				requestAnimationFrame(step);
+			} else {
+				container.scrollTop = targetTop;
+				resolve(true);
+			}
+		};
+		requestAnimationFrame(step);
+	});
+}
+
 async function jumpToMessage(msgUid: string) {
+	const seq = ++jumpSeq;
 	showMentionHistory = false;
 	isStickyAtBottom = false;
 	const targetMsg = messages.find((m) => m.msgUid === msgUid);
@@ -894,19 +1034,37 @@ async function jumpToMessage(msgUid: string) {
 		window.clearTimeout(alertAutoHideTimer);
 		alertAutoHideTimer = null;
 	}
-	await tick();
-	const el = messageContainer?.querySelector<HTMLElement>(
-		`[data-msg-uid="${CSS.escape(msgUid)}"]`,
-	);
-	if (!el) return;
-	el.scrollIntoView({ behavior: "smooth", block: "center" });
-	highlightedMsgUid = msgUid;
+	highlightedMsgUid = "";
 	if (highlightClearTimer !== null) {
 		window.clearTimeout(highlightClearTimer);
+		highlightClearTimer = null;
 	}
+	await tick();
+	if (seq !== jumpSeq) return;
+	const container = messageContainer;
+	const el = container?.querySelector<HTMLElement>(
+		`[data-msg-uid="${CSS.escape(msgUid)}"]`,
+	);
+	if (!el || !container) return;
+
+	const cRect = container.getBoundingClientRect();
+	const eRect = el.getBoundingClientRect();
+	const rawTargetTop =
+		container.scrollTop +
+		(eRect.top + eRect.height / 2) -
+		(cRect.top + cRect.height / 2);
+	const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+	const targetTop = Math.max(0, Math.min(maxScroll, rawTargetTop));
+
+	const completed = await smoothScrollContainerTo(container, targetTop, seq);
+	if (!completed || seq !== jumpSeq) return;
+
+	highlightedMsgUid = msgUid;
 	highlightClearTimer = window.setTimeout(() => {
-		highlightedMsgUid = "";
-	}, 3800);
+		if (seq === jumpSeq) {
+			highlightedMsgUid = "";
+		}
+	}, 3600);
 }
 
 async function scrollToUnreadDivider() {
@@ -951,7 +1109,7 @@ function dismissUnreadBar() {
 	}
 }
 
-function triggerAutoLoadOlderHistory() {
+function triggerAutoLoadOlderHistory(manualClick = false) {
 	if (!hasMoreHistory || isLoadingHistory || !messageContainer) return;
 	isStickyAtBottom = false;
 	const firstUid = messages[0]?.msgUid || "";
@@ -959,6 +1117,7 @@ function triggerAutoLoadOlderHistory() {
 		firstMsgUid: firstUid,
 		prevScrollHeight: messageContainer.scrollHeight,
 		prevScrollTop: messageContainer.scrollTop,
+		manualClick,
 	};
 	onLoadHistory?.();
 }
@@ -1181,11 +1340,17 @@ $effect(() => {
 					if (!messageContainer) return;
 					const newScrollHeight = messageContainer.scrollHeight;
 					const delta = newScrollHeight - anchor.prevScrollHeight;
-					messageContainer.scrollTop = anchor.prevScrollTop + delta;
+					const targetTop =
+						anchor.manualClick && anchor.prevScrollTop <= 40 && delta > 120
+							? Math.max(0, anchor.prevScrollTop + delta - 120)
+							: anchor.prevScrollTop + delta;
+					messageContainer.scrollTop = targetTop;
 					lastScrollHeight = messageContainer.scrollHeight;
 					lastClientHeight = messageContainer.clientHeight;
 				});
 			}
+		} else if (!isLoadingHistory && historyScrollAnchor) {
+			historyScrollAnchor = null;
 		}
 
 		// 2. 真正的新到达消息（底部实时推送）：
@@ -2351,15 +2516,13 @@ function removePendingImage(index: number) {
                 <span>正在加载更早的消息...</span>
               </div>
             {:else}
-              <ChatTooltip text="向上滚动自动加载，或点击手动加载" position="bottom">
-                <button
-                  type="button"
-                  class="chat-history-expand-btn text-xs py-1 px-3 rounded-full opacity-75 hover:opacity-100 transition-opacity"
-                  onclick={() => triggerAutoLoadOlderHistory()}
-                >
-                  ↑ 向上滚动加载更早历史
-                </button>
-              </ChatTooltip>
+              <button
+                type="button"
+                class="chat-history-expand-btn text-xs py-1 px-3 rounded-full opacity-75 hover:opacity-100 transition-opacity"
+                onclick={() => triggerAutoLoadOlderHistory(true)}
+              >
+                ↑ 加载更早历史
+              </button>
             {/if}
           </div>
         {:else if messages.length > 0}
@@ -2437,6 +2600,7 @@ function removePendingImage(index: number) {
               chatServerUrl={chatServerUrl}
               interconnectSites={interconnectSites}
               userNameMap={userNameMap}
+              userProfileMap={userProfileMap}
               readReceipts={readReceipts[msg.msgUid] || []}
               onRecall={onRecallMessage}
               onDelete={onDeleteMessage}
