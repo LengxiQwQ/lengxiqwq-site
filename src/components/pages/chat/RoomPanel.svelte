@@ -33,13 +33,13 @@ interface Props {
 	desktopNotificationPermission?: NotificationPermission;
 	roomUnreadCounts?: Record<string, number>;
 	roomAvatars?: Record<string, string>;
+	siteAvatar?: string;
 	onRoomSelect?: (roomId: string) => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onOpenProfile?: () => void;
 	onOpenAuth?: () => void;
 	onLogout?: () => void;
 	onToggleDesktopNotification?: () => void;
-	onCloseMobileDrawer?: () => void;
 }
 
 const {
@@ -60,13 +60,13 @@ const {
 	desktopNotificationPermission = "default" as NotificationPermission,
 	roomUnreadCounts = {},
 	roomAvatars = {},
+	siteAvatar = "",
 	onRoomSelect,
 	onOpenUserProfile,
 	onOpenProfile,
 	onOpenAuth,
 	onLogout,
 	onToggleDesktopNotification,
-	onCloseMobileDrawer,
 }: Props = $props();
 
 const observerCount = $derived(observers.length);
@@ -325,24 +325,9 @@ function formatOfflineTime(ts?: number): string {
       </svg>
       <span>房间与成员</span>
     </div>
-    <div class="flex items-center gap-2">
-      <span class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] text-[var(--chat-accent-text)] font-medium">
-        {connLabel}
-      </span>
-      {#if onCloseMobileDrawer}
-        <button
-          type="button"
-          class="chat-drawer-close-btn md:hidden"
-          aria-label="收起房间与成员抽屉"
-          onclick={() => onCloseMobileDrawer?.()}
-        >
-          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      {/if}
-    </div>
+    <span class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] text-[var(--chat-accent-text)] font-medium">
+      {connLabel}
+    </span>
   </div>
 
   <!-- 房间列表：按来源分组（互联房间 / 本站房间） -->
@@ -367,7 +352,7 @@ function formatOfflineTime(ts?: number): string {
 
   {#snippet roomItem(room: ChatRoomMeta)}
     {@const unread = currentRoom !== room.id ? (roomUnreadCounts?.[room.id] ?? 0) : 0}
-    {@const rawRoomAvatar = (roomAvatars?.[room.id] || room.avatar || "").trim()}
+    {@const rawRoomAvatar = (roomAvatars?.[room.id] || room.avatar || (!INTERCONNECT_ROOM_IDS.has(room.id) ? siteAvatar : "") || "").trim()}
     {@const hasRoomAvatar = Boolean(rawRoomAvatar) && !failedRoomAvatars[rawRoomAvatar]}
     <button
       type="button"
@@ -378,7 +363,7 @@ function formatOfflineTime(ts?: number): string {
         <img
           src={rawRoomAvatar}
           alt={room.name}
-          class="w-5 h-5 rounded-md object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
+          class="w-9 h-9 md:w-8 md:h-8 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
           loading="lazy"
           decoding="async"
           onerror={() => {
@@ -386,9 +371,16 @@ function formatOfflineTime(ts?: number): string {
           }}
         />
       {:else}
-        <span class="font-mono text-sm font-bold opacity-60 w-5 text-center shrink-0">#</span>
+        <span class="w-9 h-9 md:w-8 md:h-8 rounded-lg flex items-center justify-center bg-black/5 dark:bg-white/10 font-mono text-sm font-bold opacity-70 shrink-0">#</span>
       {/if}
-      <span class="flex-1 truncate">{room.name}</span>
+      <div class="flex-1 min-w-0 flex flex-col">
+        <span class="truncate leading-tight">{room.name}</span>
+        {#if room.subtitle}
+          <span class="text-[0.6875rem] md:text-[0.65rem] text-[var(--chat-meta-color)] font-normal truncate leading-tight mt-0.5">
+            {room.subtitle}
+          </span>
+        {/if}
+      </div>
       {#if unread > 0}
         <span class="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[0.625rem] font-bold shrink-0">
           {unread > 99 ? "99+" : unread}

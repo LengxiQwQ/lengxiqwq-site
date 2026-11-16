@@ -19,6 +19,7 @@ import BrowserChrome from "@/components/layout/BrowserChrome.astro";
 import {
 	analyticsConfig,
 	backgroundWallpaper,
+	chatConfig,
 	displaySettingsConfig,
 	expressiveCodeConfig,
 	musicPlayerConfig,
@@ -372,6 +373,8 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
         fullscreenLayout,
         wallpaperHuePresets: backgroundWallpaper.wallpaperHuePresets || {},
         wallpaperSrcList: backgroundWallpaper.src,
+        chatWallpapers: chatConfig.wallpapers ?? null,
+        isChatDevEnv: import.meta.env.DEV,
       }}
     >
       // 主题初始化 - 与setting-utils.ts保持一致
@@ -417,93 +420,186 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
         isDark ? darkTheme : lightTheme
       );
 
-      // Load the hue from local storage
-      let hueMode = null;
-      let storedCustom = null;
-      let storedHue = null;
-      try {
-        hueMode = localStorage.getItem("themeHueMode");
-        storedCustom = localStorage.getItem("customHue");
-        storedHue = localStorage.getItem("hue");
-      } catch (_) {}
-
-      let hue =
-        hueMode === "custom"
-          ? (storedCustom || ((storedHue && storedHue !== "165") ? storedHue : configHue))
-          : configHue;
-
       const isChatRoute = /^\/chat\/?$/.test(window.location.pathname || "");
-      const fixedChatWallpaper = "/wallpapers/desktop/wuthering-waves-encore.webp";
+
       if (isChatRoute) {
-        window.__initialWallpaperSrc = fixedChatWallpaper;
-      }
-
-      // 若处于非自定义模式（即预设模式或跟随壁纸模式），在首屏解析时直接选定随机壁纸并秒开对应的预设色相
-      if (hueMode !== "custom" && wallpaperSrcList) {
+        const chatRoot = document.documentElement;
+        chatRoot.setAttribute("data-chat-page", "true");
+        const wpCfg = chatWallpapers && typeof chatWallpapers === "object" ? chatWallpapers : { defaultOpacity: 0.42, defaults: {}, items: [] };
+        const wpItems = Array.isArray(wpCfg.items) ? wpCfg.items : [];
+        let chatHueNum = 175;
+        let chatBgVal = "wallpaper";
+        let chatDensityVal = "comfortable";
+        let chatFontVal = "md";
+        let selectedMap = Object.assign({ left: "", center: "", right: "", input: "" }, wpCfg.defaults || {});
+        let devOverrides = null;
         try {
-          const isMobile = window.innerWidth < 1024;
-          let dtList = [];
-          let mbList = [];
-          if (typeof wallpaperSrcList === "object" && wallpaperSrcList !== null) {
-            if (Array.isArray(wallpaperSrcList)) {
-              dtList = wallpaperSrcList;
-            } else {
-              dtList = Array.isArray(wallpaperSrcList.desktop)
-                ? wallpaperSrcList.desktop
-                : (typeof wallpaperSrcList.desktop === "string" ? [wallpaperSrcList.desktop] : []);
-              mbList = Array.isArray(wallpaperSrcList.mobile)
-                ? wallpaperSrcList.mobile
-                : (typeof wallpaperSrcList.mobile === "string" ? [wallpaperSrcList.mobile] : []);
+          const rawChat = localStorage.getItem("fireflyChatAppearance");
+          if (rawChat) {
+            const chatPrefs = JSON.parse(rawChat);
+            if (typeof chatPrefs.chatHue === "number" && Number.isFinite(chatPrefs.chatHue)) {
+              chatHueNum = Math.min(360, Math.max(0, Math.round(chatPrefs.chatHue)));
             }
-          } else if (typeof wallpaperSrcList === "string") {
-            dtList = [wallpaperSrcList];
-            mbList = [wallpaperSrcList];
-          }
-          const activeList = isMobile
-            ? (mbList.length > 0 ? mbList : dtList)
-            : (dtList.length > 0 ? dtList : mbList);
-
-          if (activeList.length > 0 || isChatRoute) {
-            const chosenSrc = isChatRoute
-              ? fixedChatWallpaper
-              : activeList[Math.floor(Math.random() * activeList.length)];
-            window.__initialWallpaperSrc = chosenSrc;
-
-            let clean = chosenSrc.split("?")[0].split("#")[0];
-            try {
-              if (clean.startsWith("http://") || clean.startsWith("https://")) {
-                clean = new URL(clean).pathname;
-              }
-            } catch (_) {}
-            try {
-              clean = decodeURIComponent(clean);
-            } catch (_) {}
-            const file = clean.split("/").pop() || "";
-            const name = file.replace(/\.[^.]+$/, "");
-
-            if (hueMode === "auto") {
-              const extractedHues = JSON.parse(localStorage.getItem("extractedWallpaperHues") || "{}");
-              const cached = extractedHues[clean] ?? extractedHues[file] ?? extractedHues[name];
-              if (typeof cached === "number") hue = String(cached);
-            } else {
-              // 默认预设模式：直接读取已配好的壁纸预设色相（支持用户本地预设与项目级预设）
-              const userPresets = JSON.parse(localStorage.getItem("wallpaperHuePresets") || "{}");
-              const preset =
-                userPresets[clean] ?? userPresets[file] ?? userPresets[name] ??
-                wallpaperHuePresets[clean] ?? wallpaperHuePresets[file] ?? wallpaperHuePresets[name];
-              if (typeof preset === "number") hue = String(preset);
+            if (
+              chatPrefs.chatBgStyle === "wallpaper" ||
+              chatPrefs.chatBgStyle === "solid" ||
+              chatPrefs.chatBgStyle === "dots" ||
+              chatPrefs.chatBgStyle === "glow"
+            ) {
+              chatBgVal = chatPrefs.chatBgStyle;
+            } else if (chatPrefs.chatWallpaperEnabled === false) {
+              chatBgVal = "solid";
+            }
+            if (chatPrefs.chatDensity === "compact") {
+              chatDensityVal = "compact";
+            }
+            if (chatPrefs.chatFontSize === "sm" || chatPrefs.chatFontSize === "lg") {
+              chatFontVal = chatPrefs.chatFontSize;
+            }
+            if (chatPrefs.selectedWallpapers && typeof chatPrefs.selectedWallpapers === "object") {
+              ["left", "center", "right", "input"].forEach(function (slot) {
+                const candidate = chatPrefs.selectedWallpapers[slot];
+                if (candidate === "") {
+                  selectedMap[slot] = "";
+                } else if (typeof candidate === "string" && wpItems.some(function (i) { return i.id === candidate && i.slot === slot; })) {
+                  selectedMap[slot] = candidate;
+                }
+              });
+            }
+            if (isChatDevEnv && chatPrefs.devItemTransforms && typeof chatPrefs.devItemTransforms === "object") {
+              devOverrides = chatPrefs.devItemTransforms;
             }
           }
         } catch (_) {}
-      }
 
-      document.documentElement.style.setProperty("--hue", hue);
-      try {
-        localStorage.setItem("hue", String(hue));
-      } catch (_) {}
-      // 首帧先匹配深浅背景，BrowserChrome 随后同步实际计算后的主题底色。
-      const browserThemeMeta = document.querySelector('meta[name="theme-color"]');
-      if (browserThemeMeta) browserThemeMeta.setAttribute("content", `hsl(${hue} 12% ${document.documentElement.classList.contains("dark") ? "10%" : "96%"})`);
+        chatRoot.removeAttribute("data-chat-scheme");
+        chatRoot.removeAttribute("data-chat-wallpaper");
+        chatRoot.style.removeProperty("--chat-bg-dim");
+        chatRoot.style.removeProperty("--chat-bg-blur");
+        chatRoot.style.removeProperty("--chat-bg-opacity");
+        chatRoot.setAttribute("data-chat-bg", chatBgVal);
+        chatRoot.setAttribute("data-chat-density", chatDensityVal);
+        chatRoot.setAttribute("data-chat-font-size", chatFontVal);
+        chatRoot.setAttribute("data-chat-custom-hue", "true");
+        ["left", "center", "right", "input"].forEach(function (slot) {
+          const itemId = selectedMap[slot] || "";
+          const baseItem = wpItems.find(function (i) { return i.id === itemId && i.slot === slot; }) || null;
+          const override = isChatDevEnv && devOverrides ? (devOverrides[itemId] || null) : null;
+          const src = override || baseItem;
+          const mode = src && (src.mode === "sticker" || src.fit === "contain") ? "sticker" : "wallpaper";
+          const fit = src && (src.fit === "contain" || src.fit === "cover") ? src.fit : (mode === "sticker" ? "contain" : "cover");
+          const opacity = src && typeof src.opacity === "number" && Number.isFinite(src.opacity)
+            ? Math.min(1, Math.max(0.05, src.opacity))
+            : 0.2;
+          const scale = src && typeof src.scale === "number" && Number.isFinite(src.scale)
+            ? Math.min(3.5, Math.max(0.15, src.scale))
+            : 1;
+          const offsetX = src && typeof src.offsetX === "number" && Number.isFinite(src.offsetX)
+            ? Math.min(200, Math.max(-200, Math.round(src.offsetX)))
+            : 0;
+          const offsetY = src && typeof src.offsetY === "number" && Number.isFinite(src.offsetY)
+            ? Math.min(200, Math.max(-200, Math.round(src.offsetY)))
+            : 0;
+          const blurEnabled = src && typeof src.blurEnabled === "boolean" ? src.blurEnabled : false;
+          const blur = src && typeof src.blur === "number" && Number.isFinite(src.blur)
+            ? Math.min(30, Math.max(0, src.blur))
+            : 0;
+          chatRoot.setAttribute("data-chat-bg-" + slot + "-mode", mode);
+          chatRoot.setAttribute("data-chat-bg-" + slot + "-fit", fit);
+          chatRoot.style.setProperty("--chat-bg-" + slot + "-fit", fit);
+          chatRoot.style.setProperty("--chat-bg-" + slot + "-opacity", String(opacity));
+          chatRoot.style.setProperty("--chat-bg-" + slot + "-scale", String(scale));
+          chatRoot.style.setProperty("--chat-bg-" + slot + "-x", offsetX + "%");
+          chatRoot.style.setProperty("--chat-bg-" + slot + "-y", offsetY + "%");
+          chatRoot.style.setProperty("--chat-bg-" + slot + "-blur", (blurEnabled ? blur : 0) + "px");
+        });
+        chatRoot.style.setProperty("--chat-hue", String(chatHueNum));
+        chatRoot.style.setProperty("--hue", String(chatHueNum));
+        const browserThemeMeta = document.querySelector('meta[name="theme-color"]');
+        if (browserThemeMeta) {
+          browserThemeMeta.setAttribute("content", `hsl(${chatHueNum} 12% ${chatRoot.classList.contains("dark") ? "10%" : "96%"})`);
+        }
+      } else {
+        // Load the hue from local storage
+        let hueMode = null;
+        let storedCustom = null;
+        let storedHue = null;
+        try {
+          hueMode = localStorage.getItem("themeHueMode");
+          storedCustom = localStorage.getItem("customHue");
+          storedHue = localStorage.getItem("hue");
+        } catch (_) {}
+
+        let hue =
+          hueMode === "custom"
+            ? (storedCustom || ((storedHue && storedHue !== "165") ? storedHue : configHue))
+            : configHue;
+
+        // 若处于非自定义模式（即预设模式或跟随壁纸模式），在首屏解析时直接选定随机壁纸并秒开对应的预设色相
+        if (hueMode !== "custom" && wallpaperSrcList) {
+          try {
+            const isMobile = window.innerWidth < 1024;
+            let dtList = [];
+            let mbList = [];
+            if (typeof wallpaperSrcList === "object" && wallpaperSrcList !== null) {
+              if (Array.isArray(wallpaperSrcList)) {
+                dtList = wallpaperSrcList;
+              } else {
+                dtList = Array.isArray(wallpaperSrcList.desktop)
+                  ? wallpaperSrcList.desktop
+                  : (typeof wallpaperSrcList.desktop === "string" ? [wallpaperSrcList.desktop] : []);
+                mbList = Array.isArray(wallpaperSrcList.mobile)
+                  ? wallpaperSrcList.mobile
+                  : (typeof wallpaperSrcList.mobile === "string" ? [wallpaperSrcList.mobile] : []);
+              }
+            } else if (typeof wallpaperSrcList === "string") {
+              dtList = [wallpaperSrcList];
+              mbList = [wallpaperSrcList];
+            }
+            const activeList = isMobile
+              ? (mbList.length > 0 ? mbList : dtList)
+              : (dtList.length > 0 ? dtList : mbList);
+
+            if (activeList.length > 0) {
+              const chosenSrc = activeList[Math.floor(Math.random() * activeList.length)];
+              window.__initialWallpaperSrc = chosenSrc;
+
+              let clean = chosenSrc.split("?")[0].split("#")[0];
+              try {
+                if (clean.startsWith("http://") || clean.startsWith("https://")) {
+                  clean = new URL(clean).pathname;
+                }
+              } catch (_) {}
+              try {
+                clean = decodeURIComponent(clean);
+              } catch (_) {}
+              const file = clean.split("/").pop() || "";
+              const name = file.replace(/\.[^.]+$/, "");
+
+              if (hueMode === "auto") {
+                const extractedHues = JSON.parse(localStorage.getItem("extractedWallpaperHues") || "{}");
+                const cached = extractedHues[clean] ?? extractedHues[file] ?? extractedHues[name];
+                if (typeof cached === "number") hue = String(cached);
+              } else {
+                // 默认预设模式：直接读取已配好的壁纸预设色相（支持用户本地预设与项目级预设）
+                const userPresets = JSON.parse(localStorage.getItem("wallpaperHuePresets") || "{}");
+                const preset =
+                  userPresets[clean] ?? userPresets[file] ?? userPresets[name] ??
+                  wallpaperHuePresets[clean] ?? wallpaperHuePresets[file] ?? wallpaperHuePresets[name];
+                if (typeof preset === "number") hue = String(preset);
+              }
+            }
+          } catch (_) {}
+        }
+
+        document.documentElement.style.setProperty("--hue", hue);
+        try {
+          localStorage.setItem("hue", String(hue));
+        } catch (_) {}
+        // 首帧先匹配深浅背景，BrowserChrome 随后同步实际计算后的主题底色。
+        const browserThemeMeta = document.querySelector('meta[name="theme-color"]');
+        if (browserThemeMeta) browserThemeMeta.setAttribute("content", `hsl(${hue} 12% ${document.documentElement.classList.contains("dark") ? "10%" : "96%"})`);
+      }
 
       // 设置卡片透明度（全屏透明模式下使用），优先使用用户自定义值
       const storedCardOpacity = localStorage.getItem("overlayCardOpacity");

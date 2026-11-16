@@ -296,6 +296,12 @@ export async function handleWallpaperChange(
 	_smooth = false,
 	explicitSrc?: string,
 ): Promise<void> {
+	if (
+		typeof document !== "undefined" &&
+		document.documentElement.hasAttribute("data-chat-page")
+	) {
+		return;
+	}
 	const mode = getThemeHueMode();
 	if (mode === "custom") return;
 	if (!img && !explicitSrc) return;
@@ -417,6 +423,12 @@ export function getActiveWallpaperImg(): HTMLImageElement | null {
  * 提取并应用当前壁纸的主题色
  */
 export async function applyCurrentWallpaperHue(smooth = false): Promise<void> {
+	if (
+		typeof document !== "undefined" &&
+		document.documentElement.hasAttribute("data-chat-page")
+	) {
+		return;
+	}
 	if (!getFollowWallpaperHue()) return;
 	const img = getActiveWallpaperImg();
 	const currentSrc =

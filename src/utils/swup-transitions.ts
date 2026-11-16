@@ -1,5 +1,11 @@
+import {
+	applyChatAppearanceToDocument,
+	clearChatAppearanceFromDocument,
+	loadChatAppearanceSettings,
+} from "@/components/pages/chat/chatAppearance";
 import { expressiveCodeConfig, navbarMode, siteConfig } from "@/config";
 import type { WALLPAPER_MODE } from "@/types/config";
+import { applyCurrentWallpaperHue } from "@/utils/color-extract-utils";
 import { scheduleContentOverflowEnhancements } from "@/utils/content-overflow-utils";
 import { initializeFloatingPanels } from "@/utils/floating-panel-utils";
 import {
@@ -13,6 +19,12 @@ import {
 } from "@/utils/grid-layout-utils";
 import { scrollFunction } from "@/utils/scroll-utils";
 import {
+	getDefaultHue,
+	getPresetHueForWallpaper,
+	getStoredBannerCarouselEnabled,
+	getThemeHueMode,
+	normalizeWallpaperKey,
+	setHue,
 	syncBannerHomeTextVisibility,
 	updateNavbarTransparency,
 } from "@/utils/setting-utils";
@@ -57,54 +69,52 @@ function finishProgressBar(): void {
 	);
 }
 
-const CHAT_FIXED_WALLPAPER = "/wallpapers/desktop/wuthering-waves-encore.webp";
-let chatSavedBlogWallpaperSrc = "";
 let lastRouteIsChatPage =
 	typeof document !== "undefined" &&
 	document.documentElement.hasAttribute("data-chat-page");
 
-function switchChatRouteWallpaper(isChatPage: boolean): void {
-	if (typeof window === "undefined") return;
-	const win = window as unknown as { __currentWallpaperSrc?: string };
-	if (isChatPage) {
-		const currentSrc = win.__currentWallpaperSrc || "";
-		if (currentSrc && !currentSrc.includes("wuthering-waves-encore")) {
-			chatSavedBlogWallpaperSrc = currentSrc;
-		}
-		window.dispatchEvent(
-			new CustomEvent("switchWallpaper", {
-				detail: {
-					src: CHAT_FIXED_WALLPAPER,
-					immediate: true,
-					pauseCarousel: true,
-				},
-			}),
-		);
-		return;
+function resolveStoredBlogHue(): number {
+	const fallback = getDefaultHue();
+	if (typeof window === "undefined" || !window.localStorage) {
+		return fallback;
 	}
-
-	if (chatSavedBlogWallpaperSrc) {
-		const restoreSrc = chatSavedBlogWallpaperSrc;
-		chatSavedBlogWallpaperSrc = "";
-		window.dispatchEvent(
-			new CustomEvent("switchWallpaper", {
-				detail: {
-					src: restoreSrc,
-					immediate: true,
-					resumeCarousel: true,
-				},
-			}),
-		);
+	const mode = getThemeHueMode();
+	if (mode === "custom") {
+		const rawCustom = localStorage.getItem("customHue");
+		const parsedCustom = rawCustom
+			? Number.parseInt(rawCustom, 10)
+			: Number.NaN;
+		if (Number.isFinite(parsedCustom)) return parsedCustom;
 	} else {
-		window.dispatchEvent(
-			new CustomEvent("switchWallpaper", {
-				detail: {
-					restoreBlogDefault: true,
-					immediate: true,
-				},
-			}),
-		);
+		const win = window as unknown as { __currentWallpaperSrc?: string };
+		const wpSrc = win.__currentWallpaperSrc || "";
+		if (mode === "preset" && wpSrc) {
+			const preset = getPresetHueForWallpaper(wpSrc);
+			if (typeof preset === "number") return preset;
+		}
+		if (mode === "auto" && wpSrc) {
+			try {
+				const clean = normalizeWallpaperKey(wpSrc);
+				const file = clean.split("/").pop() || "";
+				const name = file.replace(/\.[^.]+$/, "");
+				const extracted = JSON.parse(
+					localStorage.getItem("extractedWallpaperHues") || "{}",
+				) as Record<string, unknown>;
+				const cached = extracted[clean] ?? extracted[file] ?? extracted[name];
+				if (typeof cached === "number" && Number.isFinite(cached)) {
+					return cached;
+				}
+			} catch {
+				// 忽略损坏缓存
+			}
+		}
 	}
+	const storedHue = localStorage.getItem("hue");
+	if (storedHue && storedHue !== "165") {
+		const parsed = Number.parseInt(storedHue, 10);
+		if (Number.isFinite(parsed)) return parsed;
+	}
+	return fallback;
 }
 
 /** Swup 软切换进/出聊天室时同步或清理聊天室专属隔离状态 */
@@ -120,36 +130,39 @@ function syncChatPageRuntimeState(isChatPage: boolean): void {
 		);
 	}
 	if (!isChatPage) {
-		root.removeAttribute("data-chat-page");
-		root.removeAttribute("data-chat-scheme");
-		root.removeAttribute("data-chat-custom-hue");
-		root.style.removeProperty("--chat-hue");
-		root.style.removeProperty("--chat-bg-blur");
-		root.style.removeProperty("--chat-bg-dim");
-		root.style.removeProperty("--chat-panel-blur");
-		root.style.removeProperty("--chat-panel-opacity");
-		root.style.removeProperty("--chat-panel-radius");
+		clearChatAppearanceFromDocument();
+		const blogHue = resolveStoredBlogHue();
+		setHue(blogHue);
+		const browserThemeMeta = document.querySelector('meta[name="theme-color"]');
+		if (browserThemeMeta) {
+			browserThemeMeta.setAttribute(
+				"content",
+				`hsl(${blogHue} 12% ${root.classList.contains("dark") ? "10%" : "96%"})`,
+			);
+		}
+		window.dispatchEvent(
+			new CustomEvent("hueChange", { detail: { hue: blogHue } }),
+		);
+		void applyCurrentWallpaperHue(false);
+		window.dispatchEvent(
+			new CustomEvent("bannerCarouselChange", {
+				detail: { enabled: getStoredBannerCarouselEnabled() },
+			}),
+		);
+		window.dispatchEvent(
+			new CustomEvent("chatPageChange", { detail: { isChatPage: false } }),
+		);
 		return;
 	}
 
 	root.setAttribute("data-chat-page", "true");
-	try {
-		const raw = localStorage.getItem("fireflyChatAppearance");
-		if (!raw) return;
-		const prefs = JSON.parse(raw) as {
-			chatScheme?: unknown;
-			chatHue?: unknown;
-		};
-		if (prefs.chatScheme === "light" || prefs.chatScheme === "dark") {
-			root.setAttribute("data-chat-scheme", prefs.chatScheme);
-		}
-		if (typeof prefs.chatHue === "number") {
-			root.setAttribute("data-chat-custom-hue", "true");
-			root.style.setProperty("--chat-hue", String(prefs.chatHue));
-		}
-	} catch {
-		// 忽略无效本地缓存
-	}
+	applyChatAppearanceToDocument(loadChatAppearanceSettings(), false);
+	window.dispatchEvent(
+		new CustomEvent("bannerCarouselChange", { detail: { enabled: false } }),
+	);
+	window.dispatchEvent(
+		new CustomEvent("chatPageChange", { detail: { isChatPage: true } }),
+	);
 }
 
 let chatWallpaperRaf = 0;
@@ -302,7 +315,6 @@ function transitionChatPageWithWallpaper(visitToUrl?: string): void {
 	if (!wrapper || wallpaperMode === "none" || reducedMotion) {
 		document.body.classList.toggle("is-home", targetIsHome);
 		syncChatPageRuntimeState(isChatPage);
-		switchChatRouteWallpaper(isChatPage);
 		syncBannerHomeTextVisibility();
 		return;
 	}
@@ -321,7 +333,6 @@ function transitionChatPageWithWallpaper(visitToUrl?: string): void {
 	// LAST：一次性切换至最终目标壁纸布局，不再对 #wallpaper-wrapper 本身做逐帧变形
 	document.body.classList.toggle("is-home", targetIsHome);
 	syncChatPageRuntimeState(isChatPage);
-	switchChatRouteWallpaper(isChatPage);
 	syncBannerHomeTextVisibility();
 
 	const nextComputed = getComputedStyle(wrapper);

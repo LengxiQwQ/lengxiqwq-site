@@ -59,6 +59,35 @@ import {
 import { onMount } from "svelte";
 import Icon from "@/components/common/Icon.svelte";
 import {
+	applyChatAppearanceToDocument,
+	CHAT_PANEL_SLOTS,
+	type ChatAppearanceSettings,
+	type ChatBackgroundStyle,
+	type ChatFontSize,
+	type ChatPanelBgTransform,
+	type ChatPanelSlot,
+	type ChatWallpaperConfig,
+	type ChatWallpaperDisplayMode,
+	clearDevPanelWallpaperPreview,
+	DEFAULT_CHAT_HUE,
+	DEFAULT_CHAT_PANEL_TRANSFORM,
+	getChatWallpaperConfig,
+	getChatWallpaperItemById,
+	getChatWallpaperItems,
+	getDefaultChatAppearance,
+	getDevPanelWallpaperBlob,
+	getDevPreviewTransformKey,
+	getStoredMusicNoticesEnabled,
+	isChatPanelSlot,
+	itemToPanelTransform,
+	loadChatAppearanceSettings,
+	loadDevPanelWallpaperPreviews,
+	resolveSlotEffectiveTransform,
+	saveDevPanelWallpaperPreview,
+	setRuntimeChatWallpaperCatalog,
+	setStoredMusicNoticesEnabled,
+} from "@/components/pages/chat/chatAppearance";
+import {
 	backgroundWallpaper,
 	displaySettingsConfig,
 	siteConfig,
@@ -106,6 +135,339 @@ let saveStatusMessage = $state<string>("");
 let isMobileViewport = $state(
 	typeof window !== "undefined" ? window.innerWidth < 1024 : false,
 );
+let isChatPage = $state(
+	typeof document !== "undefined"
+		? document.documentElement.hasAttribute("data-chat-page")
+		: false,
+);
+const isDev = import.meta.env.DEV;
+let chatCatalog = $state<ChatWallpaperConfig>(getChatWallpaperConfig());
+let chatAppearance = $state<ChatAppearanceSettings>(getDefaultChatAppearance());
+let activeChatBgSlot = $state<ChatPanelSlot>("center");
+let chatMusicNotices = $state(false);
+let devPreviewPanels = $state<Partial<Record<ChatPanelSlot, string>>>({});
+let isSavingChatWallpapers = $state(false);
+let chatWallpaperSaveStatus = $state("");
+
+const CHAT_BG_SLOT_ITEMS: { slot: ChatPanelSlot; label: string }[] = [
+	{ slot: "left", label: "左栏" },
+	{ slot: "center", label: "中栏" },
+	{ slot: "right", label: "右栏" },
+	{ slot: "input", label: "输入框" },
+];
+
+const hasAnyDevPreview = $derived(
+	CHAT_PANEL_SLOTS.some((slot) => Boolean(devPreviewPanels[slot])),
+);
+
+const activeSlotHasDevPreview = $derived(
+	Boolean(isDev && devPreviewPanels[activeChatBgSlot]),
+);
+
+const activeSelectedId = $derived(
+	chatAppearance.selectedWallpapers[activeChatBgSlot] ?? "",
+);
+
+const activePresetItem = $derived.by(() => {
+	void chatCatalog;
+	return getChatWallpaperItemById(activeSelectedId, activeChatBgSlot);
+});
+
+const activeSlotWallpaperItems = $derived.by(() => {
+	void chatCatalog;
+	return getChatWallpaperItems(activeChatBgSlot);
+});
+
+const activePanelTransform = $derived.by(() => {
+	void chatCatalog;
+	return resolveSlotEffectiveTransform(
+		activeChatBgSlot,
+		chatAppearance,
+		activeSlotHasDevPreview,
+	);
+});
+
+const activeItemBaselineTransform = $derived(
+	activePresetItem
+		? itemToPanelTransform(activePresetItem)
+		: DEFAULT_CHAT_PANEL_TRANSFORM,
+);
+
+const isActivePanelTransformModified = $derived.by(() => {
+	if (activeSlotHasDevPreview) return true;
+	if (!activePresetItem) return false;
+	const a = activePanelTransform;
+	const b = activeItemBaselineTransform;
+	return (
+		a.mode !== b.mode ||
+		a.fit !== b.fit ||
+		a.opacity !== b.opacity ||
+		a.scale !== b.scale ||
+		a.offsetX !== b.offsetX ||
+		a.offsetY !== b.offsetY ||
+		a.blurEnabled !== b.blurEnabled ||
+		a.blur !== b.blur
+	);
+});
+
+const isChatHueDefault = $derived(chatAppearance.chatHue === DEFAULT_CHAT_HUE);
+const isChatBgDefault = $derived.by(() => {
+	void chatCatalog;
+	const defaults = getDefaultChatAppearance();
+	const sameSelection = CHAT_PANEL_SLOTS.every(
+		(slot) =>
+			chatAppearance.selectedWallpapers[slot] ===
+			defaults.selectedWallpapers[slot],
+	);
+	const noDevOverrides =
+		!isDev ||
+		(!hasAnyDevPreview &&
+			Object.keys(chatAppearance.devItemTransforms).length === 0);
+	return (
+		chatAppearance.chatBgStyle === defaults.chatBgStyle &&
+		sameSelection &&
+		noDevOverrides
+	);
+});
+const isChatLayoutDefault = $derived.by(() => {
+	const defaults = getDefaultChatAppearance();
+	return (
+		chatAppearance.chatFontSize === defaults.chatFontSize &&
+		chatAppearance.chatDensity === defaults.chatDensity &&
+		!chatMusicNotices
+	);
+});
+
+function updateChatSetting<K extends keyof ChatAppearanceSettings>(
+	key: K,
+	value: ChatAppearanceSettings[K],
+) {
+	const next: ChatAppearanceSettings = { ...chatAppearance, [key]: value };
+	chatAppearance = next;
+	applyChatAppearanceToDocument(next, true, devPreviewPanels);
+	window.dispatchEvent(
+		new CustomEvent("chatAppearanceChange", { detail: next }),
+	);
+	requestAnimationFrame(refreshAllRangeProgress);
+}
+
+async function selectSlotWallpaper(itemId: string) {
+	const slot = activeChatBgSlot;
+	if (itemId && !getChatWallpaperItemById(itemId, slot)) return;
+	if (isDev && devPreviewPanels[slot]) {
+		await clearDevPanelWallpaperPreview(slot);
+	}
+	const nextSelected = {
+		...chatAppearance.selectedWallpapers,
+		[slot]: itemId,
+	};
+	updateChatSetting("selectedWallpapers", nextSelected);
+}
+
+function updateActivePanelTransform(patch: Partial<ChatPanelBgTransform>) {
+	if (!isDev) return;
+	const targetKey = activeSlotHasDevPreview
+		? getDevPreviewTransformKey(activeChatBgSlot)
+		: activeSelectedId;
+	if (!targetKey) return;
+	const nextTransforms = {
+		...chatAppearance.devItemTransforms,
+		[targetKey]: {
+			...activePanelTransform,
+			...patch,
+		},
+	};
+	updateChatSetting("devItemTransforms", nextTransforms);
+}
+
+function setActivePanelMode(mode: ChatWallpaperDisplayMode) {
+	updateActivePanelTransform({
+		mode,
+		fit: mode === "sticker" ? "contain" : "cover",
+	});
+}
+
+function toggleActivePanelBlur() {
+	const cur = activePanelTransform;
+	if (cur.blurEnabled) {
+		updateActivePanelTransform({ blurEnabled: false });
+	} else {
+		updateActivePanelTransform({
+			blurEnabled: true,
+			blur: cur.blur > 0 ? cur.blur : DEFAULT_CHAT_PANEL_TRANSFORM.blur,
+		});
+	}
+}
+
+function resetActivePanelTransform() {
+	if (!isDev) return;
+	const key = activeSlotHasDevPreview
+		? getDevPreviewTransformKey(activeChatBgSlot)
+		: activeSelectedId;
+	if (!key) return;
+	const nextOverrides = { ...chatAppearance.devItemTransforms };
+	delete nextOverrides[key];
+	updateChatSetting("devItemTransforms", nextOverrides);
+}
+
+function resetChatHue() {
+	updateChatSetting("chatHue", DEFAULT_CHAT_HUE);
+}
+
+async function resetChatBackground() {
+	if (isDev && hasAnyDevPreview) {
+		await clearDevPanelWallpaperPreview();
+	}
+	const defaults = getDefaultChatAppearance();
+	const next: ChatAppearanceSettings = {
+		...chatAppearance,
+		chatBgStyle: defaults.chatBgStyle,
+		selectedWallpapers: { ...defaults.selectedWallpapers },
+		devItemTransforms: {},
+	};
+	chatAppearance = next;
+	applyChatAppearanceToDocument(next, true, {});
+	window.dispatchEvent(
+		new CustomEvent("chatAppearanceChange", { detail: next }),
+	);
+	requestAnimationFrame(refreshAllRangeProgress);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onload = () => resolve(String(reader.result || ""));
+		reader.onerror = () => reject(reader.error);
+		reader.readAsDataURL(blob);
+	});
+}
+
+async function saveChatWallpapersToRepo() {
+	if (!isDev || isSavingChatWallpapers) return;
+	isSavingChatWallpapers = true;
+	chatWallpaperSaveStatus = "保存中...";
+	try {
+		const currentCfg = getChatWallpaperConfig();
+		const nextItems = currentCfg.items.map((item) => {
+			const override = chatAppearance.devItemTransforms[item.id];
+			return override ? { ...item, ...override } : { ...item };
+		});
+		const nextSelected = { ...chatAppearance.selectedWallpapers };
+		const nextOverrides = { ...chatAppearance.devItemTransforms };
+
+		for (const slot of CHAT_PANEL_SLOTS) {
+			if (!devPreviewPanels[slot]) continue;
+			const payload = await getDevPanelWallpaperBlob(slot);
+			if (!payload) continue;
+			const dataUrl = await blobToDataUrl(payload.blob);
+			const previewKey = getDevPreviewTransformKey(slot);
+			const previewTransform = resolveSlotEffectiveTransform(
+				slot,
+				chatAppearance,
+				true,
+			);
+			const uploadRes = await fetch("/api/chat-wallpapers/upload/", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					slot,
+					name: payload.name,
+					filename: payload.name,
+					dataUrl,
+					transform: previewTransform,
+				}),
+			});
+			if (!uploadRes.ok) {
+				throw new Error(`上传 ${slot} 壁纸失败 (${uploadRes.status})`);
+			}
+			const uploadData = await uploadRes.json();
+			if (!uploadData?.item) {
+				throw new Error("上传返回数据异常");
+			}
+			nextItems.push(uploadData.item);
+			nextSelected[slot] = uploadData.item.id;
+			delete nextOverrides[previewKey];
+			await clearDevPanelWallpaperPreview(slot);
+		}
+
+		for (const item of nextItems) {
+			delete nextOverrides[item.id];
+		}
+
+		const nextConfig: ChatWallpaperConfig = {
+			defaultOpacity: currentCfg.defaultOpacity ?? 0.2,
+			defaults: { ...nextSelected },
+			items: nextItems,
+		};
+
+		const saveRes = await fetch("/api/chat-wallpapers/", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ wallpapers: nextConfig }),
+		});
+		if (!saveRes.ok) {
+			throw new Error(`保存配置失败 (${saveRes.status})`);
+		}
+
+		setRuntimeChatWallpaperCatalog(nextConfig);
+		chatCatalog = nextConfig;
+		const nextAppearance: ChatAppearanceSettings = {
+			...chatAppearance,
+			selectedWallpapers: nextSelected,
+			devItemTransforms: nextOverrides,
+		};
+		chatAppearance = nextAppearance;
+		applyChatAppearanceToDocument(nextAppearance, true, {});
+		window.dispatchEvent(
+			new CustomEvent("chat-wallpapers-catalog-change", { detail: nextConfig }),
+		);
+		window.dispatchEvent(
+			new CustomEvent("chatAppearanceChange", { detail: nextAppearance }),
+		);
+		chatWallpaperSaveStatus = "✅ 已保存到仓库配置";
+	} catch (err) {
+		console.error("saveChatWallpapersToRepo error:", err);
+		chatWallpaperSaveStatus = "⚠️ 保存失败，请检查控制台";
+	} finally {
+		isSavingChatWallpapers = false;
+		setTimeout(() => {
+			chatWallpaperSaveStatus = "";
+		}, 3500);
+	}
+}
+
+function resetChatLayout() {
+	const defaults = getDefaultChatAppearance();
+	const next: ChatAppearanceSettings = {
+		...chatAppearance,
+		chatFontSize: defaults.chatFontSize,
+		chatDensity: defaults.chatDensity,
+	};
+	chatAppearance = next;
+	applyChatAppearanceToDocument(next, true, devPreviewPanels);
+	chatMusicNotices = false;
+	setStoredMusicNoticesEnabled(false);
+}
+
+function toggleChatDensity() {
+	updateChatSetting(
+		"chatDensity",
+		chatAppearance.chatDensity === "compact" ? "comfortable" : "compact",
+	);
+}
+
+function toggleChatMusicNotices() {
+	chatMusicNotices = !chatMusicNotices;
+	setStoredMusicNoticesEnabled(chatMusicNotices);
+}
+
+async function handlePickDevPanelWallpaper(slot: ChatPanelSlot, e: Event) {
+	const input = e.currentTarget as HTMLInputElement;
+	const file = input.files?.[0];
+	input.value = "";
+	if (!file?.type.startsWith("image/")) return;
+	await saveDevPanelWallpaperPreview(slot, file);
+}
 
 function parseWallpaperOptions(): {
 	desktop: WallpaperOption[];
@@ -271,8 +633,6 @@ function handleHueInput() {
 		switchThemeHueMode("custom");
 	}
 }
-
-const isDev = import.meta.env.DEV;
 
 function getCurrentWallpaperIndex(): number {
 	if (!currentWallpaperList.length) return 0;
@@ -525,7 +885,8 @@ let cardSettingsIsDefault = $derived(
 );
 
 const hasAnyContent = $derived(
-	showThemeColor ||
+	isChatPage ||
+		showThemeColor ||
 		isWallpaperSwitchable ||
 		isFullscreenLayoutSwitchable ||
 		allowLayoutSwitch ||
@@ -536,20 +897,22 @@ const hasAnyContent = $derived(
 
 // --- Tab visibility ---
 const hasAppearanceTab = $derived(
-	showThemeColor ||
+	isChatPage ||
+		showThemeColor ||
 		allowLayoutSwitch ||
 		isCardBorderSwitchable ||
 		isCardFollowThemeSwitchable,
 );
 const hasWallpaperTab = $derived(
-	isWallpaperSwitchable ||
-		isFullscreenLayoutSwitchable ||
-		((wallpaperMode === WALLPAPER_OVERLAY ||
-			wallpaperMode === WALLPAPER_FULLSCREEN) &&
-			hasOverlaySettings) ||
-		((wallpaperMode === WALLPAPER_BANNER ||
-			wallpaperMode === WALLPAPER_FULLSCREEN) &&
-			hasBannerSettings),
+	!isChatPage &&
+		(isWallpaperSwitchable ||
+			isFullscreenLayoutSwitchable ||
+			((wallpaperMode === WALLPAPER_OVERLAY ||
+				wallpaperMode === WALLPAPER_FULLSCREEN) &&
+				hasOverlaySettings) ||
+			((wallpaperMode === WALLPAPER_BANNER ||
+				wallpaperMode === WALLPAPER_FULLSCREEN) &&
+				hasBannerSettings)),
 );
 const hasEffectsTab = $derived(isSakuraSwitchable);
 
@@ -586,9 +949,10 @@ $effect(() => {
 	}
 });
 
-// Auto-switch to wallpaper tab when entering overlay/fullscreen mode
+// Auto-switch to wallpaper tab when entering overlay/fullscreen mode (skip on chat page)
 $effect(() => {
 	if (
+		!isChatPage &&
 		(wallpaperMode === WALLPAPER_OVERLAY ||
 			wallpaperMode === WALLPAPER_FULLSCREEN) &&
 		hasOverlaySettings
@@ -882,6 +1246,79 @@ function switchLayout() {
 onMount(() => {
 	mounted = true;
 	checkScreenSize();
+	isChatPage = document.documentElement.hasAttribute("data-chat-page");
+	chatAppearance = loadChatAppearanceSettings();
+	chatMusicNotices = getStoredMusicNoticesEnabled();
+	if (isChatPage) {
+		applyChatAppearanceToDocument(chatAppearance, false);
+		requestAnimationFrame(refreshAllRangeProgress);
+	}
+
+	const handleChatPageChange = (event: Event) => {
+		const ce = event as CustomEvent<{ isChatPage?: boolean }>;
+		const nextIsChat =
+			typeof ce.detail?.isChatPage === "boolean"
+				? ce.detail.isChatPage
+				: document.documentElement.hasAttribute("data-chat-page");
+		isChatPage = nextIsChat;
+		if (nextIsChat) {
+			chatAppearance = loadChatAppearanceSettings();
+			chatMusicNotices = getStoredMusicNoticesEnabled();
+		} else {
+			themeHueMode = getThemeHueMode();
+			hue = getHue();
+		}
+		requestAnimationFrame(refreshAllRangeProgress);
+	};
+
+	const handleMusicNoticesSync = (event: Event) => {
+		const ce = event as CustomEvent<{ enabled?: boolean }>;
+		if (typeof ce.detail?.enabled === "boolean") {
+			chatMusicNotices = ce.detail.enabled;
+		} else {
+			chatMusicNotices = getStoredMusicNoticesEnabled();
+		}
+	};
+
+	const handleChatAppearanceSync = (event: Event) => {
+		const ce = event as CustomEvent<ChatAppearanceSettings | undefined>;
+		chatAppearance = ce.detail
+			? { ...ce.detail }
+			: loadChatAppearanceSettings();
+		requestAnimationFrame(refreshAllRangeProgress);
+	};
+
+	const handleDevBgPreviewSync = (event: Event) => {
+		if (!isDev) return;
+		const ce = event as CustomEvent<{
+			slot?: ChatPanelSlot | "all";
+			cleared?: boolean;
+		}>;
+		if (!ce.detail?.cleared && isChatPanelSlot(ce.detail?.slot)) {
+			activeChatBgSlot = ce.detail.slot;
+		}
+		void loadDevPanelWallpaperPreviews().then((loaded) => {
+			devPreviewPanels = loaded;
+			if (isChatPage) {
+				applyChatAppearanceToDocument(chatAppearance, false, loaded);
+			}
+			requestAnimationFrame(refreshAllRangeProgress);
+		});
+	};
+
+	if (isDev) {
+		void loadDevPanelWallpaperPreviews().then((loaded) => {
+			devPreviewPanels = loaded;
+			if (isChatPage && Object.keys(loaded).length > 0) {
+				applyChatAppearanceToDocument(chatAppearance, false, loaded);
+			}
+		});
+		window.addEventListener("chat-bg-preview-change", handleDevBgPreviewSync);
+	}
+
+	window.addEventListener("chatPageChange", handleChatPageChange);
+	window.addEventListener("chatAppearanceChange", handleChatAppearanceSync);
+	window.addEventListener("chat-music-notices-change", handleMusicNoticesSync);
 
 	// 从localStorage读取保存的壁纸模式
 	wallpaperMode = getStoredWallpaperMode();
@@ -926,6 +1363,21 @@ onMount(() => {
 	window.addEventListener("resize", checkScreenSize);
 
 	return () => {
+		if (isDev) {
+			window.removeEventListener(
+				"chat-bg-preview-change",
+				handleDevBgPreviewSync,
+			);
+		}
+		window.removeEventListener("chatPageChange", handleChatPageChange);
+		window.removeEventListener(
+			"chatAppearanceChange",
+			handleChatAppearanceSync,
+		);
+		window.removeEventListener(
+			"chat-music-notices-change",
+			handleMusicNoticesSync,
+		);
 		window.removeEventListener("resize", checkScreenSize);
 	};
 });
@@ -981,7 +1433,7 @@ onMount(() => {
 
 onMount(() => {
 	const handleHueChange = (event: Event) => {
-		if (isSavingConfig) return; // 正在保存配置时，完全拦截并丢弃外部任何 hueChange 篡改！
+		if (isSavingConfig || isChatPage) return; // 正在保存配置或位于聊天室隔离页时，不覆盖站点主题色
 		const customEvent = event as CustomEvent<{ hue: number }>;
 		if (typeof customEvent.detail?.hue === "number") {
 			hue = customEvent.detail.hue;
@@ -1004,7 +1456,12 @@ onMount(() => {
 		wallpaperPresets = getWallpaperHuePresets();
 	};
 	const handleWpChange = (event: Event) => {
-		if (isSavingConfig) return; // 正在保存配置时，严禁外部壁纸切换事件打乱保存状态！
+		if (
+			isSavingConfig ||
+			isChatPage ||
+			document.documentElement.hasAttribute("data-chat-page")
+		)
+			return; // 正在保存配置或位于聊天室时，不接受外部壁纸切换事件干扰
 		const customEvent = event as CustomEvent<{
 			img: HTMLImageElement;
 			src?: string;
@@ -1091,6 +1548,7 @@ $effect(() => {
 		isInitialHueEffect = false;
 		return;
 	}
+	if (isChatPage) return;
 	if (currentHue || currentHue === 0) {
 		setHue(currentHue);
 		if (
@@ -1125,10 +1583,12 @@ $effect(() => {
 	}
 });
 
-// Tab 切换后刷新滑块进度（overlay 滑块在 DOM 中才生效）
+// Tab 或页面模式切换后刷新滑块进度（overlay / chat 滑块在 DOM 中才生效）
 $effect(() => {
 	// eslint-disable-next-line @typescript-eslint/no-unused-expressions
 	activeTab;
+	// eslint-disable-next-line @typescript-eslint/no-unused-expressions
+	isChatPage;
 	requestAnimationFrame(refreshAllRangeProgress);
 });
 </script>
@@ -1155,6 +1615,491 @@ $effect(() => {
 
 	<!-- Appearance Tab: Theme Color + Layout -->
 	{#if activeTab === "appearance"}
+		{#if isChatPage}
+		<!-- 聊天室专属外观设置（与全站外观/壁纸完全隔离，仅对聊天页面生效） -->
+		<!-- 1. 聊天背景（三栏独立壁纸 + 透明度/遮罩/模糊 + 纹理质感） -->
+		<div>
+			<div class="section-title">
+				聊天背景
+				<button
+					aria-label="重置聊天背景"
+					class="btn-regular rounded-md active:scale-90"
+					class:opacity-0={isChatBgDefault}
+					class:pointer-events-none={isChatBgDefault}
+					disabled={isChatBgDefault}
+					aria-hidden={isChatBgDefault ? "true" : undefined}
+					onclick={resetChatBackground}
+				>
+					<div class="text-(--btn-content)">
+						<Icon icon="fa7-solid:arrow-rotate-left" class="text-[0.75rem]"></Icon>
+					</div>
+				</button>
+			</div>
+
+			<div class="space-y-2">
+				<div class="grid grid-cols-2 gap-1.5">
+					<button
+						type="button"
+						class="btn-regular rounded-md py-2 px-2 flex items-center justify-center gap-1.5 active:scale-95 transition-all text-xs font-medium cursor-pointer"
+						class:opacity-60={chatAppearance.chatBgStyle !== "wallpaper"}
+						class:bg-(--btn-regular-bg-hover)={chatAppearance.chatBgStyle === "wallpaper"}
+						class:text-(--primary)={chatAppearance.chatBgStyle === "wallpaper"}
+						class:font-semibold={chatAppearance.chatBgStyle === "wallpaper"}
+						onclick={() => updateChatSetting("chatBgStyle", "wallpaper" satisfies ChatBackgroundStyle)}
+					>
+						<Icon icon="material-symbols:wallpaper" class="text-[1.1rem] shrink-0"></Icon>
+						<span class="truncate">图片壁纸</span>
+					</button>
+					<button
+						type="button"
+						class="btn-regular rounded-md py-2 px-2 flex items-center justify-center gap-1.5 active:scale-95 transition-all text-xs font-medium cursor-pointer"
+						class:opacity-60={chatAppearance.chatBgStyle !== "solid"}
+						class:bg-(--btn-regular-bg-hover)={chatAppearance.chatBgStyle === "solid"}
+						class:text-(--primary)={chatAppearance.chatBgStyle === "solid"}
+						class:font-semibold={chatAppearance.chatBgStyle === "solid"}
+						onclick={() => updateChatSetting("chatBgStyle", "solid" satisfies ChatBackgroundStyle)}
+					>
+						<Icon icon="material-symbols:hide-image-outline" class="text-[1.1rem] shrink-0"></Icon>
+						<span class="truncate">纯净纯色</span>
+					</button>
+					<button
+						type="button"
+						class="btn-regular rounded-md py-2 px-2 flex items-center justify-center gap-1.5 active:scale-95 transition-all text-xs font-medium cursor-pointer"
+						class:opacity-60={chatAppearance.chatBgStyle !== "dots"}
+						class:bg-(--btn-regular-bg-hover)={chatAppearance.chatBgStyle === "dots"}
+						class:text-(--primary)={chatAppearance.chatBgStyle === "dots"}
+						class:font-semibold={chatAppearance.chatBgStyle === "dots"}
+						onclick={() => updateChatSetting("chatBgStyle", "dots" satisfies ChatBackgroundStyle)}
+					>
+						<svg class="w-[1.1rem] h-[1.1rem] shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+							<circle cx="5" cy="5" r="1.75" />
+							<circle cx="12" cy="5" r="1.75" />
+							<circle cx="19" cy="5" r="1.75" />
+							<circle cx="5" cy="12" r="1.75" />
+							<circle cx="12" cy="12" r="1.75" />
+							<circle cx="19" cy="12" r="1.75" />
+							<circle cx="5" cy="19" r="1.75" />
+							<circle cx="12" cy="19" r="1.75" />
+							<circle cx="19" cy="19" r="1.75" />
+						</svg>
+						<span class="truncate">微点纹理</span>
+					</button>
+					<button
+						type="button"
+						class="btn-regular rounded-md py-2 px-2 flex items-center justify-center gap-1.5 active:scale-95 transition-all text-xs font-medium cursor-pointer"
+						class:opacity-60={chatAppearance.chatBgStyle !== "glow"}
+						class:bg-(--btn-regular-bg-hover)={chatAppearance.chatBgStyle === "glow"}
+						class:text-(--primary)={chatAppearance.chatBgStyle === "glow"}
+						class:font-semibold={chatAppearance.chatBgStyle === "glow"}
+						onclick={() => updateChatSetting("chatBgStyle", "glow" satisfies ChatBackgroundStyle)}
+					>
+						<Icon icon="material-symbols:gradient" class="text-[1.1rem] shrink-0"></Icon>
+						<span class="truncate">柔光氛围</span>
+					</button>
+				</div>
+
+				{#if chatAppearance.chatBgStyle === "wallpaper"}
+				<div class="space-y-2">
+					<!-- 四栏壁纸选择（线上/本地均可切换图片）与参数调校（仅本地 DEV 可用） -->
+					<div class="p-2 rounded-lg bg-black/[0.03] dark:bg-white/[0.04] border border-black/5 dark:border-white/10 space-y-2">
+						<div class="flex items-center justify-between gap-2">
+							<span class="text-[11px] font-medium text-(--btn-content) opacity-80">
+								{isDev ? "四栏壁纸与固定参数（本地可调）" : "各栏壁纸选择"}
+							</span>
+							{#if isDev && isActivePanelTransformModified && activePresetItem && !activeSlotHasDevPreview}
+							<button
+								type="button"
+								class="text-[10px] px-1.5 py-0.5 rounded bg-(--btn-regular-bg) text-(--primary) hover:bg-(--btn-regular-bg-hover) cursor-pointer"
+								onclick={resetActivePanelTransform}
+							>
+								还原预设
+							</button>
+							{/if}
+						</div>
+
+						<div class="grid grid-cols-4 gap-1">
+							{#each CHAT_BG_SLOT_ITEMS as item (item.slot)}
+								<button
+									type="button"
+									class="btn-regular rounded py-1 px-1 text-[11px] font-medium cursor-pointer transition-all truncate"
+									class:opacity-65={activeChatBgSlot !== item.slot}
+									class:bg-(--btn-regular-bg-hover)={activeChatBgSlot === item.slot}
+									class:text-(--primary)={activeChatBgSlot === item.slot}
+									class:font-semibold={activeChatBgSlot === item.slot}
+									onclick={() => {
+										activeChatBgSlot = item.slot;
+										requestAnimationFrame(refreshAllRangeProgress);
+									}}
+								>
+									{item.label}{isDev && devPreviewPanels[item.slot] ? " ✓" : ""}
+								</button>
+							{/each}
+						</div>
+
+						<!-- 图片选择器：线上游客与本地开发均可按栏更换图片 -->
+						<div class="grid grid-cols-3 gap-1.5">
+							<button
+								type="button"
+								class="rounded-md border p-1.5 flex flex-col items-center justify-center gap-1 min-h-[3.6rem] text-[10px] font-medium cursor-pointer transition-all
+									{!activeSlotHasDevPreview && activeSelectedId === ''
+										? 'border-(--primary) bg-(--btn-regular-bg-hover) text-(--primary) font-semibold'
+										: 'border-black/10 dark:border-white/10 bg-(--btn-regular-bg) text-(--btn-content) opacity-75 hover:opacity-100'}"
+								onclick={() => void selectSlotWallpaper("")}
+							>
+								<Icon icon="material-symbols:hide-image-outline" class="text-[1rem] shrink-0"></Icon>
+								<span class="truncate max-w-full">无图片</span>
+							</button>
+
+							{#each activeSlotWallpaperItems as wp (wp.id)}
+								{@const isSelected = !activeSlotHasDevPreview && activeSelectedId === wp.id}
+								<button
+									type="button"
+									class="rounded-md border overflow-hidden flex flex-col text-left cursor-pointer transition-all
+										{isSelected
+											? 'border-(--primary) ring-1 ring-(--primary) bg-(--btn-regular-bg-hover)'
+											: 'border-black/10 dark:border-white/10 bg-(--btn-regular-bg) opacity-85 hover:opacity-100'}"
+									onclick={() => void selectSlotWallpaper(wp.id)}
+									title={`${wp.name}（${wp.mode === 'sticker' ? '小贴纸' : '大壁纸'}）`}
+								>
+									<div class="relative w-full aspect-[4/3] bg-black/5 dark:bg-white/5 overflow-hidden">
+										<img src={wp.src} alt={wp.name} loading="lazy" class="w-full h-full object-cover" />
+										<span class="absolute bottom-0.5 right-0.5 px-1 py-px rounded text-[9px] leading-tight bg-black/60 text-white">
+											{wp.mode === "sticker" ? "贴纸" : "壁纸"}
+										</span>
+									</div>
+									<span class="px-1 py-0.5 text-[10px] truncate w-full text-(--btn-content) {isSelected ? 'text-(--primary) font-semibold' : ''}">
+										{wp.name}
+									</span>
+								</button>
+							{/each}
+						</div>
+
+						{#if isDev && (activeSlotHasDevPreview || activePresetItem)}
+						<div class="pt-1.5 border-t border-black/5 dark:border-white/10 space-y-2">
+							<div class="flex items-center justify-between gap-2 text-[11px] text-(--btn-content) opacity-80">
+								<span class="truncate">
+									参数调校：{activeSlotHasDevPreview ? "本地拖拽预览图" : activePresetItem?.name}
+								</span>
+								<span class="text-[10px] text-(--primary) shrink-0">仅本地可改</span>
+							</div>
+
+							<div class="grid grid-cols-2 gap-1">
+								<button
+									type="button"
+									class="btn-regular rounded py-1 px-1.5 text-[11px] font-medium cursor-pointer transition-all"
+									class:opacity-65={activePanelTransform.mode !== "wallpaper"}
+									class:bg-(--btn-regular-bg-hover)={activePanelTransform.mode === "wallpaper"}
+									class:text-(--primary)={activePanelTransform.mode === "wallpaper"}
+									class:font-semibold={activePanelTransform.mode === "wallpaper"}
+									onclick={() => setActivePanelMode("wallpaper")}
+								>
+									大壁纸（铺满）
+								</button>
+								<button
+									type="button"
+									class="btn-regular rounded py-1 px-1.5 text-[11px] font-medium cursor-pointer transition-all"
+									class:opacity-65={activePanelTransform.mode !== "sticker"}
+									class:bg-(--btn-regular-bg-hover)={activePanelTransform.mode === "sticker"}
+									class:text-(--primary)={activePanelTransform.mode === "sticker"}
+									class:font-semibold={activePanelTransform.mode === "sticker"}
+									onclick={() => setActivePanelMode("sticker")}
+								>
+									小贴纸（越界裁剪）
+								</button>
+							</div>
+
+							<div class="rounded-md bg-(--btn-regular-bg) p-2">
+								<div class="flex items-center justify-between mb-1">
+									<span class="text-xs font-medium text-(--btn-content) opacity-80">不透明度</span>
+									<span class="text-xs text-(--btn-content)">{Math.round(activePanelTransform.opacity * 100)}%</span>
+								</div>
+								<input
+									aria-label="当前区域壁纸不透明度"
+									type="range"
+									min="5"
+									max="100"
+									step="1"
+									value={Math.round(activePanelTransform.opacity * 100)}
+									oninput={(e) => updateActivePanelTransform({ opacity: Number((e.currentTarget as HTMLInputElement).value) / 100 })}
+									class="slider w-full overlay-slider"
+								/>
+							</div>
+
+							<div class="rounded-md bg-(--btn-regular-bg) p-2">
+								<div class="flex items-center justify-between mb-1">
+									<span class="text-xs font-medium text-(--btn-content) opacity-80">图片缩放</span>
+									<span class="text-xs text-(--btn-content)">{Math.round(activePanelTransform.scale * 100)}%</span>
+								</div>
+								<input
+									aria-label="当前区域图片缩放"
+									type="range"
+									min="15"
+									max="350"
+									step="1"
+									value={Math.round(activePanelTransform.scale * 100)}
+									oninput={(e) => updateActivePanelTransform({ scale: Number((e.currentTarget as HTMLInputElement).value) / 100 })}
+									class="slider w-full overlay-slider"
+								/>
+							</div>
+
+							<div class="grid grid-cols-2 gap-1.5">
+								<div class="rounded-md bg-(--btn-regular-bg) p-2">
+									<div class="flex items-center justify-between mb-1">
+										<span class="text-[11px] font-medium text-(--btn-content) opacity-80">水平偏移</span>
+										<span class="text-[11px] text-(--btn-content)">{activePanelTransform.offsetX > 0 ? `+${activePanelTransform.offsetX}%` : `${activePanelTransform.offsetX}%`}</span>
+									</div>
+									<input
+										aria-label="当前区域图片水平偏移"
+										type="range"
+										min="-200"
+										max="200"
+										step="1"
+										value={activePanelTransform.offsetX}
+										oninput={(e) => updateActivePanelTransform({ offsetX: Number((e.currentTarget as HTMLInputElement).value) })}
+										class="slider w-full overlay-slider"
+									/>
+								</div>
+
+								<div class="rounded-md bg-(--btn-regular-bg) p-2">
+									<div class="flex items-center justify-between mb-1">
+										<span class="text-[11px] font-medium text-(--btn-content) opacity-80">垂直偏移</span>
+										<span class="text-[11px] text-(--btn-content)">{activePanelTransform.offsetY > 0 ? `+${activePanelTransform.offsetY}%` : `${activePanelTransform.offsetY}%`}</span>
+									</div>
+									<input
+										aria-label="当前区域图片垂直偏移"
+										type="range"
+										min="-200"
+										max="200"
+										step="1"
+										value={activePanelTransform.offsetY}
+										oninput={(e) => updateActivePanelTransform({ offsetY: Number((e.currentTarget as HTMLInputElement).value) })}
+										class="slider w-full overlay-slider"
+									/>
+								</div>
+							</div>
+
+							<button
+								type="button"
+								class="w-full btn-regular rounded-md py-1.5 px-2.5 flex items-center gap-2 text-left active:scale-95 transition-all cursor-pointer"
+								class:bg-(--btn-regular-bg-hover)={activePanelTransform.blurEnabled}
+								onclick={toggleActivePanelBlur}
+							>
+								<span class="text-xs font-medium text-(--btn-content) flex-1">高斯模糊</span>
+								<span class="text-[11px] text-(--btn-content) opacity-70">{activePanelTransform.blurEnabled ? `${activePanelTransform.blur.toFixed(1)}px` : "关闭"}</span>
+								<div
+									class="w-8 h-4 rounded-full transition-all duration-200 relative shrink-0"
+									class:bg-(--primary)={activePanelTransform.blurEnabled}
+									class:bg-(--btn-regular-bg-active)={!activePanelTransform.blurEnabled}
+								>
+									<div
+										class="absolute top-0.5 w-3 h-3 bg-white rounded-full shadow transition-all duration-200"
+										class:left-0.5={!activePanelTransform.blurEnabled}
+										class:left-[18px]={activePanelTransform.blurEnabled}
+									></div>
+								</div>
+							</button>
+
+							{#if activePanelTransform.blurEnabled}
+							<div class="rounded-md bg-(--btn-regular-bg) p-2">
+								<div class="flex items-center justify-between mb-1">
+									<span class="text-[11px] font-medium text-(--btn-content) opacity-80">模糊程度</span>
+									<span class="text-[11px] text-(--btn-content)">{activePanelTransform.blur.toFixed(1)}px</span>
+								</div>
+								<input
+									aria-label="当前区域高斯模糊程度"
+									type="range"
+									min="0"
+									max="30"
+									step="0.5"
+									value={activePanelTransform.blur}
+									oninput={(e) => {
+										const val = Number((e.currentTarget as HTMLInputElement).value);
+										updateActivePanelTransform({ blur: val, blurEnabled: val > 0 });
+									}}
+									class="slider w-full overlay-slider"
+								/>
+							</div>
+							{/if}
+						</div>
+						{/if}
+
+						{#if isDev}
+						<div class="space-y-1.5 pt-1.5 border-t border-black/5 dark:border-white/10">
+							<div class="flex items-center justify-between gap-2">
+								<label class="text-[11px] font-medium text-(--primary) hover:underline cursor-pointer">
+									<span>预览新图（{CHAT_BG_SLOT_ITEMS.find((i) => i.slot === activeChatBgSlot)?.label ?? ""}）</span>
+									<input type="file" accept="image/*" class="hidden" onchange={(e) => void handlePickDevPanelWallpaper(activeChatBgSlot, e)} />
+								</label>
+								{#if hasAnyDevPreview}
+								<button
+									type="button"
+									class="text-[10px] px-1.5 py-0.5 rounded bg-(--btn-regular-bg) text-(--btn-content) hover:text-(--primary) cursor-pointer"
+									onclick={() => void clearDevPanelWallpaperPreview()}
+								>
+									清除预览
+								</button>
+								{/if}
+							</div>
+							<button
+								type="button"
+								disabled={isSavingChatWallpapers}
+								class="w-full btn-regular rounded-md py-1.5 px-2.5 text-xs font-medium text-(--primary) hover:bg-(--btn-regular-bg-hover) active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+								onclick={() => void saveChatWallpapersToRepo()}
+							>
+								{isSavingChatWallpapers ? "保存中..." : "💾 保存图片与参数到仓库配置"}
+							</button>
+							{#if chatWallpaperSaveStatus}
+								<div class="text-[11px] text-center text-(--primary) font-medium">
+									{chatWallpaperSaveStatus}
+								</div>
+							{/if}
+						</div>
+						{/if}
+					</div>
+				</div>
+				{/if}
+			</div>
+		</div>
+
+		<!-- 2. 主题色彩 -->
+		<div>
+			<div class="section-title">
+				{i18n(I18nKey.themeColor)}
+				<button
+					aria-label="重置聊天室主题色为 175"
+					class="btn-regular rounded-md active:scale-90"
+					class:opacity-0={isChatHueDefault}
+					class:pointer-events-none={isChatHueDefault}
+					disabled={isChatHueDefault}
+					aria-hidden={isChatHueDefault ? "true" : undefined}
+					onclick={resetChatHue}
+				>
+					<div class="text-(--btn-content)">
+						<Icon icon="fa7-solid:arrow-rotate-left" class="text-[0.75rem]"></Icon>
+					</div>
+				</button>
+				<div id="hueValue" class="transition bg-(--btn-regular-bg) rounded-md flex justify-center
+				font-bold items-center text-(--btn-content)">
+					{chatAppearance.chatHue}
+				</div>
+			</div>
+
+			<div class="text-[11px] text-(--btn-content) opacity-70 mb-2 flex items-center gap-1.5 px-0.5">
+				<Icon icon="material-symbols:palette" class="w-3.5 h-3.5 text-(--primary) shrink-0"></Icon>
+				<span>仅对聊天室生效（默认绿色 {DEFAULT_CHAT_HUE}）</span>
+			</div>
+
+			<div class="hue-slider-shell w-full h-6 px-1 bg-[oklch(0.80_0.10_0)] dark:bg-[oklch(0.70_0.10_0)] rounded-md select-none mb-2">
+				<input
+					aria-label="聊天室主题色相"
+					type="range"
+					min="0"
+					max="360"
+					step="5"
+					value={chatAppearance.chatHue}
+					oninput={(e) => updateChatSetting("chatHue", Number((e.currentTarget as HTMLInputElement).value))}
+					class="slider"
+					id="colorSlider"
+					style="width: 100%"
+				/>
+			</div>
+		</div>
+
+		<!-- 3. 消息与界面 -->
+		<div>
+			<div class="section-title">
+				消息与界面
+				<button
+					aria-label="重置消息与界面设置"
+					class="btn-regular rounded-md active:scale-90"
+					class:opacity-0={isChatLayoutDefault}
+					class:pointer-events-none={isChatLayoutDefault}
+					disabled={isChatLayoutDefault}
+					aria-hidden={isChatLayoutDefault ? "true" : undefined}
+					onclick={resetChatLayout}
+				>
+					<div class="text-(--btn-content)">
+						<Icon icon="fa7-solid:arrow-rotate-left" class="text-[0.75rem]"></Icon>
+					</div>
+				</button>
+			</div>
+			<div class="space-y-1.5">
+				<div class="grid grid-cols-3 gap-1.5">
+					<button
+						type="button"
+						class="btn-regular rounded-md py-1.5 px-2 text-xs font-medium active:scale-95 transition-all cursor-pointer"
+						class:opacity-60={chatAppearance.chatFontSize !== "sm"}
+						class:bg-(--btn-regular-bg-hover)={chatAppearance.chatFontSize === "sm"}
+						class:text-(--primary)={chatAppearance.chatFontSize === "sm"}
+						class:font-semibold={chatAppearance.chatFontSize === "sm"}
+						onclick={() => updateChatSetting("chatFontSize", "sm" satisfies ChatFontSize)}
+					>
+						小号字体
+					</button>
+					<button
+						type="button"
+						class="btn-regular rounded-md py-1.5 px-2 text-xs font-medium active:scale-95 transition-all cursor-pointer"
+						class:opacity-60={chatAppearance.chatFontSize !== "md"}
+						class:bg-(--btn-regular-bg-hover)={chatAppearance.chatFontSize === "md"}
+						class:text-(--primary)={chatAppearance.chatFontSize === "md"}
+						class:font-semibold={chatAppearance.chatFontSize === "md"}
+						onclick={() => updateChatSetting("chatFontSize", "md" satisfies ChatFontSize)}
+					>
+						标准字体
+					</button>
+					<button
+						type="button"
+						class="btn-regular rounded-md py-1.5 px-2 text-xs font-medium active:scale-95 transition-all cursor-pointer"
+						class:opacity-60={chatAppearance.chatFontSize !== "lg"}
+						class:bg-(--btn-regular-bg-hover)={chatAppearance.chatFontSize === "lg"}
+						class:text-(--primary)={chatAppearance.chatFontSize === "lg"}
+						class:font-semibold={chatAppearance.chatFontSize === "lg"}
+						onclick={() => updateChatSetting("chatFontSize", "lg" satisfies ChatFontSize)}
+					>
+						大号字体
+					</button>
+				</div>
+
+				<button
+					type="button"
+					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
+					class:bg-(--btn-regular-bg-hover)={chatAppearance.chatDensity === "compact"}
+					onclick={toggleChatDensity}
+				>
+					<Icon icon="material-symbols:view-day-outline" class="text-[1.25rem] shrink-0"></Icon>
+					<span class="text-sm flex-1">紧凑消息排版</span>
+					<div class="w-10 h-5 rounded-full transition-all duration-200 relative"
+						 class:bg-(--primary)={chatAppearance.chatDensity === "compact"}
+						 class:bg-(--btn-regular-bg-active)={chatAppearance.chatDensity !== "compact"}>
+						<div class="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all duration-200"
+							 class:left-0.5={chatAppearance.chatDensity !== "compact"}
+							 class:left-5={chatAppearance.chatDensity === "compact"}></div>
+					</div>
+				</button>
+
+				<button
+					type="button"
+					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
+					class:bg-(--btn-regular-bg-hover)={chatMusicNotices}
+					onclick={toggleChatMusicNotices}
+				>
+					<svg class="w-[1.25rem] h-[1.25rem] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M9 18V5l12-2v13" />
+						<circle cx="6" cy="18" r="3" />
+						<circle cx="18" cy="16" r="3" />
+					</svg>
+					<span class="text-sm flex-1">聊天显示点歌记录</span>
+					<div class="w-10 h-5 rounded-full transition-all duration-200 relative"
+						 class:bg-(--primary)={chatMusicNotices}
+						 class:bg-(--btn-regular-bg-active)={!chatMusicNotices}>
+						<div class="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all duration-200"
+							 class:left-0.5={!chatMusicNotices}
+							 class:left-5={chatMusicNotices}></div>
+					</div>
+				</button>
+			</div>
+		</div>
+		{:else}
 		<!-- Theme Color Section -->
 		{#if showThemeColor}
 		<div class="">
@@ -1455,6 +2400,7 @@ $effect(() => {
 				{/if}
 			</div>
 		</div>
+		{/if}
 		{/if}
 	{/if}
 

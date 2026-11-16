@@ -1,3 +1,43 @@
+export type ChatPanelSlot = "left" | "center" | "right" | "input";
+export type ChatWallpaperDisplayMode = "wallpaper" | "sticker";
+export type ChatPanelBgFit = "cover" | "contain";
+
+export interface ChatWallpaperItem {
+	/** 壁纸唯一 ID */
+	id: string;
+	/** 所属栏位（严格隔离：left / center / right / input 互不串用） */
+	slot: ChatPanelSlot;
+	/** 在设置面板显示的壁纸名称 */
+	name: string;
+	/** 壁纸文件路径（位于 /wallpapers/chat/<slot>/...） */
+	src: string;
+	/** 显示模式：wallpaper=大壁纸默认铺满，sticker=小贴纸可超出越界裁剪 */
+	mode: ChatWallpaperDisplayMode;
+	/** 适配方式：cover=铺满，contain=保持比例完整显示（贴纸常用） */
+	fit: ChatPanelBgFit;
+	/** 图片不透明度（0.05 ~ 1，默认 0.2 即 20%） */
+	opacity?: number;
+	/** 缩放倍数（如 1 表示 100%，0.6 表示 60%） */
+	scale: number;
+	/** 水平偏移百分比（-200 ~ 200，0 为居中） */
+	offsetX: number;
+	/** 垂直偏移百分比（-200 ~ 200，0 为居中） */
+	offsetY: number;
+	/** 是否启用高斯模糊 */
+	blurEnabled: boolean;
+	/** 高斯模糊半径（px，0 ~ 30） */
+	blur: number;
+}
+
+export interface ChatWallpaperConfig {
+	/** 默认背景不透明度（0.1 ~ 1） */
+	defaultOpacity?: number;
+	/** 四栏默认选中的壁纸 ID（空字符串表示默认不显示图片） */
+	defaults: Record<ChatPanelSlot, string>;
+	/** 聊天室壁纸/贴纸库：每张图片各自固定一套大小、位置与模糊参数 */
+	items: ChatWallpaperItem[];
+}
+
 export interface ChatRoomMeta {
 	id: string;
 	name: string;
@@ -35,4 +75,8 @@ export interface ChatConfig {
 	 * 互联茶室联动友站列表（点击一键前往对方茶室）
 	 */
 	interconnectSites?: InterconnectSite[];
+	/**
+	 * 聊天室四栏壁纸库与固定默认配置（线上访问者仅可选图，参数锁定为仓库配置）
+	 */
+	wallpapers?: ChatWallpaperConfig;
 }

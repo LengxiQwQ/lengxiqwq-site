@@ -7,6 +7,11 @@ import ChatMessage from "./ChatMessage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import {
+	getStoredMusicNoticesEnabled,
+	saveDevPanelWallpaperPreview,
+	trackBgImgAspectRatio,
+} from "./chatAppearance";
+import {
 	isExternalMatrixIdentity,
 	isMentionedForUser,
 	resolveExternalOrigin,
@@ -34,6 +39,9 @@ interface Props {
 	roomName: string;
 	roomSubtitle: string;
 	roomAvatar?: string;
+	inputBgUrl?: string;
+	failedInputBg?: boolean;
+	onInputBgError?: () => void;
 	onlineCount: number;
 	messages: ChatMessageRecord[];
 	hasMoreHistory?: boolean;
@@ -63,7 +71,6 @@ interface Props {
 	walineServerUrl: string;
 	chatServerUrl?: string;
 	mentionEvent?: { name: string; userKey?: string; seq: number };
-	showSettings?: boolean;
 	showInterconnect?: boolean;
 	isInterconnectRoom?: boolean;
 	interconnectSites?: InterconnectSite[];
@@ -86,7 +93,6 @@ interface Props {
 		maxSelections: number,
 	) => void;
 	onTyping?: (typing: boolean) => void;
-	onToggleSettings?: () => void;
 	onToggleInterconnect?: () => void;
 	onSendMessage: (
 		content: string,
@@ -123,6 +129,9 @@ const {
 	roomName = "闲聊",
 	roomSubtitle = "随便聊聊日常与折腾",
 	roomAvatar = "",
+	inputBgUrl = "",
+	failedInputBg = false,
+	onInputBgError,
 	onlineCount = 0,
 	messages = [],
 	hasMoreHistory = false,
@@ -152,7 +161,6 @@ const {
 	walineServerUrl = "",
 	chatServerUrl = "",
 	mentionEvent,
-	showSettings = false,
 	showInterconnect = false,
 	isInterconnectRoom = false,
 	interconnectSites = [],
@@ -171,7 +179,6 @@ const {
 	onOpenPollModal,
 	onCreatePoll,
 	onTyping,
-	onToggleSettings,
 	onToggleInterconnect,
 	onSendMessage,
 	onRecallMessage,
@@ -215,6 +222,59 @@ const currentPinnedMsg = $derived.by(() => {
 let uploadError = $state("");
 let isDraggingFiles = $state(false);
 let dragCounter = 0;
+let inputDragActive = $state(false);
+let inputDragCounter = 0;
+
+function handleInputBgDragEnter(e: DragEvent) {
+	if (!import.meta.env.DEV) return;
+	if (!e.dataTransfer?.types?.includes("Files")) return;
+	e.preventDefault();
+	e.stopPropagation();
+	inputDragCounter += 1;
+	inputDragActive = true;
+	isDraggingFiles = false;
+	dragCounter = 0;
+}
+
+function handleInputBgDragOver(e: DragEvent) {
+	if (!import.meta.env.DEV) return;
+	if (!e.dataTransfer?.types?.includes("Files")) return;
+	e.preventDefault();
+	e.stopPropagation();
+	if (e.dataTransfer) {
+		e.dataTransfer.dropEffect = "copy";
+	}
+	inputDragActive = true;
+	isDraggingFiles = false;
+}
+
+function handleInputBgDragLeave(e: DragEvent) {
+	if (!import.meta.env.DEV) return;
+	e.preventDefault();
+	e.stopPropagation();
+	inputDragCounter = Math.max(0, inputDragCounter - 1);
+	if (inputDragCounter === 0) {
+		inputDragActive = false;
+	}
+}
+
+async function handleInputBgDrop(e: DragEvent) {
+	if (!import.meta.env.DEV) return;
+	e.preventDefault();
+	e.stopPropagation();
+	inputDragCounter = 0;
+	inputDragActive = false;
+	isDraggingFiles = false;
+	dragCounter = 0;
+	const files = Array.from(e.dataTransfer?.files || []);
+	const imageFile = files.find((f) => f.type.startsWith("image/"));
+	if (!imageFile) {
+		onNotify?.("请拖入图片文件以预览输入框壁纸");
+		return;
+	}
+	await saveDevPanelWallpaperPreview("input", imageFile);
+	onNotify?.(`已更新输入框壁纸预览：${imageFile.name}`);
+}
 
 function handleDragEnter(e: DragEvent) {
 	e.preventDefault();
@@ -367,7 +427,6 @@ const skipVoteBanner = $derived.by(() => {
 });
 
 const RECALL_WINDOW_MS = 5 * 60_000;
-const SHOW_MUSIC_NOTICES_KEY = "lengxi_chat_show_music_notices";
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
 
 let nowMs = $state(Date.now());
@@ -502,13 +561,20 @@ function formatUnreadTime(ts: number): string {
 	return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${timePart}`;
 }
 
-function toggleMusicNotices() {
-	showMusicNotices = !showMusicNotices;
-	try {
-		localStorage.setItem(SHOW_MUSIC_NOTICES_KEY, showMusicNotices ? "1" : "0");
-	} catch {
-		// 忽略存储写入异常
+async function handleCenterWallpaperDrop(e: DragEvent) {
+	if (!import.meta.env.DEV) return;
+	e.preventDefault();
+	e.stopPropagation();
+	isDraggingFiles = false;
+	dragCounter = 0;
+	const files = Array.from(e.dataTransfer?.files || []);
+	const imageFile = files.find((f) => f.type.startsWith("image/"));
+	if (!imageFile) {
+		onNotify?.("请拖入图片文件以预览聊天区壁纸");
+		return;
 	}
+	await saveDevPanelWallpaperPreview("center", imageFile);
+	onNotify?.(`已更新中间聊天区壁纸预览：${imageFile.name}`);
 }
 
 const orderedStickerPacks = $derived.by(() => {
@@ -927,16 +993,16 @@ function formatShortTime(ts: number): string {
 }
 
 onMount(() => {
-	try {
-		const saved = localStorage.getItem(SHOW_MUSIC_NOTICES_KEY);
-		if (saved === "1" || saved === "true") {
-			showMusicNotices = true;
-		} else if (saved === "0" || saved === "false") {
-			showMusicNotices = false;
+	showMusicNotices = getStoredMusicNoticesEnabled();
+	const handleMusicNoticesSync = (e: Event) => {
+		const ce = e as CustomEvent<{ enabled?: boolean }>;
+		if (typeof ce.detail?.enabled === "boolean") {
+			showMusicNotices = ce.detail.enabled;
+		} else {
+			showMusicNotices = getStoredMusicNoticesEnabled();
 		}
-	} catch {
-		// 忽略存储读取异常
-	}
+	};
+	window.addEventListener("chat-music-notices-change", handleMusicNoticesSync);
 
 	void scrollToBottom();
 
@@ -1020,6 +1086,7 @@ onMount(() => {
 	document.addEventListener("pointerdown", handlePointerDown);
 	document.addEventListener("keydown", handleDocKeydown);
 	return () => {
+		window.removeEventListener("chat-music-notices-change", handleMusicNoticesSync);
 		window.removeEventListener("dragover", preventWindowDrag);
 		window.removeEventListener("drop", preventWindowDrag);
 		resizeObserver?.disconnect();
@@ -1721,17 +1788,54 @@ function removePendingImage(index: number) {
   <!-- 视窗全屏拖拽放置提示层 -->
   {#if isDraggingFiles}
     <div class="chat-drag-overlay" role="presentation">
-      <div class="chat-drag-box">
-        <div class="w-12 h-12 rounded-2xl bg-[var(--skin-accent)]/15 text-[var(--skin-accent)] flex items-center justify-center mb-2 animate-bounce">
-          <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="17 8 12 3 7 8" />
-            <line x1="12" y1="3" x2="12" y2="15" />
-          </svg>
+      {#if import.meta.env.DEV}
+        <div class="chat-drag-dual-wrap">
+          <div class="chat-drag-box flex-1">
+            <div class="w-11 h-11 rounded-2xl bg-[var(--skin-accent)]/15 text-[var(--skin-accent)] flex items-center justify-center mb-2 animate-bounce">
+              <svg class="w-5.5 h-5.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="17 8 12 3 7 8" />
+                <line x1="12" y1="3" x2="12" y2="15" />
+              </svg>
+            </div>
+            <span class="text-sm font-bold text-[var(--deep-text)]">添加为消息附件</span>
+            <span class="text-xs text-[var(--chat-meta-color)] mt-1">拖放到聊天窗口其余区域</span>
+          </div>
+          <div
+            class="chat-drag-box chat-drag-box--wallpaper flex-1"
+            role="region"
+            aria-label="设为中间聊天区壁纸预览"
+            ondragover={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+            }}
+            ondrop={(e) => void handleCenterWallpaperDrop(e)}
+          >
+            <div class="w-11 h-11 rounded-2xl bg-[var(--primary)]/18 text-[var(--primary)] flex items-center justify-center mb-2">
+              <svg class="w-5.5 h-5.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+            </div>
+            <span class="text-sm font-bold text-[var(--primary)]">设为聊天区壁纸预览</span>
+            <span class="text-xs text-[var(--chat-meta-color)] mt-1">松开图片替换中间背景（本地开发）</span>
+          </div>
         </div>
-        <span class="text-sm font-bold text-[var(--deep-text)]">拖拽文件到此处添加为附件</span>
-        <span class="text-xs text-[var(--chat-meta-color)] mt-1">支持照片、音视频、文档或压缩包</span>
-      </div>
+      {:else}
+        <div class="chat-drag-box">
+          <div class="w-12 h-12 rounded-2xl bg-[var(--skin-accent)]/15 text-[var(--skin-accent)] flex items-center justify-center mb-2 animate-bounce">
+            <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+          </div>
+          <span class="text-sm font-bold text-[var(--deep-text)]">拖拽文件到此处添加为附件</span>
+          <span class="text-xs text-[var(--chat-meta-color)] mt-1">支持照片、音视频、文档或压缩包</span>
+        </div>
+      {/if}
     </div>
   {/if}
   <!-- 顶栏 -->
@@ -1763,7 +1867,7 @@ function removePendingImage(index: number) {
         <!-- 移动端左侧：拉开「房间与成员」抽屉的大号胶囊入口 -->
         <button
           type="button"
-          class="chat-mobile-header-room-btn md:hidden"
+          class="chat-mobile-header-room-btn chat-mobile-only"
           aria-label="打开房间与成员抽屉"
           onclick={() => onOpenRoomDrawer?.()}
         >
@@ -1802,27 +1906,60 @@ function removePendingImage(index: number) {
           </svg>
         </button>
 
-        <!-- 桌面端左侧：房间名与副标题 -->
-        {#if hasRoomAvatar}
-          <img
-            src={effectiveRoomAvatar}
-            alt={roomName}
-            class="hidden md:block w-5.5 h-5.5 rounded-md object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
-            decoding="async"
-            onerror={() => {
-              failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
-            }}
-          />
-          <span class="hidden md:inline font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
-            {roomName}
-          </span>
+        <!-- 桌面端 / iPad 左侧：房间头像、名称（互联茶室为可下拉框）与副标题 -->
+        {#if isInterconnectRoom}
+          <button
+            type="button"
+            data-chat-interconnect-trigger
+            class="chat-header-room-dropdown chat-desktop-only {showInterconnect ? 'active' : ''}"
+            aria-label="查看互联茶室友站列表"
+            aria-expanded={showInterconnect}
+            onclick={() => onToggleInterconnect?.()}
+          >
+            {#if hasRoomAvatar}
+              <img
+                src={effectiveRoomAvatar}
+                alt={roomName}
+                class="w-7 h-7 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
+                decoding="async"
+                onerror={() => {
+                  failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
+                }}
+              />
+            {:else}
+              <span class="w-7 h-7 rounded-lg flex items-center justify-center bg-black/5 dark:bg-white/10 font-mono text-xs font-bold opacity-70 shrink-0">#</span>
+            {/if}
+            <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
+              {roomName}
+            </span>
+            <svg class="w-3.5 h-3.5 opacity-65 transition-transform shrink-0 {showInterconnect ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
         {:else}
-          <span class="hidden md:inline font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
-            # {roomName}
-          </span>
+          <div class="chat-header-room-badge chat-desktop-only">
+            {#if hasRoomAvatar}
+              <img
+                src={effectiveRoomAvatar}
+                alt={roomName}
+                class="w-7 h-7 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
+                decoding="async"
+                onerror={() => {
+                  failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
+                }}
+              />
+              <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
+                {roomName}
+              </span>
+            {:else}
+              <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
+                # {roomName}
+              </span>
+            {/if}
+          </div>
         {/if}
-        <span class="text-xs text-[var(--chat-meta-color)] truncate hidden md:inline">
-          · {effectiveSubtitle}
+        <span class="text-xs text-[var(--chat-meta-color)] truncate hidden lg:inline">
+          {effectiveSubtitle}
         </span>
         {#if currentUser?.isAdmin && onSetTopic}
           <button
@@ -1901,20 +2038,7 @@ function removePendingImage(index: number) {
       {/if}
 
       <!-- 桌面端顶栏右侧控件 -->
-      <button
-        type="button"
-        role="switch"
-        aria-checked={showMusicNotices}
-        aria-label={showMusicNotices ? "隐藏聊天中的点歌记录" : "在聊天中显示点歌记录"}
-        class="chat-header-pill-btn hidden! md:inline-flex! {showMusicNotices ? 'active' : ''}"
-        onclick={toggleMusicNotices}
-      >
-        <span>点歌记录</span>
-        <span class="chat-switch-track {showMusicNotices ? 'checked' : ''}" aria-hidden="true">
-          <span class="chat-switch-thumb"></span>
-        </span>
-      </button>
-      <div class="hidden md:block">
+      <div class="chat-desktop-only">
         <ChatTooltip
           position="bottom"
           text={isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount} 人在线 · 累计 ${totalChatterCount} 人聊过天` : `${onlineCount} 人在线`}
@@ -1927,42 +2051,13 @@ function removePendingImage(index: number) {
           </div>
         </ChatTooltip>
       </div>
-      {#if isInterconnectRoom}
-        <button
-          type="button"
-          data-chat-interconnect-trigger
-          class="chat-header-pill-btn hidden! md:inline-flex! {showInterconnect ? 'active text-[var(--primary)]' : ''} items-center gap-1"
-          aria-label="查看互联茶室友站列表"
-          aria-expanded={showInterconnect}
-          onclick={() => onToggleInterconnect?.()}
-        >
-          <span class="text-xs">🍵</span>
-          <span>互联茶室</span>
-          <svg class="w-3 h-3 opacity-70 transition-transform {showInterconnect ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-      {/if}
-      <button
-        type="button"
-        data-chat-settings-trigger
-        class="chat-tool-btn hidden! md:inline-flex! {showSettings ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : ''}"
-        aria-label="外观与主题设置"
-        aria-expanded={showSettings}
-        onclick={() => onToggleSettings?.()}
-      >
-        <svg class="w-[1.1rem] h-[1.1rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
-      </button>
 
       <!-- 移动端顶栏右侧：更多设置收纳菜单 + 拉开右侧「听歌/点歌」抽屉按钮 -->
-      <div class="flex md:hidden items-center gap-1.5">
+      <div class="chat-mobile-only flex items-center gap-1.5">
         <div class="relative" bind:this={mobileMoreMenuWrapEl}>
           <button
             type="button"
-            class="chat-mobile-icon-btn {showMobileMoreMenu || showSettings || showInterconnect ? 'is-active' : ''}"
+            class="chat-mobile-icon-btn {showMobileMoreMenu || showInterconnect ? 'is-active' : ''}"
             aria-label="更多聊天室选项"
             aria-expanded={showMobileMoreMenu}
             onclick={() => (showMobileMoreMenu = !showMobileMoreMenu)}
@@ -1979,28 +2074,6 @@ function removePendingImage(index: number) {
               <div class="px-3 py-1.5 text-xs text-[var(--chat-meta-color)] border-b border-[var(--skin-line)] truncate">
                 #{roomName} · {effectiveSubtitle}
               </div>
-
-              <button
-                type="button"
-                role="menuitemcheckbox"
-                aria-checked={showMusicNotices}
-                class="chat-mobile-more-item"
-                onclick={() => {
-                  toggleMusicNotices();
-                }}
-              >
-                <span class="flex items-center gap-2.5">
-                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M9 18V5l12-2v13" />
-                    <circle cx="6" cy="18" r="3" />
-                    <circle cx="18" cy="16" r="3" />
-                  </svg>
-                  <span>显示聊天点歌记录</span>
-                </span>
-                <span class="chat-switch-track {showMusicNotices ? 'checked' : ''}" aria-hidden="true">
-                  <span class="chat-switch-thumb"></span>
-                </span>
-              </button>
 
               {#if isInterconnectRoom}
                 <button
@@ -2022,28 +2095,6 @@ function removePendingImage(index: number) {
                   </svg>
                 </button>
               {/if}
-
-              <button
-                type="button"
-                role="menuitem"
-                data-chat-settings-trigger
-                class="chat-mobile-more-item"
-                onclick={() => {
-                  showMobileMoreMenu = false;
-                  onToggleSettings?.();
-                }}
-              >
-                <span class="flex items-center gap-2.5">
-                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                  </svg>
-                  <span>外观与主题色设置</span>
-                </span>
-                <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </button>
 
               {#if currentUser?.isAdmin && onSetTopic}
                 <button
@@ -2097,7 +2148,7 @@ function removePendingImage(index: number) {
 
   <!-- 移动端顶栏正下方：超薄全局迷你播放条（不干扰底部输入法） -->
   {#if musicState?.current && mobilePlaybackStatus}
-    <div class="md:hidden shrink-0">
+    <div class="chat-mobile-only shrink-0">
       <MiniPlayerBar
         currentPlay={musicState.current}
         isListening={mobilePlaybackStatus.isListening}
@@ -2460,7 +2511,37 @@ function removePendingImage(index: number) {
   </div>
 
   <!-- 统一底部输入停靠区 -->
-  <div bind:this={dockEl} class="chat-input-dock">
+  <div
+    bind:this={dockEl}
+    class="chat-input-dock"
+    ondragenter={handleInputBgDragEnter}
+    ondragover={handleInputBgDragOver}
+    ondragleave={handleInputBgDragLeave}
+    ondrop={(e) => void handleInputBgDrop(e)}
+  >
+    <div class="chat-panel-bg-layer" aria-hidden="true">
+      {#if inputBgUrl}
+        <img
+          src={inputBgUrl}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          class="chat-panel-bg-img"
+          use:trackBgImgAspectRatio={inputBgUrl}
+          style:display={failedInputBg ? "none" : undefined}
+          onerror={() => onInputBgError?.()}
+        />
+      {/if}
+      <div class="chat-panel-bg-scrim"></div>
+    </div>
+    {#if import.meta.env.DEV && inputDragActive}
+      <div class="chat-panel-dev-drop-overlay" role="presentation">
+        <div class="chat-panel-dev-drop-box">
+          <span class="text-xs font-bold text-[var(--skin-accent)]">松开替换为输入框壁纸</span>
+          <span class="text-[11px] text-[var(--chat-meta-color)]">仅本地开发预览</span>
+        </div>
+      </div>
+    {/if}
     <!-- 统一表情面板（纯图标 Tab）：1. 颜文字 -> 2. QQ -> 3. 贴纸 -->
     {#if activePopover === "emoji"}
       <div class="chat-emoji-popover chat-sticker-popover" role="dialog" aria-label="颜文字与表情贴纸">
@@ -2915,7 +2996,7 @@ function removePendingImage(index: number) {
         </div>
 
         <div class="flex items-center gap-2.5 shrink-0">
-          <span class="hidden sm:inline text-[0.6875rem] text-[var(--chat-meta-color)] select-none">
+          <span class="hidden xl:inline text-[0.6875rem] text-[var(--chat-meta-color)] select-none">
             {#if currentUser}
               Enter 发送 · Shift+Enter 换行 · 支持 Markdown 与粘贴图片
             {:else}
@@ -2947,7 +3028,7 @@ function removePendingImage(index: number) {
       stickerMap,
       (activeMsg.attachments?.length ?? 0) > 0,
     )}
-    <div class="chat-mobile-action-sheet-wrap md:hidden" role="dialog" aria-modal="true" aria-label="消息操作菜单">
+    <div class="chat-mobile-action-sheet-wrap" role="dialog" aria-modal="true" aria-label="消息操作菜单">
       <button
         type="button"
         class="chat-mobile-action-sheet-backdrop"

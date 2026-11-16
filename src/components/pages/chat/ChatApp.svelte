@@ -5,9 +5,20 @@ import ChatAuthModal from "./ChatAuthModal.svelte";
 import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
 import ChatPollCreateModal from "./ChatPollCreateModal.svelte";
 import ChatProfileModal from "./ChatProfileModal.svelte";
-import ChatSettingsPopover from "./ChatSettingsPopover.svelte";
 import ChatUserDetailModal from "./ChatUserDetailModal.svelte";
 import ChatWindow from "./ChatWindow.svelte";
+import {
+	type ChatAppearanceSettings,
+	type ChatPanelSlot,
+	type ChatWallpaperConfig,
+	isChatPanelSlot,
+	loadChatAppearanceSettings,
+	loadDevPanelWallpaperPreviews,
+	resolveSlotWallpaperSrc,
+	saveDevPanelWallpaperPreview,
+	setRuntimeChatWallpaperCatalog,
+	trackBgImgAspectRatio,
+} from "./chatAppearance";
 import {
 	buildWsUrl,
 	clearGuestAuth,
@@ -56,6 +67,7 @@ interface Props {
 	musicTracks?: ChatMusicTrack[];
 	initialMusicVolume?: number;
 	interconnectSites?: InterconnectSite[];
+	siteAvatar?: string;
 }
 
 const {
@@ -68,6 +80,7 @@ const {
 	musicTracks = [],
 	initialMusicVolume = 1,
 	interconnectSites = [],
+	siteAvatar = "",
 }: Props = $props();
 
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
@@ -410,8 +423,83 @@ function syncRoomUrl(roomId: string) {
 	}
 }
 
-let showSettings = $state(false);
 let showProfileModal = $state(false);
+let chatAppearance = $state<ChatAppearanceSettings>(loadChatAppearanceSettings());
+let catalogRevision = $state(0);
+let devPanelPreviews = $state<Partial<Record<ChatPanelSlot, string>>>({});
+let failedPanelBg = $state<Record<ChatPanelSlot, boolean>>({
+	left: false,
+	center: false,
+	right: false,
+	input: false,
+});
+let sideDragActive = $state<{ left: boolean; right: boolean }>({
+	left: false,
+	right: false,
+});
+const sideDragCounters = { left: 0, right: 0 };
+
+const effectivePanelBgUrls = $derived.by(() => {
+	void catalogRevision;
+	return {
+		left: resolveSlotWallpaperSrc("left", chatAppearance, devPanelPreviews),
+		center: resolveSlotWallpaperSrc("center", chatAppearance, devPanelPreviews),
+		right: resolveSlotWallpaperSrc("right", chatAppearance, devPanelPreviews),
+		input: resolveSlotWallpaperSrc("input", chatAppearance, devPanelPreviews),
+	};
+});
+
+function handleSidePanelDragEnter(slot: "left" | "right", e: DragEvent) {
+	if (!import.meta.env.DEV) return;
+	if (!e.dataTransfer?.types?.includes("Files")) return;
+	e.preventDefault();
+	e.stopPropagation();
+	sideDragCounters[slot] += 1;
+	sideDragActive = { ...sideDragActive, [slot]: true };
+}
+
+function handleSidePanelDragOver(slot: "left" | "right", e: DragEvent) {
+	if (!import.meta.env.DEV) return;
+	if (!e.dataTransfer?.types?.includes("Files")) return;
+	e.preventDefault();
+	e.stopPropagation();
+	if (e.dataTransfer) {
+		e.dataTransfer.dropEffect = "copy";
+	}
+	if (!sideDragActive[slot]) {
+		sideDragActive = { ...sideDragActive, [slot]: true };
+	}
+}
+
+function handleSidePanelDragLeave(slot: "left" | "right", e: DragEvent) {
+	if (!import.meta.env.DEV) return;
+	e.preventDefault();
+	e.stopPropagation();
+	sideDragCounters[slot] = Math.max(0, sideDragCounters[slot] - 1);
+	if (sideDragCounters[slot] === 0) {
+		sideDragActive = { ...sideDragActive, [slot]: false };
+	}
+}
+
+async function handleSidePanelDrop(slot: "left" | "right", e: DragEvent) {
+	if (!import.meta.env.DEV) return;
+	e.preventDefault();
+	e.stopPropagation();
+	sideDragCounters[slot] = 0;
+	sideDragActive = { ...sideDragActive, [slot]: false };
+	const files = Array.from(e.dataTransfer?.files || []);
+	const imageFile = files.find((f) => f.type.startsWith("image/"));
+	if (!imageFile) {
+		showNotice("请拖入图片文件以预览面板壁纸");
+		return;
+	}
+	await saveDevPanelWallpaperPreview(slot, imageFile);
+	showNotice(
+		slot === "left"
+			? `已更新左侧面板壁纸预览：${imageFile.name}`
+			: `已更新右侧面板壁纸预览：${imageFile.name}`,
+	);
+}
 let showAuthModal = $state(false);
 let showUserDetailModal = $state(false);
 let showPollCreateModal = $state(false);
@@ -1276,7 +1364,6 @@ function closePendingSocket() {
 
 function handleRoomSelect(roomId: string) {
 	showInterconnect = false;
-	showSettings = false;
 	roomUnreadCounts = {
 		...roomUnreadCounts,
 		[roomId]: 0,
@@ -2043,7 +2130,87 @@ onMount(() => {
 	window.addEventListener("wheel", resetIdleTimer, { passive: true });
 	window.addEventListener("touchstart", resetIdleTimer, { passive: true });
 
+	const handleDevBgPreviewChange = (e: Event) => {
+		if (!import.meta.env.DEV) return;
+		const ce = e as CustomEvent<{
+			slot?: ChatPanelSlot | "all";
+			url?: string;
+			cleared?: boolean;
+		}>;
+		const slot = ce.detail?.slot;
+		if (ce.detail?.cleared) {
+			if (slot === "all" || !slot) {
+				for (const oldUrl of Object.values(devPanelPreviews)) {
+					if (oldUrl?.startsWith("blob:")) URL.revokeObjectURL(oldUrl);
+				}
+				devPanelPreviews = {};
+				failedPanelBg = { left: false, center: false, right: false, input: false };
+			} else {
+				const oldUrl = devPanelPreviews[slot];
+				if (oldUrl?.startsWith("blob:")) URL.revokeObjectURL(oldUrl);
+				const next = { ...devPanelPreviews };
+				delete next[slot];
+				devPanelPreviews = next;
+				failedPanelBg = { ...failedPanelBg, [slot]: false };
+			}
+			return;
+		}
+		if (isChatPanelSlot(slot) && ce.detail?.url) {
+			const oldUrl = devPanelPreviews[slot];
+			if (oldUrl?.startsWith("blob:") && oldUrl !== ce.detail.url) {
+				URL.revokeObjectURL(oldUrl);
+			}
+			devPanelPreviews = { ...devPanelPreviews, [slot]: ce.detail.url };
+			failedPanelBg = { ...failedPanelBg, [slot]: false };
+		}
+	};
+
+	const handleChatAppearanceSync = (e: Event) => {
+		const ce = e as CustomEvent<ChatAppearanceSettings | undefined>;
+		chatAppearance = ce.detail
+			? { ...ce.detail }
+			: loadChatAppearanceSettings();
+		failedPanelBg = { left: false, center: false, right: false, input: false };
+	};
+
+	const handleCatalogChange = (e: Event) => {
+		const ce = e as CustomEvent<ChatWallpaperConfig | undefined>;
+		if (ce.detail) {
+			setRuntimeChatWallpaperCatalog(ce.detail);
+		}
+		catalogRevision += 1;
+		chatAppearance = loadChatAppearanceSettings();
+		failedPanelBg = { left: false, center: false, right: false, input: false };
+	};
+
+	window.addEventListener("chatAppearanceChange", handleChatAppearanceSync);
+	window.addEventListener("chat-wallpapers-catalog-change", handleCatalogChange);
+
+	if (import.meta.env.DEV) {
+		void loadDevPanelWallpaperPreviews().then((loaded) => {
+			if (!isUnmounted && Object.keys(loaded).length > 0) {
+				devPanelPreviews = loaded;
+				failedPanelBg = { left: false, center: false, right: false, input: false };
+			}
+		});
+		window.addEventListener("chat-bg-preview-change", handleDevBgPreviewChange);
+	}
+
 	return () => {
+		window.removeEventListener("chatAppearanceChange", handleChatAppearanceSync);
+		window.removeEventListener(
+			"chat-wallpapers-catalog-change",
+			handleCatalogChange,
+		);
+		if (import.meta.env.DEV) {
+			window.removeEventListener(
+				"chat-bg-preview-change",
+				handleDevBgPreviewChange,
+			);
+			for (const oldUrl of Object.values(devPanelPreviews)) {
+				if (oldUrl?.startsWith("blob:")) URL.revokeObjectURL(oldUrl);
+			}
+		}
 		isUnmounted = true;
 		for (const pending of songRequests.values()) pending.finish(false);
 		window.clearInterval(presenceTimer);
@@ -2096,7 +2263,36 @@ onMount(() => {
       ></button>
     {/if}
 
-    <div class="chat-panel chat-panel-left {mobileDrawer === 'room' ? 'mobile-drawer-open' : ''}">
+    <div
+      class="chat-panel chat-panel-left {mobileDrawer === 'room' ? 'mobile-drawer-open' : ''}"
+      ondragenter={(e) => handleSidePanelDragEnter("left", e)}
+      ondragover={(e) => handleSidePanelDragOver("left", e)}
+      ondragleave={(e) => handleSidePanelDragLeave("left", e)}
+      ondrop={(e) => void handleSidePanelDrop("left", e)}
+    >
+      <div class="chat-panel-bg-layer" aria-hidden="true">
+        {#if effectivePanelBgUrls.left}
+          <img
+            src={effectivePanelBgUrls.left}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            class="chat-panel-bg-img"
+            use:trackBgImgAspectRatio={effectivePanelBgUrls.left}
+            style:display={failedPanelBg.left ? "none" : undefined}
+            onerror={() => { failedPanelBg = { ...failedPanelBg, left: true }; }}
+          />
+        {/if}
+        <div class="chat-panel-bg-scrim"></div>
+      </div>
+      {#if import.meta.env.DEV && sideDragActive.left}
+        <div class="chat-panel-dev-drop-overlay" role="presentation">
+          <div class="chat-panel-dev-drop-box">
+            <span class="text-xs font-bold text-[var(--skin-accent)]">松开替换为左侧面板壁纸</span>
+            <span class="text-[11px] text-[var(--chat-meta-color)]">仅本地开发预览</span>
+          </div>
+        </div>
+      {/if}
       <RoomPanel
         rooms={rooms}
         currentRoom={currentRoom}
@@ -2115,23 +2311,41 @@ onMount(() => {
         desktopNotificationPermission={desktopNotificationPermission}
         roomUnreadCounts={roomUnreadCounts}
         roomAvatars={roomAvatars}
+        siteAvatar={siteAvatar}
         onRoomSelect={handleRoomSelect}
         onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
         onOpenAuth={() => (showAuthModal = true)}
         onLogout={handleLogout}
         onToggleDesktopNotification={handleToggleDesktopNotification}
-        onCloseMobileDrawer={() => (mobileDrawer = "none")}
       />
     </div>
 
     <div class="chat-panel-center relative flex flex-col min-w-0 min-h-0 mobile-active">
-      <div class="chat-panel flex-1 min-h-0 w-full">
+      <div class="chat-panel chat-panel-center-inner flex-1 min-h-0 w-full">
+        <div class="chat-panel-bg-layer" aria-hidden="true">
+          {#if effectivePanelBgUrls.center}
+            <img
+              src={effectivePanelBgUrls.center}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              class="chat-panel-bg-img"
+              use:trackBgImgAspectRatio={effectivePanelBgUrls.center}
+              style:display={failedPanelBg.center ? "none" : undefined}
+              onerror={() => { failedPanelBg = { ...failedPanelBg, center: true }; }}
+            />
+          {/if}
+          <div class="chat-panel-bg-scrim"></div>
+        </div>
         <ChatWindow
           roomId={currentRoom}
           roomName={activeMeta.name}
           roomSubtitle={activeMeta.subtitle}
-          roomAvatar={roomAvatars[currentRoom] || activeMeta.avatar || ""}
+          roomAvatar={roomAvatars[currentRoom] || activeMeta.avatar || (currentRoom !== "interconnect" ? siteAvatar : "")}
+          inputBgUrl={effectivePanelBgUrls.input}
+          failedInputBg={failedPanelBg.input}
+          onInputBgError={() => { failedPanelBg = { ...failedPanelBg, input: true }; }}
           onlineCount={totalOnlineCount}
           messages={messages}
           hasMoreHistory={hasMoreHistory}
@@ -2170,7 +2384,6 @@ onMount(() => {
           walineServerUrl={walineServerUrl}
           chatServerUrl={normalizedChatServer}
           mentionEvent={mentionEvent}
-          showSettings={showSettings}
           showInterconnect={showInterconnect}
           isInterconnectRoom={currentRoom === "interconnect"}
           interconnectSites={interconnectSites}
@@ -2189,13 +2402,8 @@ onMount(() => {
           onOpenPollModal={() => (showPollCreateModal = true)}
           onCreatePoll={handleCreatePoll}
           onTyping={handleTyping}
-          onToggleSettings={() => {
-            showSettings = !showSettings;
-            if (showSettings) showInterconnect = false;
-          }}
           onToggleInterconnect={() => {
             showInterconnect = !showInterconnect;
-            if (showInterconnect) showSettings = false;
           }}
           onSendMessage={handleSendMessage}
           onRecallMessage={handleRecallMessage}
@@ -2216,11 +2424,6 @@ onMount(() => {
         />
       </div>
 
-      <ChatSettingsPopover
-        open={showSettings}
-        onClose={() => (showSettings = false)}
-      />
-
       <ChatInterconnectPopover
         open={showInterconnect}
         sites={interconnectSites}
@@ -2228,7 +2431,36 @@ onMount(() => {
       />
     </div>
 
-    <div class="chat-panel chat-panel-right {mobileDrawer === 'music' ? 'mobile-drawer-open' : ''}">
+    <div
+      class="chat-panel chat-panel-right {mobileDrawer === 'music' ? 'mobile-drawer-open' : ''}"
+      ondragenter={(e) => handleSidePanelDragEnter("right", e)}
+      ondragover={(e) => handleSidePanelDragOver("right", e)}
+      ondragleave={(e) => handleSidePanelDragLeave("right", e)}
+      ondrop={(e) => void handleSidePanelDrop("right", e)}
+    >
+      <div class="chat-panel-bg-layer" aria-hidden="true">
+        {#if effectivePanelBgUrls.right}
+          <img
+            src={effectivePanelBgUrls.right}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            class="chat-panel-bg-img"
+            use:trackBgImgAspectRatio={effectivePanelBgUrls.right}
+            style:display={failedPanelBg.right ? "none" : undefined}
+            onerror={() => { failedPanelBg = { ...failedPanelBg, right: true }; }}
+          />
+        {/if}
+        <div class="chat-panel-bg-scrim"></div>
+      </div>
+      {#if import.meta.env.DEV && sideDragActive.right}
+        <div class="chat-panel-dev-drop-overlay" role="presentation">
+          <div class="chat-panel-dev-drop-box">
+            <span class="text-xs font-bold text-[var(--skin-accent)]">松开替换为右侧面板壁纸</span>
+            <span class="text-[11px] text-[var(--chat-meta-color)]">仅本地开发预览</span>
+          </div>
+        </div>
+      {/if}
       <audio bind:this={chatAudio} preload="auto" playsinline muted></audio>
       {#key currentRoom}
       <MusicPanel
@@ -2291,7 +2523,6 @@ onMount(() => {
         onRequestAuth={() => (showAuthModal = true)}
         onRequestWalineAuth={handleDirectWalineLogin}
         walineLoginWaiting={walineLoginWaiting}
-        onCloseMobileDrawer={() => (mobileDrawer = "none")}
       />
       {/key}
     </div>

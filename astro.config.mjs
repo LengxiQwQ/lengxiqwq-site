@@ -538,6 +538,242 @@ function wallpaperHuePresetsDevApiPlugin() {
 	};
 }
 
+// Vite 插件：本地开发环境下处理聊天室四栏壁纸库上传与固定参数保存，写入内容仓 chatConfig.ts
+function chatWallpapersDevApiPlugin() {
+	const checkLocalOrigin = (req, res) => {
+		const origin = req.headers.origin || req.headers.referer;
+		if (!origin) return true;
+		try {
+			const originUrl = new URL(origin);
+			const isLocal =
+				originUrl.hostname === "localhost" ||
+				originUrl.hostname === "127.0.0.1" ||
+				originUrl.hostname === "::1";
+			if (!isLocal) {
+				res.statusCode = 403;
+				res.end(
+					JSON.stringify({
+						error: "Forbidden: Cross-origin requests not allowed",
+					}),
+				);
+				return false;
+			}
+			return true;
+		} catch {
+			res.statusCode = 403;
+			res.end(JSON.stringify({ error: "Forbidden: Invalid origin" }));
+			return false;
+		}
+	};
+
+	const readJsonBody = (req, maxBytes = 32 * 1024 * 1024) =>
+		new Promise((resolve, reject) => {
+			const chunks = [];
+			let total = 0;
+			req.on("data", (chunk) => {
+				total += chunk.length;
+				if (total > maxBytes) {
+					reject(new Error("Payload too large"));
+					return;
+				}
+				chunks.push(chunk);
+			});
+			req.on("end", () => {
+				try {
+					const raw = Buffer.concat(chunks).toString("utf-8");
+					resolve(JSON.parse(raw || "{}"));
+				} catch (err) {
+					reject(err);
+				}
+			});
+			req.on("error", reject);
+		});
+
+	const formatWallpapersTsBlock = (cfg) => {
+		const slots = ["left", "center", "right", "input"];
+		const validSlotSet = new Set(slots);
+		const normalizedItems = (cfg.items || []).map((item) => {
+			const itemSlot = validSlotSet.has(item.slot) ? item.slot : "center";
+			return { ...item, slot: itemSlot };
+		});
+		const defaultLines = slots
+			.map((s) => {
+				const cand = cfg.defaults?.[s] ?? "";
+				const valid = normalizedItems.some(
+					(i) => i.id === cand && i.slot === s,
+				);
+				return `\t\t\t${s}: ${JSON.stringify(valid ? cand : "")},`;
+			})
+			.join("\n");
+		const itemBlocks = normalizedItems
+			.map((item) => {
+				return [
+					"\t\t\t{",
+					`\t\t\t\tid: ${JSON.stringify(String(item.id || ""))},`,
+					`\t\t\t\tslot: ${JSON.stringify(item.slot)},`,
+					`\t\t\t\tname: ${JSON.stringify(String(item.name || "未命名壁纸"))},`,
+					`\t\t\t\tsrc: ${JSON.stringify(String(item.src || ""))},`,
+					`\t\t\t\tmode: ${JSON.stringify(item.mode === "sticker" ? "sticker" : "wallpaper")},`,
+					`\t\t\t\tfit: ${JSON.stringify(item.fit === "contain" ? "contain" : "cover")},`,
+					`\t\t\t\topacity: ${Number(item.opacity ?? 0.2)},`,
+					`\t\t\t\tscale: ${Number(item.scale ?? 1)},`,
+					`\t\t\t\toffsetX: ${Math.round(Number(item.offsetX ?? 0))},`,
+					`\t\t\t\toffsetY: ${Math.round(Number(item.offsetY ?? 0))},`,
+					`\t\t\t\tblurEnabled: ${Boolean(item.blurEnabled)},`,
+					`\t\t\t\tblur: ${Number(item.blur ?? 8)},`,
+					"\t\t\t},",
+				].join("\n");
+			})
+			.join("\n");
+		return [
+			"\twallpapers: {",
+			`\t\tdefaultOpacity: ${Number(cfg.defaultOpacity ?? 0.2)},`,
+			"\t\tdefaults: {",
+			defaultLines,
+			"\t\t},",
+			"\t\titems: [",
+			itemBlocks,
+			"\t\t],",
+			"\t},",
+		].join("\n");
+	};
+
+	return {
+		name: "vite-plugin-chat-wallpapers-api",
+		configureServer(server) {
+			server.middlewares.use(async (req, res, next) => {
+				const url = req.url?.split("?")[0];
+				const isSaveConfig =
+					url === "/api/chat-wallpapers" || url === "/api/chat-wallpapers/";
+				const isUpload =
+					url === "/api/chat-wallpapers/upload" ||
+					url === "/api/chat-wallpapers/upload/";
+				if (!isSaveConfig && !isUpload) return next();
+				if (req.method !== "POST") return next();
+				if (!checkLocalOrigin(req, res)) return;
+
+				res.setHeader("Content-Type", "application/json");
+				const contentRoot = fs.existsSync(
+					path.resolve("../lengxiqwq-site-content/config/chatConfig.ts"),
+				)
+					? path.resolve("../lengxiqwq-site-content")
+					: null;
+				const targetConfigPath = contentRoot
+					? path.join(contentRoot, "config", "chatConfig.ts")
+					: path.resolve("src/config/chatConfig.ts");
+
+				try {
+					if (isUpload) {
+						const body = await readJsonBody(req);
+						const rawSlot = String(body.slot || "");
+						const validSlots = new Set(["left", "center", "right", "input"]);
+						if (!validSlots.has(rawSlot)) {
+							res.statusCode = 400;
+							return res.end(
+								JSON.stringify({ error: "Invalid wallpaper slot" }),
+							);
+						}
+						const slot = rawSlot;
+						const rawName = String(body.name || body.filename || slot).trim();
+						const displayName =
+							rawName.replace(/\.[^.]+$/, "").slice(0, 32) || `${slot}-bg`;
+						const dataUrl = String(body.dataUrl || "");
+						const match = dataUrl.match(
+							/^data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)$/,
+						);
+						if (!match) {
+							res.statusCode = 400;
+							return res.end(JSON.stringify({ error: "Invalid image data" }));
+						}
+
+						const slugBase =
+							displayName
+								.toLowerCase()
+								.replace(/[^a-z0-9_-]+/g, "-")
+								.replace(/^-+|-+$/g, "") || `chat-${slot}`;
+						const id = `${slot}-${slugBase}-${Date.now().toString(36)}`;
+						const filename = `${id}.webp`;
+						const destSubpath = path.join(
+							"public",
+							"wallpapers",
+							"chat",
+							slot,
+							filename,
+						);
+						const primaryOut = contentRoot
+							? path.join(contentRoot, destSubpath)
+							: path.resolve(destSubpath);
+
+						const { default: sharp } = await import("sharp");
+						const inputBuf = Buffer.from(match[1], "base64");
+						const maxW = slot === "center" ? 1920 : 1440;
+						const maxH = 1440;
+						const pipeline = sharp(inputBuf).rotate().resize({
+							width: maxW,
+							height: maxH,
+							fit: "inside",
+							withoutEnlargement: true,
+						});
+						fs.mkdirSync(path.dirname(primaryOut), { recursive: true });
+						await pipeline.webp({ quality: 86, effort: 5 }).toFile(primaryOut);
+						if (contentRoot) {
+							const localMirror = path.resolve(destSubpath);
+							fs.mkdirSync(path.dirname(localMirror), { recursive: true });
+							fs.copyFileSync(primaryOut, localMirror);
+						}
+
+						const t = body.transform || {};
+						const item = {
+							id,
+							slot,
+							name: displayName,
+							src: `/wallpapers/chat/${slot}/${filename}`,
+							mode: t.mode === "sticker" ? "sticker" : "wallpaper",
+							fit: t.fit === "contain" ? "contain" : "cover",
+							opacity: Number(t.opacity ?? 0.2),
+							scale: Number(t.scale ?? 1),
+							offsetX: Math.round(Number(t.offsetX ?? 0)),
+							offsetY: Math.round(Number(t.offsetY ?? 0)),
+							blurEnabled: Boolean(t.blurEnabled),
+							blur: Number(t.blur ?? 8),
+						};
+
+						res.statusCode = 200;
+						return res.end(JSON.stringify({ success: true, item }));
+					}
+
+					const body = await readJsonBody(req, 2 * 1024 * 1024);
+					const wallpapers = body.wallpapers;
+					if (!wallpapers || !Array.isArray(wallpapers.items)) {
+						res.statusCode = 400;
+						return res.end(
+							JSON.stringify({ error: "Invalid wallpapers config" }),
+						);
+					}
+
+					let content = fs.readFileSync(targetConfigPath, "utf-8");
+					const block = formatWallpapersTsBlock(wallpapers);
+					if (/\twallpapers:\s*\{[\s\S]*?\n\t\},/.test(content)) {
+						content = content.replace(
+							/\twallpapers:\s*\{[\s\S]*?\n\t\},/,
+							block,
+						);
+					} else {
+						content = content.replace(/\n\};/, `\n${block}\n};`);
+					}
+					fs.writeFileSync(targetConfigPath, content, "utf-8");
+
+					res.statusCode = 200;
+					return res.end(JSON.stringify({ success: true, wallpapers }));
+				} catch (e) {
+					res.statusCode = 500;
+					return res.end(JSON.stringify({ error: String(e) }));
+				}
+			});
+		},
+	};
+}
+
 // Vite 插件：记录开发服务器运行锁，在服务退出时自动清理，防止多实例冲突
 function devServerLockPlugin() {
 	return {
@@ -1056,6 +1292,7 @@ export default defineConfig({
 			devServerLockPlugin(),
 			friendsAuditDevApiPlugin(),
 			wallpaperHuePresetsDevApiPlugin(),
+			chatWallpapersDevApiPlugin(),
 		],
 		server: {
 			watch: {
