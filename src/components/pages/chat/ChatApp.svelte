@@ -100,6 +100,14 @@ function uniqueObservers(list: ChatOnlineMember[]): ChatOnlineMember[] {
 }
 
 let spectatorHistory = $state<ChatSpectatorRecord[]>([]);
+
+$effect(() => {
+	if (currentUser?.isAdmin) {
+		void refreshSpectatorHistory();
+	} else {
+		spectatorHistory = [];
+	}
+});
 let roomOnlineMembers = $state<ChatOnlineMember[]>([]);
 let hasGlobalPresence = false;
 let roomMentionMembers = $state<ChatMentionCandidate[]>([]);
@@ -447,6 +455,43 @@ const effectivePanelBgUrls = $derived.by(() => {
 		right: resolveSlotWallpaperSrc("right", chatAppearance, devPanelPreviews),
 		input: resolveSlotWallpaperSrc("input", chatAppearance, devPanelPreviews),
 	};
+});
+
+const preloadedImageUrls = new Set<string>();
+
+function preloadImageUrl(url: string) {
+	if (!url || preloadedImageUrls.has(url) || typeof Image === "undefined") return;
+	preloadedImageUrls.add(url);
+	const img = new Image();
+	img.decoding = "async";
+	img.src = url;
+}
+
+$effect(() => {
+	const urls: string[] = [
+		effectivePanelBgUrls.left,
+		effectivePanelBgUrls.center,
+		effectivePanelBgUrls.right,
+		effectivePanelBgUrls.input,
+	];
+	for (const site of interconnectSites) {
+		const resolved = resolveChatAvatarUrl(site.avatar);
+		if (resolved) urls.push(resolved);
+	}
+	const pending = urls.filter((u) => u && !preloadedImageUrls.has(u));
+	if (pending.length === 0) return;
+
+	const run = () => {
+		for (const url of pending) {
+			preloadImageUrl(url);
+		}
+	};
+	if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+		const id = window.requestIdleCallback(run, { timeout: 1200 });
+		return () => window.cancelIdleCallback(id);
+	}
+	const timer = setTimeout(run, 100);
+	return () => clearTimeout(timer);
 });
 
 function handleSidePanelDragEnter(slot: "left" | "right", e: DragEvent) {
@@ -1097,7 +1142,7 @@ function connectRoom(roomId: string) {
 							isMentionedForUser(packet.message, currentUser)
 						) {
 							if (!baseDocumentTitle) baseDocumentTitle = document.title;
-							document.title = `[有人@你] ${baseDocumentTitle}`;
+							document.title = `[有人提到了你] ${baseDocumentTitle}`;
 						}
 					}
 				} else {
@@ -1490,6 +1535,15 @@ function handleLogout() {
 
 function handleOpenUserProfile(seed: ChatUserDetailSeed) {
 	if (!seed.userKey && !seed.name) return;
+	const isSpectatorSeed =
+		seed.userKey?.startsWith("spectator") ||
+		seed.userKey?.startsWith("observer") ||
+		seed.userKey?.startsWith("spec_") ||
+		seed.badge === "旁观" ||
+		seed.badge === "历史访客";
+	if (isSpectatorSeed && !currentUser?.isAdmin) {
+		return;
+	}
 	let enriched: ChatUserDetailSeed = { ...seed };
 	const needsKey =
 		!enriched.userKey ||
@@ -1879,7 +1933,10 @@ async function refreshMemberDirectory() {
 }
 
 async function refreshSpectatorHistory() {
-	if (!normalizedChatServer || isUnmounted) return;
+	if (!normalizedChatServer || isUnmounted || !currentUser?.isAdmin) {
+		spectatorHistory = [];
+		return;
+	}
 	try {
 		const separator = normalizedChatServer.includes("?") ? "&" : "?";
 		const response = await fetch(
@@ -2275,7 +2332,8 @@ onMount(() => {
           <img
             src={effectivePanelBgUrls.left}
             alt=""
-            loading="lazy"
+            loading="eager"
+            fetchpriority="low"
             decoding="async"
             class="chat-panel-bg-img"
             use:trackBgImgAspectRatio={effectivePanelBgUrls.left}
@@ -2328,7 +2386,8 @@ onMount(() => {
             <img
               src={effectivePanelBgUrls.center}
               alt=""
-              loading="lazy"
+              loading="eager"
+              fetchpriority="low"
               decoding="async"
               class="chat-panel-bg-img"
               use:trackBgImgAspectRatio={effectivePanelBgUrls.center}
@@ -2443,7 +2502,8 @@ onMount(() => {
           <img
             src={effectivePanelBgUrls.right}
             alt=""
-            loading="lazy"
+            loading="eager"
+            fetchpriority="low"
             decoding="async"
             class="chat-panel-bg-img"
             use:trackBgImgAspectRatio={effectivePanelBgUrls.right}

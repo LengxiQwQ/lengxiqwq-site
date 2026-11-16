@@ -686,11 +686,12 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
 </script>
 
 <ChatModal
-  open={open && Boolean(profile || matrixUserId || isExternalUser || isSpectator)}
+  open={open && Boolean(profile || matrixUserId || isExternalUser || (isSpectator && currentUser?.isAdmin))}
   title="成员名片"
   ariaLabel={seed ? `${seed.name} 的个人资料` : "成员名片"}
   size={matrixUserId || isExternalUser || isSpectator ? "md" : "lg"}
   fillHeightOnDesktop={!(matrixUserId || isExternalUser || isSpectator)}
+  topPriority={true}
   {lockedMinHeight}
   {onClose}
 >
@@ -711,6 +712,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
     {@const latestMsg = userMessages[userMessages.length - 1]}
     {@const lastSeenAt = onlineMatch ? Date.now() : (latestMsg?.createdAt || 0)}
     {@const recentMsgs = userMessages.slice(-5).reverse()}
+    {@const canMentionExternal = Boolean(currentUser) && roomId === "interconnect"}
 
     <div class="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-4 space-y-3 min-h-0">
       <!-- 1. 顶部身份卡片 -->
@@ -752,15 +754,31 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             </div>
           </div>
 
-          <!-- @该茶友 快捷按钮（站外暂不支持提及，置灰禁用） -->
+          <!-- @该茶友 快捷按钮（互联茶室且已登录时可用） -->
           <button
             type="button"
-            disabled
-            class="px-2.5 py-1.5 text-xs text-[var(--chat-meta-color)] bg-black/5 dark:bg-white/5 rounded-lg shrink-0 flex items-center gap-1 cursor-not-allowed opacity-50 border-none select-none"
-            aria-label="暂不支持跨站提及站外茶友"
+            disabled={!canMentionExternal}
+            class={canMentionExternal
+              ? "chat-send-btn px-3! py-1.5! h-auto! rounded-lg! text-xs! shrink-0 flex items-center gap-1 cursor-pointer"
+              : "px-2.5 py-1.5 text-xs text-[var(--chat-meta-color)] bg-black/5 dark:bg-white/5 rounded-lg shrink-0 flex items-center gap-1 cursor-not-allowed opacity-50 border-none select-none"}
+            aria-label={canMentionExternal
+              ? `在聊天中提及 ${cleanName}`
+              : !currentUser
+                ? "登录后即可提及茶友"
+                : "仅互联茶室可提及"}
+            onclick={() => {
+              if (!canMentionExternal) return;
+              onClose();
+              onMention(cleanName, seed.userKey);
+            }}
           >
-            <span class="font-bold opacity-60">@</span>
-            <span>暂不支持提及</span>
+            {#if canMentionExternal}
+              <span>@ {cleanName}</span>
+            {:else if !currentUser}
+              <span>登录后可提及</span>
+            {:else}
+              <span>仅互联茶室可提及</span>
+            {/if}
           </button>
         </div>
       </div>
@@ -1272,7 +1290,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               }}
             >
               {#if mentionDisabled}
-                @ 仅互联茶室可用
+                仅互联茶室可提及
               {:else}
                 @ {mentionDisplayName}
               {/if}

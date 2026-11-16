@@ -64,7 +64,7 @@ onMount(() => {
 
     <!-- 简明说明（拒绝花里胡哨，讲人话） -->
     <div class="px-1 text-xs text-[var(--chat-meta-color)] leading-relaxed mb-3">
-      这个房间和下面几个博客是连通的，发消息大家都能看到，也可以去他们的小站坐坐：
+      这个房间和下面几个博客是连通的，也可以去他们的小站坐坐：
     </div>
 
     <!-- 友站卡片列表 -->
@@ -85,36 +85,48 @@ onMount(() => {
                 />
                 <div class="min-w-0 flex-1">
                   <div class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
-                    {site.name}
+                    {site.owner || site.name}
                   </div>
-                  {#if site.owner}
-                    <div class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
-                      站长: {site.owner}
-                    </div>
-                  {/if}
                 </div>
               </div>
 
               {#if site.url}
-                <a
-                  href={site.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="btn-regular py-1 px-2.5 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all shrink-0 inline-flex items-center gap-1 no-underline"
-                  aria-label={`前往 ${site.name} 的茶室`}
-                >
-                  <span>去串门</span>
-                  <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                    <polyline points="15 3 21 3 21 9" />
-                    <line x1="10" y1="14" x2="21" y2="3" />
-                  </svg>
-                </a>
+                {#if site.isSelf}
+                  <a
+                    href={site.url}
+                    class="btn-regular py-1 px-2.5 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all shrink-0 inline-flex items-center gap-1 no-underline"
+                    aria-label="前往本站主页"
+                  >
+                    <span>本站</span>
+                    <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                      <polyline points="15 3 21 3 21 9" />
+                      <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
+                  </a>
+                {:else}
+                  <a
+                    href={site.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="btn-regular py-1 px-2.5 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all shrink-0 inline-flex items-center gap-1 no-underline"
+                    aria-label={`前往 ${site.owner || site.name} 的茶室`}
+                  >
+                    <span>去串门</span>
+                    <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                      <polyline points="15 3 21 3 21 9" />
+                      <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
+                  </a>
+                {/if}
               {/if}
             </div>
 
             {#if site.desc}
-              <div class="text-[0.6875rem] text-[var(--chat-meta-color)] bg-black/3 dark:bg-white/4 rounded-md px-2 py-1 leading-normal line-clamp-2">
+              <div
+                class="text-[0.6875rem] text-[var(--chat-meta-color)] bg-black/3 dark:bg-white/4 rounded-md px-2 py-1 leading-normal truncate"
+              >
                 “{site.desc}”
               </div>
             {/if}

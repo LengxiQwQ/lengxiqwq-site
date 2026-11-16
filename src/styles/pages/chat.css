@@ -534,7 +534,7 @@ html[data-chat-page][data-chat-density="compact"] #chat-page .chat-panel-center 
 .chat-role-badge {
 	display: inline-flex;
 	align-items: center;
-	padding: 0.12rem 0.45rem;
+	padding: 0.0625rem 0.28rem;
 	border-radius: 999px;
 	font-size: 0.5625rem;
 	font-weight: 600;
@@ -550,9 +550,17 @@ html[data-chat-page][data-chat-density="compact"] #chat-page .chat-panel-center 
 .chat-role-badge--host,
 .chat-role-badge--accent,
 .chat-role-badge--gold {
-	background: var(--skin-accent-soft);
-	color: var(--skin-accent);
-	border: none;
+	background: oklch(0.93 0.08 82 / 0.85);
+	color: oklch(0.45 0.13 72);
+	border: 1px solid oklch(0.75 0.13 80 / 0.45);
+}
+
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-role-badge--host,
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-role-badge--accent,
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-role-badge--gold {
+	background: oklch(0.78 0.14 82 / 0.18);
+	color: oklch(0.84 0.14 85);
+	border: 1px solid oklch(0.78 0.14 82 / 0.35);
 }
 
 .chat-role-badge--tag,
@@ -1246,14 +1254,16 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transform: translateY(-3px);
 }
 
-:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip) {
-	opacity: 1;
-	transform: translateX(-50%) translateY(0);
-}
+@media (hover: hover) and (pointer: fine) {
+	:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip) {
+		opacity: 1;
+		transform: translateX(-50%) translateY(0);
+	}
 
-:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip).align-left,
-:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip).align-right {
-	transform: translateY(0);
+	:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip).align-left,
+	:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip).align-right {
+		transform: translateY(0);
+	}
 }
 
 /* 删除歌单进入二次确认后，提示气泡常驻显示，点一次就能看到「再次点击确认删除」 */
@@ -1265,6 +1275,64 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 :is(.chat-tooltip, .chat-playlist-tooltip).align-left.is-armed,
 :is(.chat-tooltip, .chat-playlist-tooltip).align-right.is-armed {
 	transform: translateY(0);
+}
+
+/* 已读成员悬浮卡片（支持人数较多时滚轮浏览，仅桌面端鼠标悬停触发） */
+.chat-read-receipts-wrap {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+}
+
+.chat-read-receipts-popover {
+	position: absolute;
+	bottom: calc(100% + 6px);
+	z-index: 60;
+	min-width: 9.5rem;
+	max-width: 14rem;
+	padding: 0.4rem 0.45rem;
+	border-radius: 10px;
+	background: var(--skin-surface);
+	border: 1px solid var(--skin-line);
+	color: var(--skin-text);
+	box-shadow: 0 10px 26px -4px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.08);
+	opacity: 0;
+	visibility: hidden;
+	pointer-events: none;
+	transform: translateY(4px);
+	transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
+}
+
+.chat-read-receipts-popover::after {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: 100%;
+	height: 8px;
+}
+
+.chat-read-receipts-popover.align-left {
+	left: 0;
+}
+
+.chat-read-receipts-popover.align-right {
+	right: 0;
+}
+
+.chat-read-receipts-list {
+	max-height: 10.5rem;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+@media (hover: hover) and (pointer: fine) {
+	.chat-read-receipts-wrap:hover .chat-read-receipts-popover {
+		opacity: 1;
+		visibility: visible;
+		pointer-events: auto;
+		transform: translateY(0);
+	}
 }
 
 /* 与 MusicPlayer.astro 一致的缓慢唱片旋转与等化器动画 */
@@ -1833,8 +1901,8 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	}
 
 	.chat-role-badge {
-		font-size: 0.6875rem !important;
-		padding: 0.14rem 0.48rem !important;
+		font-size: 0.625rem !important;
+		padding: 0.08rem 0.34rem !important;
 	}
 
 	.chat-system-msg {
@@ -2240,6 +2308,10 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	color: var(--skin-text);
 	animation: chat-popover-in 150ms var(--ease-decelerate);
 	scrollbar-width: none;
+}
+
+.chat-interconnect-popover {
+	width: min(27rem, calc(100% - 1.5rem));
 }
 
 @media (width >= 768px) {
@@ -2926,7 +2998,21 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	background: oklch(0.70 0.14 var(--hue) / 0.24);
 }
 
-/* ─── 聊天顶栏左侧：带框房间标题与互联下拉框 ─────────────────── */
+/* ─── 聊天顶栏左侧：独立房间头像框、带框房间标题与互联下拉框 ─────────────────── */
+.chat-header-room-avatar {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 2.25rem;
+	height: 2.25rem;
+	border-radius: 11px;
+	background: color-mix(in oklch, var(--card-bg) 62%, transparent);
+	border: 1px solid var(--chat-divider-color);
+	color: var(--deep-text);
+	overflow: hidden;
+	flex-shrink: 0;
+}
+
 .chat-header-room-dropdown,
 .chat-header-room-badge {
 	display: inline-flex;
@@ -2934,7 +3020,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	flex-wrap: nowrap;
 	white-space: nowrap;
 	gap: 0.45rem;
-	padding: 0.2rem 0.6rem 0.2rem 0.25rem;
+	padding: 0.3rem 0.65rem;
 	border-radius: 12px;
 	background: color-mix(in oklch, var(--card-bg) 62%, transparent);
 	border: 1px solid var(--chat-divider-color);
@@ -2947,14 +3033,15 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
 
-.chat-header-room-dropdown:hover,
-.chat-header-room-dropdown.active {
-	background: var(--btn-plain-bg-hover);
-	border-color: color-mix(in oklch, var(--primary) 38%, var(--chat-divider-color));
+.chat-header-room-dropdown:hover {
+	background: color-mix(in oklab, var(--skin-accent) 14%, var(--skin-surface));
+	border-color: color-mix(in oklab, var(--skin-accent) 42%, var(--skin-line));
 }
 
 .chat-header-room-dropdown.active {
-	box-shadow: 0 2px 10px -2px color-mix(in oklch, var(--primary) 22%, transparent);
+	background: color-mix(in oklab, var(--skin-accent) 20%, var(--skin-surface));
+	border-color: color-mix(in oklab, var(--skin-accent) 55%, var(--skin-line));
+	box-shadow: 0 2px 10px -2px color-mix(in oklab, var(--skin-accent) 24%, transparent);
 }
 
 /* ─── 聊天顶栏：是否显示点歌记录开关胶囊 ─────────────────── */

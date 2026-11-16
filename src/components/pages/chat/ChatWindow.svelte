@@ -434,7 +434,6 @@ let nowMs = $state(Date.now());
 let messageContainer: HTMLDivElement | null = $state(null);
 let messageContentEl: HTMLDivElement | null = $state(null);
 let inputEl: HTMLTextAreaElement | null = $state(null);
-let fileInputEl: HTMLInputElement | null = $state(null);
 let mediaFileInputEl: HTMLInputElement | null = $state(null);
 let dockEl: HTMLDivElement | null = $state(null);
 let mentionHistoryWrapEl: HTMLDivElement | null = $state(null);
@@ -1709,9 +1708,6 @@ async function processImageFiles(files: FileList | File[]) {
 		uploadError = err instanceof Error ? err.message : "图片上传失败";
 	} finally {
 		isUploadingImage = false;
-		if (fileInputEl) {
-			fileInputEl.value = "";
-		}
 	}
 }
 
@@ -1895,7 +1891,7 @@ function removePendingImage(index: number) {
             {/if}
           </span>
           <span class="font-bold text-[15px] text-[var(--deep-text)] dark:text-white/95 truncate">
-            {hasRoomAvatar ? roomName : `#${roomName}`}
+            #{roomName}
           </span>
           <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/8 text-[11.5px] font-medium text-[var(--chat-meta-color)] shrink-0 tabular-nums">
             <span class="chat-online-dot"></span>
@@ -1906,7 +1902,22 @@ function removePendingImage(index: number) {
           </svg>
         </button>
 
-        <!-- 桌面端 / iPad 左侧：房间头像、名称（互联茶室为可下拉框）与副标题 -->
+        <!-- 桌面端 / iPad 左侧：独立房间头像框、名称（互联茶室为可下拉框）与副标题 -->
+        <div class="chat-header-room-avatar chat-desktop-only">
+          {#if hasRoomAvatar}
+            <img
+              src={effectiveRoomAvatar}
+              alt={roomName}
+              class="w-full h-full object-cover"
+              decoding="async"
+              onerror={() => {
+                failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
+              }}
+            />
+          {:else}
+            <span class="font-mono text-sm font-bold opacity-70">#</span>
+          {/if}
+        </div>
         {#if isInterconnectRoom}
           <button
             type="button"
@@ -1916,67 +1927,45 @@ function removePendingImage(index: number) {
             aria-expanded={showInterconnect}
             onclick={() => onToggleInterconnect?.()}
           >
-            {#if hasRoomAvatar}
-              <img
-                src={effectiveRoomAvatar}
-                alt={roomName}
-                class="w-7 h-7 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
-                decoding="async"
-                onerror={() => {
-                  failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
-                }}
-              />
-            {:else}
-              <span class="w-7 h-7 rounded-lg flex items-center justify-center bg-black/5 dark:bg-white/10 font-mono text-xs font-bold opacity-70 shrink-0">#</span>
-            {/if}
             <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
-              {roomName}
+              #{roomName}
             </span>
+            {#if interconnectSites.length > 0}
+              <span class="text-[11px] font-medium px-1.5 py-0.5 rounded-md bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] tabular-nums shrink-0">
+                {interconnectSites.length} 个站点
+              </span>
+            {/if}
             <svg class="w-3.5 h-3.5 opacity-65 transition-transform shrink-0 {showInterconnect ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <polyline points="6 9 12 15 18 9" />
             </svg>
           </button>
         {:else}
           <div class="chat-header-room-badge chat-desktop-only">
-            {#if hasRoomAvatar}
-              <img
-                src={effectiveRoomAvatar}
-                alt={roomName}
-                class="w-7 h-7 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
-                decoding="async"
-                onerror={() => {
-                  failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
-                }}
-              />
-              <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
-                {roomName}
-              </span>
-            {:else}
-              <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
-                # {roomName}
-              </span>
-            {/if}
+            <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
+              #{roomName}
+            </span>
           </div>
         {/if}
         <span class="text-xs text-[var(--chat-meta-color)] truncate hidden lg:inline">
           {effectiveSubtitle}
         </span>
         {#if currentUser?.isAdmin && onSetTopic}
-          <button
-            type="button"
-            class="hidden md:inline-flex items-center justify-center w-5 h-5 rounded text-[var(--chat-meta-color)] hover:text-[var(--primary)] hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
-            title="编辑房间主题"
-            aria-label="编辑房间主题"
-            onclick={() => {
-              topicDraft = effectiveSubtitle;
-              editingTopic = true;
-            }}
-          >
-            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-            </svg>
-          </button>
+          <ChatTooltip text="编辑房间主题" position="bottom" align="left">
+            <button
+              type="button"
+              class="hidden md:inline-flex items-center justify-center w-5 h-5 rounded text-[var(--chat-meta-color)] hover:text-[var(--primary)] hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
+              aria-label="编辑房间主题"
+              onclick={() => {
+                topicDraft = effectiveSubtitle;
+                editingTopic = true;
+              }}
+            >
+              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+              </svg>
+            </button>
+          </ChatTooltip>
         {/if}
       {/if}
     </div>
@@ -1987,10 +1976,10 @@ function removePendingImage(index: number) {
             type="button"
             class="chat-header-pill-btn {unreadMentionUids.length > 0 ? 'has-unread' : ''}"
             aria-expanded={showMentionHistory}
-            aria-label="查看 @我的消息"
+            aria-label="查看被提及的消息"
             onclick={() => (showMentionHistory = !showMentionHistory)}
           >
-            <span class="font-bold text-[var(--primary)]">@我</span>
+            <span class="font-bold text-[var(--primary)]">被提及</span>
             {#if unreadMentionUids.length > 0}
               <span class="chat-mention-unread-badge">{unreadMentionUids.length}</span>
             {:else}
@@ -1999,9 +1988,9 @@ function removePendingImage(index: number) {
           </button>
 
           {#if showMentionHistory}
-            <div class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="@我的消息列表">
+            <div class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="被提及的消息列表">
               <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
-                <span>近期 @你的消息</span>
+                <span>近期提及你的消息</span>
                 <span>{mentionsToMe.length}条</span>
               </div>
               <div class="my-0.5 border-t border-black/5 dark:border-white/10"></div>
@@ -2041,6 +2030,7 @@ function removePendingImage(index: number) {
       <div class="chat-desktop-only">
         <ChatTooltip
           position="bottom"
+          align="right"
           text={isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount} 人在线 · 累计 ${totalChatterCount} 人聊过天` : `${onlineCount} 人在线`}
         >
           <div
@@ -2256,30 +2246,32 @@ function removePendingImage(index: number) {
               </button>
             {:else if skipVoteBanner.hasVotedSkip}
               <!-- 发起投票 / 已经投过票的人：仅显示“取消”，绝不显示“同意” -->
-              <button
-                type="button"
-                class="chat-mention-jump-pill opacity-90 hover:opacity-100 border-none cursor-pointer shrink-0"
-                onclick={() => onVoteSkip?.()}
-                title="取消切歌申请"
-              >
-                取消
-              </button>
+              <ChatTooltip text="取消切歌申请" position="bottom" align="right">
+                <button
+                  type="button"
+                  class="chat-mention-jump-pill opacity-90 hover:opacity-100 border-none cursor-pointer shrink-0"
+                  onclick={() => onVoteSkip?.()}
+                >
+                  取消
+                </button>
+              </ChatTooltip>
             {:else}
               <!-- 其他没投票的人：显示“同意” -->
-              <button
-                type="button"
-                class="chat-mention-jump-pill border-none cursor-pointer shrink-0 active:scale-95"
-                onclick={() => {
-                  if (skipVoteBanner.canDirectSkip) {
-                    onSkipTrack?.();
-                  } else {
-                    onVoteSkip?.();
-                  }
-                }}
-                title="同意切歌"
-              >
-                同意
-              </button>
+              <ChatTooltip text="同意切歌" position="bottom" align="right">
+                <button
+                  type="button"
+                  class="chat-mention-jump-pill border-none cursor-pointer shrink-0 active:scale-95"
+                  onclick={() => {
+                    if (skipVoteBanner.canDirectSkip) {
+                      onSkipTrack?.();
+                    } else {
+                      onVoteSkip?.();
+                    }
+                  }}
+                >
+                  同意
+                </button>
+              </ChatTooltip>
             {/if}
           </div>
         {/if}
@@ -2293,7 +2285,7 @@ function removePendingImage(index: number) {
             >
               <span class="w-2 h-2 rounded-full bg-[var(--primary)] shrink-0 animate-pulse"></span>
               <span class="font-bold text-[var(--chat-accent-text)] shrink-0">
-                {activeAlertMessage.name} {isReplyToMe(activeAlertMessage) ? "回复了你" : "@了你"}
+                {activeAlertMessage.name} {isReplyToMe(activeAlertMessage) ? "回复了你" : "提到了你"}
               </span>
               <span class="truncate text-[var(--deep-text)] dark:text-white/85">
                 {activeAlertMessage.content || "[图片消息]"}
@@ -2368,14 +2360,15 @@ function removePendingImage(index: number) {
                 <span>正在加载更早的消息...</span>
               </div>
             {:else}
-              <button
-                type="button"
-                class="chat-history-expand-btn text-xs py-1 px-3 rounded-full opacity-75 hover:opacity-100 transition-opacity"
-                onclick={() => triggerAutoLoadOlderHistory()}
-                title="向上滚动自动加载，或点击手动加载"
-              >
-                ↑ 向上滚动加载更早历史
-              </button>
+              <ChatTooltip text="向上滚动自动加载，或点击手动加载" position="bottom">
+                <button
+                  type="button"
+                  class="chat-history-expand-btn text-xs py-1 px-3 rounded-full opacity-75 hover:opacity-100 transition-opacity"
+                  onclick={() => triggerAutoLoadOlderHistory()}
+                >
+                  ↑ 向上滚动加载更早历史
+                </button>
+              </ChatTooltip>
             {/if}
           </div>
         {:else if messages.length > 0}
@@ -2524,7 +2517,8 @@ function removePendingImage(index: number) {
         <img
           src={inputBgUrl}
           alt=""
-          loading="lazy"
+          loading="eager"
+          fetchpriority="low"
           decoding="async"
           class="chat-panel-bg-img"
           use:trackBgImgAspectRatio={inputBgUrl}
@@ -2902,43 +2896,6 @@ function removePendingImage(index: number) {
             </button>
           </ChatTooltip>
 
-          <!-- R2 图片上传按钮 -->
-          {#if enableImageUpload}
-            <input
-              bind:this={fileInputEl}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
-              multiple
-              class="hidden"
-              onchange={(e) => {
-                if (e.currentTarget.files) {
-                  void processImageFiles(e.currentTarget.files);
-                }
-              }}
-            />
-            <ChatTooltip text="上传图片">
-              <button
-                type="button"
-                class="chat-tool-btn"
-                aria-label="上传图片"
-                disabled={isUploadingImage || isUploadingMedia}
-                onclick={() => {
-                  if (!currentUser) {
-                    onRequireAuth();
-                    return;
-                  }
-                  fileInputEl?.click();
-                }}
-              >
-                <svg class="w-5 h-5 md:w-[1.15rem] md:h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <polyline points="21 15 16 10 5 21" />
-                </svg>
-              </button>
-            </ChatTooltip>
-          {/if}
-
           <!-- 多媒体与文件附件上传按钮 -->
           <input
             bind:this={mediaFileInputEl}
@@ -2951,11 +2908,11 @@ function removePendingImage(index: number) {
               }
             }}
           />
-          <ChatTooltip text="发送附件">
+          <ChatTooltip text="发送图片或附件">
             <button
               type="button"
               class="chat-tool-btn"
-              aria-label="发送附件"
+              aria-label="发送图片或附件"
               disabled={isUploadingImage || isUploadingMedia}
               onclick={() => {
                 if (!currentUser) {

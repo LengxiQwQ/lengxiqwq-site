@@ -51,6 +51,7 @@ export interface InterconnectSite {
 	avatar?: string;
 	url: string;
 	desc?: string;
+	isSelf?: boolean;
 }
 
 export interface ChatConfig {

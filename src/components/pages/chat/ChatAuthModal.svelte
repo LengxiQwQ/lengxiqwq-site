@@ -342,7 +342,7 @@ async function handleSplitGuestEnter() {
         </div>
 
         <p class="text-[11px] text-(--deep-text)/80 leading-relaxed m-0">
-          点击下方按钮将打开独立 Waline 窗口完成登录或注册（支持账号密码、GitHub 等方式），即可拥有 <strong class="font-semibold text-(--chat-accent-text)">认证</strong> 标识并解锁个人歌单与离线 @ 提醒。
+          点击下方按钮将打开独立 Waline 窗口完成登录或注册（支持账号密码、GitHub 等方式），即可拥有 <strong class="font-semibold text-(--chat-accent-text)">认证</strong> 标识并解锁个人歌单。
         </p>
 
         {#if walineLoginError}

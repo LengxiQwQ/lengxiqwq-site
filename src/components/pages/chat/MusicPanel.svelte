@@ -2669,7 +2669,7 @@ $effect(() => {
                 isSkippingTrack
                   ? "正在切歌..."
                   : canDirectSkip
-                    ? "直接切歌"
+                    ? "下一曲"
                     : hasVotedSkip
                       ? `取消投票（已投 ${activeVotes}/${activeThreshold} 票）`
                       : activeVotes > 0
@@ -2681,7 +2681,7 @@ $effect(() => {
                     type="button"
                     disabled={isSkippingTrack}
                     class="chat-skip-pill whitespace-nowrap disabled:opacity-75 disabled:cursor-wait!"
-                    aria-label={isSkippingTrack ? "正在切歌..." : "直接切歌"}
+                    aria-label={isSkippingTrack ? "正在切歌..." : "下一曲"}
                     onclick={onSkipTrack}
                   >
                     {#if isSkippingTrack}

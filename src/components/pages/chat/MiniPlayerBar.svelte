@@ -55,7 +55,7 @@ const progressRatio = $derived(
 const skipTooltipText = $derived.by(() => {
 	if (isSkippingTrack) return "正在切歌...";
 	if (canDirectSkip) {
-		return "直接切歌";
+		return "下一曲";
 	}
 	if (hasVotedSkip) {
 		return `取消投票（已投 ${voteCount}/${voteThreshold} 票）`;

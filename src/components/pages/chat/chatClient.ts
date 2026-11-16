@@ -1369,11 +1369,11 @@ export function resolveExternalOrigin(
 		if (isAiovtueRelay) {
 			matchedSite =
 				matchSiteByHint("aiovtue", sites) || {
-					name: "Aiovtue",
+					name: "AIOVTUE-雪",
 					owner: "AIOVTUE-雪",
 					avatar: "https://daily.yybb.us/owo/snow/snow-03.webp",
 					url: explicitSiteUrl || "https://chat.yybb.us/",
-					desc: "来自 chat.yybb.us 的 Aiovtue 茶室",
+					desc: "雨滴会记录生命中的每一个瞬间",
 				};
 		} else {
 			const fallbackRelayName = explicitSite || explicitBadge || relaySiteKey;
@@ -1456,13 +1456,13 @@ export function resolveExternalOrigin(
 	const hostSiteName = host.includes("gbk.ink")
 		? "GBK.ink"
 		: host.includes("somoe.xyz")
-			? "Somoe 茶室"
+			? "Somoe Home"
 			: host.includes("rainzt.cn")
-				? "听雨茶室"
+				? "朝朝听雨"
 				: host.includes("yybb.us")
-					? "Aiovtue"
+					? "AIOVTUE-雪"
 					: host.includes("detached.online")
-						? "Detached 茶室"
+						? "Detached"
 						: "";
 
 	const isRealRelay = Boolean(

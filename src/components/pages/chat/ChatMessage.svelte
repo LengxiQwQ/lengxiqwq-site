@@ -5,6 +5,7 @@ let activeGlobalVoiceStop: (() => void) | null = null;
 <script lang="ts">
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
+import ChatTooltip from "./ChatTooltip.svelte";
 import {
 	isExternalMatrixIdentity,
 	resolveExternalOrigin,
@@ -524,25 +525,26 @@ function handleBubblePointerUp(e: PointerEvent) {
       <!-- 快捷表情反应 -->
       {#if onReaction}
         <div class="relative inline-flex items-center" bind:this={reactionEl}>
-          <button
-            type="button"
-            class="chat-action-icon-btn {showQuickReaction ? 'active' : ''}"
-            aria-label="表情回应"
-            title="表情回应"
-            onclick={(e) => {
-              e.stopPropagation();
-              showQuickReaction = !showQuickReaction;
-            }}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M22 11v1a10 10 0 1 1-9-10" />
-              <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-              <line x1="9" y1="9" x2="9.01" y2="9" />
-              <line x1="15" y1="9" x2="15.01" y2="9" />
-              <path d="M16 5h6" />
-              <path d="M19 2v6" />
-            </svg>
-          </button>
+          <ChatTooltip text="表情回应" disabled={showQuickReaction}>
+            <button
+              type="button"
+              class="chat-action-icon-btn {showQuickReaction ? 'active' : ''}"
+              aria-label="表情回应"
+              onclick={(e) => {
+                e.stopPropagation();
+                showQuickReaction = !showQuickReaction;
+              }}
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M22 11v1a10 10 0 1 1-9-10" />
+                <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                <line x1="9" y1="9" x2="9.01" y2="9" />
+                <line x1="15" y1="9" x2="15.01" y2="9" />
+                <path d="M16 5h6" />
+                <path d="M19 2v6" />
+              </svg>
+            </button>
+          </ChatTooltip>
 
           {#if showQuickReaction}
             <div class="chat-quick-reactions-popover {isSelfMsg ? 'self-popover' : 'other-popover'}">
@@ -565,119 +567,125 @@ function handleBubblePointerUp(e: PointerEvent) {
 
       <!-- 快捷回复 -->
       {#if onReply}
-        <button
-          type="button"
-          class="chat-action-icon-btn"
-          aria-label="回复消息"
-          title="回复"
-          onclick={(e) => {
-            e.stopPropagation();
-            onReply?.(message);
-          }}
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polyline points="9 17 4 12 9 7" />
-            <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
-          </svg>
-        </button>
+        <ChatTooltip text="回复">
+          <button
+            type="button"
+            class="chat-action-icon-btn"
+            aria-label="回复消息"
+            onclick={(e) => {
+              e.stopPropagation();
+              onReply?.(message);
+            }}
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 17 4 12 9 7" />
+              <path d="M20 18v-2a4 4 0 0 0-4-4H4" />
+            </svg>
+          </button>
+        </ChatTooltip>
       {/if}
 
       <!-- 复制内容 -->
       {#if message.content && message.content.trim()}
-        <button
-          type="button"
-          class="chat-action-icon-btn {copySuccess ? 'text-emerald-500' : ''}"
-          aria-label="复制内容"
-          title={copySuccess ? "已复制 ✓" : "复制"}
-          onclick={handleCopy}
-        >
-          {#if copySuccess}
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-          {:else}
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
-              <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
-            </svg>
-          {/if}
-        </button>
+        <ChatTooltip text={copySuccess ? "已复制 ✓" : "复制"}>
+          <button
+            type="button"
+            class="chat-action-icon-btn {copySuccess ? 'text-emerald-500' : ''}"
+            aria-label="复制内容"
+            onclick={handleCopy}
+          >
+            {#if copySuccess}
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            {:else}
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+              </svg>
+            {/if}
+          </button>
+        </ChatTooltip>
       {/if}
 
       <!-- 编辑消息 -->
       {#if onEdit && canEdit && !message.replyTo?.isRecalled}
-        <button
-          type="button"
-          class="chat-action-icon-btn"
-          aria-label="编辑消息"
-          title="编辑"
-          onclick={(e) => {
-            e.stopPropagation();
-            onEdit?.(message);
-          }}
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-          </svg>
-        </button>
+        <ChatTooltip text="编辑">
+          <button
+            type="button"
+            class="chat-action-icon-btn"
+            aria-label="编辑消息"
+            onclick={(e) => {
+              e.stopPropagation();
+              onEdit?.(message);
+            }}
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+            </svg>
+          </button>
+        </ChatTooltip>
       {/if}
 
       <!-- 置顶 / 取消置顶 -->
       {#if isAdmin && onPin}
-        <button
-          type="button"
-          class="chat-action-icon-btn {isPinned ? 'text-[var(--skin-accent)]' : ''}"
-          aria-label={isPinned ? "取消置顶" : "置顶消息"}
-          title={isPinned ? "取消置顶" : "置顶"}
-          onclick={(e) => {
-            e.stopPropagation();
-            onPin?.(message.msgUid, isPinned);
-          }}
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <line x1="12" y1="17" x2="12" y2="22" />
-            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
-          </svg>
-        </button>
+        <ChatTooltip text={isPinned ? "取消置顶" : "置顶"}>
+          <button
+            type="button"
+            class="chat-action-icon-btn {isPinned ? 'text-[var(--skin-accent)]' : ''}"
+            aria-label={isPinned ? "取消置顶" : "置顶消息"}
+            onclick={(e) => {
+              e.stopPropagation();
+              onPin?.(message.msgUid, isPinned);
+            }}
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="17" x2="12" y2="22" />
+              <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+            </svg>
+          </button>
+        </ChatTooltip>
       {/if}
 
       <!-- 撤回消息 -->
       {#if canRecall && onRecall}
-        <button
-          type="button"
-          class="chat-action-icon-btn hover:text-[var(--primary)]"
-          aria-label="撤回消息"
-          title="撤回"
-          onclick={(e) => {
-            e.stopPropagation();
-            onRecall?.(message.msgUid);
-          }}
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polyline points="1 4 1 10 7 10" />
-            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-          </svg>
-        </button>
+        <ChatTooltip text="撤回">
+          <button
+            type="button"
+            class="chat-action-icon-btn hover:text-[var(--primary)]"
+            aria-label="撤回消息"
+            onclick={(e) => {
+              e.stopPropagation();
+              onRecall?.(message.msgUid);
+            }}
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+            </svg>
+          </button>
+        </ChatTooltip>
       {/if}
 
       <!-- 删除消息 -->
       {#if canDelete && onDelete}
-        <button
-          type="button"
-          class="chat-action-icon-btn hover:text-red-500"
-          aria-label="删除消息"
-          title="删除"
-          onclick={(e) => {
-            e.stopPropagation();
-            onDelete?.(message.msgUid);
-          }}
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 6h18" />
-            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-          </svg>
-        </button>
+        <ChatTooltip text="删除">
+          <button
+            type="button"
+            class="chat-action-icon-btn hover:text-red-500"
+            aria-label="删除消息"
+            onclick={(e) => {
+              e.stopPropagation();
+              onDelete?.(message.msgUid);
+            }}
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 6h18" />
+              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+            </svg>
+          </button>
+        </ChatTooltip>
       {/if}
     </div>
   {/if}
@@ -866,23 +874,46 @@ function handleBubblePointerUp(e: PointerEvent) {
     {@const shown = readers.slice(0, 4)}
     {@const restCount = readers.length - shown.length}
     <span
-      class="inline-flex items-center -space-x-1 ml-1 select-none"
-      title={`已读：${readers.map((r) => r.name).join("、")}`}
+      class="chat-read-receipts-wrap ml-1 select-none"
       aria-label={`已读：${readers.map((r) => r.name).join("、")}`}
     >
-      {#each shown as reader (reader.userKey)}
-        <span class="inline-flex rounded-full ring-1 ring-[var(--card-bg)] overflow-hidden">
-          <ChatAvatar
-            src={reader.avatar}
-            name={reader.name}
-            size="xs"
-            class="w-3.5! h-3.5! text-[8px]!"
-          />
-        </span>
-      {/each}
-      {#if restCount > 0}
-        <span class="text-[0.625rem] text-[var(--chat-meta-color)] pl-1.5 tabular-nums">+{restCount}</span>
-      {/if}
+      <span class="inline-flex items-center -space-x-1">
+        {#each shown as reader (reader.userKey)}
+          <span class="inline-flex rounded-full ring-1 ring-[var(--card-bg)] overflow-hidden">
+            <ChatAvatar
+              src={reader.avatar}
+              name={reader.name}
+              size="xs"
+              class="w-3.5! h-3.5! text-[8px]!"
+            />
+          </span>
+        {/each}
+        {#if restCount > 0}
+          <span class="text-[0.625rem] text-[var(--chat-meta-color)] pl-1.5 tabular-nums">+{restCount}</span>
+        {/if}
+      </span>
+      <div
+        class="chat-read-receipts-popover {isSelf ? 'align-right' : 'align-left'}"
+        role="tooltip"
+      >
+        <div class="text-[0.6875rem] font-semibold text-[var(--deep-text)] dark:text-white/90 px-1 pb-1 mb-1 border-b border-[var(--chat-divider-color)] flex items-center justify-between gap-2">
+          <span>已读成员</span>
+          <span class="text-[0.625rem] font-normal text-[var(--chat-meta-color)] tabular-nums">{readers.length} 人</span>
+        </div>
+        <div class="chat-read-receipts-list custom-scrollbar space-y-1">
+          {#each readers as reader (reader.userKey)}
+            <div class="flex items-center gap-1.5 px-1 py-0.5 rounded text-[0.75rem] text-[var(--deep-text)] dark:text-white/85">
+              <ChatAvatar
+                src={reader.avatar}
+                name={reader.name}
+                size="xs"
+                class="w-4! h-4! text-[8px]! shrink-0"
+              />
+              <span class="truncate">{reader.name}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
     </span>
   {/if}
 {/snippet}
@@ -1104,7 +1135,7 @@ function handleBubblePointerUp(e: PointerEvent) {
             {/each}
           {/if}
           {#if isMentionedMe}
-            <span class="chat-mentioned-tag">@了你</span>
+            <span class="chat-mentioned-tag">提到了你</span>
           {/if}
         </div>
       {/if}
