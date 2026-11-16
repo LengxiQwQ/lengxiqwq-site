@@ -251,6 +251,17 @@ function updateChatSetting<K extends keyof ChatAppearanceSettings>(
 	requestAnimationFrame(refreshAllRangeProgress);
 }
 
+function resolveChatWallpaperThumbSrc(wp: ChatWallpaperItem): string {
+	if (wp.thumbSrc) return wp.thumbSrc;
+	if (wp.src.startsWith("/wallpapers/chat/") && !wp.src.includes("/thumbs/")) {
+		return wp.src.replace(
+			/(\/wallpapers\/chat\/[^/]+\/)([^/]+)$/,
+			"$1thumbs/$2",
+		);
+	}
+	return wp.src;
+}
+
 async function selectSlotWallpaper(itemId: string) {
 	const slot = activeChatBgSlot;
 	if (itemId && !getChatWallpaperItemById(itemId, slot)) return;
@@ -1762,7 +1773,19 @@ $effect(() => {
 									title={`${wp.name}（${wp.mode === 'sticker' ? '小贴纸' : '大壁纸'}）`}
 								>
 									<div class="relative w-full aspect-[4/3] bg-black/5 dark:bg-white/5 overflow-hidden">
-										<img src={wp.src} alt={wp.name} loading="lazy" class="w-full h-full object-cover" />
+										<img
+											src={resolveChatWallpaperThumbSrc(wp)}
+											alt={wp.name}
+											loading="lazy"
+											decoding="async"
+											class="w-full h-full object-cover"
+											onerror={(e) => {
+												const img = e.currentTarget as HTMLImageElement;
+												if (img.dataset.fallbackApplied) return;
+												img.dataset.fallbackApplied = "1";
+												img.src = wp.src;
+											}}
+										/>
 										<span class="absolute bottom-0.5 right-0.5 px-1 py-px rounded text-[9px] leading-tight bg-black/60 text-white">
 											{wp.mode === "sticker" ? "贴纸" : "壁纸"}
 										</span>

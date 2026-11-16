@@ -11,6 +11,8 @@ export interface ChatWallpaperItem {
 	name: string;
 	/** 壁纸文件路径（位于 /wallpapers/chat/<slot>/...） */
 	src: string;
+	/** 缩略图文件路径（位于 /wallpapers/chat/<slot>/thumbs/...，未填时回退 src） */
+	thumbSrc?: string;
 	/** 显示模式：wallpaper=大壁纸默认铺满，sticker=小贴纸可超出越界裁剪 */
 	mode: ChatWallpaperDisplayMode;
 	/** 适配方式：cover=铺满，contain=保持比例完整显示（贴纸常用） */

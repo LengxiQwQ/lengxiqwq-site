@@ -700,9 +700,20 @@ function chatWallpapersDevApiPlugin() {
 							slot,
 							filename,
 						);
+						const thumbSubpath = path.join(
+							"public",
+							"wallpapers",
+							"chat",
+							slot,
+							"thumbs",
+							filename,
+						);
 						const primaryOut = contentRoot
 							? path.join(contentRoot, destSubpath)
 							: path.resolve(destSubpath);
+						const primaryThumbOut = contentRoot
+							? path.join(contentRoot, thumbSubpath)
+							: path.resolve(thumbSubpath);
 
 						const { default: sharp } = await import("sharp");
 						const inputBuf = Buffer.from(match[1], "base64");
@@ -716,10 +727,25 @@ function chatWallpapersDevApiPlugin() {
 						});
 						fs.mkdirSync(path.dirname(primaryOut), { recursive: true });
 						await pipeline.webp({ quality: 86, effort: 5 }).toFile(primaryOut);
+
+						fs.mkdirSync(path.dirname(primaryThumbOut), { recursive: true });
+						await sharp(inputBuf)
+							.rotate()
+							.resize({
+								width: 320,
+								withoutEnlargement: true,
+							})
+							.webp({ quality: 75, effort: 5 })
+							.toFile(primaryThumbOut);
+
 						if (contentRoot) {
 							const localMirror = path.resolve(destSubpath);
 							fs.mkdirSync(path.dirname(localMirror), { recursive: true });
 							fs.copyFileSync(primaryOut, localMirror);
+
+							const localThumbMirror = path.resolve(thumbSubpath);
+							fs.mkdirSync(path.dirname(localThumbMirror), { recursive: true });
+							fs.copyFileSync(primaryThumbOut, localThumbMirror);
 						}
 
 						const t = body.transform || {};
@@ -728,6 +754,7 @@ function chatWallpapersDevApiPlugin() {
 							slot,
 							name: displayName,
 							src: `/wallpapers/chat/${slot}/${filename}`,
+							thumbSrc: `/wallpapers/chat/${slot}/thumbs/${filename}`,
 							mode: t.mode === "sticker" ? "sticker" : "wallpaper",
 							fit: t.fit === "contain" ? "contain" : "cover",
 							opacity: Number(t.opacity ?? 0.2),

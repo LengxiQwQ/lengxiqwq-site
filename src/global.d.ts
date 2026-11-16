@@ -63,6 +63,7 @@ declare global {
 				config: Record<string, unknown>;
 			};
 			togglePlay: () => void;
+			stop: () => boolean;
 			playNext: () => void;
 			playPrev: () => void;
 			cyclePlayMode: () => void;

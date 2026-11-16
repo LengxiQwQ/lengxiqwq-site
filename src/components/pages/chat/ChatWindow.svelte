@@ -75,7 +75,6 @@ interface Props {
 	isInterconnectRoom?: boolean;
 	interconnectSites?: InterconnectSite[];
 	totalChatterCount?: number;
-	noticeText?: string;
 	pinnedUids?: string[];
 	roomTopic?: string;
 	typingUsers?: string[];
@@ -165,7 +164,6 @@ const {
 	isInterconnectRoom = false,
 	interconnectSites = [],
 	totalChatterCount = 0,
-	noticeText = "",
 	pinnedUids = [],
 	roomTopic = "",
 	typingUsers = [],
@@ -2205,13 +2203,6 @@ function removePendingImage(index: number) {
           </ChatTooltip>
         {/if}
       </div>
-    </div>
-  {/if}
-
-  <!-- 提示条 -->
-  {#if noticeText}
-    <div class="mx-4 mt-2 px-3 py-1.5 rounded-xl text-xs bg-(--primary)/14 border border-(--primary)/25 text-[var(--chat-accent-text)] flex items-center justify-between gap-2 shrink-0">
-      <span>{noticeText}</span>
     </div>
   {/if}
 

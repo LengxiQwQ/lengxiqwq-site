@@ -417,6 +417,35 @@ const managerConfigStr = JSON.stringify({
         }
     }
 
+    function stop() {
+        loadVersion++;
+        if (errorSkipTimeout) {
+            clearTimeout(errorSkipTimeout);
+            errorSkipTimeout = null;
+        }
+        var wasActive = !audio.paused || state.isPlaying || audio.currentTime > 0;
+        audio.pause();
+        try {
+            audio.currentTime = 0;
+        } catch (_e) {}
+        state.isPlaying = false;
+        emitPlayState(false, true);
+        emit('fm:timeupdate', {
+            currentTime: 0,
+            duration: audio.duration || 0,
+            progress: 0,
+            currentTimeStr: '0:00',
+            durationStr: formatTime(audio.duration || 0),
+            lrcIndex: -1
+        });
+        if ('mediaSession' in navigator) {
+            try {
+                navigator.mediaSession.playbackState = 'none';
+            } catch (_e) {}
+        }
+        return wasActive;
+    }
+
     function playNext(auto) {
         if (state.playlist.length === 0) return;
         if (state.playMode === 1 && auto) {
@@ -654,6 +683,7 @@ const managerConfigStr = JSON.stringify({
             };
         },
         togglePlay: togglePlay,
+        stop: stop,
         playNext: function () { playNext(false); },
         playPrev: playPrev,
         cyclePlayMode: cyclePlayMode,

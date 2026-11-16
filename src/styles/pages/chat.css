@@ -485,40 +485,18 @@ html[data-chat-page][data-chat-density="compact"] #chat-page .chat-panel-center 
 	line-height: 1.58 !important;
 }
 
-/* 别人发的消息：奶白泡泡，左下角尾巴 */
+/* 别人发的消息：奶白泡泡，左上角一体弧形尾巴 */
 .chat-bubble-other {
 	background: var(--skin-bubble) !important;
 	color: var(--skin-text) !important;
-	border-bottom-left-radius: 5px !important;
+	border-top-left-radius: 4px !important;
 }
 
-.chat-bubble-other::after {
-	content: "";
-	position: absolute;
-	bottom: 0;
-	left: -6px;
-	width: 11px;
-	height: 11px;
-	background: var(--skin-bubble);
-	clip-path: polygon(100% 0, 100% 100%, 0 100%);
-}
-
-/* 自己发的消息：带主题色阶的泡泡，右下角尾巴 */
+/* 自己发的消息：带主题色阶的泡泡，右上角一体弧形尾巴 */
 .chat-bubble-self {
 	background: var(--skin-bubble-self) !important;
 	color: var(--skin-bubble-self-text) !important;
-	border-bottom-right-radius: 5px !important;
-}
-
-.chat-bubble-self::after {
-	content: "";
-	position: absolute;
-	bottom: 0;
-	right: -6px;
-	width: 11px;
-	height: 11px;
-	background: var(--skin-bubble-self);
-	clip-path: polygon(0 0, 100% 100%, 0 100%);
+	border-top-right-radius: 4px !important;
 }
 
 .chat-bubble-self a {
@@ -528,6 +506,48 @@ html[data-chat-page][data-chat-density="compact"] #chat-page .chat-panel-center 
 
 .chat-bubble-mentioned {
 	box-shadow: 0 0 0 2px var(--skin-accent), 0 2px 10px -2px oklch(0.70 0.14 var(--hue) / 0.25) !important;
+}
+
+.chat-bubble-svg-ready {
+	background: transparent !important;
+	box-shadow: none !important;
+}
+
+.chat-bubble-svg-ready > :not(.chat-bubble-bg) {
+	position: relative;
+	z-index: 1;
+}
+
+.chat-bubble-bg {
+	position: absolute;
+	top: 0;
+	left: 0;
+	overflow: visible;
+	pointer-events: none;
+	z-index: 0;
+}
+
+.chat-bubble-shadow {
+	fill: color-mix(in oklab, var(--skin-text) 7%, transparent);
+}
+
+.chat-bubble-other .chat-bubble-shape {
+	fill: var(--skin-bubble);
+}
+
+.chat-bubble-self .chat-bubble-shape {
+	fill: var(--skin-bubble-self);
+}
+
+.chat-bubble-mentioned .chat-bubble-shadow {
+	fill: oklch(0.70 0.14 var(--hue) / 0.16);
+}
+
+.chat-bubble-mentioned .chat-bubble-shape {
+	stroke: var(--skin-accent);
+	stroke-width: 4;
+	stroke-linejoin: round;
+	paint-order: stroke;
 }
 
 /* 成员头衔与标签胶囊 */
@@ -1862,7 +1882,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 		align-items: center;
 		gap: 0.625rem;
 		padding: 0.48rem 0.75rem;
-		background: var(--skin-rail) !important;
+		background: transparent !important;
 		border-bottom: 1px solid var(--skin-line) !important;
 		-webkit-backdrop-filter: none !important;
 		backdrop-filter: none !important;

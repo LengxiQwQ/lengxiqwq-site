@@ -193,6 +193,7 @@ let hasClockSample = false;
 const pendingClockPings = new WeakMap<WebSocket, { wall: number; monotonic: number }>();
 let chatAudio: HTMLAudioElement | null = $state(null);
 let noticeText = $state("");
+let noticeVisible = $state(false);
 let targetMessageUid = $state("");
 let showInterconnect = $state(false);
 let totalChatterCount = $state(0);
@@ -637,11 +638,21 @@ function handleVoteSkip() {
 	}
 }
 
+function placeGlobalToast(node: HTMLDivElement) {
+	document.body.appendChild(node);
+	return {
+		destroy() {
+			node.remove();
+		},
+	};
+}
+
 function showNotice(msg: string) {
 	noticeText = msg;
+	noticeVisible = true;
 	if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 	noticeTimer = window.setTimeout(() => {
-		noticeText = "";
+		noticeVisible = false;
 	}, 3600);
 }
 
@@ -1958,6 +1969,8 @@ async function refreshSpectatorHistory() {
 
 onMount(() => {
 	isUnmounted = false;
+	// 切入聊天室时立即停止全站侧栏/顶栏音乐播放器，避免与点歌台同时发声
+	window.__fireflyMusic?.stop?.();
 	baseDocumentTitle = document.title;
 	currentAuth = resolveInitialAuth();
 	walineToken = currentAuth?.kind === "waline" ? currentAuth.token : "";
@@ -2447,7 +2460,6 @@ onMount(() => {
           isInterconnectRoom={currentRoom === "interconnect"}
           interconnectSites={interconnectSites}
           totalChatterCount={totalChatterCount}
-          noticeText={noticeText}
           pinnedUids={pinnedUids}
           roomTopic={roomTopic}
           typingUsers={typingUsers}
@@ -2640,4 +2652,15 @@ onMount(() => {
     onClose={() => (showPollCreateModal = false)}
     onSubmit={handleCreatePoll}
   />
+
+  <!-- 全局底部悬浮提示气泡（挂载至 body 顶层，避免被弹窗/抽屉/壁纸遮挡） -->
+  <div
+    use:placeGlobalToast
+    class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[2147483647] px-4 py-2.5 rounded-xl bg-black/85 dark:bg-neutral-800/90 text-white text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md transition-all duration-300 max-w-[90vw] text-center border border-white/10 pointer-events-none select-none {noticeVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-95'}"
+    role="status"
+    aria-live="polite"
+    aria-hidden={!noticeVisible}
+  >
+    {noticeText}
+  </div>
 </div>

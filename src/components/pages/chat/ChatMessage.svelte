@@ -101,6 +101,48 @@ const {
 let showQuickReaction = $state(false);
 let copySuccess = $state(false);
 let reactionEl = $state<HTMLElement | null>(null);
+let bubbleW = $state(0);
+let bubbleH = $state(0);
+
+function trackBubbleBox(node: HTMLElement) {
+	const sync = () => {
+		const rect = node.getBoundingClientRect();
+		const w = Math.round(rect.width * 100) / 100;
+		const h = Math.round(rect.height * 100) / 100;
+		if (w !== bubbleW) bubbleW = w;
+		if (h !== bubbleH) bubbleH = h;
+	};
+	sync();
+	if (typeof ResizeObserver === "undefined") return {};
+	const ro = new ResizeObserver(sync);
+	ro.observe(node);
+	return {
+		destroy() {
+			ro.disconnect();
+		},
+	};
+}
+
+const bubblePath = $derived.by(() => {
+	const w = bubbleW;
+	const h = bubbleH;
+	if (w <= 0 || h <= 0) return "";
+	const r = Math.max(6, Math.min(16, Math.floor(Math.min(w, h) / 2)));
+	const ty = Math.min(13, Math.max(8, h - r));
+	return [
+		"M -5 0",
+		`L ${w - r} 0`,
+		`A ${r} ${r} 0 0 1 ${w} ${r}`,
+		`L ${w} ${h - r}`,
+		`A ${r} ${r} 0 0 1 ${w - r} ${h}`,
+		`L ${r} ${h}`,
+		`A ${r} ${r} 0 0 1 0 ${h - r}`,
+		`L 0 ${ty}`,
+		`C 0 ${ty * 0.58}, -2.4 2.8, -5.8 1.3`,
+		"Q -7 0, -5 0",
+		"Z",
+	].join(" ");
+});
 
 async function handleCopy(e: MouseEvent) {
 	e.stopPropagation();
@@ -1054,7 +1096,24 @@ function handleBubblePointerUp(e: PointerEvent) {
         {:else if isStickerAttachmentOnly}
           {@render renderStickerAttachmentOnlyBody(true)}
         {:else}
-          <div class="chat-bubble chat-bubble-self">
+          <div
+            use:trackBubbleBox
+            class="chat-bubble chat-bubble-self {bubblePath ? 'chat-bubble-svg-ready' : ''}"
+          >
+            {#if bubblePath}
+              <svg
+                class="chat-bubble-bg"
+                viewBox="0 0 {bubbleW} {bubbleH}"
+                style="width: {bubbleW}px; height: {bubbleH}px;"
+                shape-rendering="geometricPrecision"
+                aria-hidden="true"
+              >
+                <g transform="translate({bubbleW} 0) scale(-1 1)">
+                  <path class="chat-bubble-shadow" transform="translate(0 1)" d={bubblePath} />
+                  <path class="chat-bubble-shape" d={bubblePath} />
+                </g>
+              </svg>
+            {/if}
             {#if message.replyTo}
               {@render replyQuoteBlock()}
             {/if}
@@ -1154,7 +1213,22 @@ function handleBubblePointerUp(e: PointerEvent) {
         {:else if isStickerAttachmentOnly}
           {@render renderStickerAttachmentOnlyBody(false)}
         {:else}
-          <div class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''}">
+          <div
+            use:trackBubbleBox
+            class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''} {bubblePath ? 'chat-bubble-svg-ready' : ''}"
+          >
+            {#if bubblePath}
+              <svg
+                class="chat-bubble-bg"
+                viewBox="0 0 {bubbleW} {bubbleH}"
+                style="width: {bubbleW}px; height: {bubbleH}px;"
+                shape-rendering="geometricPrecision"
+                aria-hidden="true"
+              >
+                <path class="chat-bubble-shadow" transform="translate(0 1)" d={bubblePath} />
+                <path class="chat-bubble-shape" d={bubblePath} />
+              </svg>
+            {/if}
             {#if message.replyTo}
               {@render replyQuoteBlock()}
             {/if}
