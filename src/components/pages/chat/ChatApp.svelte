@@ -37,7 +37,6 @@ import type {
 	ImageAttachment,
 	RoomMusicState,
 } from "./chatTypes";
-import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import MusicPanel from "./MusicPanel.svelte";
 import type { ChatMusicTrack } from "./musicTypes";
 import RoomPanel from "./RoomPanel.svelte";
@@ -74,7 +73,7 @@ const {
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
 const LAST_ROOM_STORAGE_KEY = "lengxi_chat_last_room";
 
-let activeTab = $state<"room" | "chat" | "music">("chat");
+let mobileDrawer = $state<"none" | "room" | "music">("none");
 let currentRoom = $state(rooms[0]?.id || "chat");
 let connectionState = $state<ConnectionState>("idle");
 let isWindowFocused = $state(true);
@@ -212,6 +211,55 @@ const NOTIFICATION_STORAGE_KEY = "fireflyChatDesktopNotification";
 let desktopNotificationEnabled = $state(false);
 let desktopNotificationPermission = $state<NotificationPermission>("default");
 let roomUnreadCounts = $state<Record<string, number>>({});
+const otherRoomsUnreadCount = $derived.by(() =>
+	Object.entries(roomUnreadCounts).reduce(
+		(acc, [rId, cnt]) => (rId !== currentRoom ? acc + (cnt || 0) : acc),
+		0,
+	),
+);
+
+let stageTouchStart: { x: number; y: number; time: number } | null = null;
+
+function handleStageTouchStart(e: TouchEvent) {
+	if (typeof window === "undefined" || e.touches.length !== 1) return;
+	if (!window.matchMedia("(width < 768px)").matches) return;
+	const target = e.target as HTMLElement | null;
+	if (
+		target?.closest(
+			"input, textarea, .chat-slim-slider, .chat-slider-control, .chat-picker-tabs, .chat-md-table-wrap, pre, code",
+		)
+	) {
+		stageTouchStart = null;
+		return;
+	}
+	const t = e.touches[0];
+	stageTouchStart = { x: t.clientX, y: t.clientY, time: Date.now() };
+}
+
+function handleStageTouchEnd(e: TouchEvent) {
+	if (!stageTouchStart || e.changedTouches.length !== 1) return;
+	const start = stageTouchStart;
+	stageTouchStart = null;
+	const t = e.changedTouches[0];
+	const dx = t.clientX - start.x;
+	const dy = t.clientY - start.y;
+	const dt = Date.now() - start.time;
+	if (dt > 600 || Math.abs(dx) < 56 || Math.abs(dy) > Math.abs(dx) * 0.65) {
+		return;
+	}
+	const vw = window.innerWidth || 375;
+	if (mobileDrawer === "none") {
+		if (dx > 0 && start.x < Math.min(96, vw * 0.28)) {
+			mobileDrawer = "room";
+		} else if (dx < 0 && start.x > vw - Math.min(96, vw * 0.28)) {
+			mobileDrawer = "music";
+		}
+	} else if (mobileDrawer === "room" && dx < -48) {
+		mobileDrawer = "none";
+	} else if (mobileDrawer === "music" && dx > 48) {
+		mobileDrawer = "none";
+	}
+}
 
 let lastMarkedServerReadAt = 0;
 let lastReportedAudioKey = "";
@@ -1215,7 +1263,7 @@ function handleRoomSelect(roomId: string) {
 		[roomId]: 0,
 	};
 	if (roomId === currentRoom) {
-		if (activeTab === "room") activeTab = "chat";
+		mobileDrawer = "none";
 		return;
 	}
 	roomMessageCache.set(currentRoom, messages);
@@ -1258,9 +1306,7 @@ function handleRoomSelect(roomId: string) {
 		}
 		connectRoom(roomId);
 	}
-	if (activeTab === "room") {
-		activeTab = "chat";
-	}
+	mobileDrawer = "none";
 }
 
 function handleMentionUser(name: string, userKey?: string) {
@@ -1270,9 +1316,7 @@ function handleMentionUser(name: string, userKey?: string) {
 	}
 	mentionSeq += 1;
 	mentionEvent = { name, ...(userKey ? { userKey } : {}), seq: mentionSeq };
-	if (activeTab !== "chat") {
-		activeTab = "chat";
-	}
+	mobileDrawer = "none";
 }
 
 function handleDirectWalineLogin() {
@@ -1385,9 +1429,7 @@ function handleOpenPlaylistFromProfile(playlistId: string) {
 	showUserDetailModal = false;
 	externalPlaylistSeq += 1;
 	externalPlaylistRequest = { playlistId, seq: externalPlaylistSeq };
-	if (activeTab !== "music") {
-		activeTab = "music";
-	}
+	mobileDrawer = "music";
 }
 
 function handleUpdateProfile(draft: ChatProfileDraft) {
@@ -2015,8 +2057,21 @@ onMount(() => {
 </script>
 
 <div class="flex flex-col h-full w-full min-h-0">
-  <div class="chat-mobile-stage flex flex-1 min-h-0 gap-0">
-    <div class="chat-panel chat-panel-left {activeTab === 'room' ? 'mobile-active' : ''}">
+  <div
+    class="chat-mobile-stage flex flex-1 min-h-0 gap-0"
+    ontouchstart={handleStageTouchStart}
+    ontouchend={handleStageTouchEnd}
+  >
+    {#if mobileDrawer !== "none"}
+      <button
+        type="button"
+        class="chat-mobile-drawer-backdrop md:hidden"
+        aria-label="关闭侧边抽屉"
+        onclick={() => (mobileDrawer = "none")}
+      ></button>
+    {/if}
+
+    <div class="chat-panel chat-panel-left {mobileDrawer === 'room' ? 'mobile-drawer-open' : ''}">
       <RoomPanel
         rooms={rooms}
         currentRoom={currentRoom}
@@ -2040,10 +2095,11 @@ onMount(() => {
         onOpenAuth={() => (showAuthModal = true)}
         onLogout={handleLogout}
         onToggleDesktopNotification={handleToggleDesktopNotification}
+        onCloseMobileDrawer={() => (mobileDrawer = "none")}
       />
     </div>
 
-    <div class="chat-panel-center relative flex flex-col min-w-0 min-h-0 {activeTab === 'chat' ? 'mobile-active' : ''}">
+    <div class="chat-panel-center relative flex flex-col min-w-0 min-h-0 mobile-active">
       <div class="chat-panel flex-1 min-h-0 w-full">
         <ChatWindow
           roomId={currentRoom}
@@ -2062,7 +2118,7 @@ onMount(() => {
           roomOnlineMembers={roomOnlineMembers}
           observers={observers}
           mentionMembers={mentionMembers}
-          isChatTabActive={activeTab === "chat"}
+          isChatTabActive={mobileDrawer === "none"}
           targetMessageUid={targetMessageUid}
           clockOffsetMs={clockOffsetMs}
           musicState={musicState}
@@ -2121,6 +2177,15 @@ onMount(() => {
           onRequireAuth={() => (showAuthModal = true)}
           onMentionUser={handleMentionUser}
           onOpenUserProfile={handleOpenUserProfile}
+          otherRoomsUnreadCount={otherRoomsUnreadCount}
+          mobilePlaybackStatus={mobilePlaybackStatus}
+          onOpenRoomDrawer={() => (mobileDrawer = "room")}
+          onOpenMusicDrawer={() => (mobileDrawer = "music")}
+          onOpenLyricsDrawer={() => {
+            mobileDrawer = "music";
+            musicPanelRef?.openPlayerTab?.();
+          }}
+          onToggleListen={() => musicPanelRef?.toggleListenControl?.()}
         />
       </div>
 
@@ -2136,7 +2201,7 @@ onMount(() => {
       />
     </div>
 
-    <div class="chat-panel chat-panel-right {activeTab === 'music' ? 'mobile-active' : ''}">
+    <div class="chat-panel chat-panel-right {mobileDrawer === 'music' ? 'mobile-drawer-open' : ''}">
       <audio bind:this={chatAudio} preload="auto" playsinline muted></audio>
       {#key currentRoom}
       <MusicPanel
@@ -2199,6 +2264,7 @@ onMount(() => {
         onRequestAuth={() => (showAuthModal = true)}
         onRequestWalineAuth={handleDirectWalineLogin}
         walineLoginWaiting={walineLoginWaiting}
+        onCloseMobileDrawer={() => (mobileDrawer = "none")}
       />
       {/key}
     </div>
@@ -2236,9 +2302,7 @@ onMount(() => {
     onJumpToMessage={(msgUid) => {
       showUserDetailModal = false;
       targetMessageUid = msgUid;
-      if (activeTab !== "chat") {
-        activeTab = "chat";
-      }
+      mobileDrawer = "none";
     }}
   />
 
@@ -2258,68 +2322,4 @@ onMount(() => {
     onClose={() => (showPollCreateModal = false)}
     onSubmit={handleCreatePoll}
   />
-
-  <!-- 移动端跨面板全局迷你播放条（仅非点歌面板且有曲目播放时展示） -->
-  {#if musicState?.current && activeTab !== "music"}
-    <MiniPlayerBar
-      currentPlay={musicState.current}
-      isListening={mobilePlaybackStatus.isListening}
-      elapsedSec={mobilePlaybackStatus.elapsedSec}
-      durationSec={mobilePlaybackStatus.durationSec}
-      canDirectSkip={mobilePlaybackStatus.canDirectSkip}
-      isSoloCoolingDown={mobilePlaybackStatus.isSoloCoolingDown}
-      soloCooldownRemainSec={mobilePlaybackStatus.soloCooldownRemainSec}
-      hasVotedSkip={mobilePlaybackStatus.hasVotedSkip}
-      voteCount={musicState.voteCount}
-      voteThreshold={musicState.voteThreshold}
-      isSkippingTrack={isSkippingTrack}
-      variant="mobile"
-      onOpenLyrics={() => {
-        activeTab = "music";
-        musicPanelRef?.openPlayerTab?.();
-      }}
-      onToggleListen={() => musicPanelRef?.toggleListenControl?.()}
-      onSkipTrack={handleSkipTrack}
-      onVoteSkip={handleVoteSkip}
-    />
-  {/if}
-
-  <!-- 移动端底部 Tab 切换 -->
-  <nav class="chat-mobile-tabs" aria-label="聊天室面板切换">
-    <button
-      type="button"
-      class="chat-mobile-tab {activeTab === 'room' ? 'active' : ''}"
-      onclick={() => (activeTab = 'room')}
-    >
-      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
-      <span>房间/成员</span>
-    </button>
-    <button
-      type="button"
-      class="chat-mobile-tab {activeTab === 'chat' ? 'active' : ''}"
-      onclick={() => (activeTab = 'chat')}
-    >
-      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-      </svg>
-      <span>聊天视窗</span>
-    </button>
-    <button
-      type="button"
-      class="chat-mobile-tab {activeTab === 'music' ? 'active' : ''}"
-      onclick={() => (activeTab = 'music')}
-    >
-      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M9 18V5l12-2v13" />
-        <circle cx="6" cy="18" r="3" />
-        <circle cx="18" cy="16" r="3" />
-      </svg>
-      <span>点歌/歌词</span>
-    </button>
-  </nav>
 </div>

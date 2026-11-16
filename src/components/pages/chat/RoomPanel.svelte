@@ -38,6 +38,7 @@ interface Props {
 	onOpenAuth?: () => void;
 	onLogout?: () => void;
 	onToggleDesktopNotification?: () => void;
+	onCloseMobileDrawer?: () => void;
 }
 
 const {
@@ -63,6 +64,7 @@ const {
 	onOpenAuth,
 	onLogout,
 	onToggleDesktopNotification,
+	onCloseMobileDrawer,
 }: Props = $props();
 
 const observerCount = $derived(observers.length);
@@ -317,11 +319,26 @@ function formatOfflineTime(ts?: number): string {
       <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </svg>
-      <span>聊天室</span>
+      <span>房间与成员</span>
     </div>
-    <span class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] text-[var(--chat-accent-text)] font-medium">
-      {connLabel}
-    </span>
+    <div class="flex items-center gap-2">
+      <span class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] text-[var(--chat-accent-text)] font-medium">
+        {connLabel}
+      </span>
+      {#if onCloseMobileDrawer}
+        <button
+          type="button"
+          class="chat-drawer-close-btn md:hidden"
+          aria-label="收起房间与成员抽屉"
+          onclick={() => onCloseMobileDrawer?.()}
+        >
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      {/if}
+    </div>
   </div>
 
   <!-- 房间列表：按来源分组（互联房间 / 本站房间） -->
@@ -599,19 +616,19 @@ function formatOfflineTime(ts?: number): string {
               {displayName}
             </span>
             {#if !isExternal}
-              <span class="chat-role-badge chat-role-badge--{roleBadge.type} py-px! px-1! text-[0.5625rem]!">
+              <span class="chat-role-badge chat-role-badge--{roleBadge.type} md:py-px! md:px-1! md:text-[0.5625rem]!">
                 {roleBadge.label}
               </span>
             {/if}
             {#if member.customBadges && member.customBadges.length > 0}
               {#each member.customBadges as b (b.text)}
-                <span class="chat-role-badge chat-role-badge--{b.color} py-px! px-1! text-[0.5625rem]!">
+                <span class="chat-role-badge chat-role-badge--{b.color} md:py-px! md:px-1! md:text-[0.5625rem]!">
                   {b.text}
                 </span>
               {/each}
             {/if}
           </div>
-          <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
+          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate md:-mt-0.5">
             {subtitle}
           </span>
         </div>
@@ -827,7 +844,7 @@ function formatOfflineTime(ts?: number): string {
         </div>
         <div class="flex flex-col min-w-0 flex-1">
           <div class="flex items-center gap-1.5 min-w-0">
-            <span class="text-xs font-bold text-[var(--deep-text)] dark:text-white/90 truncate">
+            <span class="text-[14px] md:text-xs font-bold text-[var(--deep-text)] dark:text-white/90 truncate">
               {currentUser.name}
             </span>
             <span class="chat-role-badge chat-role-badge--{selfBadge.type}">
@@ -841,7 +858,7 @@ function formatOfflineTime(ts?: number): string {
               {/each}
             {/if}
           </div>
-          <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
+          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
             {currentUser.status && currentUser.status !== "在线" ? currentUser.status : "点击设置状态..."}
           </span>
         </div>
@@ -850,11 +867,11 @@ function formatOfflineTime(ts?: number): string {
       <ChatTooltip text={notificationTooltip} position="top" align="right">
         <button
           type="button"
-          class="chat-tool-btn w-7! h-7! shrink-0 {isNotificationActive ? 'text-[var(--chat-accent-text)]' : ''}"
+          class="chat-tool-btn w-9! h-9! md:w-7! md:h-7! shrink-0 {isNotificationActive ? 'text-[var(--chat-accent-text)]' : ''}"
           aria-label={notificationTooltip}
           onclick={() => onToggleDesktopNotification?.()}
         >
-          <Icon icon={notificationIcon} class="w-4 h-4" />
+          <Icon icon={notificationIcon} class="w-4.5 h-4.5 md:w-4 md:h-4" />
         </button>
       </ChatTooltip>
 
@@ -868,13 +885,13 @@ function formatOfflineTime(ts?: number): string {
           >
             <button
               type="button"
-              class="chat-tool-btn w-7! h-7! shrink-0 chat-logout-trigger {logoutConfirmOpen ? 'is-armed' : ''}"
+              class="chat-tool-btn w-9! h-9! md:w-7! md:h-7! shrink-0 chat-logout-trigger {logoutConfirmOpen ? 'is-armed' : ''}"
               aria-label={logoutConfirmOpen ? "收起退出确认" : "退出登录"}
               aria-expanded={logoutConfirmOpen}
               aria-haspopup="dialog"
               onclick={() => (logoutConfirmOpen = !logoutConfirmOpen)}
             >
-              <svg class="w-3.5 h-3.5 transition-transform duration-200 {logoutConfirmOpen ? 'translate-x-0.5' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <svg class="w-4 h-4 md:w-3.5 md:h-3.5 transition-transform duration-200 {logoutConfirmOpen ? 'translate-x-0.5' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                 <polyline points="16 17 21 12 16 7" />
                 <line x1="21" y1="12" x2="9" y2="12" />

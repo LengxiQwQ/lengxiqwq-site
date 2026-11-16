@@ -28,6 +28,10 @@ const stickerPackUrls = (commentConfig.waline?.emoji ?? []).filter(
             if (window.swup) return;
             var root = document.documentElement;
             root.setAttribute("data-chat-page", "true");
+            var vp = document.querySelector('meta[name="viewport"]');
+            if (vp) {
+                vp.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover");
+            }
             try {
                 var raw = localStorage.getItem("fireflyChatAppearance");
                 if (raw) {

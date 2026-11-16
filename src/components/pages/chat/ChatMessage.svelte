@@ -53,6 +53,17 @@ interface Props {
 	onJumpToMessage?: (msgUid: string) => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onMention?: (name: string, userKey?: string) => void;
+	onOpenMobileActions?: (
+		message: ChatMessageRecord,
+		meta: {
+			isSelf: boolean;
+			senderDisplayName: string;
+			canRecall: boolean;
+			canEdit: boolean;
+			canDelete: boolean;
+			isPinned: boolean;
+		},
+	) => void;
 }
 
 const {
@@ -83,6 +94,7 @@ const {
 	onJumpToMessage,
 	onOpenUserProfile,
 	onMention,
+	onOpenMobileActions,
 }: Props = $props();
 
 let showQuickReaction = $state(false);
@@ -394,6 +406,85 @@ function formatReactionTooltip(users: string[]): string {
 		return uniqueNames.join("、");
 	}
 	return `${uniqueNames.slice(0, 3).join("、")} 等 ${uniqueNames.length} 人`;
+}
+
+let pointerStartPos: { x: number; y: number; time: number } | null = null;
+let longPressTimer: number | null = null;
+
+function clearLongPress() {
+	if (longPressTimer !== null) {
+		window.clearTimeout(longPressTimer);
+		longPressTimer = null;
+	}
+}
+
+function triggerMobileActions() {
+	if (!onOpenMobileActions) return;
+	onOpenMobileActions(message, {
+		isSelf,
+		senderDisplayName: senderDisplayName || message.name || "用户",
+		canRecall,
+		canEdit: Boolean(canEdit && !message.replyTo?.isRecalled),
+		canDelete,
+		isPinned,
+	});
+}
+
+function handleBubblePointerDown(e: PointerEvent) {
+	if (!onOpenMobileActions || typeof window === "undefined") return;
+	if (!window.matchMedia("(width < 768px), (pointer: coarse)").matches) return;
+	if (e.button !== 0 && e.pointerType === "mouse") return;
+	const target = e.target as HTMLElement | null;
+	if (
+		target?.closest(
+			"button, a:not([data-chat-image]), video, audio, input, textarea, .chat-msg-floating-actions",
+		)
+	) {
+		return;
+	}
+	pointerStartPos = { x: e.clientX, y: e.clientY, time: Date.now() };
+	clearLongPress();
+	longPressTimer = window.setTimeout(() => {
+		longPressTimer = null;
+		pointerStartPos = null;
+		triggerMobileActions();
+	}, 460);
+}
+
+function handleBubblePointerMove(e: PointerEvent) {
+	if (!pointerStartPos) return;
+	if (
+		Math.abs(e.clientX - pointerStartPos.x) > 10 ||
+		Math.abs(e.clientY - pointerStartPos.y) > 10
+	) {
+		pointerStartPos = null;
+		clearLongPress();
+	}
+}
+
+function handleBubblePointerUp(e: PointerEvent) {
+	clearLongPress();
+	if (!pointerStartPos) return;
+	const pos = pointerStartPos;
+	pointerStartPos = null;
+	if (
+		Math.abs(e.clientX - pos.x) > 10 ||
+		Math.abs(e.clientY - pos.y) > 10 ||
+		Date.now() - pos.time > 500
+	) {
+		return;
+	}
+	const selection = window.getSelection?.();
+	if (selection && selection.toString().trim().length > 0) return;
+	const target = e.target as HTMLElement | null;
+	if (
+		target?.closest(
+			"a, button, video, audio, input, textarea, [data-chat-image], .chat-msg-floating-actions",
+		)
+	) {
+		return;
+	}
+	triggerMobileActions();
 }
 </script>
 
@@ -896,7 +987,7 @@ function formatReactionTooltip(users: string[]): string {
       />
     </button>
 
-    <div class="flex flex-col items-end max-w-[74%] min-w-0">
+    <div class="flex flex-col items-end max-w-[82%] md:max-w-[74%] min-w-0">
       {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0)}
         <div class="flex items-center justify-end gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if roleBadge}
@@ -908,12 +999,18 @@ function formatReactionTooltip(users: string[]): string {
             {/each}
           {/if}
           {#if senderDisplayName}
-            <span class="text-xs text-[var(--chat-meta-color)] font-medium truncate">{senderDisplayName}</span>
+            <span class="text-[13px] md:text-xs text-[var(--chat-meta-color)] font-medium truncate">{senderDisplayName}</span>
           {/if}
         </div>
       {/if}
 
-      <div class="relative max-w-full">
+      <div
+        class="relative max-w-full"
+        onpointerdown={handleBubblePointerDown}
+        onpointermove={handleBubblePointerMove}
+        onpointerup={handleBubblePointerUp}
+        onpointercancel={clearLongPress}
+      >
         {@render renderFloatingActions(true)}
 
         {#if isStickerOnly}
@@ -951,11 +1048,11 @@ function formatReactionTooltip(users: string[]): string {
 
       {#if formattedTime}
         <div class="flex items-center gap-1 mt-1 px-1 select-none">
-          <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">
+          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)]">
             {formattedTime}
           </span>
           {#if message.isEdited}
-            <span class="text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
+            <span class="text-[11px] md:text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
           {/if}
           {@render renderReadReceipts()}
         </div>
@@ -978,7 +1075,7 @@ function formatReactionTooltip(users: string[]): string {
       />
     </button>
 
-    <div class="flex flex-col items-start max-w-[74%] min-w-0">
+    <div class="flex flex-col items-start max-w-[82%] md:max-w-[74%] min-w-0">
       {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0) || isMentionedMe}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if effectiveSenderUrl}
@@ -986,12 +1083,12 @@ function formatReactionTooltip(users: string[]): string {
               href={effectiveSenderUrl}
               target="_blank"
               rel="noopener noreferrer"
-              class="text-xs text-[var(--chat-meta-color)] hover:text-[var(--primary)] font-medium truncate no-underline"
+              class="text-[13px] md:text-xs text-[var(--chat-meta-color)] hover:text-[var(--primary)] font-medium truncate no-underline"
             >
               {senderDisplayName}
             </a>
           {:else if senderDisplayName}
-            <span class="text-xs text-[var(--chat-meta-color)] font-medium truncate">{senderDisplayName}</span>
+            <span class="text-[13px] md:text-xs text-[var(--chat-meta-color)] font-medium truncate">{senderDisplayName}</span>
           {/if}
           {#if roleBadge}
             <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
@@ -1007,7 +1104,13 @@ function formatReactionTooltip(users: string[]): string {
         </div>
       {/if}
 
-      <div class="relative max-w-full">
+      <div
+        class="relative max-w-full"
+        onpointerdown={handleBubblePointerDown}
+        onpointermove={handleBubblePointerMove}
+        onpointerup={handleBubblePointerUp}
+        onpointercancel={clearLongPress}
+      >
         {@render renderFloatingActions(false)}
 
         {#if isStickerOnly}
@@ -1045,11 +1148,11 @@ function formatReactionTooltip(users: string[]): string {
 
       {#if formattedTime}
         <div class="flex items-center gap-1 mt-1 px-1 select-none">
-          <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">
+          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)]">
             {formattedTime}
           </span>
           {#if message.isEdited}
-            <span class="text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
+            <span class="text-[11px] md:text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
           {/if}
           {@render renderReadReceipts()}
         </div>

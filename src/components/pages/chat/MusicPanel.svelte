@@ -84,6 +84,7 @@ interface Props {
 		volume?: number;
 	}) => void;
 	onNotify?: (message: string) => void;
+	onCloseMobileDrawer?: () => void;
 }
 
 interface LyricLine {
@@ -125,6 +126,7 @@ const {
 	externalPlaylistRequest,
 	onPlaybackStatusChange,
 	onNotify,
+	onCloseMobileDrawer,
 }: Props = $props();
 
 const initVol = untrack(() => {
@@ -2279,41 +2281,57 @@ $effect(() => {
       <span>点歌台</span>
     </div>
 
-    <button
-      type="button"
-      disabled={!currentPlay}
-      class="text-[0.6875rem] px-2.5 py-0.5 rounded-full border font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed
-        {isListening && currentPlay
-          ? 'bg-(--primary)/14 border-(--primary)/30 text-[var(--chat-accent-text)] hover:bg-(--primary)/22'
-          : 'bg-[var(--card-bg)]/60 border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-[var(--card-bg)]/85'}"
-      aria-label={listenAction}
-      onclick={toggleListen}
-    >
-      {#if audioStatus === "playing" && currentPlay}
-        <span class="chat-eq-bars" aria-hidden="true">
-          <span class="chat-eq-bar"></span>
-          <span class="chat-eq-bar"></span>
-          <span class="chat-eq-bar"></span>
-        </span>
-        <span>收听中</span>
-      {:else}
-        <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
-        </svg>
-        <span>{!currentPlay ? "未在播放" : audioStatus === "loading" ? "正在缓冲" : audioStatus === "error" ? "重试收听" : audioStatus === "blocked" ? "点击开始收听" : "静音同步"}</span>
+    <div class="flex items-center gap-2">
+      <button
+        type="button"
+        disabled={!currentPlay}
+        class="text-xs md:text-[0.6875rem] px-3 md:px-2.5 py-1 md:py-0.5 rounded-full border font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed
+          {isListening && currentPlay
+            ? 'bg-(--primary)/14 border-(--primary)/30 text-[var(--chat-accent-text)] hover:bg-(--primary)/22'
+            : 'bg-[var(--card-bg)]/60 border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-[var(--card-bg)]/85'}"
+        aria-label={listenAction}
+        onclick={toggleListen}
+      >
+        {#if audioStatus === "playing" && currentPlay}
+          <span class="chat-eq-bars" aria-hidden="true">
+            <span class="chat-eq-bar"></span>
+            <span class="chat-eq-bar"></span>
+            <span class="chat-eq-bar"></span>
+          </span>
+          <span>收听中</span>
+        {:else}
+          <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+          </svg>
+          <span>{!currentPlay ? "未在播放" : audioStatus === "loading" ? "正在缓冲" : audioStatus === "error" ? "重试收听" : audioStatus === "blocked" ? "点击开始收听" : "静音同步"}</span>
+        {/if}
+      </button>
+
+      {#if onCloseMobileDrawer}
+        <button
+          type="button"
+          class="chat-drawer-close-btn md:hidden"
+          aria-label="收起点歌台抽屉"
+          onclick={() => onCloseMobileDrawer?.()}
+        >
+          <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       {/if}
-    </button>
+    </div>
   </div>
 
   <!-- 4-Tab 切换栏：歌词 / 搜索 / 歌单 / 历史 -->
-  <div class="grid grid-cols-4 gap-1.5 border-b border-[var(--chat-divider-color)] px-2.5 py-1.5 shrink-0" role="tablist" aria-label="点歌台视图切换">
+  <div class="grid grid-cols-4 gap-1.5 border-b border-[var(--chat-divider-color)] px-2.5 py-2 md:py-1.5 shrink-0" role="tablist" aria-label="点歌台视图切换">
     <button
       type="button"
       role="tab"
       aria-selected={activeTab === "player"}
-      class="flex items-center justify-center gap-1.5 py-2 px-1.5 text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] md:text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'player'
-          ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
+          ? 'bg-(--btn-plain-bg-hover) text-(--primary) font-semibold'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
       onclick={() => switchMusicTab("player")}
     >
@@ -2328,9 +2346,9 @@ $effect(() => {
       type="button"
       role="tab"
       aria-selected={activeTab === "search"}
-      class="flex items-center justify-center gap-1.5 py-2 px-1.5 text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] md:text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'search'
-          ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
+          ? 'bg-(--btn-plain-bg-hover) text-(--primary) font-semibold'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
       onclick={() => switchMusicTab("search")}
     >
@@ -2345,9 +2363,9 @@ $effect(() => {
       type="button"
       role="tab"
       aria-selected={activeTab === "playlist"}
-      class="flex items-center justify-center gap-1.5 py-2 px-1.5 text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] md:text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'playlist'
-          ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
+          ? 'bg-(--btn-plain-bg-hover) text-(--primary) font-semibold'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
       onmouseenter={() => void loadPlaylists()}
       onfocus={() => void loadPlaylists()}
@@ -2365,9 +2383,9 @@ $effect(() => {
       type="button"
       role="tab"
       aria-selected={activeTab === "history"}
-      class="flex items-center justify-center gap-1.5 py-2 px-1.5 text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] md:text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'history'
-          ? 'bg-(--btn-plain-bg-hover) text-(--primary)'
+          ? 'bg-(--btn-plain-bg-hover) text-(--primary) font-semibold'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
       onclick={() => switchMusicTab("history")}
     >
@@ -2382,8 +2400,8 @@ $effect(() => {
   {#snippet trackRequestRow(song: ChatMusicTrack, subtitle: string, countBadge?: string)}
     {@const isCurrent = isTrackCurrent(song)}
     {@const isQueued = isTrackQueued(song)}
-    <div class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-      <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
+    <div class="flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+      <div class="w-10 h-10 md:w-8 md:h-8 rounded-lg md:rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
         {#if song.cover}
           <img src={song.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
         {:else}
@@ -2401,17 +2419,17 @@ $effect(() => {
       </div>
 
       <div class="min-w-0 flex-1">
-        <div class="text-xs font-bold truncate {isCurrent ? 'text-[var(--chat-accent-text)]' : 'text-[var(--deep-text)]'}">
+        <div class="text-[13.5px] md:text-xs font-bold truncate {isCurrent ? 'text-[var(--chat-accent-text)]' : 'text-[var(--deep-text)]'}">
           {song.title}
         </div>
-        <div class="text-[10px] text-[var(--chat-meta-color)] truncate">
+        <div class="text-[11.5px] md:text-[10px] text-[var(--chat-meta-color)] truncate mt-0.5">
           {subtitle}
         </div>
       </div>
 
       {#if isCurrent}
         <span
-          class="{countBadge ? 'w-9 h-9 flex-col gap-0.5' : 'w-7 h-7'} rounded-lg inline-flex items-center justify-center bg-(--primary)/12 text-[var(--chat-accent-text)] shrink-0 aspect-square"
+          class="{countBadge ? 'w-10 h-10 md:w-9 md:h-9 flex-col gap-0.5' : 'w-9 h-9 md:w-7 md:h-7'} rounded-xl md:rounded-lg inline-flex items-center justify-center bg-(--primary)/12 text-[var(--chat-accent-text)] shrink-0 aspect-square"
           aria-label="播放中"
         >
           <span class="chat-eq-bars" aria-hidden="true">
@@ -2420,63 +2438,63 @@ $effect(() => {
             <span class="chat-eq-bar"></span>
           </span>
           {#if countBadge}
-            <span class="text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </span>
       {:else if isQueued && !canToggleCatalogTrack(song)}
         <span
-          class="{countBadge ? 'w-9 h-9 flex-col gap-0.5' : 'w-7 h-7'} rounded-lg inline-flex items-center justify-center text-[var(--chat-meta-color)] shrink-0 aspect-square"
+          class="{countBadge ? 'w-10 h-10 md:w-9 md:h-9 flex-col gap-0.5' : 'w-9 h-9 md:w-7 md:h-7'} rounded-xl md:rounded-lg inline-flex items-center justify-center text-[var(--chat-meta-color)] shrink-0 aspect-square"
           aria-label="已入列"
         >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <svg class="w-4 h-4 md:w-3.5 md:h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polyline points="20 6 9 17 4 12" />
           </svg>
           {#if countBadge}
-            <span class="text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </span>
       {:else if isQueued}
         <button
           type="button"
-          class="chat-queue-icon-btn {countBadge ? 'w-9! h-9! flex-col gap-0.5' : 'w-7! h-7!'} shrink-0 aspect-square text-red-500/85 hover:text-red-500!"
+          class="chat-queue-icon-btn {countBadge ? 'w-10! h-10! md:w-9! md:h-9! flex-col gap-0.5' : 'w-9! h-9! md:w-7! md:h-7!'} rounded-xl! md:rounded-lg! shrink-0 aspect-square text-red-500/85 hover:text-red-500!"
           aria-label={`移除 ${song.title}`}
           onclick={() => handleToggleQueueTrack(song)}
         >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true">
+          <svg class="w-4 h-4 md:w-3.5 md:h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true">
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
           {#if countBadge}
-            <span class="text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </button>
       {:else if enqueuingTrackIds.has(song.id)}
         <button
           type="button"
           disabled
-          class="chat-queue-icon-btn {countBadge ? 'w-9! h-9! flex-col gap-0.5' : 'w-7! h-7!'} shrink-0 aspect-square text-[var(--chat-accent-text)] bg-(--primary)/10 opacity-75 cursor-wait!"
+          class="chat-queue-icon-btn {countBadge ? 'w-10! h-10! md:w-9! md:h-9! flex-col gap-0.5' : 'w-9! h-9! md:w-7! md:h-7!'} rounded-xl! md:rounded-lg! shrink-0 aspect-square text-[var(--chat-accent-text)] bg-(--primary)/10 opacity-75 cursor-wait!"
           aria-label={`正在点歌 ${song.title}...`}
         >
-          <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <svg class="w-4 h-4 md:w-3.5 md:h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
             <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
           </svg>
           {#if countBadge}
-            <span class="text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </button>
       {:else}
         <button
           type="button"
-          class="chat-queue-icon-btn {countBadge ? 'w-9! h-9! flex-col gap-0.5' : 'w-7! h-7!'} shrink-0 aspect-square text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20!"
+          class="chat-queue-icon-btn {countBadge ? 'w-10! h-10! md:w-9! md:h-9! flex-col gap-0.5' : 'w-9! h-9! md:w-7! md:h-7!'} rounded-xl! md:rounded-lg! shrink-0 aspect-square text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20!"
           aria-label={`点歌 ${song.title}`}
           onclick={() => handleToggleQueueTrack(song)}
         >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true">
+          <svg class="w-4 h-4 md:w-3.5 md:h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true">
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
           {#if countBadge}
-            <span class="text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </button>
       {/if}
@@ -2987,7 +3005,7 @@ $effect(() => {
         </div>
         <button
           type="button"
-          class="shrink-0 h-[32px] px-3 rounded-full text-xs font-medium border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          class="shrink-0 h-10 md:h-[32px] px-4 md:px-3 rounded-full text-sm md:text-xs font-medium border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer"
           disabled={!searchQuery.trim() || isSearching}
           onclick={() => submitSearch()}
         >
@@ -3827,7 +3845,7 @@ $effect(() => {
       <div class="inline-flex items-center gap-0.5 rounded-lg bg-[var(--card-bg)]/60 p-0.5 border border-[var(--chat-divider-color)]" role="group" aria-label="历史排序方式">
         <button
           type="button"
-          class="px-2 py-0.5 text-[11px] font-medium rounded-md border-none cursor-pointer transition-colors whitespace-nowrap
+          class="px-3 py-1.5 md:px-2 md:py-0.5 text-xs md:text-[11px] font-medium rounded-md border-none cursor-pointer transition-colors whitespace-nowrap
             {historySort === 'recent'
               ? 'bg-(--primary) text-white'
               : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
@@ -3837,7 +3855,7 @@ $effect(() => {
         </button>
         <button
           type="button"
-          class="px-2 py-0.5 text-[11px] font-medium rounded-md border-none cursor-pointer transition-colors whitespace-nowrap
+          class="px-3 py-1.5 md:px-2 md:py-0.5 text-xs md:text-[11px] font-medium rounded-md border-none cursor-pointer transition-colors whitespace-nowrap
             {historySort === 'count'
               ? 'bg-(--primary) text-white'
               : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
@@ -3851,7 +3869,7 @@ $effect(() => {
         <button
           type="button"
           aria-expanded={showRequesterFilter}
-          class="inline-flex items-center gap-1 max-w-32 px-2 py-1 text-[11px] font-medium rounded-lg border cursor-pointer transition-colors
+          class="inline-flex items-center gap-1.5 max-w-36 px-3 py-1.5 md:px-2 md:py-1 text-xs md:text-[11px] font-medium rounded-lg border cursor-pointer transition-colors
             {selectedRequester
               ? 'bg-(--primary) text-white border-transparent'
               : 'bg-[var(--card-bg)]/60 text-[var(--chat-meta-color)] border-[var(--chat-divider-color)] hover:text-[var(--deep-text)]'}"

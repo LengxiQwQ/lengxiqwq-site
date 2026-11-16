@@ -110,6 +110,15 @@ function switchChatRouteWallpaper(isChatPage: boolean): void {
 /** Swup 软切换进/出聊天室时同步或清理聊天室专属隔离状态 */
 function syncChatPageRuntimeState(isChatPage: boolean): void {
 	const root = document.documentElement;
+	const viewportMeta = document.querySelector('meta[name="viewport"]');
+	if (viewportMeta) {
+		viewportMeta.setAttribute(
+			"content",
+			isChatPage
+				? "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+				: "width=device-width, initial-scale=1, viewport-fit=cover",
+		);
+	}
 	if (!isChatPage) {
 		root.removeAttribute("data-chat-page");
 		root.removeAttribute("data-chat-scheme");
