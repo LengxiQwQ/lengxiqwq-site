@@ -302,12 +302,12 @@ function handleSubmit(e: SubmitEvent) {
               </div>
               <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-3 flex items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="text-xs font-medium text-(--btn-content)">离线提及与回复邮件提醒</div>
+                  <div class="text-xs font-medium text-(--btn-content)">离线 @ 与回复邮件提醒</div>
                   <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
                     {#if isIsolatedGuest}
                       独立临时身份未经邮箱所有权验证，已禁用离线邮件提醒，防止误发邮件
                     {:else}
-                      不在线时有人提到或回复你，将发送摘要邮件至账号邮箱
+                      不在线时有人 @ 或回复你，将发送摘要邮件至账号邮箱
                     {/if}
                   </div>
                 </div>
@@ -315,7 +315,7 @@ function handleSubmit(e: SubmitEvent) {
                   type="button"
                   role="switch"
                   aria-checked={isIsolatedGuest ? false : draftNotifyEmail}
-                  aria-label="切换离线提及邮件提醒"
+                  aria-label="切换离线 @ 邮件提醒"
                   disabled={isIsolatedGuest}
                   class="p-0 border-none bg-transparent shrink-0 {isIsolatedGuest ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}"
                   onclick={() => {
