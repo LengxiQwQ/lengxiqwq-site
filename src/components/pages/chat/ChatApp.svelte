@@ -156,6 +156,7 @@ let serverUnreadUserCount = $state(0);
 let unreadJumpSeq = $state(0);
 let pinnedUids = $state<string[]>([]);
 let roomTopic = $state<string>("");
+let roomAvatars = $state<Record<string, string>>({});
 let typingUsers = $state<string[]>([]);
 let readReceipts = $state<Record<string, ChatReadReceipt[]>>({});
 let musicState = $state<RoomMusicState | null>(null);
@@ -763,6 +764,15 @@ function connectRoom(roomId: string) {
 					packet.oldestHistoryId ?? packet.messages[0]?.id ?? 0;
 				pinnedUids = packet.pinnedUids ?? [];
 				roomTopic = packet.topic ?? "";
+				if (packet.roomAvatars || typeof packet.roomAvatar === "string") {
+					roomAvatars = {
+						...roomAvatars,
+						...(packet.roomAvatars ?? {}),
+						...(typeof packet.roomAvatar === "string"
+							? { [packet.roomId]: packet.roomAvatar }
+							: {}),
+					};
+				}
 				readReceipts = packet.readReceipts ?? {};
 				typingUsers = [];
 				clearSkipPending();
@@ -1098,6 +1108,15 @@ function connectRoom(roomId: string) {
 			case "chat:topic_update": {
 				if (packet.roomId === currentRoom) {
 					roomTopic = packet.topic || "";
+				}
+				break;
+			}
+			case "chat:room_avatar_update": {
+				if (packet.roomId) {
+					roomAvatars = {
+						...roomAvatars,
+						[packet.roomId]: packet.avatar || "",
+					};
 				}
 				break;
 			}
@@ -1562,7 +1581,7 @@ function handleLoadHistory(sinceCreatedAt = 0, jumpTarget = false) {
 	}
 }
 
-function handleMarkRead(timestamp: number) {
+function handleMarkRead(timestamp: number, msgUid?: string) {
 	if (!Number.isFinite(timestamp) || timestamp <= 0) return;
 	const userKey = currentUser?.userKey || "guest";
 	persistUserLastSeen(currentRoom, userKey, timestamp);
@@ -1572,7 +1591,13 @@ function handleMarkRead(timestamp: number) {
 		ws?.readyState === WebSocket.OPEN
 	) {
 		lastMarkedServerReadAt = timestamp;
-		ws.send(JSON.stringify({ type: "chat:mark_read", timestamp }));
+		ws.send(
+			JSON.stringify({
+				type: "chat:mark_read",
+				timestamp,
+				...(msgUid ? { msgUid } : {}),
+			}),
+		);
 	}
 }
 
@@ -2089,6 +2114,7 @@ onMount(() => {
         desktopNotificationEnabled={desktopNotificationEnabled}
         desktopNotificationPermission={desktopNotificationPermission}
         roomUnreadCounts={roomUnreadCounts}
+        roomAvatars={roomAvatars}
         onRoomSelect={handleRoomSelect}
         onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
@@ -2105,6 +2131,7 @@ onMount(() => {
           roomId={currentRoom}
           roomName={activeMeta.name}
           roomSubtitle={activeMeta.subtitle}
+          roomAvatar={roomAvatars[currentRoom] || activeMeta.avatar || ""}
           onlineCount={totalOnlineCount}
           messages={messages}
           hasMoreHistory={hasMoreHistory}

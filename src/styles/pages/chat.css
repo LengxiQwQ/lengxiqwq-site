@@ -2349,10 +2349,12 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 
 .chat-msg-image {
 	display: block;
-	max-width: min(14rem, 100%);
+	max-width: 14rem;
 	max-height: 11rem;
 	width: auto;
 	height: auto;
+	min-width: 0;
+	flex-shrink: 1;
 	object-fit: cover;
 	cursor: zoom-in;
 	transition: transform 160ms ease;
@@ -2930,19 +2932,34 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 }
 
 @keyframes chat-jump-pulse {
-	0%,
-	55% {
-		background-color: oklch(0.70 0.14 var(--hue) / 0.24);
-		box-shadow: 0 0 0 4px oklch(0.70 0.14 var(--hue) / 0.28);
+	0% {
+		opacity: 0;
+		transform: scale(0.965);
+	}
+	10% {
+		opacity: 1;
+		transform: scale(1.015);
+	}
+	18%,
+	65% {
+		opacity: 1;
+		transform: scale(1);
 	}
 	100% {
-		background-color: transparent;
-		box-shadow: 0 0 0 0 transparent;
+		opacity: 0;
+		transform: scale(1);
 	}
 }
 
-.chat-msg-jump-highlight {
-	border-radius: 0.875rem;
+.chat-msg-jump-highlight .chat-msg-bubble-wrap::before {
+	content: "";
+	position: absolute;
+	inset: -5px -8px;
+	border-radius: 22px;
+	border: 2px dashed color-mix(in oklab, var(--skin-accent) 85%, transparent);
+	box-shadow: 0 0 14px -3px color-mix(in oklab, var(--skin-accent) 28%, transparent);
+	pointer-events: none;
+	z-index: 1;
 	animation: chat-jump-pulse 3.8s var(--ease-decelerate) forwards;
 }
 

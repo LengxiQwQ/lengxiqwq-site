@@ -33,6 +33,7 @@ interface Props {
 	roomId: string;
 	roomName: string;
 	roomSubtitle: string;
+	roomAvatar?: string;
 	onlineCount: number;
 	messages: ChatMessageRecord[];
 	hasMoreHistory?: boolean;
@@ -55,7 +56,7 @@ interface Props {
 	onVoteSkip?: () => void;
 	onClearTargetMessage?: () => void;
 	onLoadHistory?: (sinceCreatedAt?: number, jumpTarget?: boolean) => void;
-	onMarkRead?: (timestamp: number) => void;
+	onMarkRead?: (timestamp: number, msgUid?: string) => void;
 	stickerPacks: StickerPack[];
 	stickerMap: Map<string, StickerItem>;
 	enableImageUpload: boolean;
@@ -121,6 +122,7 @@ const {
 	roomId = "chat",
 	roomName = "闲聊",
 	roomSubtitle = "随便聊聊日常与折腾",
+	roomAvatar = "",
 	onlineCount = 0,
 	messages = [],
 	hasMoreHistory = false,
@@ -196,6 +198,11 @@ let isUploadingImage = $state(false);
 let isUploadingMedia = $state(false);
 
 const effectiveSubtitle = $derived(roomTopic ? roomTopic : roomSubtitle);
+let failedRoomAvatars = $state<Record<string, boolean>>({});
+const effectiveRoomAvatar = $derived((roomAvatar || "").trim());
+const hasRoomAvatar = $derived(
+	Boolean(effectiveRoomAvatar) && !failedRoomAvatars[effectiveRoomAvatar],
+);
 const pinnedMessages = $derived.by(() => {
 	if (!pinnedUids || pinnedUids.length === 0) return [];
 	return pinnedUids.map(uid => messages.find(m => m.msgUid === uid)).filter((m): m is ChatMessageRecord => Boolean(m));
@@ -763,13 +770,14 @@ function handleMessageScroll() {
 		messages.length > 0 &&
 		isChatPaneFocused()
 	) {
-		const latestTs = messages[messages.length - 1].createdAt;
+		const latestMsg = messages[messages.length - 1];
+		const latestTs = latestMsg.createdAt;
 		writeLastSeenAt(
 			roomId,
 			currentUser.userKey,
 			latestTs,
 		);
-		onMarkRead?.(latestTs);
+		onMarkRead?.(latestTs, latestMsg.msgUid);
 	}
 
 	// 向上滚动到接近顶部时自动触发加载更早历史消息
@@ -852,7 +860,8 @@ async function scrollToUnreadDivider() {
 	highlightUnreadDivider = true;
 	unreadBarDismissed = true;
 	if (messages.length > 0) {
-		onMarkRead?.(messages[messages.length - 1].createdAt);
+		const lastMsg = messages[messages.length - 1];
+		onMarkRead?.(lastMsg.createdAt, lastMsg.msgUid);
 	}
 	if (unreadHighlightTimer !== null) {
 		window.clearTimeout(unreadHighlightTimer);
@@ -874,7 +883,8 @@ function handleJumpToUnread() {
 function dismissUnreadBar() {
 	unreadBarDismissed = true;
 	if (messages.length > 0) {
-		onMarkRead?.(messages[messages.length - 1].createdAt);
+		const lastMsg = messages[messages.length - 1];
+		onMarkRead?.(lastMsg.createdAt, lastMsg.msgUid);
 	}
 }
 
@@ -1136,7 +1146,7 @@ $effect(() => {
 			if (isChatPaneFocused() && isStickyAtBottom) {
 				const latestIncoming = liveIncoming[liveIncoming.length - 1];
 				if (latestIncoming) {
-					onMarkRead?.(latestIncoming.createdAt);
+					onMarkRead?.(latestIncoming.createdAt, latestIncoming.msgUid);
 				}
 			}
 
@@ -1176,7 +1186,7 @@ $effect(() => {
 	}
 	if (!latestMsg) return;
 	writeLastSeenAt(roomId, currentUser.userKey, latestMsg.createdAt);
-	onMarkRead?.(latestMsg.createdAt);
+	onMarkRead?.(latestMsg.createdAt, latestMsg.msgUid);
 });
 
 $effect(() => {
@@ -1474,9 +1484,9 @@ function collectMentionKeys(content: string): string[] {
 	}
 	if (
 		currentUser?.isAdmin &&
-		(lower.includes("@room") ||
-			lower.includes("@all") ||
-			lower.includes("@所有人"))
+		/(?:^|[^A-Za-z0-9._+-])@(?:room|all|所有人)(?=$|[\s,，。、！!？?：:；;()[\]{}<>"'~`’”）】》」』])/i.test(
+			content,
+		)
 	) {
 		keys.add("room");
 	}
@@ -1758,18 +1768,30 @@ function removePendingImage(index: number) {
           onclick={() => onOpenRoomDrawer?.()}
         >
           <span class="relative inline-flex items-center justify-center w-7 h-7 rounded-lg bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] shrink-0">
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-            </svg>
+            {#if hasRoomAvatar}
+              <img
+                src={effectiveRoomAvatar}
+                alt={roomName}
+                class="w-full h-full rounded-lg object-cover"
+                decoding="async"
+                onerror={() => {
+                  failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
+                }}
+              />
+            {:else}
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            {/if}
             {#if otherRoomsUnreadCount > 0}
               <span class="chat-mobile-room-unread-dot" aria-label={`其他房间有 ${otherRoomsUnreadCount} 条未读消息`}></span>
             {/if}
           </span>
           <span class="font-bold text-[15px] text-[var(--deep-text)] dark:text-white/95 truncate">
-            #{roomName}
+            {hasRoomAvatar ? roomName : `#${roomName}`}
           </span>
           <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/8 text-[11.5px] font-medium text-[var(--chat-meta-color)] shrink-0 tabular-nums">
             <span class="chat-online-dot"></span>
@@ -1781,9 +1803,24 @@ function removePendingImage(index: number) {
         </button>
 
         <!-- 桌面端左侧：房间名与副标题 -->
-        <span class="hidden md:inline font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
-          # {roomName}
-        </span>
+        {#if hasRoomAvatar}
+          <img
+            src={effectiveRoomAvatar}
+            alt={roomName}
+            class="hidden md:block w-5.5 h-5.5 rounded-md object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
+            decoding="async"
+            onerror={() => {
+              failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
+            }}
+          />
+          <span class="hidden md:inline font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
+            {roomName}
+          </span>
+        {:else}
+          <span class="hidden md:inline font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
+            # {roomName}
+          </span>
+        {/if}
         <span class="text-xs text-[var(--chat-meta-color)] truncate hidden md:inline">
           · {effectiveSubtitle}
         </span>
@@ -2399,12 +2436,13 @@ function removePendingImage(index: number) {
           onclick={() => {
             void scrollToBottom(true);
             if (currentUser && messages.length > 0) {
+              const lastMsg = messages[messages.length - 1];
               writeLastSeenAt(
                 roomId,
                 currentUser.userKey,
-                messages[messages.length - 1].createdAt,
+                lastMsg.createdAt,
               );
-              onMarkRead?.(messages[messages.length - 1].createdAt);
+              onMarkRead?.(lastMsg.createdAt, lastMsg.msgUid);
             }
           }}
         >

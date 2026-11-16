@@ -32,6 +32,7 @@ interface Props {
 	desktopNotificationEnabled?: boolean;
 	desktopNotificationPermission?: NotificationPermission;
 	roomUnreadCounts?: Record<string, number>;
+	roomAvatars?: Record<string, string>;
 	onRoomSelect?: (roomId: string) => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onOpenProfile?: () => void;
@@ -58,6 +59,7 @@ const {
 	desktopNotificationEnabled = false,
 	desktopNotificationPermission = "default" as NotificationPermission,
 	roomUnreadCounts = {},
+	roomAvatars = {},
 	onRoomSelect,
 	onOpenUserProfile,
 	onOpenProfile,
@@ -73,6 +75,8 @@ const observerCount = $derived(observers.length);
 const INTERCONNECT_ROOM_IDS = new Set(["interconnect"]);
 
 const isCurrentInterconnect = $derived(INTERCONNECT_ROOM_IDS.has(currentRoom));
+
+let failedRoomAvatars = $state<Record<string, boolean>>({});
 
 const isNotificationActive = $derived(
 	Boolean(desktopNotificationEnabled && desktopNotificationPermission === "granted"),
@@ -363,12 +367,27 @@ function formatOfflineTime(ts?: number): string {
 
   {#snippet roomItem(room: ChatRoomMeta)}
     {@const unread = currentRoom !== room.id ? (roomUnreadCounts?.[room.id] ?? 0) : 0}
+    {@const rawRoomAvatar = (roomAvatars?.[room.id] || room.avatar || "").trim()}
+    {@const hasRoomAvatar = Boolean(rawRoomAvatar) && !failedRoomAvatars[rawRoomAvatar]}
     <button
       type="button"
       class="chat-room-item {currentRoom === room.id ? 'active' : ''} text-left w-full border-none"
       onclick={() => onRoomSelect?.(room.id)}
     >
-      <span class="font-mono text-sm font-bold opacity-60 w-4 text-center ml-1">#</span>
+      {#if hasRoomAvatar}
+        <img
+          src={rawRoomAvatar}
+          alt={room.name}
+          class="w-5 h-5 rounded-md object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
+          loading="lazy"
+          decoding="async"
+          onerror={() => {
+            failedRoomAvatars = { ...failedRoomAvatars, [rawRoomAvatar]: true };
+          }}
+        />
+      {:else}
+        <span class="font-mono text-sm font-bold opacity-60 w-5 text-center shrink-0">#</span>
+      {/if}
       <span class="flex-1 truncate">{room.name}</span>
       {#if unread > 0}
         <span class="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[0.625rem] font-bold shrink-0">

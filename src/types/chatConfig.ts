@@ -2,6 +2,7 @@ export interface ChatRoomMeta {
 	id: string;
 	name: string;
 	subtitle: string;
+	avatar?: string;
 }
 
 export interface InterconnectSite {

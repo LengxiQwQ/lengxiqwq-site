@@ -2,6 +2,7 @@ import { marked, type Token } from "marked";
 import {
 	buildChatTokenRegex,
 	type ChatContentSegment,
+	isPrecededByEmailChar,
 	resolveExternalOrLocalSticker,
 	type StickerItem,
 } from "./stickerLoader";
@@ -57,6 +58,7 @@ export function parseChatMarkdown(
 	content: string,
 	stickerMap: Map<string, StickerItem>,
 	mentions: string[] = [],
+	canRoomHighlight = false,
 ): ChatMarkdownAst {
 	const stickers: StickerItem[] = [];
 	const mentionEntries: Array<{ text: string; target: string }> = [];
@@ -65,7 +67,7 @@ export function parseChatMarkdown(
 		return { tokens: [], stickers, mentions: mentionEntries };
 	}
 
-	const tokenMatcher = buildChatTokenRegex(mentions);
+	const tokenMatcher = buildChatTokenRegex(mentions, canRoomHighlight);
 	const parts = content.split(CODE_SPLIT_RE);
 
 	const protectedContent = parts
@@ -73,8 +75,11 @@ export function parseChatMarkdown(
 			// Odd indices match CODE_SPLIT_RE: preserve literal code blocks/spans untouched
 			if (idx % 2 === 1) return part;
 			tokenMatcher.lastIndex = 0;
-			return part.replace(tokenMatcher, (token) => {
+			return part.replace(tokenMatcher, (token, _captured, offset) => {
 				if (token.startsWith("@") && token.length > 1) {
+					if (isPrecededByEmailChar(part, Number(offset))) {
+						return token;
+					}
 					const slot = mentionEntries.length;
 					mentionEntries.push({ text: token, target: token.slice(1) });
 					return `\uE000MNT${slot}\uE001`;

@@ -30,7 +30,7 @@ const {
 }: Props = $props();
 
 const ast: ChatMarkdownAst = $derived(
-	parseChatMarkdown(content, stickerMap, mentions),
+	parseChatMarkdown(content, stickerMap, mentions, canRoomHighlight),
 );
 
 function isSelfMentionTarget(target: string): boolean {
@@ -93,7 +93,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
         <a
           href={safeSrc}
           data-chat-image={safeSrc}
-          class="inline-block my-1 overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
+          class="inline-flex max-w-full align-top my-1 overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
           onclick={(e) => {
             e.preventDefault();
             void openChatImageLightbox(safeSrc, e.currentTarget);

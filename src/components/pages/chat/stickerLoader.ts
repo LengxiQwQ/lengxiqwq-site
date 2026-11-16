@@ -169,19 +169,65 @@ interface RawStickerManifest {
 
 const STICKER_TOKEN_PATTERN =
 	":[A-Za-z0-9_.-]+_[^:\\s<>\"']+?:|\\[lottie:[a-zA-Z0-9-]+\\]|\\[sticker:[a-zA-Z0-9/_-]+\\]";
+const MENTION_BOUNDARY_AFTER =
+	"(?=$|[\\s,，。、！!？?：:；;()\\[\\]{}<>\"'~`’”）】》」』])";
 
-export function buildChatTokenRegex(mentions: string[] = []): RegExp {
-	const cleanMentions = Array.from(
-		new Set(mentions.map((m) => m.trim()).filter(Boolean)),
-	).sort((a, b) => b.length - a.length);
+function isRoomBroadcastName(name: string): boolean {
+	const trimmed = name.trim();
+	const lower = trimmed.toLowerCase();
+	return (
+		lower === "room" ||
+		lower === "@room" ||
+		lower === "all" ||
+		lower === "@all" ||
+		trimmed === "所有人" ||
+		trimmed === "@所有人"
+	);
+}
+
+export function isPrecededByEmailChar(text: string, index: number): boolean {
+	return index > 0 && /[A-Za-z0-9._+-]/.test(text[index - 1]);
+}
+
+export function buildVerifiedMentionNames(
+	mentions: string[] = [],
+	canRoomHighlight = false,
+): string[] {
+	const names = new Set<string>();
+	let hasRoomMention = false;
+
+	for (const raw of mentions) {
+		const clean = raw.trim().replace(/^@+/, "");
+		if (!clean) continue;
+		if (isRoomBroadcastName(clean)) {
+			if (canRoomHighlight) {
+				hasRoomMention = true;
+			}
+			continue;
+		}
+		names.add(clean);
+	}
+
+	if (hasRoomMention) {
+		names.add("所有人");
+		names.add("room");
+		names.add("all");
+	}
+
+	return Array.from(names).sort((a, b) => b.length - a.length);
+}
+
+export function buildChatTokenRegex(
+	mentions: string[] = [],
+	canRoomHighlight = false,
+): RegExp {
+	const cleanMentions = buildVerifiedMentionNames(mentions, canRoomHighlight);
 
 	if (cleanMentions.length > 0) {
-		return new RegExp(
-			`(${STICKER_TOKEN_PATTERN}|@(?:${cleanMentions.map(escapeRegexLiteral).join("|")})|@[^\\s@]{1,16})`,
-			"g",
-		);
+		const mentionPattern = `@(?:${cleanMentions.map(escapeRegexLiteral).join("|")})${MENTION_BOUNDARY_AFTER}`;
+		return new RegExp(`(${STICKER_TOKEN_PATTERN}|${mentionPattern})`, "gi");
 	}
-	return new RegExp(`(${STICKER_TOKEN_PATTERN}|@[^\\s@]{1,16})`, "g");
+	return new RegExp(`(${STICKER_TOKEN_PATTERN})`, "g");
 }
 
 export function resolveExternalOrLocalSticker(
@@ -349,12 +395,13 @@ export function parseChatSegments(
 	content: string,
 	stickerMap: Map<string, StickerItem>,
 	mentions: string[] = [],
+	canRoomHighlight = false,
 ): ChatContentSegment[] {
 	if (!content) return [];
 	const segments: ChatContentSegment[] = [];
 	let lastIndex = 0;
 
-	const matcher = buildChatTokenRegex(mentions);
+	const matcher = buildChatTokenRegex(mentions, canRoomHighlight);
 	matcher.lastIndex = 0;
 
 	let match = matcher.exec(content);
@@ -368,12 +415,18 @@ export function parseChatSegments(
 			});
 		}
 
-		if (token.startsWith("@") && token.length > 1) {
+		if (
+			token.startsWith("@") &&
+			token.length > 1 &&
+			!isPrecededByEmailChar(content, start)
+		) {
 			segments.push({
 				kind: "mention",
 				text: token,
 				target: token.slice(1),
 			});
+		} else if (token.startsWith("@")) {
+			segments.push({ kind: "text", text: token });
 		} else {
 			const sticker = resolveExternalOrLocalSticker(token, stickerMap);
 			if (sticker) {

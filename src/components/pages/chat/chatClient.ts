@@ -36,6 +36,8 @@ export interface RoomInitPacket {
 	unreadUserCount?: number;
 	pinnedUids?: string[];
 	topic?: string;
+	roomAvatar?: string;
+	roomAvatars?: Record<string, string>;
 	readReceipts?: Record<string, ChatReadReceipt[]>;
 	members: ChatOnlineMember[];
 	observers?: ChatOnlineMember[];
@@ -113,6 +115,7 @@ export type ServerPacket =
 	  }
 	| { type: "chat:pinned_update"; roomId: string; pinnedUids: string[] }
 	| { type: "chat:topic_update"; roomId: string; topic: string }
+	| { type: "chat:room_avatar_update"; roomId: string; avatar: string }
 	| {
 			type: "chat:typing";
 			roomId: string;

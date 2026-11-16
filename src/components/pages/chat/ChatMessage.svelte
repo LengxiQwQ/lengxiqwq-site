@@ -164,7 +164,12 @@ function handleToggleAudio(url: string) {
 }
 
 const segments = $derived(
-	parseChatSegments(message.content, stickerMap, message.mentions),
+	parseChatSegments(
+		message.content,
+		stickerMap,
+		message.mentions,
+		canRoomHighlight,
+	),
 );
 
 const stickerSegments = $derived(
@@ -703,7 +708,7 @@ function handleBubblePointerUp(e: PointerEvent) {
 
 {#snippet renderAttachmentsBlock()}
   {#if safeAttachments.length > 0}
-    <div class="flex flex-col gap-2 mt-2">
+    <div class="flex flex-col gap-2 {message.replyTo || message.content.trim().length > 0 ? 'mt-2' : ''}">
       {#each safeAttachments as att (att.url)}
         {#if att.type === "image" && att.isSticker}
           <a
@@ -728,7 +733,7 @@ function handleBubblePointerUp(e: PointerEvent) {
           <a
             href={att.url}
             data-chat-image={att.url}
-            class="block overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
+            class="flex w-fit max-w-full overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
             onclick={(e) => {
               e.preventDefault();
               void openChatImageLightbox(att.url, e.currentTarget);
@@ -1005,7 +1010,7 @@ function handleBubblePointerUp(e: PointerEvent) {
       {/if}
 
       <div
-        class="relative max-w-full"
+        class="relative max-w-full chat-msg-bubble-wrap"
         onpointerdown={handleBubblePointerDown}
         onpointermove={handleBubblePointerMove}
         onpointerup={handleBubblePointerUp}
@@ -1105,7 +1110,7 @@ function handleBubblePointerUp(e: PointerEvent) {
       {/if}
 
       <div
-        class="relative max-w-full"
+        class="relative max-w-full chat-msg-bubble-wrap"
         onpointerdown={handleBubblePointerDown}
         onpointermove={handleBubblePointerMove}
         onpointerup={handleBubblePointerUp}
