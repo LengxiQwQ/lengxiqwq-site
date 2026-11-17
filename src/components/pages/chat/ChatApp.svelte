@@ -2407,7 +2407,6 @@ onMount(() => {
         onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
         onOpenAuth={() => (showAuthModal = true)}
-        onLogout={handleLogout}
         onToggleDesktopNotification={handleToggleDesktopNotification}
       />
     </div>

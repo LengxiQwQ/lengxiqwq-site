@@ -1854,6 +1854,13 @@ async function processImageFiles(files: FileList | File[]) {
 	const list = Array.from(files).filter((f) => f.type.startsWith("image/"));
 	if (list.length === 0) return;
 
+	const MAX_FILE_SIZE = 100 * 1024 * 1024;
+	const oversized = list.find((f) => f.size > MAX_FILE_SIZE);
+	if (oversized) {
+		uploadError = `图片“${oversized.name}”超过 100MB 上传限制`;
+		return;
+	}
+
 	const remaining = Math.max(0, 3 - pendingImages.length);
 	if (remaining === 0) {
 		uploadError = "单条消息最多附带 3 张图片";
@@ -1881,6 +1888,16 @@ async function processMediaFiles(files: FileList | File[]) {
 	}
 	const list = Array.from(files);
 	if (list.length === 0) return;
+
+	const MAX_FILE_SIZE = 100 * 1024 * 1024;
+	const oversized = list.find((f) => f.size > MAX_FILE_SIZE);
+	if (oversized) {
+		uploadError = `文件“${oversized.name}”超过 100MB 上传限制`;
+		if (mediaFileInputEl) {
+			mediaFileInputEl.value = "";
+		}
+		return;
+	}
 
 	const remaining = Math.max(0, 3 - pendingImages.length);
 	if (remaining === 0) {

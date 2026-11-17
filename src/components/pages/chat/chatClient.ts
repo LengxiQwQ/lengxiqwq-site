@@ -921,8 +921,8 @@ export async function uploadChatMedia(
 		throw new Error("未配置多媒体上传服务");
 	}
 
-	if (file.size > 25 * 1024 * 1024) {
-		throw new Error("文件大小超过 25MB 限制");
+	if (file.size > 100 * 1024 * 1024) {
+		throw new Error("文件大小超过 100MB 限制");
 	}
 
 	const resp = await fetch(
