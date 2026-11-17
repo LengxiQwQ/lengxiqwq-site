@@ -57,6 +57,7 @@ interface Props {
 	observers?: ChatOnlineMember[];
 	mentionMembers?: ChatMentionCandidate[];
 	isChatTabActive?: boolean;
+	isWindowFocused?: boolean;
 	targetMessageUid?: string;
 	clockOffsetMs?: number;
 	musicState?: RoomMusicState | null;
@@ -149,6 +150,7 @@ const {
 	observers = [],
 	mentionMembers = [],
 	isChatTabActive = true,
+	isWindowFocused = true,
 	targetMessageUid = "",
 	clockOffsetMs = 0,
 	musicState = null,
@@ -511,6 +513,7 @@ function isChatPaneFocused(): boolean {
 		return true;
 	}
 	if (document.hidden) return false;
+	if (!isWindowFocused) return false;
 	const usesPanelTabs = window.matchMedia("(width < 768px)").matches;
 	return !usesPanelTabs || isChatTabActive;
 }
@@ -675,7 +678,7 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 			badgeType: "host",
 			isAdmin: false,
 			online: true,
-			lastSeenAt: Date.now(),
+			lastSeenAt: 0,
 		});
 	}
 	for (const m of mentionMembers) {
@@ -727,26 +730,29 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 			badgeType: m.badgeType,
 			isAdmin: m.isAdmin,
 			online: true,
+			connectedAt: m.connectedAt,
 			isFocused: m.isFocused,
 			presenceMode: m.presenceMode,
-			lastSeenAt: prev?.lastSeenAt ?? Date.now(),
+			lastSeenAt: prev?.lastSeenAt ?? 0,
 		});
 	}
 	return Array.from(map.values()).sort((a, b) => {
 		if (a.userKey === "room") return -1;
 		if (b.userKey === "room") return 1;
-		if (a.online !== b.online) return a.online ? -1 : 1;
-		if (a.online && b.online) {
-			if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
-			return a.name.localeCompare(b.name, "zh-CN");
+		// 组别：0=在线且专注, 1=在线但离开(away), 2=离线
+		const aGroup = !a.online ? 2 : a.isFocused === false ? 1 : 0;
+		const bGroup = !b.online ? 2 : b.isFocused === false ? 1 : 0;
+		if (aGroup !== bGroup) return aGroup - bGroup;
+		if (aGroup <= 1) {
+			// 在线用户：最新连接的排在最下面（升序，小的在前）
+			const aTime = a.connectedAt || 0;
+			const bTime = b.connectedAt || 0;
+			return aTime - bTime || a.name.localeCompare(b.name, "zh-CN");
 		}
+		// 离线用户：最近离线的排在最下面（降序，大的在后）
 		const aTime = a.lastSeenAt || 0;
 		const bTime = b.lastSeenAt || 0;
-		if (aTime !== bTime) {
-			return bTime - aTime;
-		}
-		if (a.isAdmin !== b.isAdmin) return a.isAdmin ? -1 : 1;
-		return a.name.localeCompare(b.name, "zh-CN");
+		return aTime - bTime || a.name.localeCompare(b.name, "zh-CN");
 	});
 });
 
@@ -2613,7 +2619,6 @@ function removePendingImage(index: number) {
             <ChatMessage
               message={msg}
               isSelf={isSelf}
-              isMentionedMe={isMentionedToMe(msg)}
               isHighlighted={highlightedMsgUid === msg.msgUid}
               currentUserName={currentUser?.name || ""}
               currentUserKey={currentUser?.userKey}

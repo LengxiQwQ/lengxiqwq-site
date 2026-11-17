@@ -142,6 +142,7 @@ const mentionMembers = $derived.by<ChatMentionCandidate[]>(() => {
 			bio: member.bio || previous?.bio,
 			status: member.status || previous?.status,
 			customBadges: member.customBadges || previous?.customBadges,
+			lastSeenAt: Math.max(member.lastSeenAt || 0, previous?.lastSeenAt || 0),
 			online: onlineKeys.has(member.userKey),
 		});
 	}
@@ -2595,6 +2596,7 @@ onMount(() => {
           observers={observers}
           mentionMembers={mentionMembers}
           isChatTabActive={mobileDrawer === "none"}
+          isWindowFocused={isEffectiveFocused}
           targetMessageUid={targetMessageUid}
           clockOffsetMs={clockOffsetMs}
           musicState={musicState}

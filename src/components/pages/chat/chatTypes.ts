@@ -207,6 +207,7 @@ export interface ChatMentionCandidate {
 	customBadges?: ChatCustomBadge[];
 	isAdmin: boolean;
 	online: boolean;
+	connectedAt?: number;
 	isFocused?: boolean;
 	presenceMode?: ChatPresenceMode;
 	site?: string;

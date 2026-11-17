@@ -1223,32 +1223,10 @@ export function isMentionedForUser(
 		hasExplicitRoomText &&
 		Array.isArray(msg.mentionKeys) &&
 		(msg.mentionKeys.includes("room") || msg.mentionKeys.includes("@room"));
-	if (Array.isArray(msg.mentionKeys)) {
-		if (
-			msg.mentionKeys.some(
-				(k) => keys.has(k) || (hasVerifiedRoomKey && (k === "room" || k === "@room")),
-			)
-		) {
-			return true;
-		}
-	}
-	const myName = (user.name || "").trim().toLowerCase();
-	const canTriggerRoomMention = Boolean(
-		hasVerifiedRoomKey || (msg.isAdmin && hasExplicitRoomText),
-	);
-	return Boolean(
-		Array.isArray(msg.mentions) &&
-			msg.mentions.some((m) => {
-				const lower = m.trim().toLowerCase();
-				if (myName && lower === myName) return true;
-				if (
-					canTriggerRoomMention &&
-					(lower === "room" || lower === "all" || m.trim() === "所有人")
-				) {
-					return true;
-				}
-				return false;
-			}),
+	// 只认协议字段 mentionKeys，没有则不触发（历史消息无 mentionKeys 一律忽略）
+	if (!Array.isArray(msg.mentionKeys) || msg.mentionKeys.length === 0) return false;
+	return msg.mentionKeys.some(
+		(k) => keys.has(k) || (hasVerifiedRoomKey && (k === "room" || k === "@room")),
 	);
 }
 

@@ -31,7 +31,6 @@ import {
 interface Props {
 	message: ChatMessageRecord;
 	isSelf: boolean;
-	isMentionedMe?: boolean;
 	isHighlighted?: boolean;
 	currentUserName?: string;
 	currentUserKey?: string;
@@ -73,7 +72,6 @@ interface Props {
 const {
 	message,
 	isSelf,
-	isMentionedMe = false,
 	isHighlighted = false,
 	currentUserName = "",
 	currentUserKey = "",
@@ -1373,7 +1371,7 @@ function handleBubbleClick(e: MouseEvent) {
     </button>
 
     <div class="flex flex-col items-start max-w-[82%] md:max-w-[74%] min-w-0">
-      {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0) || isMentionedMe}
+      {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0)}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if effectiveSenderUrl}
             <a
@@ -1394,9 +1392,6 @@ function handleBubbleClick(e: MouseEvent) {
             {#each message.customBadges as b (b.text)}
               <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
             {/each}
-          {/if}
-          {#if isMentionedMe}
-            <span class="chat-mentioned-tag">提到了你</span>
           {/if}
         </div>
       {/if}
@@ -1420,7 +1415,7 @@ function handleBubbleClick(e: MouseEvent) {
         {:else}
           <div
             use:trackBubbleBox
-            class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''} {bubblePath ? 'chat-bubble-svg-ready' : ''}"
+            class="chat-bubble chat-bubble-other {bubblePath ? 'chat-bubble-svg-ready' : ''}"
           >
             {@render renderBubbleBg(false)}
             {#if message.replyTo}
