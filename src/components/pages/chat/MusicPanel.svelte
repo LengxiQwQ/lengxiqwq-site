@@ -3,6 +3,7 @@ import { onMount, tick, untrack } from "svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
+import { positionChatFloating } from "./chatFloating";
 import { formatClockSeconds } from "./chatClient";
 import type {
 	ChatMentionCandidate,
@@ -3489,7 +3490,7 @@ $effect(() => {
                     </svg>
                   {/if}
                 </button>
-                <span class="chat-playlist-tooltip align-left" role="tooltip">
+                <span data-chat-floating use:positionChatFloating={{ placement: "top-start", hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
                   {isRandomizing ? "正在随机点歌..." : "随机点一首"}
                 </span>
               </div>
@@ -3509,7 +3510,7 @@ $effect(() => {
                       <line x1="10" y1="14" x2="21" y2="3" />
                     </svg>
                   </a>
-                  <span class="chat-playlist-tooltip {!canManagePlaylist(selectedPlaylist) ? 'align-right' : ''}" role="tooltip">
+                  <span data-chat-floating use:positionChatFloating={{ placement: canManagePlaylist(selectedPlaylist) ? "top" : "top-end", hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
                     前往{formatPlatformLabel(selectedPlaylist.platform)}原歌单
                   </span>
                 </div>
@@ -3529,7 +3530,7 @@ $effect(() => {
                       <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                     </svg>
                   </button>
-                  <span class="chat-playlist-tooltip {!currentUser?.isAdmin ? 'align-right' : ''}" role="tooltip">
+                  <span data-chat-floating use:positionChatFloating={{ placement: currentUser?.isAdmin ? "top" : "top-end", hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
                     {#if isRefreshingPlaylistId === selectedPlaylist.id}
                       正在同步...
                     {:else if selectedPlaylist.updatedAt}
@@ -3553,7 +3554,7 @@ $effect(() => {
                         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                       </svg>
                     </button>
-                    <span class="chat-playlist-tooltip" role="tooltip">
+                    <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
                       {selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}
                     </span>
                   </div>
@@ -3581,7 +3582,9 @@ $effect(() => {
                       {/if}
                     </button>
                     <span
-                      class="chat-playlist-tooltip align-right {confirmDeletePlaylistId === selectedPlaylist.id ? 'is-armed' : ''}"
+                      data-chat-floating
+                      use:positionChatFloating={{ placement: "top-end", hover: "tooltip", forceOpen: confirmDeletePlaylistId === selectedPlaylist.id, gap: 7 }}
+                      class="chat-playlist-tooltip"
                       role="tooltip"
                     >
                       {#if isDeletingPlaylistId === selectedPlaylist.id}
@@ -3864,7 +3867,7 @@ $effect(() => {
         </button>
 
         {#if showRequesterFilter}
-          <div class="chat-requester-menu custom-scrollbar" role="menu" aria-label="按点歌人筛选">
+          <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end" }} class="chat-requester-menu custom-scrollbar" role="menu" aria-label="按点歌人筛选">
             <button
               type="button"
               role="menuitem"

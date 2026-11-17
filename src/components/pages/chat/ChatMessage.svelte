@@ -14,6 +14,7 @@ import {
 } from "./chatClient";
 import type { InterconnectSite } from "./chatConfig";
 import { openChatImageLightbox } from "./chatLightbox";
+import { positionChatFloating } from "./chatFloating";
 import type {
 	ChatMessageRecord,
 	ChatReadReceipt,
@@ -184,9 +185,19 @@ $effect(() => {
 			showMoreActions = false;
 		}
 	}
+	function handleEscape(event: KeyboardEvent) {
+		if (event.key !== "Escape" || event.defaultPrevented) return;
+		const active = showMoreActions ? moreActionsEl : reactionEl;
+		const restoreFocus = active?.contains(document.activeElement);
+		showMoreActions = false;
+		showQuickReaction = false;
+		if (restoreFocus) active?.querySelector("button")?.focus({ preventScroll: true });
+	}
 	window.addEventListener("pointerdown", handleOutside, { capture: true });
+	window.addEventListener("keydown", handleEscape);
 	return () => {
 		window.removeEventListener("pointerdown", handleOutside, { capture: true });
+		window.removeEventListener("keydown", handleEscape);
 	};
 });
 let activeAudioUrl = $state<string | null>(null);
@@ -515,14 +526,30 @@ function resolveReactionUsers(users: string[]): ReactionUserItem[] {
 	return list;
 }
 
-let pointerStartPos: { x: number; y: number; time: number } | null = null;
+let pointerStartPos: { id: number; x: number; y: number } | null = null;
 let longPressTimer: number | null = null;
+let pendingBubbleClick: "tap" | "long-press" | null = null;
 
 function clearLongPress() {
 	if (longPressTimer !== null) {
 		window.clearTimeout(longPressTimer);
 		longPressTimer = null;
 	}
+}
+
+function cancelBubblePress() {
+	clearLongPress();
+	pointerStartPos = null;
+	pendingBubbleClick = null;
+}
+
+$effect(() => cancelBubblePress);
+
+function isBubbleActionTarget(target: EventTarget | null) {
+	return (
+		target instanceof Element &&
+		!target.closest("a, button, video, audio, input, textarea, [data-chat-image], .chat-msg-floating-actions")
+	);
 }
 
 function triggerMobileActions() {
@@ -538,60 +565,67 @@ function triggerMobileActions() {
 }
 
 function handleBubblePointerDown(e: PointerEvent) {
-	if (!onOpenMobileActions || typeof window === "undefined") return;
-	if (!window.matchMedia("(width < 768px), (pointer: coarse)").matches) return;
-	if (e.button !== 0 && e.pointerType === "mouse") return;
-	const target = e.target as HTMLElement | null;
+	if (!e.isPrimary) return;
+	cancelBubblePress();
 	if (
-		target?.closest(
-			"button, a:not([data-chat-image]), video, audio, input, textarea, .chat-msg-floating-actions",
-		)
+		!onOpenMobileActions ||
+		e.button !== 0 ||
+		!isBubbleActionTarget(e.target) ||
+		(e.pointerType === "mouse" &&
+			!window.matchMedia("(width < 768px), (pointer: coarse)").matches)
 	) {
 		return;
 	}
-	pointerStartPos = { x: e.clientX, y: e.clientY, time: Date.now() };
-	clearLongPress();
+	pointerStartPos = { id: e.pointerId, x: e.clientX, y: e.clientY };
 	longPressTimer = window.setTimeout(() => {
 		longPressTimer = null;
 		pointerStartPos = null;
+		if (window.getSelection()?.toString().trim()) return;
+		pendingBubbleClick = "long-press";
 		triggerMobileActions();
 	}, 460);
 }
 
+function isSameBubblePress(e: PointerEvent) {
+	return (
+		pointerStartPos?.id === e.pointerId &&
+		Math.abs(e.clientX - pointerStartPos.x) <= 10 &&
+		Math.abs(e.clientY - pointerStartPos.y) <= 10
+	);
+}
+
 function handleBubblePointerMove(e: PointerEvent) {
-	if (!pointerStartPos) return;
-	if (
-		Math.abs(e.clientX - pointerStartPos.x) > 10 ||
-		Math.abs(e.clientY - pointerStartPos.y) > 10
-	) {
-		pointerStartPos = null;
-		clearLongPress();
-	}
+	if (pointerStartPos?.id === e.pointerId && !isSameBubblePress(e)) cancelBubblePress();
+}
+
+function handleBubblePointerLeave(e: PointerEvent) {
+	if (e.pointerType === "mouse" && pointerStartPos?.id === e.pointerId) cancelBubblePress();
 }
 
 function handleBubblePointerUp(e: PointerEvent) {
-	clearLongPress();
-	if (!pointerStartPos) return;
-	const pos = pointerStartPos;
-	pointerStartPos = null;
-	if (
-		Math.abs(e.clientX - pos.x) > 10 ||
-		Math.abs(e.clientY - pos.y) > 10 ||
-		Date.now() - pos.time > 500
-	) {
+	if (pointerStartPos?.id !== e.pointerId) return;
+	const isTap = isSameBubblePress(e);
+	cancelBubblePress();
+	if (isTap) pendingBubbleClick = "tap";
+}
+
+function handleBubbleClick(e: MouseEvent) {
+	const pendingClick = pendingBubbleClick;
+	pendingBubbleClick = null;
+	// Let the actual tap finish before mounting an overlay over its target.
+	if (pendingClick === "long-press") {
+		e.preventDefault();
+		e.stopPropagation();
 		return;
 	}
-	const selection = window.getSelection?.();
-	if (selection && selection.toString().trim().length > 0) return;
-	const target = e.target as HTMLElement | null;
 	if (
-		target?.closest(
-			"a, button, video, audio, input, textarea, [data-chat-image], .chat-msg-floating-actions",
-		)
+		pendingClick === "tap" &&
+		!e.defaultPrevented &&
+		isBubbleActionTarget(e.target) &&
+		!window.getSelection()?.toString().trim()
 	) {
-		return;
+		triggerMobileActions();
 	}
-	triggerMobileActions();
 }
 </script>
 
@@ -672,7 +706,14 @@ function handleBubblePointerUp(e: PointerEvent) {
           </ChatTooltip>
 
           {#if showQuickReaction}
-            <div class="chat-quick-reactions-popover {isSelfMsg ? 'self-popover' : 'other-popover'}">
+            <div
+              data-chat-floating
+              use:positionChatFloating={{
+                placement: isSelfMsg ? "top-end" : "top-start",
+                onReferenceHidden: () => (showQuickReaction = false),
+              }}
+              class="chat-quick-reactions-popover"
+            >
               {#each ["👍", "❤️", "😂", "🎉", "🔥", "👀"] as em (em)}
                 <button
                   type="button"
@@ -736,7 +777,16 @@ function handleBubblePointerUp(e: PointerEvent) {
           </ChatTooltip>
 
           {#if showMoreActions}
-            <div class="chat-more-actions-popover {isSelfMsg ? 'self-popover' : 'other-popover'}" role="menu" aria-label="更多消息操作">
+            <div
+              data-chat-floating
+              use:positionChatFloating={{
+                placement: isSelfMsg ? "bottom-start" : "bottom-end",
+                onReferenceHidden: () => (showMoreActions = false),
+              }}
+              class="chat-more-actions-popover"
+              role="menu"
+              aria-label="更多消息操作"
+            >
               {#if canCopy}
                 <button
                   type="button"
@@ -856,7 +906,9 @@ function handleBubblePointerUp(e: PointerEvent) {
           </button>
           {#if reactionUsers.length > 0}
             <div
-              class="chat-read-receipts-popover chat-reaction-popover {alignEnd ? 'align-right' : 'align-left'}"
+              data-chat-floating
+              use:positionChatFloating={{ placement: alignEnd ? "top-end" : "top-start", hover: "card" }}
+              class="chat-read-receipts-popover chat-reaction-popover"
               role="dialog"
               aria-label={`${emoji} 回应成员`}
             >
@@ -1079,8 +1131,11 @@ function handleBubblePointerUp(e: PointerEvent) {
         {/if}
       </span>
       <div
-        class="chat-read-receipts-popover {isSelf ? 'align-right' : 'align-left'}"
-        role="tooltip"
+        data-chat-floating
+        use:positionChatFloating={{ placement: isSelf ? "top-end" : "top-start", hover: "card" }}
+        class="chat-read-receipts-popover"
+        role="dialog"
+        aria-label="已读成员"
       >
         <div class="text-[0.6875rem] font-semibold text-[var(--deep-text)] dark:text-white/90 px-1 pb-1 mb-1 border-b border-[var(--chat-divider-color)] flex items-center justify-between gap-2">
           <span>已读成员</span>
@@ -1239,12 +1294,15 @@ function handleBubblePointerUp(e: PointerEvent) {
         </div>
       {/if}
 
+      <!-- svelte-ignore a11y_click_events_have_key_events (This click completes a pointer gesture. Nested message controls keep their own keyboard handling.) -->
       <div
         class="relative max-w-full chat-msg-bubble-wrap"
         onpointerdown={handleBubblePointerDown}
         onpointermove={handleBubblePointerMove}
         onpointerup={handleBubblePointerUp}
-        onpointercancel={clearLongPress}
+        onpointerleave={handleBubblePointerLeave}
+        onpointercancel={cancelBubblePress}
+        onclick={handleBubbleClick}
       >
         {@render renderFloatingActions(true)}
 
@@ -1343,12 +1401,15 @@ function handleBubblePointerUp(e: PointerEvent) {
         </div>
       {/if}
 
+      <!-- svelte-ignore a11y_click_events_have_key_events (This click completes a pointer gesture. Nested message controls keep their own keyboard handling.) -->
       <div
         class="relative max-w-full chat-msg-bubble-wrap"
         onpointerdown={handleBubblePointerDown}
         onpointermove={handleBubblePointerMove}
         onpointerup={handleBubblePointerUp}
-        onpointercancel={clearLongPress}
+        onpointerleave={handleBubblePointerLeave}
+        onpointercancel={cancelBubblePress}
+        onclick={handleBubbleClick}
       >
         {@render renderFloatingActions(false)}
 

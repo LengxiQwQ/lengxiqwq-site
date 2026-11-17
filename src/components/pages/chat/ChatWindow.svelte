@@ -5,6 +5,7 @@ import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
+import { positionChatFloating } from "./chatFloating";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import {
 	getStoredMusicNoticesEnabled,
@@ -118,6 +119,9 @@ interface Props {
 		volume?: number;
 	};
 	onOpenRoomDrawer?: () => void;
+	splitRoomPanelId: string;
+	splitRoomOpen: boolean;
+	onToggleSplitRoom: (event: MouseEvent & { currentTarget: HTMLButtonElement }) => void;
 	onOpenMusicDrawer?: () => void;
 	onOpenLyricsDrawer?: () => void;
 	onToggleListen?: () => void;
@@ -188,6 +192,9 @@ const {
 	otherRoomsUnreadCount = 0,
 	mobilePlaybackStatus,
 	onOpenRoomDrawer,
+	splitRoomPanelId,
+	splitRoomOpen,
+	onToggleSplitRoom,
 	onOpenMusicDrawer,
 	onOpenLyricsDrawer,
 	onToggleListen,
@@ -358,11 +365,29 @@ let mobileActionTarget = $state<{
 	canDelete: boolean;
 	isPinned: boolean;
 } | null>(null);
+let mobileActionDialog = $state<HTMLDialogElement | null>(null);
+let pressedActionBackdrop: HTMLButtonElement | null = null;
 let unreadMentionUids = $state<string[]>([]);
 let alertBannerUid = $state<string | null>(null);
 let highlightedMsgUid = $state("");
 let editingTopic = $state(false);
 let topicDraft = $state("");
+
+function openMobileActionDialog(dialog: HTMLDialogElement) {
+	dialog.showModal();
+	return {
+		destroy() {
+			if (dialog.open) dialog.close();
+		},
+	};
+}
+
+function closeMobileActions() {
+	// Release the modal before edit or reply transfers focus to the composer.
+	if (mobileActionDialog?.open) mobileActionDialog.close();
+	mobileActionTarget = null;
+	pressedActionBackdrop = null;
+}
 
 let unreadBarDismissed = $state(false);
 let isUnreadDividerInView = $state(false);
@@ -446,6 +471,11 @@ let highlightClearTimer: number | null = null;
 let unreadHighlightTimer: number | null = null;
 let lastRenderedVisibleLen = 0;
 let isStickyAtBottom = true;
+const bottomScrollTolerance = 2;
+let isPinnedToBottom = $state(true);
+const followsLayoutAtBottom = $derived(
+	isPinnedToBottom && !targetMessageUid && !highlightedMsgUid && !highlightUnreadDivider,
+);
 let lastScrollHeight = 0;
 let lastClientHeight = 0;
 
@@ -895,9 +925,14 @@ function getScrollGap(): number {
 
 function snapScrollToBottom() {
 	if (!messageContainer) return;
-	messageContainer.scrollTop = messageContainer.scrollHeight;
-	lastScrollHeight = messageContainer.scrollHeight;
-	lastClientHeight = messageContainer.clientHeight;
+	const { scrollHeight, clientHeight, scrollTop } = messageContainer;
+	// The CSS-pixel heights are rounded, while scrollTop can be fractional.
+	if (scrollHeight - clientHeight - scrollTop > bottomScrollTolerance) {
+		messageContainer.scrollTop = scrollHeight;
+	}
+	lastScrollHeight = scrollHeight;
+	lastClientHeight = clientHeight;
+	isPinnedToBottom = true;
 	isStickyAtBottom = true;
 	showScrollBottomBtn = false;
 	newMessagesWhileScrolled = 0;
@@ -913,20 +948,11 @@ function handleMessageScroll() {
 	lastScrollHeight = sh;
 	lastClientHeight = ch;
 
-	// 如果原本处于贴底状态，且本次 scroll 事件伴随容器/内容高度变化（例如平板 100dvh 稳定、软键盘弹起、图片撑开），
-	// 立即重新贴底，防止被浏览器当成用户手动上滑而脱离贴底锁定
-	if (
-		isStickyAtBottom &&
-		layoutChanged &&
-		!targetMessageUid &&
-		!highlightedMsgUid &&
-		!highlightUnreadDivider
-	) {
-		snapScrollToBottom();
-		return;
-	}
+	// Layout-induced scroll events must not cancel a pinned position before ResizeObserver runs.
+	if (layoutChanged && followsLayoutAtBottom) return;
 
 	const gap = getScrollGap();
+	isPinnedToBottom = gap <= bottomScrollTolerance;
 	isStickyAtBottom = gap < 120;
 	showScrollBottomBtn = gap > 180;
 	if (isStickyAtBottom) {
@@ -970,18 +996,6 @@ async function scrollToBottom(smooth = false) {
 		return;
 	}
 	snapScrollToBottom();
-	// 在平板及移动端上，视口高度（100dvh）与文本/弹性盒排版常在下一帧才完全收敛，
-	// 补一次 rAF 贴底确保初始进入和发图后精确停靠在最底部
-	requestAnimationFrame(() => {
-		if (
-			isStickyAtBottom &&
-			!targetMessageUid &&
-			!highlightedMsgUid &&
-			!highlightUnreadDivider
-		) {
-			snapScrollToBottom();
-		}
-	});
 }
 
 let jumpSeq = 0;
@@ -1022,6 +1036,7 @@ async function jumpToMessage(msgUid: string) {
 	const seq = ++jumpSeq;
 	showMentionHistory = false;
 	isStickyAtBottom = false;
+	isPinnedToBottom = false;
 	const targetMsg = messages.find((m) => m.msgUid === msgUid);
 	if (currentUser && targetMsg) {
 		writeLastSeenAt(roomId, currentUser.userKey, targetMsg.createdAt);
@@ -1069,6 +1084,7 @@ async function jumpToMessage(msgUid: string) {
 
 async function scrollToUnreadDivider() {
 	isStickyAtBottom = false;
+	isPinnedToBottom = false;
 	await tick();
 	const dividerEl = messageContainer?.querySelector<HTMLElement>(
 		"[data-unread-divider]",
@@ -1094,6 +1110,7 @@ async function scrollToUnreadDivider() {
 
 function handleJumpToUnread() {
 	isStickyAtBottom = false;
+	isPinnedToBottom = false;
 	if (hasUnloadedUnread) {
 		onLoadHistory?.(sessionUnreadSince, true);
 		return;
@@ -1112,6 +1129,7 @@ function dismissUnreadBar() {
 function triggerAutoLoadOlderHistory(manualClick = false) {
 	if (!hasMoreHistory || isLoadingHistory || !messageContainer) return;
 	isStickyAtBottom = false;
+	isPinnedToBottom = false;
 	const firstUid = messages[0]?.msgUid || "";
 	historyScrollAnchor = {
 		firstMsgUid: firstUid,
@@ -1162,36 +1180,13 @@ onMount(() => {
 
 	void scrollToBottom();
 
-	let rafSyncId: number | null = null;
-	const scheduleSnapIfSticky = () => {
-		if (
-			!isStickyAtBottom ||
-			targetMessageUid ||
-			highlightedMsgUid ||
-			highlightUnreadDivider
-		) {
-			return;
-		}
-		snapScrollToBottom();
-		if (rafSyncId !== null) window.cancelAnimationFrame(rafSyncId);
-		rafSyncId = window.requestAnimationFrame(() => {
-			rafSyncId = null;
-			if (
-				isStickyAtBottom &&
-				!targetMessageUid &&
-				!highlightedMsgUid &&
-				!highlightUnreadDivider
-			) {
-				snapScrollToBottom();
-			}
-		});
+	const followBottomAfterLayout = () => {
+		if (followsLayoutAtBottom) snapScrollToBottom();
 	};
 
 	const resizeObserver =
 		typeof ResizeObserver !== "undefined"
-			? new ResizeObserver(() => {
-					scheduleSnapIfSticky();
-				})
+			? new ResizeObserver(followBottomAfterLayout)
 			: null;
 	if (messageContainer) {
 		resizeObserver?.observe(messageContainer);
@@ -1203,7 +1198,7 @@ onMount(() => {
 	const handleMediaLoad = (e: Event) => {
 		const target = e.target as HTMLElement | null;
 		if (target && (target.tagName === "IMG" || target.tagName === "VIDEO")) {
-			scheduleSnapIfSticky();
+			followBottomAfterLayout();
 		}
 	};
 	messageContainer?.addEventListener("load", handleMediaLoad, true);
@@ -1227,7 +1222,7 @@ onMount(() => {
 		if (e.key === "Escape") {
 			showMentionHistory = false;
 			showMobileMoreMenu = false;
-			mobileActionTarget = null;
+			closeMobileActions();
 		}
 	};
 
@@ -1247,7 +1242,6 @@ onMount(() => {
 		window.removeEventListener("drop", preventWindowDrag);
 		resizeObserver?.disconnect();
 		messageContainer?.removeEventListener("load", handleMediaLoad, true);
-		if (rafSyncId !== null) window.cancelAnimationFrame(rafSyncId);
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleDocKeydown);
 		if (alertAutoHideTimer !== null) window.clearTimeout(alertAutoHideTimer);
@@ -1397,7 +1391,7 @@ $effect(() => {
 		mobileActionTarget &&
 		!msgs.some((m) => m.msgUid === mobileActionTarget?.message.msgUid)
 	) {
-		mobileActionTarget = null;
+		closeMobileActions();
 	}
 });
 
@@ -1596,18 +1590,6 @@ $effect(() => {
 });
 
 $effect(() => {
-	const container = messageContainer;
-	if (!container || typeof ResizeObserver === "undefined") return;
-	const observer = new ResizeObserver(() => {
-		if (isStickyAtBottom && !targetMessageUid) {
-			container.scrollTop = container.scrollHeight;
-		}
-	});
-	observer.observe(container);
-	return () => observer.disconnect();
-});
-
-$effect(() => {
 	if (mentionEvent && mentionEvent.seq !== lastMentionSeq) {
 		lastMentionSeq = mentionEvent.seq;
 		const cleanMentionName =
@@ -1731,6 +1713,13 @@ function handleStartReply(msg: ChatMessageRecord) {
 	void tick().then(() => {
 		inputEl?.focus();
 	});
+}
+
+function handleStartEdit(msg: ChatMessageRecord) {
+	editingMessage = msg;
+	inputText = msg.content;
+	// iPad Safari opens the keyboard when focus is part of the original tap.
+	inputEl?.focus();
 }
 
 function handleJumpToReply(msgUid: string) {
@@ -2017,6 +2006,22 @@ function removePendingImage(index: number) {
   <!-- 顶栏 -->
   <div class="chat-panel-header">
     <div class="flex items-center gap-2 min-w-0 flex-1">
+      <button
+        type="button"
+        class="chat-tool-btn chat-split-room-trigger relative shrink-0"
+        aria-label={`${splitRoomOpen ? "收起" : "展开"}房间与成员${otherRoomsUnreadCount > 0 ? `，其他房间有 ${otherRoomsUnreadCount} 条未读消息` : ""}`}
+        aria-controls={splitRoomPanelId}
+        aria-expanded={splitRoomOpen}
+        onclick={onToggleSplitRoom}
+      >
+        <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M9 4v16" />
+        </svg>
+        {#if otherRoomsUnreadCount > 0}
+          <span class="chat-split-room-unread-dot" aria-hidden="true"></span>
+        {/if}
+      </button>
       {#if editingTopic && currentUser?.isAdmin}
         <form
           class="flex items-center gap-1.5 min-w-0 flex-1 max-w-md"
@@ -2102,6 +2107,7 @@ function removePendingImage(index: number) {
           <button
             type="button"
             data-chat-interconnect-trigger
+            data-chat-interconnect-anchor
             class="chat-header-room-dropdown chat-desktop-only {showInterconnect ? 'active' : ''}"
             aria-label="查看互联茶室友站列表"
             aria-expanded={showInterconnect}
@@ -2168,7 +2174,7 @@ function removePendingImage(index: number) {
           </button>
 
           {#if showMentionHistory}
-            <div class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="被提及的消息列表">
+            <div data-chat-floating use:positionChatFloating={{ placement: "bottom-start" }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="被提及的消息列表">
               <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
                 <span>近期提及你的消息</span>
                 <span>{mentionsToMe.length}条</span>
@@ -2227,6 +2233,7 @@ function removePendingImage(index: number) {
         <div class="relative" bind:this={mobileMoreMenuWrapEl}>
           <button
             type="button"
+            data-chat-interconnect-anchor
             class="chat-mobile-icon-btn {showMobileMoreMenu || showInterconnect ? 'is-active' : ''}"
             aria-label="更多聊天室选项"
             aria-expanded={showMobileMoreMenu}
@@ -2240,7 +2247,7 @@ function removePendingImage(index: number) {
           </button>
 
           {#if showMobileMoreMenu}
-            <div class="chat-mobile-more-menu" role="menu" aria-label="聊天室更多选项">
+            <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8 }} class="chat-mobile-more-menu" role="menu" aria-label="聊天室更多选项">
               <div class="px-3 py-1.5 text-xs text-[var(--chat-meta-color)] border-b border-[var(--skin-line)] truncate">
                 #{roomName} · {effectiveSubtitle}
               </div>
@@ -2518,10 +2525,12 @@ function removePendingImage(index: number) {
 
     <div
       bind:this={messageContainer}
+      data-chat-message-scroll
+      data-chat-pinned-bottom={followsLayoutAtBottom ? "" : undefined}
       onscroll={handleMessageScroll}
-      class="flex-1 overflow-y-auto custom-scrollbar px-4 md:px-5 py-4 min-h-0"
+      class="flex-1 custom-scrollbar min-h-0"
     >
-      <div bind:this={messageContentEl} class="min-h-full flex flex-col gap-3">
+      <div bind:this={messageContentEl} class="chat-message-content min-h-full flex flex-col gap-3">
         {#if hasMoreHistory}
           <div class="flex justify-center py-1.5" bind:this={topSentinelEl}>
             {#if isLoadingHistory}
@@ -2622,11 +2631,7 @@ function removePendingImage(index: number) {
               onRecall={onRecallMessage}
               onDelete={onDeleteMessage}
               onReply={msg.kind === "user" ? handleStartReply : undefined}
-              onEdit={(m) => {
-                editingMessage = m;
-                inputText = m.content;
-                inputEl?.focus();
-              }}
+              onEdit={handleStartEdit}
               onPin={onPinMessage}
               onReaction={onReaction}
               onVotePoll={onVotePoll}
@@ -2710,7 +2715,7 @@ function removePendingImage(index: number) {
     {/if}
     <!-- 统一表情面板（纯图标 Tab）：1. 颜文字 -> 2. QQ -> 3. 贴纸 -->
     {#if activePopover === "emoji"}
-      <div class="chat-emoji-popover chat-sticker-popover" role="dialog" aria-label="颜文字与表情贴纸">
+      <div data-chat-floating use:positionChatFloating={{ placement: "top-start", gap: 8 }} class="chat-emoji-popover chat-sticker-popover" role="dialog" aria-label="颜文字与表情贴纸">
         <div class="chat-picker-body custom-scrollbar">
           {#if activeEmojiTab === "kaomoji"}
             <div class="space-y-2.5">
@@ -2799,7 +2804,7 @@ function removePendingImage(index: number) {
 
     <!-- @ 选人弹窗（输入 @ 时触发：在线优先，离线靠后） -->
     {#if mentionMenuOpen}
-      <div class="chat-mention-autocomplete custom-scrollbar" role="listbox" aria-label="选择要 @ 的成员">
+      <div data-chat-floating use:positionChatFloating={{ placement: "top-start", gap: 8 }} class="chat-mention-autocomplete custom-scrollbar" role="listbox" aria-label="选择要 @ 的成员">
         {#if filteredMentionCandidates.length === 0}
           <div class="px-2.5 py-2 text-[11px] text-[var(--chat-meta-color)]">
             没有找到匹配的成员
@@ -3157,12 +3162,28 @@ function removePendingImage(index: number) {
       stickerMap,
       (activeMsg.attachments?.length ?? 0) > 0,
     )}
-    <div class="chat-mobile-action-sheet-wrap" role="dialog" aria-modal="true" aria-label="消息操作菜单">
+    <dialog
+      bind:this={mobileActionDialog}
+      use:openMobileActionDialog
+      class="chat-mobile-action-sheet-wrap"
+      aria-label="消息操作菜单"
+      oncancel={(e) => {
+        e.preventDefault();
+        closeMobileActions();
+      }}
+    >
       <button
         type="button"
         class="chat-mobile-action-sheet-backdrop"
         aria-label="关闭消息操作菜单"
-        onclick={() => (mobileActionTarget = null)}
+        onpointerdown={(e) => (pressedActionBackdrop = e.currentTarget)}
+        onpointercancel={() => (pressedActionBackdrop = null)}
+        onclick={(e) => {
+          if (e.detail === 0 || e.currentTarget === pressedActionBackdrop) {
+            closeMobileActions();
+          }
+          pressedActionBackdrop = null;
+        }}
       ></button>
 
       <div class="chat-mobile-action-sheet">
@@ -3189,7 +3210,7 @@ function removePendingImage(index: number) {
             type="button"
             class="chat-drawer-close-btn shrink-0"
             aria-label="关闭菜单"
-            onclick={() => (mobileActionTarget = null)}
+            onclick={closeMobileActions}
           >
             <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <line x1="18" y1="6" x2="6" y2="18" />
@@ -3208,8 +3229,9 @@ function removePendingImage(index: number) {
                 class="chat-mobile-sheet-emoji-btn {isMyReaction ? 'is-active' : ''}"
                 aria-label={`回应表情 ${em}`}
                 onclick={() => {
-                  onReaction?.(activeMsg.msgUid, em);
-                  mobileActionTarget = null;
+                  const uid = activeMsg.msgUid;
+                  closeMobileActions();
+                  onReaction?.(uid, em);
                 }}
               >
                 <span>{em}</span>
@@ -3226,7 +3248,7 @@ function removePendingImage(index: number) {
               class="chat-mobile-sheet-action-btn"
               onclick={() => {
                 const target = activeMsg;
-                mobileActionTarget = null;
+                closeMobileActions();
                 handleStartReply(target);
               }}
             >
@@ -3244,7 +3266,7 @@ function removePendingImage(index: number) {
               class="chat-mobile-sheet-action-btn"
               onclick={async () => {
                 const text = activeMsg.content;
-                mobileActionTarget = null;
+                closeMobileActions();
                 try {
                   await navigator.clipboard.writeText(text);
                   onNotify?.("已复制消息内容");
@@ -3261,6 +3283,41 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
+          {#if mobileActionTarget.canEdit}
+            <button
+              type="button"
+              class="chat-mobile-sheet-action-btn"
+              onclick={() => {
+                const m = activeMsg;
+                closeMobileActions();
+                handleStartEdit(m);
+              }}
+            >
+              <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+              </svg>
+              <span>编辑消息</span>
+            </button>
+          {/if}
+
+          {#if mobileActionTarget.canRecall && onRecallMessage}
+            <button
+              type="button"
+              class="chat-mobile-sheet-action-btn is-warning"
+              onclick={() => {
+                const uid = activeMsg.msgUid;
+                closeMobileActions();
+                onRecallMessage?.(uid);
+              }}
+            >
+              <svg class="w-4.5 h-4.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="1 4 1 10 7 10" />
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              </svg>
+              <span>撤回消息</span>
+            </button>
+          {/if}
+
           {#if !mobileActionTarget.isSelf && activeMsg.name}
             <button
               type="button"
@@ -3268,7 +3325,7 @@ function removePendingImage(index: number) {
               onclick={() => {
                 const name = activeMsg.name;
                 const key = activeMsg.userKey;
-                mobileActionTarget = null;
+                closeMobileActions();
                 onMentionUser(name, key);
               }}
             >
@@ -3283,7 +3340,7 @@ function removePendingImage(index: number) {
               class="chat-mobile-sheet-action-btn"
               onclick={() => {
                 const m = activeMsg;
-                mobileActionTarget = null;
+                closeMobileActions();
                 onOpenUserProfile?.({
                   userKey: m.userKey,
                   name: m.name,
@@ -3306,33 +3363,15 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if mobileActionTarget.canEdit}
-            <button
-              type="button"
-              class="chat-mobile-sheet-action-btn"
-              onclick={() => {
-                const m = activeMsg;
-                mobileActionTarget = null;
-                editingMessage = m;
-                inputText = m.content;
-                void tick().then(() => inputEl?.focus());
-              }}
-            >
-              <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-              </svg>
-              <span>编辑消息</span>
-            </button>
-          {/if}
-
           {#if currentUser?.isAdmin && onPinMessage}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn"
               onclick={() => {
                 const uid = activeMsg.msgUid;
-                mobileActionTarget = null;
-                onPinMessage?.(uid, activeIsPinned);
+                const wasPinned = activeIsPinned;
+                closeMobileActions();
+                onPinMessage?.(uid, wasPinned);
               }}
             >
               <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -3343,31 +3382,13 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if mobileActionTarget.canRecall && onRecallMessage}
-            <button
-              type="button"
-              class="chat-mobile-sheet-action-btn is-warning"
-              onclick={() => {
-                const uid = activeMsg.msgUid;
-                mobileActionTarget = null;
-                onRecallMessage?.(uid);
-              }}
-            >
-              <svg class="w-4.5 h-4.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polyline points="1 4 1 10 7 10" />
-                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-              </svg>
-              <span>撤回消息</span>
-            </button>
-          {/if}
-
           {#if mobileActionTarget.canDelete}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn is-danger"
               onclick={() => {
                 const uid = activeMsg.msgUid;
-                mobileActionTarget = null;
+                closeMobileActions();
                 onDeleteMessage(uid);
               }}
             >
@@ -3381,6 +3402,6 @@ function removePendingImage(index: number) {
           {/if}
         </div>
       </div>
-    </div>
+    </dialog>
   {/if}
 </div>

@@ -38,6 +38,7 @@ interface Props {
 	roomAvatars?: Record<string, string>;
 	siteAvatar?: string;
 	onRoomSelect?: (roomId: string) => void;
+	onCloseSplitRoom?: () => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onOpenProfile?: () => void;
 	onOpenAuth?: () => void;
@@ -64,6 +65,7 @@ const {
 	roomAvatars = {},
 	siteAvatar = "",
 	onRoomSelect,
+	onCloseSplitRoom,
 	onOpenUserProfile,
 	onOpenProfile,
 	onOpenAuth,
@@ -261,6 +263,18 @@ function formatOfflineTime(ts?: number): string {
   <!-- 面板顶栏 -->
   <div class="chat-panel-header">
     <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 flex items-center gap-2">
+      {#if onCloseSplitRoom}
+        <button
+          type="button"
+          class="chat-tool-btn chat-split-room-close shrink-0"
+          aria-label="收起房间与成员"
+          onclick={onCloseSplitRoom}
+        >
+          <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      {/if}
       <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </svg>

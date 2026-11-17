@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onMount } from "svelte";
+import { onMount, tick } from "svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAuthModal from "./ChatAuthModal.svelte";
 import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
@@ -87,6 +87,16 @@ const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
 const LAST_ROOM_STORAGE_KEY = "lengxi_chat_last_room";
 
 let mobileDrawer = $state<"none" | "room" | "music">("none");
+const roomPanelId = "chat-room-panel";
+let isMobileLayout = $state(false);
+let stageContentRect = $state<DOMRectReadOnly>();
+// Keep the split threshold aligned with the chat-stage container query in chat.css.
+const isSplitLayout = $derived(
+	!isMobileLayout && stageContentRect !== undefined && stageContentRect.width < 1240,
+);
+let splitRoomOpen = $state(false);
+let roomPanelEl: HTMLDivElement;
+let splitRoomTrigger: HTMLButtonElement | undefined;
 let currentRoom = $state(rooms[0]?.id || "chat");
 let connectionState = $state<ConnectionState>("idle");
 let isWindowFocused = $state(true);
@@ -250,6 +260,64 @@ const otherRoomsUnreadCount = $derived.by(() =>
 );
 
 let stageTouchStart: { x: number; y: number; time: number } | null = null;
+
+$effect(() => {
+	if (!isSplitLayout) splitRoomOpen = false;
+});
+
+function closeSplitRoom(restoreFocus = false) {
+	if (!splitRoomOpen) return;
+	splitRoomOpen = false;
+	if (restoreFocus) splitRoomTrigger?.focus({ preventScroll: true });
+}
+
+async function toggleSplitRoom(event: MouseEvent & { currentTarget: HTMLButtonElement }) {
+	if (splitRoomOpen) {
+		closeSplitRoom(true);
+		return;
+	}
+	splitRoomTrigger = event.currentTarget;
+	splitRoomOpen = true;
+	if (event.detail === 0) {
+		await tick();
+		if (isSplitLayout && splitRoomOpen) {
+			roomPanelEl.querySelector<HTMLButtonElement>(".chat-split-room-close")?.focus();
+		}
+	}
+}
+
+$effect(() => {
+	if (!isSplitLayout || !splitRoomOpen) return;
+
+	function handleOutsidePointer(event: PointerEvent) {
+		if (
+			event.target instanceof Element &&
+			!roomPanelEl.contains(event.target) &&
+			!splitRoomTrigger?.contains(event.target) &&
+			!event.target.closest(".chat-modal-backdrop")
+		) {
+			closeSplitRoom();
+		}
+	}
+
+	function handleEscape(event: KeyboardEvent) {
+		if (
+			event.key === "Escape" &&
+			!event.defaultPrevented &&
+			!event.isComposing &&
+			!document.querySelector(".chat-modal-backdrop")
+		) {
+			closeSplitRoom(true);
+		}
+	}
+
+	document.addEventListener("pointerdown", handleOutsidePointer, true);
+	document.addEventListener("keydown", handleEscape);
+	return () => {
+		document.removeEventListener("pointerdown", handleOutsidePointer, true);
+		document.removeEventListener("keydown", handleEscape);
+	};
+});
 
 function handleStageTouchStart(e: TouchEvent) {
 	if (typeof window === "undefined" || e.touches.length !== 1) return;
@@ -1426,6 +1494,7 @@ function closePendingSocket() {
 
 function handleRoomSelect(roomId: string) {
 	showInterconnect = false;
+	closeSplitRoom(roomPanelEl?.contains(document.activeElement));
 	roomUnreadCounts = {
 		...roomUnreadCounts,
 		[roomId]: 0,
@@ -1486,6 +1555,7 @@ function handleMentionUser(name: string, userKey?: string) {
 	mentionSeq += 1;
 	mentionEvent = { name, ...(userKey ? { userKey } : {}), seq: mentionSeq };
 	mobileDrawer = "none";
+	closeSplitRoom();
 }
 
 function handleDirectWalineLogin() {
@@ -1608,6 +1678,7 @@ function handleOpenPlaylistFromProfile(playlistId: string) {
 	externalPlaylistSeq += 1;
 	externalPlaylistRequest = { playlistId, seq: externalPlaylistSeq };
 	mobileDrawer = "music";
+	closeSplitRoom();
 }
 
 function handleUpdateProfile(draft: ChatProfileDraft) {
@@ -1988,6 +2059,14 @@ async function refreshSpectatorHistory() {
 
 onMount(() => {
 	isUnmounted = false;
+	const mobileLayoutQuery = window.matchMedia("(width < 768px)");
+	isMobileLayout = mobileLayoutQuery.matches;
+	const handleMobileLayoutChange = (event: MediaQueryListEvent) => {
+		isMobileLayout = event.matches;
+		mobileDrawer = "none";
+		stageTouchStart = null;
+	};
+	mobileLayoutQuery.addEventListener("change", handleMobileLayoutChange);
 	// 切入聊天室时立即停止全站侧栏/顶栏音乐播放器，避免与点歌台同时发声
 	window.__fireflyMusic?.stop?.();
 	baseDocumentTitle = document.title;
@@ -2321,6 +2400,7 @@ onMount(() => {
 		window.removeEventListener("keydown", resetIdleTimer);
 		window.removeEventListener("wheel", resetIdleTimer);
 		window.removeEventListener("touchstart", resetIdleTimer);
+		mobileLayoutQuery.removeEventListener("change", handleMobileLayoutChange);
 		cancelWalinePopup?.();
 		if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
@@ -2341,6 +2421,7 @@ onMount(() => {
 <div class="flex flex-col h-full w-full min-h-0">
   <div
     class="chat-mobile-stage flex flex-1 min-h-0 gap-0"
+    bind:contentRect={stageContentRect}
     ontouchstart={handleStageTouchStart}
     ontouchend={handleStageTouchEnd}
   >
@@ -2355,6 +2436,10 @@ onMount(() => {
 
     <div
       class="chat-panel chat-panel-left {mobileDrawer === 'room' ? 'mobile-drawer-open' : ''}"
+      class:chat-split-room-open={isSplitLayout && splitRoomOpen}
+      id={roomPanelId}
+      bind:this={roomPanelEl}
+      inert={isSplitLayout && !splitRoomOpen}
       ondragenter={(e) => handleSidePanelDragEnter("left", e)}
       ondragover={(e) => handleSidePanelDragOver("left", e)}
       ondragleave={(e) => handleSidePanelDragLeave("left", e)}
@@ -2404,6 +2489,7 @@ onMount(() => {
         roomAvatars={roomAvatars}
         siteAvatar={siteAvatar}
         onRoomSelect={handleRoomSelect}
+        onCloseSplitRoom={isSplitLayout && splitRoomOpen ? () => closeSplitRoom(true) : undefined}
         onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
         onOpenAuth={() => (showAuthModal = true)}
@@ -2505,6 +2591,9 @@ onMount(() => {
           otherRoomsUnreadCount={otherRoomsUnreadCount}
           mobilePlaybackStatus={mobilePlaybackStatus}
           onOpenRoomDrawer={() => (mobileDrawer = "room")}
+          splitRoomPanelId={roomPanelId}
+          splitRoomOpen={isSplitLayout && splitRoomOpen}
+          onToggleSplitRoom={toggleSplitRoom}
           onOpenMusicDrawer={() => (mobileDrawer = "music")}
           onOpenLyricsDrawer={() => {
             mobileDrawer = "music";
@@ -2653,6 +2742,7 @@ onMount(() => {
       showUserDetailModal = false;
       targetMessageUid = msgUid;
       mobileDrawer = "none";
+      closeSplitRoom();
     }}
   />
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Snippet } from "svelte";
+import { positionChatFloating } from "./chatFloating";
 
 interface Props {
 	text?: string;
@@ -23,16 +24,9 @@ const {
 	content,
 }: Props = $props();
 
-const alignClass = $derived(
-	align === "left"
-		? "align-left"
-		: align === "right"
-			? "align-right"
-			: "",
-);
-
-const positionClass = $derived(
-	position === "bottom" ? "position-bottom" : "",
+const placement = $derived(
+	align === "left" ? `${position}-start` as const :
+	align === "right" ? `${position}-end` as const : position,
 );
 </script>
 
@@ -41,7 +35,12 @@ const positionClass = $derived(
     {@render children()}
   {/if}
   {#if !disabled && (text || content)}
-    <span class="chat-tooltip {alignClass} {positionClass} {tooltipClass}" role="tooltip">
+    <span
+      data-chat-floating
+      use:positionChatFloating={{ placement, hover: "tooltip", gap: 7 }}
+      class="chat-tooltip {tooltipClass}"
+      role="tooltip"
+    >
       {#if typeof content === "function"}
         {@render content()}
       {:else if content}

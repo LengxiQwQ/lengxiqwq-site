@@ -423,8 +423,8 @@ html[data-chat-page][data-chat-density="compact"] #chat-page .chat-bubble {
 	border-radius: 15px !important;
 }
 
-html[data-chat-page][data-chat-density="compact"] #chat-page .chat-panel-center .overflow-y-auto {
-	padding: 10px min(28px, 3vw) 14px !important;
+html[data-chat-page][data-chat-density="compact"] #chat-page [data-chat-message-scroll] {
+	padding: 10px min(28px, 3vw) 14px;
 }
 
 .chat-panel-header {
@@ -441,8 +441,20 @@ html[data-chat-page][data-chat-density="compact"] #chat-page .chat-panel-center 
 /* ==========================================================================
    4. 聊天消息气泡与系统通知（Telegram 云朵泡泡）
    ========================================================================== */
-.chat-panel-center .overflow-y-auto {
-	padding: 16px min(36px, 3.5vw) 20px !important;
+[data-chat-message-scroll] {
+	overflow-x: hidden;
+	overflow-y: auto;
+	overscroll-behavior-y: none;
+	scrollbar-gutter: stable both-edges;
+	padding: 16px max(0px, calc(min(36px, 3.5vw) - 10px)) 20px;
+}
+
+[data-chat-pinned-bottom] {
+	overflow-anchor: none;
+}
+
+.chat-message-content {
+	justify-content: safe flex-end;
 }
 
 [data-msg-uid] {
@@ -845,9 +857,6 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 
 /* 表情与贴纸弹窗 */
 .chat-emoji-popover {
-	position: absolute;
-	left: 0.75rem;
-	bottom: calc(100% + 0.5rem);
 	z-index: 20;
 	padding: 0.65rem;
 	border-radius: 14px;
@@ -1217,21 +1226,43 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	color: #fff;
 }
 
+[data-chat-floating] {
+	position: absolute;
+	/* Measure above and to the left of the anchor without extending the scroll tail. */
+	inset: auto 100% 100% auto;
+	box-sizing: border-box;
+	max-width: min(var(--chat-floating-width, 100vw), var(--chat-floating-max-width, 100vw));
+	max-height: min(var(--chat-floating-height, 100dvh), var(--chat-floating-max-height, 100dvh));
+}
+
+[data-chat-floating]:not([data-chat-floating-state]) {
+	display: none;
+}
+
+[data-chat-floating][data-chat-floating-state="measuring"] {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+[data-chat-floating][data-chat-floating-state="ready"] {
+	inset: var(--chat-floating-y) auto auto var(--chat-floating-x);
+}
+
 .chat-tooltip,
 .chat-playlist-tooltip {
-	position: absolute;
-	bottom: calc(100% + 7px);
-	top: auto;
-	left: 50%;
-	transform: translateX(-50%) translateY(3px);
+	width: max-content;
+	--chat-floating-max-width: 18rem;
+	--chat-tooltip-offset: 3px;
 	padding: 0.28rem 0.56rem;
 	border-radius: 8px;
 	font-size: 0.6875rem;
 	line-height: 1.25;
 	font-weight: 500;
-	white-space: nowrap;
+	overflow-wrap: anywhere;
 	pointer-events: none;
 	opacity: 0;
+	translate: 0 var(--chat-tooltip-offset);
+	transition: opacity 90ms ease, translate 90ms var(--ease-decelerate);
 	z-index: 60;
 	background: var(--skin-surface);
 	-webkit-backdrop-filter: none;
@@ -1239,7 +1270,22 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	border: 1px solid var(--skin-line);
 	box-shadow: 0 4px 14px -2px rgb(0 0 0 / 0.12);
 	color: var(--skin-text);
-	transition: opacity 140ms ease, transform 140ms var(--ease-decelerate, ease);
+}
+
+:is(.chat-tooltip, .chat-playlist-tooltip)[data-chat-tooltip-side="bottom"] {
+	--chat-tooltip-offset: -3px;
+}
+
+:is(.chat-tooltip, .chat-playlist-tooltip)[data-chat-floating-state="ready"]:not([data-chat-tooltip-leaving]) {
+	opacity: 1;
+	translate: none;
+	transition-duration: 140ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	:is(.chat-tooltip, .chat-playlist-tooltip)[data-chat-floating] {
+		transition: none;
+	}
 }
 
 html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page :is(.chat-tooltip, .chat-playlist-tooltip) {
@@ -1249,54 +1295,6 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	color: var(--skin-text);
 }
 
-:is(.chat-tooltip, .chat-playlist-tooltip).align-left {
-	left: 0;
-	transform: translateY(3px);
-}
-
-:is(.chat-tooltip, .chat-playlist-tooltip).align-right {
-	left: auto;
-	right: 0;
-	transform: translateY(3px);
-}
-
-:is(.chat-tooltip, .chat-playlist-tooltip).position-bottom {
-	bottom: auto;
-	top: calc(100% + 7px);
-	transform: translateX(-50%) translateY(-3px);
-}
-
-:is(.chat-tooltip, .chat-playlist-tooltip).position-bottom.align-left {
-	transform: translateY(-3px);
-}
-
-:is(.chat-tooltip, .chat-playlist-tooltip).position-bottom.align-right {
-	transform: translateY(-3px);
-}
-
-@media (hover: hover) and (pointer: fine) {
-	:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip) {
-		opacity: 1;
-		transform: translateX(-50%) translateY(0);
-	}
-
-	:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip).align-left,
-	:is(.chat-tooltip-wrap, .chat-playlist-action-wrap):hover :is(.chat-tooltip, .chat-playlist-tooltip).align-right {
-		transform: translateY(0);
-	}
-}
-
-/* 删除歌单进入二次确认后，提示气泡常驻显示，点一次就能看到「再次点击确认删除」 */
-:is(.chat-tooltip, .chat-playlist-tooltip).is-armed {
-	opacity: 1;
-	transform: translateX(-50%) translateY(0);
-}
-
-:is(.chat-tooltip, .chat-playlist-tooltip).align-left.is-armed,
-:is(.chat-tooltip, .chat-playlist-tooltip).align-right.is-armed {
-	transform: translateY(0);
-}
-
 /* 已读成员悬浮卡片（支持人数较多时滚轮浏览，仅桌面端鼠标悬停触发） */
 .chat-read-receipts-wrap {
 	position: relative;
@@ -1304,59 +1302,30 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	align-items: center;
 }
 
-.chat-read-receipts-wrap:hover {
+.chat-read-receipts-wrap:is(:hover, :focus-within) {
 	z-index: 40;
 }
 
 .chat-read-receipts-popover {
-	position: absolute;
-	bottom: calc(100% + 6px);
 	z-index: 60;
-	min-width: 9.5rem;
-	max-width: 14rem;
+	width: max-content;
+	min-width: min(9.5rem, var(--chat-floating-width, 100vw));
+	--chat-floating-max-width: 14rem;
+	display: flex;
+	flex-direction: column;
 	padding: 0.4rem 0.45rem;
 	border-radius: 10px;
 	background: var(--skin-surface);
 	border: 1px solid var(--skin-line);
 	color: var(--skin-text);
 	box-shadow: 0 10px 26px -4px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.08);
-	opacity: 0;
-	visibility: hidden;
-	pointer-events: none;
-	transform: translateY(4px);
-	transition: opacity 140ms ease, transform 140ms ease, visibility 140ms ease;
-}
-
-.chat-read-receipts-popover::after {
-	content: "";
-	position: absolute;
-	left: 0;
-	right: 0;
-	top: 100%;
-	height: 8px;
-}
-
-.chat-read-receipts-popover.align-left {
-	left: 0;
-}
-
-.chat-read-receipts-popover.align-right {
-	right: 0;
 }
 
 .chat-read-receipts-list {
+	min-height: 0;
 	max-height: 10.5rem;
 	overflow-y: auto;
 	overscroll-behavior: contain;
-}
-
-@media (hover: hover) and (pointer: fine) {
-	.chat-read-receipts-wrap:hover .chat-read-receipts-popover {
-		opacity: 1;
-		visibility: visible;
-		pointer-events: auto;
-		transform: translateY(0);
-	}
 }
 
 /* 与 MusicPlayer.astro 一致的缓慢唱片旋转与等化器动画 */
@@ -1762,6 +1731,8 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
    ========================================================================== */
 @media (width >= 768px) {
 	.chat-mobile-stage {
+		position: relative;
+		container: chat-stage / inline-size;
 		--chat-left-panel-width: 335px;
 		--chat-right-panel-width: 380px;
 	}
@@ -1787,6 +1758,57 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	.chat-mobile-stage {
 		--chat-left-panel-width: 280px;
 		--chat-right-panel-width: 340px;
+	}
+}
+
+.chat-tool-btn.chat-split-room-trigger {
+	display: none;
+}
+
+.chat-split-room-unread-dot {
+	position: absolute;
+	top: 0.25rem;
+	right: 0.25rem;
+	width: 0.5rem;
+	height: 0.5rem;
+	border: 1px solid var(--skin-surface);
+	border-radius: 50%;
+	background: var(--skin-accent);
+}
+
+.chat-split-room-trigger:focus-visible,
+.chat-split-room-close:focus-visible {
+	outline: 2px solid var(--skin-accent);
+	outline-offset: -2px;
+}
+
+@media (width >= 768px) {
+	@container chat-stage (width < 1240px) {
+		.chat-tool-btn.chat-split-room-trigger {
+			display: inline-flex;
+		}
+
+		.chat-panel.chat-panel-left {
+			position: absolute;
+			inset: 0 auto 0 0;
+			z-index: 55;
+			width: 280px;
+			visibility: hidden;
+		}
+
+		.chat-panel.chat-panel-left.chat-split-room-open {
+			visibility: visible;
+			border-right: 1px solid var(--skin-line) !important;
+			box-shadow: 12px 0 32px -12px rgb(0 0 0 / 0.42) !important;
+		}
+
+		.chat-panel-center {
+			border-left: 0;
+		}
+
+		.chat-panel-right {
+			width: clamp(280px, 32cqw, 340px);
+		}
 	}
 }
 
@@ -1901,8 +1923,8 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	}
 
 	/* 全面放大聊天视窗消息气泡与排版阅读感 */
-	.chat-panel-center .overflow-y-auto {
-		padding: 12px 12px 16px !important;
+	[data-chat-message-scroll] {
+		padding: 12px 12px 16px;
 	}
 
 	[data-msg-uid] > div:last-child {
@@ -2104,11 +2126,9 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 }
 
 .chat-mobile-more-menu {
-	position: absolute;
-	right: 0;
-	top: calc(100% + 8px);
 	z-index: 48;
 	width: 15rem;
+	overflow-y: auto;
 	padding: 0.375rem;
 	border-radius: 14px;
 	background: var(--skin-surface);
@@ -2180,10 +2200,25 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 .chat-mobile-action-sheet-wrap {
 	position: fixed;
 	inset: 0;
-	z-index: 88;
+	width: 100%;
+	height: 100%;
+	max-width: none;
+	max-height: none;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: inherit;
+}
+
+.chat-mobile-action-sheet-wrap[open] {
 	display: flex;
 	flex-direction: column;
 	justify-content: flex-end;
+}
+
+.chat-mobile-action-sheet-wrap::backdrop {
+	background: transparent;
 }
 
 .chat-mobile-action-sheet-backdrop {
@@ -2214,6 +2249,10 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	position: relative;
 	z-index: 1;
 	width: 100%;
+	max-height: 100%;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior-y: contain;
 	padding: 0.65rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
 	border-radius: 20px 20px 0 0;
 	background: var(--skin-surface);
@@ -2298,7 +2337,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	}
 
 	/* iPad 等大屏触控设备：消息操作菜单居中浮卡展示 */
-	.chat-mobile-action-sheet-wrap {
+	.chat-mobile-action-sheet-wrap[open] {
 		justify-content: center;
 		align-items: center;
 		padding: 1.5rem;
@@ -2317,12 +2356,8 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
    10. 聊天室中心区右上角：独立纯净设置卡片（实心奶灰，无毛玻璃依赖）
    ========================================================================== */
 .chat-settings-popover {
-	position: absolute;
-	top: 3.625rem;
-	right: 0.75rem;
 	z-index: 40;
 	width: min(20rem, calc(100% - 1.5rem));
-	max-height: calc(100% - 4.5rem);
 	overflow-y: auto;
 	padding: 0 0.75rem 0.75rem;
 	border-radius: 14px;
@@ -2336,13 +2371,6 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 
 .chat-interconnect-popover {
 	width: min(27rem, calc(100% - 1.5rem));
-}
-
-@media (width >= 768px) {
-	.chat-interconnect-popover {
-		left: 0.75rem;
-		right: auto;
-	}
 }
 
 .chat-settings-popover::-webkit-scrollbar {
@@ -2646,7 +2674,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	display: flex;
 	flex-direction: column;
 	width: min(36rem, calc(100% - 1.5rem));
-	max-height: min(22rem, 52vh);
+	--chat-floating-max-height: min(22rem, 52vh);
 	padding: 0;
 	overflow: hidden;
 	color: var(--deep-text);
@@ -2960,12 +2988,9 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 
 /* ─── 点歌历史：按点歌人筛选悬浮菜单 ─────────────────────── */
 .chat-requester-menu {
-	position: absolute;
-	right: 0;
-	top: calc(100% + 0.35rem);
 	z-index: 30;
 	width: 13.5rem;
-	max-height: 15rem;
+	--chat-floating-max-height: 15rem;
 	overflow-y: auto;
 	padding: 0.35rem;
 	border-radius: 0.75rem;
@@ -3153,7 +3178,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 
 .chat-mention-history-menu {
 	width: 17.5rem;
-	max-height: 18rem;
+	--chat-floating-max-height: 18rem;
 }
 
 .chat-floating-alerts-stack {
@@ -3292,12 +3317,9 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 }
 
 .chat-mention-autocomplete {
-	position: absolute;
-	left: 0.75rem;
-	bottom: calc(100% + 0.45rem);
 	z-index: 25;
 	width: min(19.5rem, calc(100% - 1.5rem));
-	max-height: 14rem;
+	--chat-floating-max-height: 14rem;
 	overflow-y: auto;
 	/* 弹窗朝输入框上方展开：倒序排列，让优先级最高的成员（在线、最新在线）贴着输入框排在最下方 */
 	display: flex;
@@ -3574,6 +3596,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 
 /* ─── 消息悬停操作按钮（回复 / 撤回）与回复引用块 ──────────── */
 .chat-msg-floating-actions {
+	--chat-toolbar-enter: 140ms;
 	position: absolute;
 	top: 0.25rem;
 	display: inline-flex;
@@ -3588,24 +3611,34 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	box-shadow: 0 4px 14px -2px rgba(0, 0, 0, 0.12), 0 2px 4px rgba(0, 0, 0, 0.04);
 	opacity: 0;
 	pointer-events: none;
-	transition: opacity 160ms cubic-bezier(0.2, 0, 0, 1);
 	z-index: 25;
 	white-space: nowrap;
 }
 
-.chat-msg-bubble-wrap:hover .chat-msg-floating-actions,
-.chat-msg-bubble-wrap:focus-within .chat-msg-floating-actions,
+.chat-msg-bubble-wrap:has(:focus-visible) > .chat-msg-floating-actions,
 .chat-msg-floating-actions.is-active {
 	opacity: 1;
 	pointer-events: auto;
+	transition: opacity var(--chat-toolbar-enter) var(--ease-decelerate);
 }
 
-.chat-msg-floating-actions::before {
-	content: "";
-	position: absolute;
-	top: -4px;
-	bottom: -4px;
-	width: 12px;
+.chat-msg-floating-actions.is-active {
+	z-index: 26;
+}
+
+@media (hover: hover) {
+	/* The message row covers the gap from the bubble to its toolbar. */
+	[data-msg-uid]:hover .chat-msg-floating-actions {
+		opacity: 1;
+		pointer-events: auto;
+		transition: opacity var(--chat-toolbar-enter) var(--ease-decelerate);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.chat-msg-floating-actions {
+		--chat-toolbar-enter: 0ms;
+	}
 }
 
 /* 自己的消息：悬浮栏严格置于气泡左侧外边缘，绝不遮挡上方的昵称与右侧头像 */
@@ -3614,24 +3647,15 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	left: auto;
 }
 
-.chat-msg-floating-actions.self::before {
-	left: 100%;
-}
-
 /* 别人的消息：悬浮栏严格置于气泡右侧外边缘，绝不遮挡上方的昵称与左侧头像 */
 .chat-msg-floating-actions.other {
 	left: calc(100% + 8px);
 	right: auto;
 }
 
-.chat-msg-floating-actions.other::before {
-	right: 100%;
-}
-
 .chat-more-actions-popover {
-	position: absolute;
-	top: calc(100% + 6px);
-	min-width: 7.75rem;
+	width: max-content;
+	min-width: min(7.75rem, var(--chat-floating-width, 100vw));
 	padding: 0.3rem;
 	border-radius: 10px;
 	background: var(--skin-surface);
@@ -3639,16 +3663,10 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	box-shadow: 0 10px 26px -4px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.08);
 	display: flex;
 	flex-direction: column;
+	overflow-y: auto;
+	overscroll-behavior: contain;
 	gap: 0.12rem;
 	z-index: 50;
-}
-
-.chat-more-actions-popover.self-popover {
-	left: 0;
-}
-
-.chat-more-actions-popover.other-popover {
-	right: 0;
 }
 
 .chat-more-action-item {
@@ -3656,6 +3674,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	align-items: center;
 	gap: 0.45rem;
 	width: 100%;
+	flex-shrink: 0;
 	padding: 0.34rem 0.5rem;
 	border: none;
 	border-radius: 7px;
@@ -3727,9 +3746,10 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 }
 
 .chat-quick-reactions-popover {
-	position: absolute;
-	bottom: calc(100% + 6px);
 	display: inline-flex;
+	flex-wrap: wrap;
+	width: max-content;
+	overflow-y: auto;
 	align-items: center;
 	gap: 0.2rem;
 	padding: 0.25rem 0.45rem;
@@ -3742,16 +3762,6 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	z-index: 40;
 	animation: chat-popover-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
 	white-space: nowrap;
-}
-
-.chat-quick-reactions-popover.self-popover {
-	right: 0;
-	left: auto;
-}
-
-.chat-quick-reactions-popover.other-popover {
-	left: 0;
-	right: auto;
 }
 
 .chat-msg-action-btn {
@@ -4112,7 +4122,7 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	align-items: center;
 }
 
-.chat-reaction-item:hover {
+.chat-reaction-item:is(:hover, :focus-within) {
 	z-index: 40;
 }
 
@@ -4134,8 +4144,8 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 }
 
 .chat-reaction-popover {
-	min-width: 10.5rem;
-	max-width: 15rem;
+	min-width: min(10.5rem, var(--chat-floating-width, 100vw));
+	--chat-floating-max-width: 15rem;
 }
 
 .chat-reaction-user-btn {
@@ -4157,15 +4167,6 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 .chat-reaction-user-btn:hover {
 	background: var(--btn-plain-bg-hover);
 	color: var(--primary);
-}
-
-@media (hover: hover) and (pointer: fine) {
-	.chat-reaction-item:hover .chat-reaction-popover {
-		opacity: 1;
-		visibility: visible;
-		pointer-events: auto;
-		transform: translateY(0);
-	}
 }
 
 .chat-reaction-pill:hover {
@@ -4362,10 +4363,8 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	.chat-emoji-popover,
 	.chat-sticker-popover,
 	.chat-kaomoji-popover {
-		left: 0.5rem;
-		right: 0.5rem;
-		width: auto;
-		max-height: min(22rem, 50dvh);
+		width: calc(100% - 1rem);
+		--chat-floating-max-height: min(22rem, 50dvh);
 	}
 
 	.chat-kaomoji-item {
@@ -4391,8 +4390,6 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	}
 
 	.chat-settings-popover {
-		top: 3.75rem;
-		right: 0.625rem;
 		width: min(22rem, calc(100% - 1.25rem));
 	}
 
@@ -4402,9 +4399,7 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	}
 
 	.chat-mention-autocomplete {
-		left: 0.5rem;
-		right: 0.5rem;
-		width: auto;
+		width: calc(100% - 1rem);
 		max-height: min(15.5rem, 36dvh);
 	}
 
