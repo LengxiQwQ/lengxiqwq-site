@@ -2627,6 +2627,7 @@ onMount(() => {
     walineServerUrl={walineServerUrl}
     onSave={handleUpdateProfile}
     onClose={() => (showProfileModal = false)}
+    onLogout={handleLogout}
   />
 
   <!-- 用户详细资料卡弹窗 -->

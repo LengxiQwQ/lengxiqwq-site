@@ -85,7 +85,7 @@ onMount(() => {
                 />
                 <div class="min-w-0 flex-1">
                   <div class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
-                    {site.owner || site.name}
+                    {site.name || site.owner}
                   </div>
                 </div>
               </div>
@@ -112,7 +112,7 @@ onMount(() => {
                     class="btn-regular py-1 px-2.5 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all shrink-0 inline-flex items-center gap-1 no-underline"
                     aria-label={`前往 ${site.owner || site.name} 的茶室`}
                   >
-                    <span>去串门</span>
+                    <span>前往</span>
                     <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                       <polyline points="15 3 21 3 21 9" />

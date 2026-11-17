@@ -15,6 +15,7 @@ interface Props {
 	walineServerUrl?: string;
 	onSave: (draft: ChatProfileDraft) => void;
 	onClose: () => void;
+	onLogout?: () => void;
 }
 
 const {
@@ -23,6 +24,7 @@ const {
 	walineServerUrl = "",
 	onSave,
 	onClose,
+	onLogout,
 }: Props = $props();
 
 const walineProfileUrl = $derived.by(() => {
@@ -307,7 +309,7 @@ function handleSubmit(e: SubmitEvent) {
                     {#if isIsolatedGuest}
                       独立临时身份未经邮箱所有权验证，已禁用离线邮件提醒，防止误发邮件
                     {:else}
-                      不在线时有人 @ 或回复你，将发送摘要邮件至账号邮箱
+                      不在线时有人 @ 或回复你，将发送摘要至邮箱账号
                     {/if}
                   </div>
                 </div>
@@ -334,17 +336,37 @@ function handleSubmit(e: SubmitEvent) {
       </div>
 
       <div class="shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-(--chat-divider-color)">
-        {#if walineProfileUrl}
-          <a
-            href={walineProfileUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 no-underline shrink-0"
-          >
-            <span>{currentUser.authType === "waline" ? "Waline 个人中心" : "前往 Waline 平台"}</span>
-            <span class="text-[11px] opacity-80">↗</span>
-          </a>
-        {/if}
+        <div class="flex items-center gap-2 shrink-0">
+          {#if walineProfileUrl}
+            <a
+              href={walineProfileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 no-underline shrink-0"
+            >
+              <span>{currentUser.authType === "waline" ? "Waline 个人中心" : "前往 Waline 平台"}</span>
+              <span class="text-[11px] opacity-80">↗</span>
+            </a>
+          {/if}
+
+          {#if onLogout}
+            <button
+              type="button"
+              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 text-red-500 hover:text-red-600 hover:bg-red-500/10 active:scale-95 transition-all cursor-pointer border-none shrink-0"
+              onclick={() => {
+                onLogout();
+                onClose();
+              }}
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              <span>退出登录</span>
+            </button>
+          {/if}
+        </div>
 
         <div class="flex items-center gap-2 ml-auto flex-1 sm:flex-initial justify-end">
           <button

@@ -827,7 +827,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               rel="noopener noreferrer"
               class="chat-btn-ghost px-2.5 py-1 text-xs shrink-0 text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20 rounded-lg no-underline font-medium transition-colors"
             >
-              前往串门 ↗
+              前往站点 ↗
             </a>
           {:else if seed.url}
             <a
@@ -963,7 +963,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 {seed.name || (isOnline ? "旁观者" : "历史访客")}
               </span>
               <span class="chat-role-badge chat-role-badge--tag">{isOnline ? "👁️ 旁观访客" : "🕒 历史访客"}</span>
-              {#if isReturning}
+              {#if isReturning && currentUser?.isAdmin}
                 <span class="chat-role-badge chat-role-badge--accent">常客 · 第 {visits} 次来访</span>
               {/if}
             </div>

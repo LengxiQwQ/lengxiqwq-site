@@ -718,7 +718,7 @@ function formatOfflineTime(ts?: number): string {
           ? "闲聊"
           : targetRoom}
     {@const visitLabel = obs?.visitCount && obs.visitCount > 1 ? `第 ${obs.visitCount} 次来访` : "初次到访"}
-    {@const subtitle = `${visitLabel} · ${roomName}`}
+    {@const subtitle = isCurrentUserAdmin ? `${visitLabel} · ${roomName}` : roomName}
     {@const isFocused = obs ? obs.isFocused !== false : true}
     {@const muted = obs ? obs.isMuted !== false : false}
     {#if obs}
@@ -772,7 +772,8 @@ function formatOfflineTime(ts?: number): string {
           ? "闲聊"
           : targetRoom}
     {@const visitLabel = item.visitCount && item.visitCount > 1 ? `第 ${item.visitCount} 次来访` : "初次到访"}
-    {@const subtitle = `${timeLabel} · ${visitLabel}`}
+    {@const subtitle = isCurrentUserAdmin ? `${timeLabel} · ${visitLabel}` : timeLabel}
+    {#if isCurrentUserAdmin}
     <button
       type="button"
       class="chat-user-item group justify-between w-full text-left border-none bg-transparent cursor-pointer opacity-70 hover:opacity-100 transition-opacity"
@@ -844,6 +845,7 @@ function formatOfflineTime(ts?: number): string {
         </span>
       {/if}
     </button>
+    {/if}
   {/snippet}
 
   <!-- 底部：当前登录 / 访客身份卡片（点击头像或昵称整块区域打开个人资料弹窗） -->
