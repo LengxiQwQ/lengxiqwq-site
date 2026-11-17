@@ -89,10 +89,12 @@ const LAST_ROOM_STORAGE_KEY = "lengxi_chat_last_room";
 let mobileDrawer = $state<"none" | "room" | "music">("none");
 const roomPanelId = "chat-room-panel";
 let isMobileLayout = $state(false);
+let splitLayoutBreakpoint = $state(1240);
 let stageContentRect = $state<DOMRectReadOnly>();
-// Keep the split threshold aligned with the chat-stage container query in chat.css.
 const isSplitLayout = $derived(
-	!isMobileLayout && stageContentRect !== undefined && stageContentRect.width < 1240,
+	!isMobileLayout &&
+		stageContentRect !== undefined &&
+		stageContentRect.width < splitLayoutBreakpoint,
 );
 let splitRoomOpen = $state(false);
 let roomPanelEl: HTMLDivElement;
@@ -841,7 +843,9 @@ function triggerDesktopNotification(roomId: string, message: ChatMessageRecord) 
 
 function sendPacket(packet: Record<string, unknown>): boolean {
 	if (!ws || ws.readyState !== WebSocket.OPEN) {
-		showNotice("正在重新连接聊天室，请稍候...");
+		showNotice(
+			navigator.onLine ? "正在重新连接聊天室，请稍候..." : "网络已断开，请检查网络连接",
+		);
 		return false;
 	}
 	ws.send(JSON.stringify(packet));
@@ -863,12 +867,37 @@ function sampleRoomClock(socket: WebSocket | null) {
 	}, 5000);
 }
 
-function connectRoom(roomId: string) {
-	if (isUnmounted) return;
+function clearReconnectTimer() {
 	if (reconnectTimer !== null) {
 		window.clearTimeout(reconnectTimer);
 		reconnectTimer = null;
 	}
+}
+
+function handleNetworkOffline() {
+	if (isUnmounted) return;
+	connectionState = "offline";
+	clearReconnectTimer();
+	const socket = ws;
+	ws = null;
+	closePendingSocket();
+	clearSkipPending();
+	socket?.close(1000, "offline");
+}
+
+function handleNetworkOnline() {
+	if (isUnmounted || connectionState !== "offline" || !normalizedChatServer) return;
+	reconnectAttempt = 1;
+	connectRoom(currentRoom);
+}
+
+function connectRoom(roomId: string) {
+	if (isUnmounted) return;
+	if (!navigator.onLine) {
+		handleNetworkOffline();
+		return;
+	}
+	clearReconnectTimer();
 	if (ws) {
 		// 先保留旧连接，等新房间握手成功后再断开，避免切换瞬间从在线列表里消失。
 		closePendingSocket();
@@ -1465,6 +1494,10 @@ function connectRoom(roomId: string) {
 
 	socket.addEventListener("close", () => {
 		if (ws !== socket || isUnmounted) return;
+		if (!navigator.onLine) {
+			handleNetworkOffline();
+			return;
+		}
 		closePendingSocket();
 		ws = null;
 		clearSkipPending();
@@ -2061,12 +2094,29 @@ onMount(() => {
 	isUnmounted = false;
 	const mobileLayoutQuery = window.matchMedia("(width < 768px)");
 	isMobileLayout = mobileLayoutQuery.matches;
-	const handleMobileLayoutChange = (event: MediaQueryListEvent) => {
-		isMobileLayout = event.matches;
+	const handleMobileLayoutChange = () => {
+		isMobileLayout = mobileLayoutQuery.matches;
 		mobileDrawer = "none";
 		stageTouchStart = null;
 	};
 	mobileLayoutQuery.addEventListener("change", handleMobileLayoutChange);
+	const touchLayoutQuery = window.matchMedia("(pointer: coarse)");
+	const updateSplitLayoutBreakpoint = () => {
+		if (!touchLayoutQuery.matches) {
+			splitLayoutBreakpoint = 1240;
+			return;
+		}
+		const { width, height, orientation } = window.screen;
+		const isPortrait = orientation?.type.startsWith("portrait") ?? width < height;
+		const portraitWidth = Math.min(width, height);
+		// A full-width portrait iPad can be narrower than the tablet split breakpoint.
+		splitLayoutBreakpoint =
+			isPortrait && portraitWidth >= 768 ? Math.min(1024, portraitWidth - 2) : 1024;
+	};
+	updateSplitLayoutBreakpoint();
+	touchLayoutQuery.addEventListener("change", updateSplitLayoutBreakpoint);
+	window.addEventListener("resize", updateSplitLayoutBreakpoint);
+	window.screen.orientation?.addEventListener("change", updateSplitLayoutBreakpoint);
 	// 切入聊天室时立即停止全站侧栏/顶栏音乐播放器，避免与点歌台同时发声
 	window.__fireflyMusic?.stop?.();
 	baseDocumentTitle = document.title;
@@ -2291,6 +2341,8 @@ onMount(() => {
 	window.addEventListener("blur", handleWindowBlur);
 	window.addEventListener("pagehide", handlePageHide);
 	window.addEventListener("pageshow", handlePageShowOrResume);
+	window.addEventListener("offline", handleNetworkOffline);
+	window.addEventListener("online", handleNetworkOnline);
 	window.addEventListener("storage", handleWalineStorageSync);
 	window.addEventListener("mousemove", resetIdleTimer, { passive: true });
 	window.addEventListener("pointerdown", resetIdleTimer, { passive: true });
@@ -2394,6 +2446,8 @@ onMount(() => {
 		window.removeEventListener("blur", handleWindowBlur);
 		window.removeEventListener("pagehide", handlePageHide);
 		window.removeEventListener("pageshow", handlePageShowOrResume);
+		window.removeEventListener("offline", handleNetworkOffline);
+		window.removeEventListener("online", handleNetworkOnline);
 		window.removeEventListener("storage", handleWalineStorageSync);
 		window.removeEventListener("mousemove", resetIdleTimer);
 		window.removeEventListener("pointerdown", resetIdleTimer);
@@ -2401,8 +2455,11 @@ onMount(() => {
 		window.removeEventListener("wheel", resetIdleTimer);
 		window.removeEventListener("touchstart", resetIdleTimer);
 		mobileLayoutQuery.removeEventListener("change", handleMobileLayoutChange);
+		touchLayoutQuery.removeEventListener("change", updateSplitLayoutBreakpoint);
+		window.removeEventListener("resize", updateSplitLayoutBreakpoint);
+		window.screen.orientation?.removeEventListener("change", updateSplitLayoutBreakpoint);
 		cancelWalinePopup?.();
-		if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
+		clearReconnectTimer();
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 		if (skipPendingTimer !== null) window.clearTimeout(skipPendingTimer);
 		closePendingSocket();
@@ -2422,6 +2479,7 @@ onMount(() => {
   <div
     class="chat-mobile-stage flex flex-1 min-h-0 gap-0"
     bind:contentRect={stageContentRect}
+    data-chat-split-layout={isSplitLayout ? "" : undefined}
     ontouchstart={handleStageTouchStart}
     ontouchend={handleStageTouchEnd}
   >

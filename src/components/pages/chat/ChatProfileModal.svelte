@@ -337,18 +337,6 @@ function handleSubmit(e: SubmitEvent) {
 
       <div class="shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-(--chat-divider-color)">
         <div class="flex items-center gap-2 shrink-0">
-          {#if walineProfileUrl}
-            <a
-              href={walineProfileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 no-underline shrink-0"
-            >
-              <span>{currentUser.authType === "waline" ? "Waline 个人中心" : "前往 Waline 平台"}</span>
-              <span class="text-[11px] opacity-80">↗</span>
-            </a>
-          {/if}
-
           {#if onLogout}
             <button
               type="button"
@@ -365,6 +353,18 @@ function handleSubmit(e: SubmitEvent) {
               </svg>
               <span>退出登录</span>
             </button>
+          {/if}
+
+          {#if walineProfileUrl}
+            <a
+              href={walineProfileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 no-underline shrink-0"
+            >
+              <span>{currentUser.authType === "waline" ? "Waline 个人中心" : "前往 Waline 平台"}</span>
+              <span class="text-[11px] opacity-80">↗</span>
+            </a>
           {/if}
         </div>
 

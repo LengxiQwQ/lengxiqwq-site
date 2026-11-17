@@ -177,9 +177,9 @@ const connLabel = $derived(
 		? "已连接"
 		: connectionState === "reconnecting"
 			? "重连中"
-			: connectionState === "connecting"
-				? "连接中"
-				: "离线",
+			: connectionState === "offline"
+				? "已断开"
+				: "连接中",
 );
 
 function resolveMemberRoleBadge(user: {
@@ -301,7 +301,11 @@ function formatOfflineTime(ts?: number): string {
           </button>
         </ChatTooltip>
       {/if}
-      <span class="text-[0.6875rem] px-2 py-0.5 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] text-[var(--chat-accent-text)] font-medium">
+      <span
+        class="chat-connection-status text-[0.6875rem] px-2 py-0.5 rounded-full font-medium"
+        data-state={connectionState}
+        role="status"
+      >
         {connLabel}
       </span>
     </div>

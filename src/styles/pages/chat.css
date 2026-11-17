@@ -438,6 +438,27 @@ html[data-chat-page][data-chat-density="compact"] #chat-page [data-chat-message-
 	background: transparent !important;
 }
 
+.chat-connection-status {
+	color-scheme: light;
+	--chat-connection-color: light-dark(#80510a, #ffd180);
+	color: var(--chat-connection-color);
+	background: color-mix(in oklab, var(--chat-connection-color) 12%, var(--skin-surface));
+	border: 1px solid color-mix(in oklab, var(--chat-connection-color) 28%, var(--skin-surface));
+	transition: none;
+}
+
+.chat-connection-status[data-state="connected"] {
+	--chat-connection-color: light-dark(#176246, #89e1b6);
+}
+
+.chat-connection-status[data-state="offline"] {
+	--chat-connection-color: light-dark(#a12d3a, #ff9fa7);
+}
+
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) .chat-connection-status {
+	color-scheme: dark;
+}
+
 /* ==========================================================================
    4. 聊天消息气泡与系统通知（Telegram 云朵泡泡）
    ========================================================================== */
@@ -1761,6 +1782,14 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	}
 }
 
+/* 触屏平板竖屏仍显示三栏，按可用宽度缩窄两侧。 */
+@media (768px <= width < 1024px) and (pointer: coarse) {
+	.chat-mobile-stage {
+		--chat-left-panel-width: min(280px, 27.5vw);
+		--chat-right-panel-width: min(340px, 33.5vw);
+	}
+}
+
 .chat-tool-btn.chat-split-room-trigger {
 	display: none;
 }
@@ -1783,32 +1812,30 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 }
 
 @media (width >= 768px) {
-	@container chat-stage (width < 1240px) {
-		.chat-tool-btn.chat-split-room-trigger {
-			display: inline-flex;
-		}
+	[data-chat-split-layout] .chat-tool-btn.chat-split-room-trigger {
+		display: inline-flex;
+	}
 
-		.chat-panel.chat-panel-left {
-			position: absolute;
-			inset: 0 auto 0 0;
-			z-index: 55;
-			width: 280px;
-			visibility: hidden;
-		}
+	[data-chat-split-layout] .chat-panel.chat-panel-left {
+		position: absolute;
+		inset: 0 auto 0 0;
+		z-index: 55;
+		width: 280px;
+		visibility: hidden;
+	}
 
-		.chat-panel.chat-panel-left.chat-split-room-open {
-			visibility: visible;
-			border-right: 1px solid var(--skin-line) !important;
-			box-shadow: 12px 0 32px -12px rgb(0 0 0 / 0.42) !important;
-		}
+	[data-chat-split-layout] .chat-panel.chat-panel-left.chat-split-room-open {
+		visibility: visible;
+		border-right: 1px solid var(--skin-line) !important;
+		box-shadow: 12px 0 32px -12px rgb(0 0 0 / 0.42) !important;
+	}
 
-		.chat-panel-center {
-			border-left: 0;
-		}
+	[data-chat-split-layout] .chat-panel-center {
+		border-left: 0;
+	}
 
-		.chat-panel-right {
-			width: clamp(280px, 32cqw, 340px);
-		}
+	[data-chat-split-layout] .chat-panel-right {
+		width: clamp(280px, 32cqw, 340px);
 	}
 }
 
