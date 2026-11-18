@@ -1,11 +1,6 @@
 <script lang="ts">
 import { onMount, tick } from "svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
-import ChatAuthModal from "./ChatAuthModal.svelte";
-import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
-import ChatPollCreateModal from "./ChatPollCreateModal.svelte";
-import ChatProfileModal from "./ChatProfileModal.svelte";
-import ChatUserDetailModal from "./ChatUserDetailModal.svelte";
 import ChatWindow from "./ChatWindow.svelte";
 import {
 	type ChatAppearanceSettings,
@@ -675,6 +670,79 @@ let showAuthModal = $state(false);
 let showUserDetailModal = $state(false);
 let showPollCreateModal = $state(false);
 
+// 非首屏必需的弹窗按需动态加载，减小聊天页首包 JS 体积
+let ChatAuthModalComp = $state<typeof import("./ChatAuthModal.svelte").default | null>(null);
+let ChatInterconnectPopoverComp = $state<typeof import("./ChatInterconnectPopover.svelte").default | null>(null);
+let ChatPollCreateModalComp = $state<typeof import("./ChatPollCreateModal.svelte").default | null>(null);
+let ChatProfileModalComp = $state<typeof import("./ChatProfileModal.svelte").default | null>(null);
+let ChatUserDetailModalComp = $state<typeof import("./ChatUserDetailModal.svelte").default | null>(null);
+
+$effect(() => {
+	if (showAuthModal && !ChatAuthModalComp) {
+		void import("./ChatAuthModal.svelte")
+			.then((mod) => {
+				ChatAuthModalComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatAuthModal:", err);
+				showAuthModal = false;
+				showNotice("登录弹窗加载失败，请检查网络后重试", "error");
+			});
+	}
+});
+$effect(() => {
+	if (showInterconnect && !ChatInterconnectPopoverComp) {
+		void import("./ChatInterconnectPopover.svelte")
+			.then((mod) => {
+				ChatInterconnectPopoverComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatInterconnectPopover:", err);
+				showInterconnect = false;
+				showNotice("互联节点列表加载失败，请检查网络后重试", "error");
+			});
+	}
+});
+$effect(() => {
+	if (showPollCreateModal && !ChatPollCreateModalComp) {
+		void import("./ChatPollCreateModal.svelte")
+			.then((mod) => {
+				ChatPollCreateModalComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatPollCreateModal:", err);
+				showPollCreateModal = false;
+				showNotice("投票弹窗加载失败，请检查网络后重试", "error");
+			});
+	}
+});
+$effect(() => {
+	if (showProfileModal && !ChatProfileModalComp) {
+		void import("./ChatProfileModal.svelte")
+			.then((mod) => {
+				ChatProfileModalComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatProfileModal:", err);
+				showProfileModal = false;
+				showNotice("资料编辑弹窗加载失败，请检查网络后重试", "error");
+			});
+	}
+});
+$effect(() => {
+	if (showUserDetailModal && !ChatUserDetailModalComp) {
+		void import("./ChatUserDetailModal.svelte")
+			.then((mod) => {
+				ChatUserDetailModalComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatUserDetailModal:", err);
+				showUserDetailModal = false;
+				showNotice("用户资料卡加载失败，请检查网络后重试", "error");
+			});
+	}
+});
+
 function openAuthModal() {
 	showUserDetailModal = false;
 	showProfileModal = false;
@@ -708,6 +776,28 @@ let cancelWalinePopup: (() => void) | null = null;
 let reconnectAttempt = 0;
 let isUnmounted = false;
 let currentAuth: { kind: "waline" | "guest"; token: string } | null = null;
+let secondaryStartupDone = false;
+let secondaryStartupTimer: number | null = null;
+
+function runSecondaryStartup() {
+	if (secondaryStartupDone || isUnmounted) return;
+	secondaryStartupDone = true;
+	if (secondaryStartupTimer !== null) {
+		window.clearTimeout(secondaryStartupTimer);
+		secondaryStartupTimer = null;
+	}
+	void loadStickerPacks(stickerPackUrls).then((packs) => {
+		if (!isUnmounted) stickerPacks = packs;
+	});
+	void refreshGlobalPresence();
+	void refreshMemberDirectory();
+}
+
+$effect(() => {
+	if (mobileDrawer === "room" && !secondaryStartupDone) {
+		runSecondaryStartup();
+	}
+});
 
 const stickerMap = $derived(buildStickerLookup(stickerPacks));
 const activeMeta = $derived(
@@ -1102,6 +1192,9 @@ function connectRoom(roomId: string) {
 				if (packet.mergedGuestHistory) {
 					showNotice("已自动合并同邮箱的历史访客记录至当前账号");
 				}
+				if (!secondaryStartupDone) {
+					window.setTimeout(runSecondaryStartup, 0);
+				}
 				break;
 			}
 			case "chat:history_batch": {
@@ -1176,6 +1269,9 @@ function connectRoom(roomId: string) {
 				}
 				if (packet.mergedGuestHistory) {
 					showNotice("已自动合并同邮箱的历史访客记录至当前账号");
+				}
+				if (!secondaryStartupDone) {
+					window.setTimeout(runSecondaryStartup, 0);
 				}
 				break;
 			}
@@ -2325,13 +2421,9 @@ onMount(() => {
 		targetMessageUid = paramMsg;
 	}
 
-	void loadStickerPacks(stickerPackUrls).then((packs) => {
-		stickerPacks = packs;
-	});
+	// 优先建连房间 WebSocket，表情包与全局名录等待首屏消息到达后（或 600ms 兜底）再后台拉取
 	connectRoom(currentRoom);
-	void refreshGlobalPresence();
-	void refreshMemberDirectory();
-	void refreshSpectatorHistory();
+	secondaryStartupTimer = window.setTimeout(runSecondaryStartup, 600);
 
 	let presenceTick = 0;
 	const presenceTimer = window.setInterval(() => {
@@ -2601,6 +2693,10 @@ onMount(() => {
 		}
 		isUnmounted = true;
 		clearHistoryLoadTimer();
+		if (secondaryStartupTimer !== null) {
+			window.clearTimeout(secondaryStartupTimer);
+			secondaryStartupTimer = null;
+		}
 		for (const pending of songRequests.values()) pending.finish(false);
 		window.clearInterval(presenceTimer);
 		window.clearInterval(memberTimer);
@@ -2833,11 +2929,13 @@ onMount(() => {
         />
       </div>
 
-      <ChatInterconnectPopover
-        open={showInterconnect}
-        sites={interconnectSites}
-        onClose={() => (showInterconnect = false)}
-      />
+      {#if ChatInterconnectPopoverComp}
+        <ChatInterconnectPopoverComp
+          open={showInterconnect}
+          sites={interconnectSites}
+          onClose={() => (showInterconnect = false)}
+        />
+      {/if}
     </div>
 
     <div
@@ -2943,59 +3041,67 @@ onMount(() => {
   </div>
 
   <!-- 个人资料独立编辑弹窗 -->
-  <ChatProfileModal
-    open={showProfileModal}
-    currentUser={currentUser}
-    walineServerUrl={walineServerUrl}
-    onSave={handleUpdateProfile}
-    onClose={() => (showProfileModal = false)}
-    onLogout={handleLogout}
-  />
+  {#if ChatProfileModalComp}
+    <ChatProfileModalComp
+      open={showProfileModal}
+      currentUser={currentUser}
+      walineServerUrl={walineServerUrl}
+      onSave={handleUpdateProfile}
+      onClose={() => (showProfileModal = false)}
+      onLogout={handleLogout}
+    />
+  {/if}
 
   <!-- 用户详细资料卡弹窗 -->
-  <ChatUserDetailModal
-    open={showUserDetailModal}
-    seed={userDetailSeed}
-    roomId={currentRoom}
-    chatServerUrl={normalizedChatServer}
-    currentUser={currentUser}
-    onlineMembers={onlineMembers}
-    messages={messages}
-    musicHistoryLogs={musicState?.historyLogs ?? []}
-    interconnectSites={interconnectSites}
-    onClose={() => (showUserDetailModal = false)}
-    onMention={handleMentionUser}
-    onEditSelf={() => {
-      showUserDetailModal = false;
-      showProfileModal = true;
-    }}
-    onEnqueueTrack={handleEnqueueTrack}
-    onOpenPlaylist={handleOpenPlaylistFromProfile}
-    onUpdateMemberBadges={handleUpdateMemberBadges}
-    onJumpToMessage={(msgUid) => {
-      showUserDetailModal = false;
-      targetMessageUid = msgUid;
-      mobileDrawer = "none";
-      closeSplitRoom();
-    }}
-  />
+  {#if ChatUserDetailModalComp}
+    <ChatUserDetailModalComp
+      open={showUserDetailModal}
+      seed={userDetailSeed}
+      roomId={currentRoom}
+      chatServerUrl={normalizedChatServer}
+      currentUser={currentUser}
+      onlineMembers={onlineMembers}
+      messages={messages}
+      musicHistoryLogs={musicState?.historyLogs ?? []}
+      interconnectSites={interconnectSites}
+      onClose={() => (showUserDetailModal = false)}
+      onMention={handleMentionUser}
+      onEditSelf={() => {
+        showUserDetailModal = false;
+        showProfileModal = true;
+      }}
+      onEnqueueTrack={handleEnqueueTrack}
+      onOpenPlaylist={handleOpenPlaylistFromProfile}
+      onUpdateMemberBadges={handleUpdateMemberBadges}
+      onJumpToMessage={(msgUid) => {
+        showUserDetailModal = false;
+        targetMessageUid = msgUid;
+        mobileDrawer = "none";
+        closeSplitRoom();
+      }}
+    />
+  {/if}
 
   <!-- 身份准入二选一弹窗（最高层级，唤起时自动收起其他底层弹窗） -->
-  <ChatAuthModal
-    open={showAuthModal}
-    roomId={currentRoom}
-    chatServerUrl={normalizedChatServer}
-    walineServerUrl={walineServerUrl}
-    onAuthenticated={handleAuthenticated}
-    onClose={() => (showAuthModal = false)}
-  />
+  {#if ChatAuthModalComp}
+    <ChatAuthModalComp
+      open={showAuthModal}
+      roomId={currentRoom}
+      chatServerUrl={normalizedChatServer}
+      walineServerUrl={walineServerUrl}
+      onAuthenticated={handleAuthenticated}
+      onClose={() => (showAuthModal = false)}
+    />
+  {/if}
 
   <!-- 发起投票弹窗（顶级外层，免受 .chat-mobile-stage 高斯模糊影响） -->
-  <ChatPollCreateModal
-    open={showPollCreateModal}
-    onClose={() => (showPollCreateModal = false)}
-    onSubmit={handleCreatePoll}
-  />
+  {#if ChatPollCreateModalComp}
+    <ChatPollCreateModalComp
+      open={showPollCreateModal}
+      onClose={() => (showPollCreateModal = false)}
+      onSubmit={handleCreatePoll}
+    />
+  {/if}
 
   <!-- 全局底部悬浮提示气泡（挂载至 body 顶层，避免被弹窗/抽屉/壁纸遮挡） -->
   <div

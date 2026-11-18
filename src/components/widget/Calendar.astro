@@ -132,13 +132,25 @@ const postUrlPrefix = url("/posts/");
 
   async function fetchData() {
     try {
-      // 使用缓存避免 swup 导航时重复请求
+      // 使用缓存与 in-flight 去重，避免 swup 导航或并发调度重复请求
       if (window.__allPostMetaCache) {
         allPostsData = window.__allPostMetaCache;
       } else {
-        const response = await fetch(calendarDataUrl);
-        allPostsData = await response.json();
-        window.__allPostMetaCache = allPostsData;
+        if (!window.__allPostMetaPromise) {
+          window.__allPostMetaPromise = fetch(calendarDataUrl)
+            .then((response) => {
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              return response.json();
+            })
+            .then((data) => {
+              window.__allPostMetaCache = data;
+              return data;
+            })
+            .finally(() => {
+              window.__allPostMetaPromise = null;
+            });
+        }
+        allPostsData = await window.__allPostMetaPromise;
       }
       
       // Reconstruct postDateMap and availableYears
@@ -574,13 +586,76 @@ const postUrlPrefix = url("/posts/");
       renderCalendar();
   }
 
+  let calendarObserver = null;
+  let calendarIdleScheduled = false;
+
+  function isCalendarVisible() {
+      if (document.documentElement.hasAttribute('data-chat-page')) return false;
+      const widgetEl = document.getElementById('calendar-widget') || document.getElementById('calendar-grid');
+      if (!widgetEl) return false;
+      return widgetEl.getClientRects().length > 0;
+  }
+
+  function scheduleFetchData() {
+      if (document.documentElement.hasAttribute('data-chat-page')) return;
+      if (window.__allPostMetaCache) {
+          fetchData();
+          return;
+      }
+
+      if (calendarObserver) {
+          calendarObserver.disconnect();
+          calendarObserver = null;
+      }
+
+      const targetEl = document.getElementById('calendar-widget') || document.getElementById('calendar-grid');
+      if (!targetEl) return;
+
+      let started = false;
+      const runOnce = () => {
+          if (started) return;
+          if (!isCalendarVisible()) return;
+          started = true;
+          if (calendarObserver) {
+              calendarObserver.disconnect();
+              calendarObserver = null;
+          }
+          fetchData();
+      };
+
+      if (typeof IntersectionObserver === 'function') {
+          calendarObserver = new IntersectionObserver((entries) => {
+              if (entries.some((entry) => entry.isIntersecting)) {
+                  runOnce();
+              }
+          }, { rootMargin: '300px 0px' });
+          calendarObserver.observe(targetEl);
+      }
+
+      if (!calendarIdleScheduled) {
+          calendarIdleScheduled = true;
+          const scheduleIdle = () => {
+              const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 800));
+              idle(() => {
+                  calendarIdleScheduled = false;
+                  runOnce();
+              }, { timeout: 2000 });
+          };
+          if (document.readyState === 'complete') scheduleIdle();
+          else window.addEventListener('load', scheduleIdle, { once: true });
+      }
+  }
+
   function initCalendar() {
+      // 聊天室隐藏了全局侧栏，跳过请求文章元数据 JSON
+      if (document.documentElement.hasAttribute('data-chat-page')) return;
+
       // Reset to current date on init
       const now = new Date();
       displayYear = now.getFullYear();
       displayMonth = now.getMonth();
       
-      fetchData();
+      scheduleFetchData();
       
       // Bind events
       const prevBtn = document.getElementById('prev-month-btn');
@@ -610,9 +685,18 @@ const postUrlPrefix = url("/posts/");
   // 防止 Swup 切页重跑脚本时重复注册监听器（此脚本的 data-swup-ignore-script 在 define:vars 构建时可能丢失）
   if (!window.__calendarInit) {
     window.__calendarInit = true;
-    // 页面切换时重新渲染
-    document.addEventListener("swup:contentReplaced", () => {
-      setTimeout(initCalendar, 100);
+    // Swup page:view 会在 updateSidebarComponentsVisibility() 去掉 .hidden 之后触发，
+    // 再走一帧 rAF 确保布局可见性已同步再检查调度
+    const handleCalendarReinit = () => {
+      if (!document.documentElement.hasAttribute('data-chat-page')) {
+        requestAnimationFrame(() => initCalendar());
+      }
+    };
+    document.addEventListener("swup:page:view", handleCalendarReinit);
+    window.addEventListener("chatPageChange", (e) => {
+      if (!e?.detail?.isChatPage) {
+        setTimeout(handleCalendarReinit, 100);
+      }
     });
   }
 </script>

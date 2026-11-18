@@ -132,10 +132,16 @@ import { url } from "@/utils/url-utils";
 
     // 重置初始化标志
     window.spineModelInitialized = false;
+    window.__spineModelInitializing = false;
   }
 
   async function initSpineModel() {
     if (!spineModelConfig.enable) return;
+
+    // 聊天室全屏页隐藏看板娘，跳过运行时与模型下载
+    if (document.documentElement.hasAttribute("data-chat-page")) {
+      return;
+    }
 
     // 检查移动端显示设置，如果隐藏则不加载运行时
     if (
@@ -148,16 +154,17 @@ import { url } from "@/utils/url-utils";
       return;
     }
 
-    // 检查是否已经初始化
-    if (window.spineModelInitialized) {
-      console.log("⏭️ Spine model already initialized, skipping...");
+    // 检查是否已经初始化或正在初始化中
+    if (window.spineModelInitialized || window.__spineModelInitializing) {
+      console.log("⏭️ Spine model already initialized or initializing, skipping...");
       return;
     }
 
     console.log("🎯 Initializing Spine Model...");
 
-    // 先清理可能存在的旧实例
+    // 先清理可能存在的旧实例，再加并发初始化锁（cleanupSpineModel 内部会重置标志）
     cleanupSpineModel();
+    window.__spineModelInitializing = true;
 
     // 首先加载 CSS
     loadSpineCSS();
@@ -228,6 +235,7 @@ import { url } from "@/utils/url-utils";
 
       // 标记为已初始化
       window.spineModelInitialized = true;
+      window.__spineModelInitializing = false;
 
       // 创建 SpinePlayer
       new window.spine.SpinePlayer("spine-player-container", {
@@ -405,6 +413,7 @@ import { url } from "@/utils/url-utils";
 
       // 重置初始化标志，允许重试
       window.spineModelInitialized = false;
+      window.__spineModelInitializing = false;
 
       const errorDiv = document.getElementById("spine-error");
       if (errorDiv) {
@@ -419,34 +428,61 @@ import { url } from "@/utils/url-utils";
     }
   }
 
-  // 监听页面卸载事件，清理资源
-  window.addEventListener("beforeunload", cleanupSpineModel);
+  // 防止 Swup 重跑脚本时重复挂载全局监听器
+  if (!window.__spineScriptBound) {
+    window.__spineScriptBound = true;
 
-  // 监听 Swup 页面切换事件（如果使用了 Swup）
-  if (typeof window.swup !== "undefined" && window.swup.hooks) {
-    window.swup.hooks.on("content:replace", () => {
-      // 只更新响应式显示，不重新创建模型
+    // 监听页面卸载事件，清理资源
+    window.addEventListener("beforeunload", cleanupSpineModel);
+
+    // 监听 Swup 页面切换事件与聊天室退出事件
+    const handlePostNavigation = () => {
+      setTimeout(() => {
+        if (!window.spineModelInitialized && !window.__spineModelInitializing && !document.documentElement.hasAttribute("data-chat-page")) {
+          initSpineModel();
+        } else {
+          updateResponsiveDisplay();
+        }
+      }, 100);
+    };
+    const bindSwupHook = () => {
+      if (typeof window.swup !== "undefined" && window.swup.hooks && !window.__spineSwupHookBound) {
+        window.__spineSwupHookBound = true;
+        window.swup.hooks.on("content:replace", handlePostNavigation);
+      }
+    };
+    bindSwupHook();
+    document.addEventListener("swup:enable", bindSwupHook, { once: true });
+    window.addEventListener("chatPageChange", (e) => {
+      if (!e?.detail?.isChatPage) {
+        handlePostNavigation();
+      }
+    });
+
+    // 监听 popstate 事件（浏览器前进后退）
+    window.addEventListener("popstate", () => {
       setTimeout(() => {
         updateResponsiveDisplay();
       }, 100);
     });
-  }
 
-  // 监听 popstate 事件（浏览器前进后退）
-  window.addEventListener("popstate", () => {
-    setTimeout(() => {
-      updateResponsiveDisplay();
-    }, 100);
-  });
+    // 监听窗口大小变化
+    window.addEventListener("resize", updateResponsiveDisplay);
 
-  // 监听窗口大小变化
-  window.addEventListener("resize", updateResponsiveDisplay);
-
-  // 页面加载完成后初始化（只初始化一次）
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initSpineModel);
-  } else {
-    initSpineModel();
+    // 首屏 load + 空闲后再下载 Spine 运行时与骨骼纹理，不抢占首屏核心内容
+    function scheduleSpineInit() {
+      if (document.documentElement.hasAttribute("data-chat-page")) return;
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(() => void initSpineModel(), { timeout: 1500 });
+      } else {
+        window.setTimeout(() => void initSpineModel(), 800);
+      }
+    }
+    if (document.readyState === "complete") {
+      scheduleSpineInit();
+    } else {
+      window.addEventListener("load", scheduleSpineInit, { once: true });
+    }
   }
 </script>
 )}

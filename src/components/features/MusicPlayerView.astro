@@ -972,7 +972,9 @@ const viewConfigStr = JSON.stringify({
     // 每个 widget 只初始化一次。导航栏那份 widget 在 swup 容器之外、DOM 不会被
     // 替换，而本脚本每次导航都会被重跑；侧栏 widget 会被整体替换，新 DOM 上没有
     // 这个标记，因此仍会正常重新初始化（旧实例由内部的 MutationObserver 清理）。
+    // 聊天室全屏页隐藏所有站点音乐面板，跳过初始化以避免无谓的 Meting API 请求。
     function initAll() {
+        if (document.documentElement.hasAttribute('data-chat-page')) return;
         var widgets = document.querySelectorAll('.music-player-widget');
         for (var i = 0; i < widgets.length; i++) {
             var w = widgets[i];
@@ -983,6 +985,21 @@ const viewConfigStr = JSON.stringify({
     }
 
     initAll();
+
+    if (!window.__musicViewSwupBound) {
+        window.__musicViewSwupBound = true;
+        var resumeMusicOnBlog = function () {
+            if (!document.documentElement.hasAttribute('data-chat-page')) {
+                setTimeout(initAll, 0);
+            }
+        };
+        document.addEventListener('swup:page:view', resumeMusicOnBlog);
+        window.addEventListener('chatPageChange', function (e) {
+            if (!(e && e.detail && e.detail.isChatPage)) {
+                resumeMusicOnBlog();
+            }
+        });
+    }
 })();
 </script>
 

@@ -115,6 +115,7 @@ function serializeMenus(menus: Props["config"]["menus"]) {
 		}
 	}
 
+	let tipObserverStarted = false;
 	const tipObserver = new MutationObserver((mutations) => {
 		for (const m of mutations) {
 			for (const node of m.addedNodes) {
@@ -125,7 +126,6 @@ function serializeMenus(menus: Props["config"]["menus"]) {
 			}
 		}
 	});
-	tipObserver.observe(document.body, { childList: true, subtree: true });
 
 	// 菜单动作映射
 	let currentModelIndex = 0;
@@ -142,7 +142,11 @@ function serializeMenus(menus: Props["config"]["menus"]) {
 		},
 	};
 
+	let live2dInitialized = false;
 	function initWidget() {
+		if (live2dInitialized) return;
+		if (document.documentElement.hasAttribute("data-chat-page")) return;
+
 		const container = document.getElementById("l2d-widget-container");
 		if (!container) return;
 
@@ -225,18 +229,41 @@ function serializeMenus(menus: Props["config"]["menus"]) {
 				}
 			}
 
+			live2dInitialized = true;
+			if (!tipObserverStarted) {
+				tipObserverStarted = true;
+				tipObserver.observe(document.body, { childList: true, subtree: true });
+			}
 			createWidget(options);
 		} catch (e) {
 			console.error("Failed to initialize Live2D widget:", e);
 		}
 	}
 
-	// 确保只初始化一次
-	if (document.readyState === "loading") {
-		document.addEventListener("DOMContentLoaded", initWidget);
-	} else {
-		initWidget();
+	// 首屏 load + 空闲后再下载 Live2D 模型，避免阻塞首屏核心内容
+	function scheduleInitWidget() {
+		if (live2dInitialized) return;
+		if (document.documentElement.hasAttribute("data-chat-page")) return;
+		if (typeof window.requestIdleCallback === "function") {
+			window.requestIdleCallback(initWidget, { timeout: 1500 });
+		} else {
+			window.setTimeout(initWidget, 800);
+		}
 	}
+
+	if (document.readyState === "complete") {
+		scheduleInitWidget();
+	} else {
+		window.addEventListener("load", scheduleInitWidget, { once: true });
+	}
+
+	// 若从聊天室切回博客页，按需补初始化看板娘
+	window.addEventListener("chatPageChange", (e: Event) => {
+		const ce = e as CustomEvent<{ isChatPage?: boolean }>;
+		if (!ce.detail?.isChatPage) {
+			scheduleInitWidget();
+		}
+	});
 
 	// 响应式处理：窗口大小变化时显示/隐藏
 	function handleResponsive() {
