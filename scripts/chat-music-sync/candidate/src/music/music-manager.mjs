@@ -25,6 +25,12 @@ function writeJsonAtomic(filePath, data) {
   }
 }
 
+const MAX_PREPARE_WAIT_MS = 2100;
+const QUORUM_PREPARE_WAIT_MS = 1500;
+const MULTI_LISTENER_LEAD_MS = 280;
+const SINGLE_LISTENER_LEAD_MS = 120;
+const PREPARED_REUSE_TTL_MS = 25 * 60_000;
+
 export class MusicManager {
   constructor({ roomId = 'chat', dataDir, musicRegistry, signSecret, serverOrigin, onStateChanged, onPrefetchTrack, onUnavailable, getListeners = () => [] }) {
     this.roomId = roomId;
@@ -49,6 +55,10 @@ export class MusicManager {
     this.fallbackPlaylistName = null;
     this._nextLogId = 1;
     this._advanceTimer = null;
+    this._refreshPreparedTimer = null;
+    this._prepareBarrierTimer = null;
+    this._quorumBarrierTimer = null;
+    this.readyClients = new Set();
     this.preparedFallback = null;
     this.preparedQueue = null;
     this._prepareFallbackTimer = null;
@@ -188,7 +198,8 @@ export class MusicManager {
       next,
       current: this.current && {
         ...this.current,
-        phase: this.current.phase === 'scheduled' && Date.now() >= this.current.startedAt
+        phase: (this.current.phase === 'scheduled' || this.current.phase === 'preparing') &&
+          Date.now() >= this.current.startedAt
           ? 'playing' : this.current.phase
       },
       queue: this.queue.map(item => ({
@@ -285,7 +296,11 @@ export class MusicManager {
     // Otherwise add to queue
     const queueItem = { uid, track, requesterKey, requesterName, requesterAvatar, enqueuedAt: now };
     this.queue.push(queueItem);
-    if (this.queue[0] === queueItem) void this.prepareNext(playable);
+    if (this.queue[0] === queueItem) {
+      void this.prepareNext(playable);
+    } else if (this.queue[1] === queueItem) {
+      this.onPrefetchTrack(playable.streamUrl, false);
+    }
     this.savePlayback();
     this.onStateChanged();
 
@@ -305,6 +320,13 @@ export class MusicManager {
     }
   }
 
+  clearBarrierTimers() {
+    clearTimeout(this._prepareBarrierTimer);
+    clearTimeout(this._quorumBarrierTimer);
+    this._prepareBarrierTimer = null;
+    this._quorumBarrierTimer = null;
+  }
+
   scheduleAdvance() {
     clearTimeout(this._advanceTimer);
     clearTimeout(this._refreshPreparedTimer);
@@ -321,20 +343,61 @@ export class MusicManager {
     }
   }
 
+  commitScheduledStart(play, leadMs = MULTI_LISTENER_LEAD_MS) {
+    if (!play || this.current !== play || play.phase !== 'preparing') return;
+    this.clearBarrierTimers();
+    const nextStart = Date.now() + leadMs;
+    play.phase = 'scheduled';
+    // Only pull startedAt earlier or set the authoritative launch timestamp
+    if (nextStart < play.startedAt || play.startedAt <= Date.now()) {
+      play.startedAt = nextStart;
+    }
+    this.savePlayback();
+    this.scheduleAdvance();
+    this.onStateChanged();
+  }
+
+  ready(playUid, clientId, revision) {
+    const play = this.current;
+    if (!play || play.uid !== playUid) return false;
+    if (revision !== undefined && revision !== (play.sourceRevision ?? 0)) return false;
+    if (!this.readyClients) this.readyClients = new Set();
+    if (clientId) this.readyClients.add(clientId);
+    this.recheckReady();
+    return true;
+  }
+
+  recheckReady() {
+    const play = this.current;
+    if (!play || play.phase !== 'preparing') return;
+    const listeners = (this.getListeners?.() || []).filter(client => client.modern);
+    if (listeners.length === 0) {
+      this.commitScheduledStart(play, SINGLE_LISTENER_LEAD_MS);
+      return;
+    }
+    const readyCount = listeners.filter(client => this.readyClients?.has(client.id)).length;
+    if (readyCount >= listeners.length) {
+      const leadMs = listeners.length === 1 ? SINGLE_LISTENER_LEAD_MS : MULTI_LISTENER_LEAD_MS;
+      this.commitScheduledStart(play, leadMs);
+    }
+  }
+
   playTrack(track, requester, isFallback = false, startedAt = Date.now(), requestUid) {
     this.generation++;
-    const listeners = this.getListeners();
+    this.clearBarrierTimers();
+    this.readyClients = new Set();
+    const listeners = this.getListeners ? this.getListeners() : [];
     const restored = startedAt < Date.now() - 1000;
     // Mixed-version rooms remain immediate until old listeners reload.
-    const synchronized = !restored && listeners.every(client => client.modern);
-    this.current = {
+    const synchronized = !restored && listeners.length > 0 && listeners.every(client => client.modern);
+    const play = {
       uid: 'play_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
       track,
       requesterKey: requester.userKey,
       requesterName: requester.name,
       requesterAvatar: requester.avatar || '',
-      startedAt: synchronized ? Date.now() + 2000 : startedAt,
-      phase: synchronized ? "scheduled" : "playing",
+      startedAt: synchronized ? Date.now() + MAX_PREPARE_WAIT_MS : startedAt,
+      phase: synchronized ? 'preparing' : 'playing',
       durationSec: durationOf(track.durationSec) || 240,
       isFallback,
       requestUid,
@@ -342,13 +405,34 @@ export class MusicManager {
       skipVotes: [],
       skipVoteNames: []
     };
-    this.onPrefetchTrack(track.streamUrl);
+    this.current = play;
+
+    if (synchronized) {
+      this._quorumBarrierTimer = setTimeout(() => {
+        if (this.current !== play || play.phase !== 'preparing') return;
+        const active = (this.getListeners?.() || []).filter(client => client.modern);
+        const readyCount = active.filter(client => this.readyClients?.has(client.id)).length;
+        if (active.length === 0 || (readyCount > 0 && readyCount >= Math.ceil(active.length * 0.75))) {
+          this.commitScheduledStart(play, MULTI_LISTENER_LEAD_MS);
+        }
+      }, QUORUM_PREPARE_WAIT_MS);
+      this._quorumBarrierTimer.unref?.();
+
+      this._prepareBarrierTimer = setTimeout(() => {
+        if (this.current === play && play.phase === 'preparing') {
+          this.commitScheduledStart(play, MULTI_LISTENER_LEAD_MS);
+        }
+      }, MAX_PREPARE_WAIT_MS - MULTI_LISTENER_LEAD_MS);
+      this._prepareBarrierTimer.unref?.();
+    }
+
+    this.onPrefetchTrack(track.streamUrl, true);
     this.savePlayback();
     this.scheduleAdvance();
 
     // Warm the current song first and then the next choice for this room.
     clearTimeout(this._prepareFallbackTimer);
-    this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 300);
+    this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 800);
   }
 
   async resolveFallbackTrackPlayable() {
@@ -383,7 +467,7 @@ export class MusicManager {
       if (!refresh || !previous.checkedAt) return;
       const usable = await this.usePrepared(previous);
       if (usable && this[slot] === previous) {
-        this.onPrefetchTrack(usable.streamUrl);
+        this.onPrefetchTrack(usable.streamUrl, false);
         return;
       }
     }
@@ -403,14 +487,21 @@ export class MusicManager {
     }
     record.playable = playable;
     record.checkedAt = Date.now();
-    if (queued || !this.queue.length) this.onPrefetchTrack(playable.streamUrl);
+    if (queued || !this.queue.length) {
+      this.onPrefetchTrack(playable.streamUrl, false);
+    }
+    if (this.queue[1]?.track) {
+      void this.resolve(this.queue[1].track).then(second => {
+        if (second?.streamUrl) this.onPrefetchTrack(second.streamUrl, false);
+      }).catch(() => {});
+    }
     this.onStateChanged();
   }
 
   async usePrepared(record) {
     if (!record) return null;
     if (!record.checkedAt) return await record.pending;
-    if (Date.now() - record.checkedAt < 60_000) return record.playable;
+    if (Date.now() - record.checkedAt < PREPARED_REUSE_TTL_MS) return record.playable;
     const cached = await this.musicRegistry.isCached?.(record.playable, this.signSecret).catch(() => false);
     return cached ? record.playable : null;
   }
@@ -427,6 +518,7 @@ export class MusicManager {
   advanceNext() {
     const generation = this.generation;
     if (this.advancing?.generation === generation) return this.advancing.promise;
+    this.clearBarrierTimers();
     clearTimeout(this._advanceTimer);
     clearTimeout(this._refreshPreparedTimer);
     clearTimeout(this._prepareFallbackTimer);
@@ -649,7 +741,7 @@ export class MusicManager {
         // Notify even for the same address: clients must actually reload that resource.
         play.track = playable;
         play.sourceRevision++;
-        this.onPrefetchTrack(playable.streamUrl);
+        this.onPrefetchTrack(playable.streamUrl, true);
         this.onStateChanged();
       }
       // Never skip the whole room on one device report or a transient resolver outage.

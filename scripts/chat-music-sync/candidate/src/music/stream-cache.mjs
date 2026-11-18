@@ -3,7 +3,7 @@ import { createReadStream, createWriteStream, promises as fs } from 'node:fs';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
-import { idleWatchdog, waitBounded } from './stream-timeouts.mjs';
+import { idleWatchdog } from './stream-timeouts.mjs';
 import { fetchAudio, identifyAudio } from './audio-source.mjs';
 
 const directory = process.env.CHAT_MUSIC_CACHE_DIR || '/opt/chat-server/data/music_cache';
@@ -11,15 +11,22 @@ const MAX_BYTES = 500 * 1024 * 1024;
 const MAX_FILE = 32 * 1024 * 1024;
 const MAX_FILES = 150;
 const FETCH_TIMEOUT = 90_000;
+const IN_FLIGHT_LOOKAHEAD_BYTES = 256 * 1024;
+
 const queue = [];
 let downloading = 0;
-const pending = new Map();
+const inFlight = new Map();
 const active = new Map();
 let cleanup;
 
-function paths(url) {
-  const key = createHash('sha256').update(url).digest('hex').slice(0, 32);
-  return { key, audio: path.join(directory, key + '.audio'), meta: path.join(directory, key + '.meta.json') };
+function paths(url, trackKey = '') {
+  const seed = typeof trackKey === 'string' && trackKey.trim() ? trackKey.trim() : url;
+  const key = createHash('sha256').update(seed).digest('hex').slice(0, 32);
+  return {
+    key,
+    audio: path.join(directory, key + '.audio'),
+    meta: path.join(directory, key + '.meta.json')
+  };
 }
 
 export function parseRange(header, size) {
@@ -52,8 +59,25 @@ async function openCached(files) {
   }
 }
 
-export async function hasCachedAudio(url) {
-  const cached = await openCached(paths(url));
+async function openCachedWithFallback(url, trackKey = '') {
+  const primary = paths(url, trackKey);
+  const cached = await openCached(primary);
+  if (cached) return { cached, files: primary };
+  if (trackKey) {
+    const legacy = paths(url, '');
+    if (legacy.key !== primary.key) {
+      const legacyCached = await openCached(legacy);
+      if (legacyCached) return { cached: legacyCached, files: legacy };
+    }
+  }
+  return { cached: null, files: primary };
+}
+
+export async function hasCachedAudio(url, trackKey = '') {
+  const files = paths(url, trackKey);
+  const running = inFlight.get(files.key);
+  if (running?.ready && !running.failed) return true;
+  const { cached } = await openCachedWithFallback(url, trackKey);
   if (!cached) return false;
   await cached.file.close();
   return true;
@@ -72,7 +96,7 @@ async function trimCache() {
   let count = files.length;
   for (const item of files) {
     if (size <= MAX_BYTES && count <= MAX_FILES) break;
-    if (pending.has(item.key) || active.has(item.key)) continue;
+    if (inFlight.has(item.key) || active.has(item.key)) continue;
     if (await fs.unlink(item.audio).then(() => true, () => false)) {
       await fs.unlink(path.join(directory, item.key + '.meta.json')).catch(() => {});
       size -= item.stat.size;
@@ -88,86 +112,273 @@ export function maintainAudioCache() {
   return cleanup;
 }
 
-function drainPrefetch() {
-  while (downloading < 2 && queue.length) {
+function drainQueue() {
+  while (downloading < 3 && queue.length) {
     const job = queue.shift();
     downloading++;
-    job.run().finally(() => { downloading--; job.done(); drainPrefetch(); });
+    job.run().finally(() => {
+      downloading--;
+      drainQueue();
+    });
   }
 }
 
-export function prefetchAudio(url, priority = false) {
-  const files = paths(url);
-  if (pending.has(files.key)) {
-    if (priority) {
-      const index = queue.findIndex(job => job.key === files.key);
-      if (index > 0) queue.unshift(queue.splice(index, 1)[0]);
-    }
-    return pending.get(files.key);
+function notifyWaiters(entry) {
+  for (const wake of [...entry.waiters]) {
+    try {
+      wake();
+    } catch {}
   }
-  if (pending.size >= 12) return Promise.resolve();
-  let done;
-  const task = new Promise(resolve => { done = resolve; });
-  pending.set(files.key, task);
+}
+
+function startInFlightDownload(url, trackKey = '', priority = false) {
+  const files = paths(url, trackKey);
+  const existing = inFlight.get(files.key);
+  if (existing) {
+    if (priority && !existing.started) {
+      const idx = queue.findIndex(job => job.key === files.key);
+      if (idx > 0) queue.unshift(queue.splice(idx, 1)[0]);
+      drainQueue();
+    }
+    return existing;
+  }
+
+  let resolveHeader;
+  let resolveDone;
+  const entry = {
+    key: files.key,
+    url,
+    files,
+    started: false,
+    ready: false,
+    complete: false,
+    persisted: false,
+    failed: false,
+    error: null,
+    type: null,
+    totalSize: 0,
+    bytesReceived: 0,
+    chunks: [],
+    waiters: new Set(),
+    headerPromise: new Promise(resolve => { resolveHeader = resolve; }),
+    donePromise: new Promise(resolve => { resolveDone = resolve; })
+  };
+
+  inFlight.set(files.key, entry);
+
   const run = async () => {
-    const cached = await openCached(files);
+    entry.started = true;
+    const { cached } = await openCachedWithFallback(url, trackKey);
     if (cached) {
-      await cached.file.close();
+      entry.type = cached.type;
+      entry.totalSize = cached.size;
+      entry.bytesReceived = cached.size;
+      entry.ready = true;
+      entry.complete = true;
+      entry.persisted = true;
+      await cached.file.close().catch(() => {});
+      resolveHeader(true);
+      notifyWaiters(entry);
       return;
     }
+
     const part = files.audio + '.part';
     const metaPart = files.meta + '.part';
+    let diskStream;
     try {
       await fs.mkdir(directory, { recursive: true });
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(FETCH_TIMEOUT)]);
       const headerTimer = setTimeout(() => controller.abort(new Error('prefetch first-byte timeout')), 10_000);
       let upstream;
-      try { upstream = await fetchAudio(url, { signal }); }
-      finally { clearTimeout(headerTimer); }
-      const length = Number(upstream.headers.get('content-length'));
+      try {
+        upstream = await fetchAudio(url, { signal });
+      } finally {
+        clearTimeout(headerTimer);
+      }
+      const length = Number(upstream.headers.get('content-length')) || 0;
       if (upstream.status !== 200 || !upstream.body || length > MAX_FILE) {
         await upstream.body?.cancel();
         throw new Error('invalid prefetch response HTTP ' + upstream.status);
       }
-      let size = 0;
-      const limiter = new Transform({
-        transform(chunk, _encoding, done) {
-          size += chunk.length;
-          done(size > MAX_FILE ? new Error('audio file too large') : null, chunk);
+
+      diskStream = createWriteStream(part);
+      let diskError = null;
+      diskStream.on('error', err => { diskError = err; });
+
+      let headerBuffer = Buffer.alloc(0);
+      for await (const rawChunk of Readable.fromWeb(upstream.body)) {
+        if (signal.aborted) throw signal.reason || new Error('prefetch aborted');
+        if (diskError) throw diskError;
+        const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+        if (chunk.length === 0) continue;
+
+        if (entry.bytesReceived + chunk.length > MAX_FILE) {
+          throw new Error('audio file too large');
         }
-      });
-      await pipeline(Readable.fromWeb(upstream.body), limiter, createWriteStream(part), { signal });
-      const file = await fs.open(part, 'r');
-      const prefix = Buffer.alloc(12);
-      let type;
-      try {
-        await file.read(prefix, 0, prefix.length, 0);
-        type = identifyAudio(prefix);
-      } finally {
-        await file.close();
+
+        if (!entry.ready) {
+          if (headerBuffer.length < 12) {
+            const needed = 12 - headerBuffer.length;
+            headerBuffer = Buffer.concat([headerBuffer, chunk.subarray(0, needed)]);
+          }
+          if (headerBuffer.length >= 12) {
+            const detected = identifyAudio(headerBuffer);
+            if (!detected) throw new Error('invalid audio header');
+            entry.type = detected;
+            entry.totalSize = length;
+            entry.ready = true;
+            resolveHeader(true);
+          }
+        }
+
+        entry.chunks.push(chunk);
+        entry.bytesReceived += chunk.length;
+        if (!diskStream.write(chunk)) {
+          await new Promise((resolve, reject) => {
+            const onDrain = () => {
+              diskStream.removeListener('error', onError);
+              resolve();
+            };
+            const onError = err => {
+              diskStream.removeListener('drain', onDrain);
+              reject(err);
+            };
+            diskStream.once('drain', onDrain);
+            diskStream.once('error', onError);
+          });
+        }
+        notifyWaiters(entry);
       }
-      if (!type || size < 12 || (length && size !== length)) throw new Error('invalid audio cache entry');
+
+      if (!entry.ready) {
+        const detected = identifyAudio(headerBuffer);
+        if (!detected || entry.bytesReceived < 12) throw new Error('invalid audio cache entry');
+        entry.type = detected;
+        entry.totalSize = length || entry.bytesReceived;
+        entry.ready = true;
+        resolveHeader(true);
+      }
+
+      if (length > 0 && entry.bytesReceived !== length) {
+        throw new Error('incomplete audio download');
+      }
+      entry.totalSize = entry.bytesReceived;
+      entry.complete = true;
+      notifyWaiters(entry);
+
+      await new Promise((resolve, reject) => {
+        diskStream.end(err => (err ? reject(err) : resolve()));
+      });
+      diskStream = null;
+
       await fs.rename(part, files.audio);
-      await fs.writeFile(metaPart, JSON.stringify({ complete: true, size }));
+      await fs.writeFile(metaPart, JSON.stringify({ complete: true, size: entry.bytesReceived }));
       await fs.rename(metaPart, files.meta);
+      entry.persisted = true;
       void maintainAudioCache();
     } catch (error) {
-      console.warn('[StreamCache] prefetch:', files.key, error.message);
+      entry.failed = true;
+      entry.error = error;
+      if (!entry.ready) resolveHeader(false);
+      notifyWaiters(entry);
+      console.warn('[StreamCache] download:', files.key, error.message);
     } finally {
+      if (diskStream) {
+        try { diskStream.destroy(); } catch {}
+      }
       await Promise.all([part, metaPart].map(file => fs.unlink(file).catch(() => {})));
     }
   };
+
   const job = {
     key: files.key,
-    run: () => run().catch(error => console.warn('[StreamCache] prefetch:', files.key, error.message))
-      .finally(() => pending.delete(files.key)),
-    done
+    run: () => run()
+      .finally(() => {
+        inFlight.delete(files.key);
+        resolveDone();
+      })
   };
-  if (priority) queue.unshift(job);
-  else queue.push(job);
-  drainPrefetch();
-  return task;
+
+  if (priority) {
+    // Immediate execution for live listener streams even if background prefetch slots are busy
+    downloading++;
+    job.run().finally(() => {
+      downloading--;
+      drainQueue();
+    });
+  } else {
+    if (queue.length < 16) {
+      queue.push(job);
+      drainQueue();
+    } else {
+      inFlight.delete(files.key);
+      resolveHeader(false);
+      resolveDone();
+    }
+  }
+
+  return entry;
+}
+
+export function prefetchAudio(url, priorityOrReferer = false, _mimeType, trackKey = '') {
+  const priority = typeof priorityOrReferer === 'boolean' ? priorityOrReferer : false;
+  const entry = startInFlightDownload(url, trackKey, priority);
+  return entry.donePromise;
+}
+
+async function* generateInFlightSlice(entry, start, end, signal) {
+  let cursor = start;
+  let chunkIdx = 0;
+  let chunkOffset = 0;
+
+  while (cursor <= end) {
+    if (signal.aborted) return;
+
+    while (chunkIdx < entry.chunks.length && cursor <= end) {
+      const chunk = entry.chunks[chunkIdx];
+      const chunkEnd = chunkOffset + chunk.length;
+      if (cursor < chunkEnd) {
+        const sliceStart = Math.max(0, cursor - chunkOffset);
+        const sliceEnd = Math.min(chunk.length, end - chunkOffset + 1);
+        if (sliceEnd > sliceStart) {
+          const piece = chunk.subarray(sliceStart, sliceEnd);
+          cursor += piece.length;
+          yield piece;
+        }
+      }
+      if (cursor >= chunkEnd) {
+        chunkOffset = chunkEnd;
+        chunkIdx++;
+      } else {
+        break;
+      }
+    }
+
+    if (cursor > end) break;
+    if (entry.failed) throw entry.error || new Error('in-flight audio stream failed');
+    if (entry.complete) {
+      if (cursor <= end) throw new Error('unexpected EOF in audio stream');
+      break;
+    }
+
+    await new Promise((resolve, reject) => {
+      const onWake = () => {
+        cleanupWait();
+        resolve();
+      };
+      const onAbort = () => {
+        cleanupWait();
+        reject(signal.reason || new Error('aborted'));
+      };
+      const cleanupWait = () => {
+        entry.waiters.delete(onWake);
+        signal.removeEventListener('abort', onAbort);
+      };
+      entry.waiters.add(onWake);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
 }
 
 const responseHeaders = {
@@ -177,26 +388,35 @@ const responseHeaders = {
   'X-Content-Type-Options': 'nosniff'
 };
 
-export async function handleStreamProxyRequest(req, res, url, _referer, mimeType) {
-  const files = paths(url);
+export async function handleStreamProxyRequest(req, res, url, _referer, mimeType, trackKey = '') {
   const range = req.headers.range;
   const abort = new AbortController();
   const disconnect = () => abort.abort();
   res.once('close', disconnect);
   const signal = abort.signal;
   const idle = idleWatchdog(abort);
-  const progress = new Transform({ transform(chunk, _encoding, done) { idle.touch(); done(null, chunk); } });
-  active.set(files.key, (active.get(files.key) || 0) + 1);
-  let cached;
-  try {
-    cached = await openCached(files);
-    if (!cached && req.method !== 'HEAD') {
-      // All first listeners share one download. Bound the wait so a slow source cannot
-      // indefinitely hold startup; the normal Range path remains a fallback.
-      await waitBounded(prefetchAudio(url, true), 2500, signal);
-      if (signal.aborted) return;
-      cached = await openCached(files);
+  const progress = new Transform({
+    transform(chunk, _encoding, done) {
+      idle.touch();
+      done(null, chunk);
     }
+  });
+
+  const primaryFiles = paths(url, trackKey);
+  active.set(primaryFiles.key, (active.get(primaryFiles.key) || 0) + 1);
+  let cached = null;
+  let activeFiles = primaryFiles;
+
+  try {
+    if (range && !/^bytes=(?:\d+-\d*|-\d+)$/i.test(range)) {
+      res.writeHead(400, responseHeaders).end();
+      return;
+    }
+
+    const diskResult = await openCachedWithFallback(url, trackKey);
+    cached = diskResult.cached;
+    activeFiles = diskResult.files;
+
     if (cached) {
       const { size, type, file } = cached;
       const slice = parseRange(range, size);
@@ -206,7 +426,7 @@ export async function handleStreamProxyRequest(req, res, url, _referer, mimeType
         return;
       }
       const now = new Date();
-      void fs.utimes(files.audio, now, now).catch(() => {});
+      void fs.utimes(activeFiles.audio, now, now).catch(() => {});
       res.writeHead(slice ? 206 : 200, {
         ...responseHeaders,
         'X-Audio-Cache': 'HIT',
@@ -220,14 +440,60 @@ export async function handleStreamProxyRequest(req, res, url, _referer, mimeType
       return;
     }
 
-    if (range && !/^bytes=(?:\d+-\d*|-\d+)$/i.test(range)) {
-      res.writeHead(400, responseHeaders).end();
-      return;
+    // Progressive In-Flight Stream-Tee: start or join a single shared upstream download.
+    // Wait ONLY for the upstream response headers + first 12 magic bytes (~100ms), never the whole file!
+    const shared = inFlight.get(primaryFiles.key) ||
+      (req.method !== 'HEAD' ? startInFlightDownload(url, trackKey, true) : null);
+
+    if (shared) {
+      const headerOk = await shared.headerPromise;
+      if (signal.aborted) return;
+
+      if (headerOk && shared.ready && shared.totalSize > 0) {
+        const size = shared.totalSize;
+        const slice = parseRange(range, size);
+        if (slice === false) {
+          res.writeHead(416, { ...responseHeaders, 'Content-Range': 'bytes */' + size });
+          res.end();
+          return;
+        }
+        const start = slice ? slice.start : 0;
+        const end = slice ? slice.end : size - 1;
+
+        // If the requested range starts within already downloaded bytes (or within 256KB lookahead),
+        // stream progressively from the shared in-memory chunk buffer with zero duplicate upstream requests!
+        if (shared.complete || start <= shared.bytesReceived + IN_FLIGHT_LOOKAHEAD_BYTES) {
+          res.writeHead(slice ? 206 : 200, {
+            ...responseHeaders,
+            'X-Audio-Cache': 'HIT',
+            'Content-Type': shared.type || mimeType || 'audio/mpeg',
+            'Accept-Ranges': 'bytes',
+            'Content-Length': end - start + 1,
+            ...(slice && { 'Content-Range': 'bytes ' + start + '-' + end + '/' + size })
+          });
+          if (req.method === 'HEAD') {
+            res.end();
+          } else {
+            await pipeline(
+              Readable.from(generateInFlightSlice(shared, start, end, signal)),
+              progress,
+              res,
+              { signal }
+            );
+          }
+          return;
+        }
+      }
     }
+
+    // Fallback for far-ahead unbuffered Range seeks or HEAD on cold cache
     const headerTimer = setTimeout(() => abort.abort(new Error('audio first-byte timeout')), 10_000);
     let upstream;
-    try { upstream = await fetchAudio(url, { range, signal }); }
-    finally { clearTimeout(headerTimer); }
+    try {
+      upstream = await fetchAudio(url, { range, signal });
+    } finally {
+      clearTimeout(headerTimer);
+    }
     idle.touch();
     if (!upstream.ok || !upstream.body) {
       await upstream.body?.cancel();
@@ -260,7 +526,7 @@ export async function handleStreamProxyRequest(req, res, url, _referer, mimeType
       await pipeline(Readable.fromWeb(upstream.body), progress, res, { signal });
     }
   } catch (error) {
-    if (!abort.signal.aborted) console.warn('[StreamCache] response:', files.key, error.message);
+    if (!abort.signal.aborted) console.warn('[StreamCache] response:', primaryFiles.key, error.message);
     if (res.destroyed) return;
     if (res.headersSent) res.destroy();
     else res.writeHead(502, { ...responseHeaders, 'Content-Type': 'application/json' })
@@ -269,8 +535,8 @@ export async function handleStreamProxyRequest(req, res, url, _referer, mimeType
     idle.stop();
     await cached?.file.close().catch(() => {});
     res.removeListener('close', disconnect);
-    const count = active.get(files.key) - 1;
-    if (count) active.set(files.key, count);
-    else active.delete(files.key);
+    const count = (active.get(primaryFiles.key) || 1) - 1;
+    if (count > 0) active.set(primaryFiles.key, count);
+    else active.delete(primaryFiles.key);
   }
 }

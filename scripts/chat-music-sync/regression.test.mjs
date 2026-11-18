@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { MusicManager } from './candidate/src/music/music-manager.mjs';
 import { parseRange } from './candidate/src/music/stream-cache.mjs';
 import { idleWatchdog, waitBounded } from './candidate/src/music/stream-timeouts.mjs';
+import { signStreamProxyUrl, verifyStreamProxyToken } from './candidate/src/music/stream-signer.mjs';
 import { MusicClock } from '../../src/components/pages/chat/musicClock.ts';
 import { correctionForDrift, RoomAudioPlayer } from '../../src/components/pages/chat/roomAudioPlayer.ts';
 
@@ -15,15 +16,23 @@ function manager({ healthy = false, resolved = null, listeners = [] } = {}) {
     musicRegistry: { isHealthy: async () => healthy },
     resolve: async () => { m.events.resolve++; return resolved; },
     onStateChanged: () => m.events.changed++, advanceNext: () => m.events.advance++,
-    savePlayback() {}, scheduleAdvance() {}, onPrefetchTrack() {}, prepareNext() {}
+    savePlayback() {}, scheduleAdvance() {}, onPrefetchTrack() {}, prepareNext() {},
+    clearBarrierTimers() {
+      clearTimeout(this._prepareBarrierTimer);
+      clearTimeout(this._quorumBarrierTimer);
+      this._prepareBarrierTimer = null;
+      this._quorumBarrierTimer = null;
+    }
   });
   return m;
 }
+
 test('one weak device cannot replace a healthy source or skip the room', async () => {
   const m = manager({ healthy: true });
   await m.reportError('p1', 'a', 0);
   assert.deepEqual(m.events, { changed: 0, advance: 0, resolve: 0 });
 });
+
 test('resolver outage does not skip; same-URL recovery increments revision', async () => {
   const failed = manager();
   await failed.reportError('p1', 'a', 0);
@@ -35,6 +44,7 @@ test('resolver outage does not skip; same-URL recovery increments revision', asy
   await m.reportError('p1', 'b', 0);
   assert.equal(m.events.resolve, 1, 'obsolete revision cannot initiate another recovery');
 });
+
 test('old recovery cannot overwrite a newer track', async () => {
   const m = manager();
   let complete;
@@ -46,24 +56,47 @@ test('old recovery cannot overwrite a newer track', async () => {
   await pending;
   assert.equal(m.current.uid, 'p2'); assert.equal(m.events.changed, 0);
 });
-test('one future start is fixed without waiting for any client acknowledgement', () => {
-  const listeners = [{ id: 'phone', modern: true }, { id: 'laptop', modern: true }];
+
+test('two-phase adaptive ready barrier commits early when all active listeners report ready', () => {
+  const listeners = [{ id: 'phone', modern: true }, { id: 'tablet', modern: true }];
   const m = manager({ listeners });
-  m.playTrack({ streamUrl: 'x' }, { userKey: 'a' });
-  const start = m.current.startedAt;
-  assert.equal(m.current.phase, 'scheduled');
-  assert.ok(start >= Date.now() + 1900);
-  listeners.push({ id: 'late', modern: true });
-  assert.equal(m.current.startedAt, start);
-  assert.equal(typeof m.ready, 'undefined');
-  assert.equal(m._startTimer, undefined);
-  clearTimeout(m._prepareFallbackTimer);
+  try {
+    m.playTrack({ streamUrl: 'x' }, { userKey: 'a' });
+    const initialDeadline = m.current.startedAt;
+    assert.equal(m.current.phase, 'preparing');
+    assert.ok(initialDeadline >= Date.now() + 1900);
+
+    // First listener ready -> still preparing until second listener is ready
+    m.ready(m.current.uid, 'phone', 0);
+    assert.equal(m.current.phase, 'preparing');
+
+    // Second listener ready -> barrier immediately commits to scheduled with a tight lead window
+    m.ready(m.current.uid, 'tablet', 0);
+    assert.equal(m.current.phase, 'scheduled');
+    assert.ok(m.current.startedAt < initialDeadline);
+    assert.ok(m.current.startedAt <= Date.now() + 350);
+  } finally {
+    m.clearBarrierTimers();
+    clearTimeout(m._prepareFallbackTimer);
+  }
 });
+
 test('legacy listening clients keep compatible immediate playback', () => {
   const m = manager({ listeners: [{ id: 'legacy', modern: false }] });
   m.playTrack({ streamUrl: 'x' }, { userKey: 'a' });
   assert.equal(m.current.phase, 'playing');
+  m.clearBarrierTimers();
   clearTimeout(m._prepareFallbackTimer);
+});
+
+test('deterministic stream signer produces identical URLs within the same bucket and preserves trackKey', () => {
+  const urlA = signStreamProxyUrl('https://chat-server.lengxiqwq.com', 'https://ws.stream.qqmusic.qq.com/song.mp3', 'secret', 'https://y.qq.com/', 'audio/mpeg', 'qq:004IM0wx49gYJq');
+  const urlB = signStreamProxyUrl('https://chat-server.lengxiqwq.com', 'https://ws.stream.qqmusic.qq.com/song.mp3', 'secret', 'https://y.qq.com/', 'audio/mpeg', 'qq:004IM0wx49gYJq');
+  assert.equal(urlA, urlB);
+  const token = new URL(urlA).searchParams.get('token');
+  const verified = verifyStreamProxyToken(token, 'secret');
+  assert.equal(verified.trackKey, 'qq:004IM0wx49gYJq');
+  assert.equal(verified.mimeType, 'audio/mpeg');
 });
 
 test('sync snapshot preserves newly deployed queue votes and schedules', () => {
@@ -76,6 +109,7 @@ test('sync snapshot preserves newly deployed queue votes and schedules', () => {
   assert.equal(snapshot.current.phase,'scheduled');
   assert.deepEqual(snapshot.queue[0].playVotes,['listener']);
 });
+
 test('slow but progressing transfer survives; truly idle transfer aborts', async () => {
   const controller = new AbortController();
   const watchdog = idleWatchdog(controller, 80);
@@ -86,18 +120,21 @@ test('slow but progressing transfer survives; truly idle transfer aborts', async
   await new Promise(resolve => setTimeout(resolve, 110));
   assert.equal(controller.signal.aborted, true); watchdog.stop();
 });
+
 test('cache wait is bounded and cancellation releases the waiter', async () => {
   const controller = new AbortController();
   const wait = waitBounded(new Promise(() => {}), 60_000, controller.signal);
   controller.abort(); await wait;
   await waitBounded(new Promise(() => {}), 10);
 });
+
 test('Range handling preserves suffix, open ranges and unsatisfiable ranges', () => {
   assert.deepEqual(parseRange('bytes=-20', 100), { start: 80, end: 99 });
   assert.deepEqual(parseRange('bytes=20-', 100), { start: 20, end: 99 });
   assert.equal(parseRange('bytes=100-', 100), false);
   assert.equal(parseRange('bytes=0-1,4-5', 100), false);
 });
+
 test('clock ignores wall-clock changes and filters high-latency outliers', () => {
   let now = 100; const c = new MusicClock(() => now);
   c.seed(10000); now = 200; assert.equal(c.now(), 10100);
@@ -109,10 +146,13 @@ test('clock ignores wall-clock changes and filters high-latency outliers', () =>
   c.resetSamples(); now = 6100; c.sample(100000, 6000);
   assert.equal(c.now(), 100050, 'resume discards pre-sleep samples');
 });
-test('drift control has a deadband, bounded rate and hard catch-up', () => {
+
+test('drift control has a deadband, quantized PLL rate, buffer-starvation protection, and 2.5s hard seek', () => {
   assert.deepEqual(correctionForDrift(0.08), { seek: false, rate: 1 });
   assert.equal(correctionForDrift(0.5).rate, 1.02);
   assert.equal(correctionForDrift(-0.5).rate, 0.98);
+  assert.deepEqual(correctionForDrift(1.2), { seek: false, rate: 1.035 });
+  assert.deepEqual(correctionForDrift(1.2, 0.5), { seek: false, rate: 1 });
   assert.equal(correctionForDrift(8).seek, true);
 });
 
@@ -127,6 +167,7 @@ class FakeAudio extends EventTarget {
   play() { this.plays++; if (this.reject) return Promise.reject(new DOMException('blocked', 'NotAllowedError')); this.paused = false; return Promise.resolve(); }
   pause() { this.paused = true; }
 }
+
 test('player holds future start, aligns late join, reloads same URL and supports explicit unblock', async () => {
   const doc = new EventTarget(); doc.hidden = false;
   const win = new EventTarget();
@@ -159,24 +200,28 @@ test('player holds future start, aligns late join, reloads same URL and supports
   } finally { player.destroy(); }
 });
 
-test('a seek finishing late becomes audible instead of endlessly chasing the clock', async () => {
+test('prime-and-park starts at 0.000s with ZERO seek when startedAt arrives, and tablet 1.2s lag uses PLL rate without 1.8s seek loop', async () => {
   let now = 10000, position = 0, seeks = 0;
   const audio = new FakeAudio();
-  Object.defineProperty(audio, 'currentTime', { get: () => position, set(value) { position = value; seeks++; audio.seeking = true; } });
+  Object.defineProperty(audio, 'currentTime', { get: () => position, set(value) { position = value; seeks++; audio.seeking = false; } });
   audio.load = () => { audio.loads++; position = 0; audio.seeking = false; };
   const player = new RoomAudioPlayer(audio, {
     now: () => now, status() {}, ready() {}, error() {}, ended() {}, duration() {}
   });
   try {
-    player.setTrack({ uid: 'slow-seek', track: { streamUrl: 'https://example.invalid/audio' }, startedAt: 11000, phase: 'scheduled' });
+    player.setTrack({ uid: 'tablet-sync', track: { streamUrl: 'https://example.invalid/audio' }, startedAt: 11000, phase: 'scheduled' });
     player.listen(); await Promise.resolve();
-    position = 1; now = 11020;
+    // Playhead remains parked at 0 during preparing; at startedAt (11020), drift is 0.02s <= 0.15s deadband -> ZERO seeks!
+    now = 11020;
     audio.dispatchEvent(new Event('canplay'));
-    assert.equal(seeks, 1);
-    now += 600; audio.seeking = false;
-    audio.dispatchEvent(new Event('seeked'));
-    assert.equal(seeks, 1, 'do not immediately repeat a seek because its completion was slow');
+    assert.equal(seeks, 0, 'zero seeks at start when parked at 0.000s');
     assert.equal(audio.muted, false);
+
+    // Simulate tablet falling 1.2s behind (which used to trigger an infinite 1.8s hard-seek loop)
+    now = 15200; position = 3.0; // expected = 4.2s, drift = +1.2s
+    audio.dispatchEvent(new Event('progress'));
+    assert.equal(seeks, 0, '1.2s drift on tablet must NOT trigger a hard seek');
+    assert.equal(audio.playbackRate, 1.035, 'uses smooth 1.035x PLL rate to catch up');
   } finally { player.destroy(); }
 });
 

@@ -7,11 +7,13 @@ const HEADERS = {
 export function isAllowedStreamTarget(value) {
   try {
     const url = new URL(value);
-    const host = url.hostname;
+    const host = url.hostname.toLowerCase();
     return ['http:', 'https:'].includes(url.protocol) && !url.port &&
       !url.username && !url.password &&
-      (host.endsWith('.stream.qqmusic.qq.com') || host.endsWith('.music.tc.qq.com') ||
-        host.endsWith('.music.qq.com') || host.endsWith('.music.gtimg.com'));
+      (host.endsWith('.stream.qqmusic.qq.com') ||
+        host.endsWith('.music.tc.qq.com') ||
+        host.endsWith('.music.qq.com') ||
+        host.endsWith('.music.gtimg.com'));
   } catch {
     return false;
   }
@@ -32,8 +34,9 @@ export async function fetchAudio(url, { range, signal } = {}) {
 }
 
 export function identifyAudio(bytes) {
+  if (bytes.length < 4) return null;
   if (bytes.subarray(0, 3).toString() === 'ID3') return 'audio/mpeg';
-  if (bytes.subarray(4, 8).toString() === 'ftyp') return 'audio/mp4';
+  if (bytes.length >= 8 && bytes.subarray(4, 8).toString() === 'ftyp') return 'audio/mp4';
   if (bytes.subarray(0, 4).toString() === 'fLaC') return 'audio/flac';
   if (bytes.subarray(0, 4).toString() === 'OggS') return 'audio/ogg';
   if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) {
@@ -43,6 +46,7 @@ export function identifyAudio(bytes) {
 }
 
 export async function probeAudio(url) {
+  if (!isAllowedStreamTarget(url)) throw new Error('untrusted audio host');
   const response = await fetchAudio(url, {
     range: 'bytes=0-4095',
     signal: AbortSignal.timeout(4000)

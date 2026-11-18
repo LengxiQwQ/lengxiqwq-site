@@ -1646,6 +1646,7 @@ $effect(() => {
 		lastPlayUid = active.uid;
 		coverLoadFailed = false;
 		localDuration = active.durationSec;
+		roomElapsed = computeExpectedElapsed();
 		lastUserScrollAt = 0;
 		void loadLyricsForUrl(active.track.lrcUrl || active.track.lrc);
 		const autoListen = pendingAutoUnmuteTrackId &&
@@ -1848,7 +1849,12 @@ onMount(() => {
 		if (!currentPlay) return;
 
 		const expected = computeExpectedElapsed();
-		roomElapsed = listenIntent && audioEl && audioStatus !== "preparing" ? audioEl.currentTime : expected;
+		roomElapsed =
+			audioStatus === "preparing"
+				? 0
+				: listenIntent && audioEl && audioStatus === "playing"
+					? audioEl.currentTime
+					: expected;
 		syncLyricIndex(roomElapsed);
 
 	}, 250);
@@ -2168,6 +2174,9 @@ $effect(() => {
     {@const voted = Boolean(currentUser && votes.includes(currentUser.userKey))}
     {@const direct = !currentPlay || canDirectSkip}
     {@const action = direct ? "切到" : voted ? "取消投票切到" : "投票切到"}
+    {#if !direct && votes.length > 0}
+      {#key votes.length}<span class="chat-queue-vote-count" aria-hidden="true">{votes.length}/2</span>{/key}
+    {/if}
     <button
       type="button"
       class="chat-queue-play-btn {voted ? 'is-voted' : ''}"
@@ -2179,7 +2188,6 @@ $effect(() => {
       <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <path d="m7.07 18.62 8.43-5.95c.56-.39.56-1.24 0-1.64L7.07 5.08c-.65-.46-1.57 0-1.57.8v11.94c0 .8.92 1.26 1.57.8zM17 6c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1s-1-.45-1-1V7c0-.55.45-1 1-1z" />
       </svg>
-      {#if !direct && votes.length > 0}{#key votes.length}<span class="chat-queue-vote-count">{votes.length}/2</span>{/key}{/if}
     </button>
   {/snippet}
 
@@ -2563,14 +2571,14 @@ $effect(() => {
                 : "flex: 0 1 auto; max-height: 42%;"
               : "flex: 1 1 0%;"}
           >
-            <div class="flex items-center justify-between mb-1.5 shrink-0">
+            <div class="flex items-center justify-between mb-2 shrink-0">
               <span class="text-xs font-medium text-[var(--chat-meta-color)]">
                 即将播放 ({queue.length})
               </span>
             </div>
 
             {#if queue.length === 0}
-              <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 pt-2 pb-7">
+              <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 py-3">
                 {#if currentPlay?.isFallback}
                   <span class="text-xs font-medium text-[var(--deep-text)]">
                     正在冷场轮播
@@ -2590,7 +2598,7 @@ $effect(() => {
                 onscroll={triggerQueueScroll}
               >
                 {#each queue as item (item.uid)}
-                  <div class="flex items-center gap-2 py-1.5 px-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                  <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                     <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
                       {#if item.track.cover}
                         <img src={item.track.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
@@ -2619,21 +2627,23 @@ $effect(() => {
                       </div>
                     </div>
 
-                    <div class="flex items-center gap-0.5 shrink-0">
-                      {@render queuedPlayButton(item)}
+                    <div class="flex items-center gap-1 shrink-0">
                       {#if canRemoveEntry(item)}
                         <button
                           type="button"
-                          class="chat-queue-icon-btn"
+                          class="chat-queue-icon-btn chat-queue-row-action"
                           onclick={() => onRemoveQueue(item.uid)}
                           aria-label={`移除 ${item.track.title}`}
                         >
-                          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                             <line x1="18" y1="6" x2="6" y2="18" />
                             <line x1="6" y1="6" x2="18" y2="18" />
                           </svg>
                         </button>
+                      {:else}
+                        <span class="chat-queue-row-action" aria-hidden="true"></span>
                       {/if}
+                      {@render queuedPlayButton(item)}
                     </div>
                   </div>
                 {/each}
@@ -2789,7 +2799,7 @@ $effect(() => {
       <div class="border-t border-[var(--chat-divider-color)]"></div>
 
       <div>
-        <div class="flex items-center justify-between mb-1 px-0.5">
+        <div class="flex items-center justify-between mb-2 px-0.5">
           <span class="text-xs font-medium text-[var(--chat-meta-color)]">
             房间待播队列 ({queue.length})
           </span>
@@ -2800,7 +2810,7 @@ $effect(() => {
             待播队列为空，去挑一首歌加入电台吧
           </div>
         {:else}
-          <div class="space-y-0.5">
+          <div class="space-y-1">
             {#each queue as item (item.uid)}
               <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                 <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
@@ -2830,21 +2840,23 @@ $effect(() => {
                   </div>
                 </div>
 
-                <div class="flex items-center gap-0.5 shrink-0">
-                  {@render queuedPlayButton(item)}
+                <div class="flex items-center gap-1 shrink-0">
                   {#if canRemoveEntry(item)}
                     <button
                       type="button"
-                      class="chat-queue-icon-btn"
+                      class="chat-queue-icon-btn chat-queue-row-action"
                       onclick={() => onRemoveQueue(item.uid)}
                       aria-label={`移除 ${item.track.title}`}
                     >
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
                         <line x1="18" y1="6" x2="6" y2="18" />
                         <line x1="6" y1="6" x2="18" y2="18" />
                       </svg>
                     </button>
+                  {:else}
+                    <span class="chat-queue-row-action" aria-hidden="true"></span>
                   {/if}
+                  {@render queuedPlayButton(item)}
                 </div>
               </div>
             {/each}

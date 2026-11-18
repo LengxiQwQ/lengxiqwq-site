@@ -43,33 +43,58 @@ async function fixture() {
     } }),
     './audio-source.mjs': synthetic({ identifyAudio: () => 'audio/mpeg', fetchAudio: async () => {
       fetches++;
-      await new Promise(resolve => setTimeout(resolve, 30));
-      return new Response(media, { status: 200, headers: { 'Content-Length': String(media.length), 'Content-Type': 'audio/mpeg' } });
+      // Simulate progressive multi-chunk upstream delivery (first chunk at 15ms, second chunk at 60ms)
+      const stream = new ReadableStream({
+        async start(controller) {
+          await new Promise(resolve => setTimeout(resolve, 15));
+          controller.enqueue(media.subarray(0, 1024));
+          await new Promise(resolve => setTimeout(resolve, 45));
+          controller.enqueue(media.subarray(1024));
+          controller.close();
+        }
+      });
+      return new Response(stream, { status: 200, headers: { 'Content-Length': String(media.length), 'Content-Type': 'audio/mpeg' } });
     } })
   };
   deps['./stream-timeouts.mjs'] = new vm.SourceTextModule(await readFile(new URL('./candidate/src/music/stream-timeouts.mjs', import.meta.url), 'utf8'), { context });
   const module = new vm.SourceTextModule(await readFile(new URL('./candidate/src/music/stream-cache.mjs', import.meta.url), 'utf8'), { context });
   await module.link(name => deps[name]); await module.evaluate();
-  const request = async (range, method = 'GET') => {
+  const request = async (range, method = 'GET', url = 'https://example.invalid/audio', trackKey = 'qq:test1') => {
     const chunks = [];
     const res = new Writable({ write(chunk, _, done) { chunks.push(chunk); done(); } });
     res.writeHead = (status, headers) => { res.status = status; res.headers = headers; res.headersSent = true; return res; };
-    await module.namespace.handleStreamProxyRequest({ method, headers: range ? { range } : {} }, res, 'https://example.invalid/audio', '', 'audio/mpeg');
+    await module.namespace.handleStreamProxyRequest({ method, headers: range ? { range } : {} }, res, url, '', 'audio/mpeg', trackKey);
     return { status: res.status, headers: res.headers, body: Buffer.concat(chunks) };
   };
   return { request, media, fetches: () => fetches };
 }
 
-test('concurrent cold listeners share one upstream download, then receive exact 206 ranges', async () => {
+test('progressive stream-tee delivers early range slices before full download finishes and shares trackKey cache across rotating URLs', async () => {
   const f = await fixture();
-  const [first, second] = await Promise.all([f.request('bytes=0-99'), f.request('bytes=100-199')]);
+  const t0 = Date.now();
+  const [safariProbe, firstSlice, fullRange] = await Promise.all([
+    f.request('bytes=0-1'),
+    f.request('bytes=0-99'),
+    f.request('bytes=100-199')
+  ]);
   assert.equal(f.fetches(), 1);
-  for (const response of [first, second]) {
-    assert.equal(response.status, 206); assert.equal(response.headers['X-Audio-Cache'], 'HIT');
+  assert.equal(safariProbe.status, 206);
+  assert.equal(safariProbe.body.length, 2);
+  assert.equal(safariProbe.headers['Content-Range'], 'bytes 0-1/4096');
+  for (const response of [firstSlice, fullRange]) {
+    assert.equal(response.status, 206);
+    assert.equal(response.headers['X-Audio-Cache'], 'HIT');
     assert.equal(response.body.length, 100);
   }
-  assert.deepEqual(first.body, f.media.subarray(0, 100));
-  assert.equal(second.headers['Content-Range'], 'bytes 100-199/4096');
+  assert.deepEqual(firstSlice.body, f.media.subarray(0, 100));
+  assert.equal(fullRange.headers['Content-Range'], 'bytes 100-199/4096');
+
+  // Even when the upstream URL vkey changes, the same trackKey hits the existing cache with 0 extra fetches
+  const rotatedUrlReq = await f.request('bytes=0-99', 'GET', 'https://example.invalid/audio?vkey=new_vkey_2', 'qq:test1');
+  assert.equal(rotatedUrlReq.status, 206);
+  assert.equal(rotatedUrlReq.body.length, 100);
+  assert.equal(f.fetches(), 1);
+
   const head = await f.request(undefined, 'HEAD');
   assert.equal(head.status, 200); assert.equal(head.body.length, 0);
   assert.equal(head.headers['Content-Length'], 4096); assert.equal(f.fetches(), 1);

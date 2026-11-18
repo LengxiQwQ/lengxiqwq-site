@@ -1455,6 +1455,7 @@ function connectRoom(roomId: string) {
 					const nextUid = packet.current?.uid ?? "";
 					if (!nextUid || nextUid !== prevUid) {
 						clearSkipPending();
+						if (nextUid) sampleRoomClock(socket);
 					}
 					musicClock.seed(packet.serverTime);
 					if (!hasClockSample) clockOffsetMs = packet.serverTime - Date.now();
@@ -2780,6 +2781,9 @@ onMount(() => {
         isSkippingTrack={isSkippingTrack}
         onSkipTrack={handleSkipTrack}
         onVoteSkip={handleVoteSkip}
+        onReady={(playUid, sourceRevision) =>
+          sendPacket({ type: "music:ready", playUid, sourceRevision })
+        }
         onReportDuration={(playUid, durationSec) =>
           sendPacket({ type: "music:report_duration", playUid, durationSec })
         }

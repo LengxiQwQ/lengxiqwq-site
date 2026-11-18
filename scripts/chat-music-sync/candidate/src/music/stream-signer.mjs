@@ -2,6 +2,7 @@ import { isAllowedStreamTarget } from './audio-source.mjs';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 const STREAM_TTL_SEC = 60 * 60 * 4; // 4 hours
+const EXP_BUCKET_SEC = 60 * 60 * 2; // 2-hour bucket so preloaded & active URLs stay deterministic
 
 function toBase64Url(str) {
   return Buffer.from(str).toString('base64url');
@@ -16,13 +17,16 @@ export function signStreamProxyUrl(
   targetUrl,
   secret,
   referer = 'https://y.qq.com/',
-  mimeType = 'audio/mpeg'
+  mimeType = 'audio/mpeg',
+  trackKey = ''
 ) {
-  const exp = Math.floor(Date.now() / 1000) + STREAM_TTL_SEC;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const exp = Math.ceil((nowSec + STREAM_TTL_SEC / 2) / EXP_BUCKET_SEC) * EXP_BUCKET_SEC;
   const payload = JSON.stringify({
     u: targetUrl,
     r: referer,
     m: mimeType,
+    ...(typeof trackKey === 'string' && trackKey ? { k: trackKey } : {}),
     exp
   });
   const encodedPayload = toBase64Url(payload);
@@ -59,7 +63,8 @@ export function verifyStreamProxyToken(token, secret) {
     return {
       url: parsed.u,
       referer: typeof parsed.r === 'string' ? parsed.r : 'https://y.qq.com/',
-      mimeType: typeof parsed.m === 'string' ? parsed.m : 'audio/mpeg'
+      mimeType: typeof parsed.m === 'string' ? parsed.m : 'audio/mpeg',
+      trackKey: typeof parsed.k === 'string' ? parsed.k : ''
     };
   } catch {
     return null;

@@ -1,4 +1,4 @@
-import { probeAudio } from './audio-source.mjs';
+import { isAllowedStreamTarget, probeAudio } from './audio-source.mjs';
 
 const QQ_HEADERS = {
   'User-Agent':
@@ -9,6 +9,16 @@ const QQ_HEADERS = {
 function buildAlbumCoverUrl(albumMid) {
   if (!albumMid) return '';
   return `https://y.gtimg.cn/music/photo_new/T002R300x300M000${encodeURIComponent(albumMid)}.jpg`;
+}
+
+function extractCoverUrl(raw) {
+  if (typeof raw === 'string' && raw.startsWith('http')) return raw;
+  if (raw && typeof raw === 'object') {
+    for (const key of ['medium', 'large', 'small']) {
+      if (typeof raw[key] === 'string' && raw[key].startsWith('http')) return raw[key];
+    }
+  }
+  return undefined;
 }
 
 function decodeBase64Utf8(b64) {
@@ -193,47 +203,103 @@ export class QQMusicProvider {
     }
   }
 
+  async trySource(mid, source) {
+    try {
+      const response = await fetch(source.endpoint, {
+        headers: QQ_HEADERS,
+        signal: AbortSignal.timeout(source.timeoutMs || 5000)
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error('resolver HTTP ' + response.status);
+      }
+      const data = source.read(await response.json());
+      if (typeof data?.url !== 'string' || !data.url) throw new Error('no audio URL');
+      if (!isAllowedStreamTarget(data.url)) throw new Error('untrusted audio host');
+      const mimeType = await probeAudio(data.url);
+      const durationVal = Number(data.interval || data.duration);
+      return {
+        url: data.url,
+        mimeType,
+        cover: extractCoverUrl(data.cover || data.pic),
+        durationSec: Number.isFinite(durationVal) && durationVal > 0 ? Math.round(durationVal) : undefined,
+        providerChannel: source.name
+      };
+    } catch (error) {
+      if (mid && mid !== '0') {
+        console.warn('[MusicSource]', source.name, mid, error.message);
+      }
+      return null;
+    }
+  }
+
   async resolveStream(mid) {
-    const id = encodeURIComponent(mid);
-    const sources = [
-      ...(this.cyapiKey ? [{
-        name: 'cyapi',
-        endpoint: 'https://cyapi.top/API/qq_music.php?type=json&quality=128&mid=' + id +
-          '&apikey=' + encodeURIComponent(this.cyapiKey),
-        read: data => data
-      }] : []),
+    const cleanMid = (mid || '').trim();
+    if (!cleanMid || cleanMid === '0') return null;
+    const id = encodeURIComponent(cleanMid);
+
+    const cyapiSource = this.cyapiKey ? {
+      name: 'cyapi',
+      timeoutMs: 6500,
+      endpoint: 'https://cyapi.top/API/qq_music.php?type=json&quality=128&mid=' + id +
+        '&apikey=' + encodeURIComponent(this.cyapiKey),
+      read: data => data
+    } : null;
+
+    const vkeysSources = [
       {
-        name: 'vkeys',
+        name: 'vkeys-192',
+        timeoutMs: 4500,
+        endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=4&mid=' + id,
+        read: data => data?.data
+      },
+      {
+        name: 'vkeys-96',
+        timeoutMs: 4500,
         endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=1&mid=' + id,
-        read: data => data.data
+        read: data => data?.data
       }
     ];
 
-    for (const source of sources) {
-      try {
-        const response = await fetch(source.endpoint, {
-          headers: QQ_HEADERS,
-          signal: AbortSignal.timeout(4500)
-        });
-        if (!response.ok) {
-          await response.body?.cancel();
-          throw new Error('resolver HTTP ' + response.status);
-        }
-        const data = source.read(await response.json());
-        if (typeof data?.url !== 'string') throw new Error('no audio URL');
-        const mimeType = await probeAudio(data.url);
-        return {
-          url: data.url,
-          mimeType,
-          cover: data.cover || data.pic,
-          durationSec: Number(data.interval) || undefined,
-          providerChannel: source.name
-        };
-      } catch (error) {
-        console.warn('[MusicSource]', source.name, mid, error.message);
+    const runVkeys = async () => {
+      for (const src of vkeysSources) {
+        const res = await this.trySource(cleanMid, src);
+        if (res) return res;
       }
+      return null;
+    };
+
+    if (!cyapiSource) {
+      return runVkeys();
     }
-    return null;
+
+    // Hedged resolution: start cyapi first; if it doesn't finish within 1200ms, race with vkeys.
+    const cyapiPromise = this.trySource(cleanMid, cyapiSource);
+    let hedgeTimer;
+    const earlyResult = await Promise.race([
+      cyapiPromise,
+      new Promise(resolve => {
+        hedgeTimer = setTimeout(() => resolve('HEDGE_TIMEOUT'), 1200);
+      })
+    ]);
+    clearTimeout(hedgeTimer);
+
+    if (earlyResult && earlyResult !== 'HEDGE_TIMEOUT') {
+      return earlyResult;
+    }
+
+    if (earlyResult === null) {
+      return runVkeys();
+    }
+
+    // cyapi is still in-flight after 1200ms; launch vkeys in parallel and take the first non-null result.
+    const vkeysPromise = runVkeys();
+    const firstDone = await Promise.race([
+      cyapiPromise.then(res => ({ which: 'cyapi', res })),
+      vkeysPromise.then(res => ({ which: 'vkeys', res }))
+    ]);
+    if (firstDone.res) return firstDone.res;
+    return firstDone.which === 'cyapi' ? await vkeysPromise : await cyapiPromise;
   }
 
   async getLyric(mid) {
