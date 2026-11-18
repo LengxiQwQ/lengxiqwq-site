@@ -1,4 +1,5 @@
 <script lang="ts">
+import { untrack } from "svelte";
 import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
@@ -352,11 +353,28 @@ const profile = $derived(remoteProfile ?? fallbackData?.profile ?? null);
 let managedBadges = $state<ChatCustomBadge[]>([]);
 let isSavingBadges = $state(false);
 let badgeSaveNotice = $state("");
+let managedInitUserKey = "";
+let managedSyncedRemote = false;
+let managedDirty = false;
 
 $effect(() => {
-	if (open && profile) {
+	if (!open) {
+		managedInitUserKey = "";
+		managedSyncedRemote = false;
+		managedDirty = false;
+		badgeSaveNotice = "";
+		return;
+	}
+	if (!profile) return;
+	if (managedInitUserKey !== profile.userKey) {
+		managedInitUserKey = profile.userKey;
+		managedSyncedRemote = Boolean(remoteProfile);
+		managedDirty = false;
 		managedBadges = (profile.customBadges || []).map((b) => ({ ...b }));
 		badgeSaveNotice = "";
+	} else if (remoteProfile && !managedSyncedRemote && !managedDirty) {
+		managedSyncedRemote = true;
+		managedBadges = (remoteProfile.customBadges || []).map((b) => ({ ...b }));
 	}
 });
 
@@ -407,6 +425,7 @@ async function handleSaveBadges() {
 				};
 			}
 			userDetailCache.delete(`${roomId}:${profile.userKey}`);
+			managedDirty = false;
 			managedBadges = sanitized.map((b) => ({ ...b }));
 			badgeSaveNotice = "头衔已更新";
 			setTimeout(() => {
@@ -426,10 +445,12 @@ async function handleSaveBadges() {
 
 function handleAddBadge() {
 	if (managedBadges.length >= 3) return;
+	managedDirty = true;
 	managedBadges = [...managedBadges, { text: "", color: "gold" }];
 }
 
 function handleRemoveBadge(index: number) {
+	managedDirty = true;
 	managedBadges = managedBadges.filter((_, i) => i !== index);
 }
 
@@ -479,7 +500,21 @@ const totalSongCount = $derived.by<number>(() => {
 });
 
 $effect(() => {
-	const currentSeed = seed;
+	const currentOpen = open;
+	const targetUserKey = seed?.userKey ?? "";
+	const targetRoom = roomId;
+	const targetServerUrl = chatServerUrl;
+	const externalSkip = untrack(
+		() =>
+			matrixUserId ||
+			isExternalUser ||
+			isSpectator ||
+			targetUserKey.startsWith("matrix:") ||
+			targetUserKey.startsWith("@") ||
+			targetUserKey.startsWith("name:") ||
+			targetUserKey === "system:fallback",
+	);
+
 	localVisibleLimit = TRACK_PAGE_SIZE;
 	remoteTracks = [];
 	remoteHasMore = false;
@@ -489,34 +524,28 @@ $effect(() => {
 	trackTab = "recent";
 	lockedMinHeight = 0;
 
-	if (!open || !currentSeed?.userKey) {
+	if (!currentOpen || !targetUserKey) {
 		remoteProfile = null;
 		isLoading = false;
 		return;
 	}
 
 	remoteProfile = null;
-	if (
-		matrixUserId ||
-		isExternalUser ||
-		isSpectator ||
-		currentSeed.userKey.startsWith("matrix:") ||
-		currentSeed.userKey.startsWith("@") ||
-		currentSeed.userKey.startsWith("name:") ||
-		currentSeed.userKey === "system:fallback"
-	) {
+	if (externalSkip) {
 		isLoading = false;
 		return;
 	}
 
-	const detailCacheKey = `${roomId}:${currentSeed.userKey}`;
+	const detailCacheKey = `${targetRoom}:${targetUserKey}`;
 	const cachedEntry = userDetailCache.get(detailCacheKey);
 
 	if (cachedEntry) {
-		const liveOnline = onlineMembers.find(
-			(m) => m.userKey === currentSeed.userKey,
+		const liveOnline = untrack(() =>
+			onlineMembers.find((m) => m.userKey === targetUserKey),
 		);
-		const isWaline = currentSeed.userKey.startsWith("waline:");
+		const seedOnline = untrack(() => seed?.online);
+		const seedPresence = untrack(() => seed?.presenceMode);
+		const isWaline = targetUserKey.startsWith("waline:");
 		const mergedProfile: ChatUserDetailProfile = {
 			...cachedEntry.profile,
 			authType: isWaline ? "waline" : cachedEntry.profile.authType,
@@ -536,9 +565,9 @@ $effect(() => {
 			),
 			bio: liveOnline?.bio ?? cachedEntry.profile.bio,
 			location: liveOnline?.location || cachedEntry.profile.location,
-			online: Boolean(liveOnline ?? currentSeed.online),
+			online: Boolean(liveOnline ?? seedOnline),
 			isFocused: liveOnline ? liveOnline.isFocused !== false : cachedEntry.profile.isFocused,
-			presenceMode: liveOnline?.presenceMode ?? cachedEntry.profile.presenceMode ?? currentSeed.presenceMode,
+			presenceMode: liveOnline?.presenceMode ?? cachedEntry.profile.presenceMode ?? seedPresence,
 		};
 		remoteProfile = mergedProfile;
 		remoteTracks = mergedProfile.recentTracks ?? [];
@@ -549,9 +578,9 @@ $effect(() => {
 	let cancelled = false;
 	isLoading = true;
 	void fetchUserDetailProfile(
-		chatServerUrl,
-		roomId,
-		currentSeed.userKey,
+		targetServerUrl,
+		targetRoom,
+		targetUserKey,
 		TRACK_PAGE_SIZE,
 		readStoredWalineToken(),
 	).then((res) => {
@@ -720,6 +749,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
   size={matrixUserId || isExternalUser || isSpectator ? "md" : "lg"}
   fillHeightOnDesktop={!(matrixUserId || isExternalUser || isSpectator)}
   topPriority={true}
+  portalToChatPage={true}
   {lockedMinHeight}
   {onClose}
 >
@@ -765,7 +795,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               </span>
               <span class="chat-role-badge chat-role-badge--tag">🍵 互联茶友</span>
               {#if seed.customBadges && seed.customBadges.length > 0}
-                {#each seed.customBadges as b (b.text)}
+                {#each seed.customBadges as b, idx (`${b.text}:${idx}`)}
                   <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
                 {/each}
               {/if}
@@ -1226,7 +1256,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                   {profile.badge}
                 </span>
                 {#if effectiveCustomBadges.length > 0}
-                  {#each effectiveCustomBadges as b (b.text)}
+                  {#each effectiveCustomBadges as b, idx (`${b.text}:${idx}`)}
                     <span class="chat-role-badge chat-role-badge--{b.color}">
                       {b.text}
                     </span>
@@ -1374,13 +1404,14 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 </div>
               {:else}
                 <div class="space-y-2">
-                  {#each managedBadges as badge, idx}
+                  {#each managedBadges as badge, idx (idx)}
                     <div class="p-2 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10 space-y-1.5">
                       <div class="flex items-center gap-2">
                         <input
                           type="text"
                           maxlength={8}
-                          bind:value={badge.text}
+                          bind:value={managedBadges[idx].text}
+                          oninput={() => (managedDirty = true)}
                           placeholder="输入头衔（最多 8 字）"
                           class="chat-auth-input text-xs py-1 px-2 h-7.5 flex-1 min-w-0"
                         />
@@ -1405,7 +1436,10 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                               {badge.color === 'gold'
                                 ? 'chat-role-badge--gold border-amber-500/50 shadow-xs font-semibold'
                                 : 'bg-transparent text-[var(--chat-meta-color)] border-transparent opacity-60 hover:opacity-100'}"
-                            onclick={() => (badge.color = 'gold')}
+                            onclick={() => {
+                              managedDirty = true;
+                              managedBadges[idx].color = 'gold';
+                            }}
                           >
                             <span class="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
                             <span>金色</span>
@@ -1416,7 +1450,10 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                               {badge.color === 'gray'
                                 ? 'chat-role-badge--gray border-neutral-400/50 shadow-xs font-semibold'
                                 : 'bg-transparent text-[var(--chat-meta-color)] border-transparent opacity-60 hover:opacity-100'}"
-                            onclick={() => (badge.color = 'gray')}
+                            onclick={() => {
+                              managedDirty = true;
+                              managedBadges[idx].color = 'gray';
+                            }}
                           >
                             <span class="w-1.5 h-1.5 rounded-full bg-neutral-400 inline-block"></span>
                             <span>灰色</span>
@@ -1504,7 +1541,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               导入的歌单
             </div>
             <div class="rounded-xl bg-(--btn-regular-bg) p-1.5 space-y-1">
-              {#each profile.playlists as pl (pl.id)}
+              {#each profile.playlists as pl, idx (`${pl.id}:${idx}`)}
                 <button
                   type="button"
                   class="w-full flex items-center gap-2 p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left bg-transparent border-none cursor-pointer"
@@ -1689,7 +1726,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               </div>
             </div>
           {:else}
-            {#each topTracks as item, idx (item.track.id)}
+            {#each topTracks as item, idx (`${item.track.id}:${idx}`)}
               <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/70 hover:bg-(--btn-regular-bg) transition-colors">
                 <span class="w-5 text-center text-[10px] font-bold tabular-nums shrink-0 {idx < 3 ? 'text-[var(--chat-accent-text)]' : 'text-[var(--chat-meta-color)]'}">
                   #{idx + 1}

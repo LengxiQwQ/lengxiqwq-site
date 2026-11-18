@@ -1,10 +1,25 @@
 type FancyboxType = typeof import("@fancyapps/ui").Fancybox;
 
+export interface ChatLightboxImageItem {
+	src: string;
+}
+
 let cachedCssUrls: string[] = [];
 let cachedFancyboxPromise: Promise<FancyboxType> | null = null;
 let loadedFancyboxRef: FancyboxType | null = null;
 let swupCleanupBound = false;
 let openSeq = 0;
+let customSourceProvider: (() => ChatLightboxImageItem[]) | null = null;
+
+/**
+ * Register a memory-backed image provider (used by virtualized ChatWindow
+ * so off-screen chat images remain navigable in the lightbox).
+ */
+export function setChatLightboxSourceProvider(
+	provider: (() => ChatLightboxImageItem[]) | null,
+): void {
+	customSourceProvider = provider;
+}
 
 function bindSwupCleanupOnce(): void {
 	if (swupCleanupBound || typeof document === "undefined") return;
@@ -119,46 +134,104 @@ export async function openChatImageLightbox(
 		const Fancybox = await loadFancybox();
 		if (currentSeq !== openSeq) return;
 
-		const scope = document.getElementById("chat-page") ?? document;
-		const nodes = Array.from(
-			scope.querySelectorAll<HTMLElement>("[data-chat-image]"),
+		const isStickerTrigger = Boolean(
+			triggerEl?.querySelector(".chat-sticker-large"),
 		);
 
-		const slides: Array<{
+		const allSlides: Array<{
 			src: string;
 			type: "image";
 			triggerEl?: HTMLElement;
 			thumbEl?: HTMLImageElement;
 		}> = [];
-		let startIndex = -1;
+		let rawStartIndex = -1;
 
-		for (const el of nodes) {
-			const src = el.getAttribute("data-chat-image") || "";
-			if (!src) continue;
-			const imgEl = el.querySelector("img") ?? undefined;
-			if (triggerEl && el === triggerEl) {
-				startIndex = slides.length;
+		if (!isStickerTrigger) {
+			const scope = document.getElementById("chat-page") ?? document;
+			const nodes = Array.from(
+				scope.querySelectorAll<HTMLElement>("[data-chat-image]"),
+			);
+			const triggerSrc =
+				triggerEl?.getAttribute("data-chat-image") || targetUrl;
+			const triggerImg = triggerEl?.querySelector("img") ?? undefined;
+			const readyTriggerThumb =
+				triggerImg?.complete && triggerImg.naturalWidth > 0
+					? triggerImg
+					: undefined;
+
+			const providerItems = customSourceProvider?.();
+			if (providerItems && providerItems.length > 0) {
+				let matchedTrigger = false;
+				for (const item of providerItems) {
+					if (!item.src) continue;
+					const isTrigger = !matchedTrigger && item.src === triggerSrc;
+					if (isTrigger) {
+						matchedTrigger = true;
+						rawStartIndex = allSlides.length;
+					}
+					allSlides.push({
+						src: item.src,
+						type: "image",
+						triggerEl: isTrigger ? (triggerEl ?? undefined) : undefined,
+						thumbEl: isTrigger ? readyTriggerThumb : undefined,
+					});
+				}
+			} else {
+				for (const el of nodes) {
+					const src = el.getAttribute("data-chat-image") || "";
+					if (!src) continue;
+					const imgEl = el.querySelector("img") ?? undefined;
+					// 聊天图片相册不混入表情包贴纸，避免把大量表情包塞进缩略图与左右切换列表
+					if (imgEl?.classList.contains("chat-sticker-large")) continue;
+					const isTrigger = Boolean(triggerEl && el === triggerEl);
+					if (isTrigger) {
+						rawStartIndex = allSlides.length;
+					}
+					const readyThumb =
+						isTrigger && imgEl?.complete && imgEl.naturalWidth > 0
+							? imgEl
+							: undefined;
+					allSlides.push({
+						src,
+						type: "image",
+						triggerEl: isTrigger ? el : undefined,
+						thumbEl: readyThumb,
+					});
+				}
 			}
-			slides.push({
-				src,
-				type: "image",
-				triggerEl: el,
-				thumbEl: imgEl,
-			});
 		}
 
-		if (startIndex < 0) {
-			startIndex = slides.findIndex((s) => s.src === targetUrl);
+		if (rawStartIndex < 0) {
+			rawStartIndex = allSlides.findIndex((s) => s.src === targetUrl);
 		}
+
+		let slides = allSlides;
+		let startIndex = rawStartIndex;
 		if (slides.length === 0) {
-			slides.push({
-				src: targetUrl,
-				type: "image",
-				triggerEl: triggerEl ?? undefined,
-			});
+			const triggerImg = triggerEl?.querySelector("img") ?? undefined;
+			const readyThumb =
+				triggerImg?.complete && triggerImg.naturalWidth > 0
+					? triggerImg
+					: undefined;
+			slides = [
+				{
+					src: targetUrl,
+					type: "image",
+					triggerEl: triggerEl ?? undefined,
+					thumbEl: readyThumb,
+				},
+			];
 			startIndex = 0;
-		} else if (startIndex < 0) {
-			startIndex = 0;
+		} else {
+			if (startIndex < 0) startIndex = 0;
+			// 长聊天记录场景下仅截取当前图片前后窗口，防止海量原图同时进 DOM
+			const MAX_WINDOW_SIDE = 25;
+			if (allSlides.length > MAX_WINDOW_SIDE * 2 + 1) {
+				const from = Math.max(0, startIndex - MAX_WINDOW_SIDE);
+				const to = Math.min(allSlides.length, startIndex + MAX_WINDOW_SIDE + 1);
+				slides = allSlides.slice(from, to);
+				startIndex = startIndex - from;
+			}
 		}
 
 		Fancybox.show(slides, {
@@ -166,8 +239,7 @@ export async function openChatImageLightbox(
 			Hash: false,
 			closeExisting: true,
 			Thumbs: {
-				autoStart: true,
-				minCount: 3,
+				autoStart: false,
 			},
 			Toolbar: {
 				display: {
@@ -187,7 +259,7 @@ export async function openChatImageLightbox(
 			dragToClose: true,
 			fitToView: true,
 			preload: 1,
-			infinite: true,
+			infinite: slides.length > 1,
 			Panzoom: {
 				maxScale: 2,
 				minScale: 1,

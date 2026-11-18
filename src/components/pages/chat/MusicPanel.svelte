@@ -3510,7 +3510,7 @@ $effect(() => {
           {:else}
             <div>
               {#each memberPlaylistGroups as group, groupIndex (group.ownerKey)}
-                <div class={groupIndex > 0 ? "mt-2.5 pt-2.5 border-t border-[var(--chat-divider-color)]" : ""}>
+                <div class={groupIndex > 0 ? "mt-3" : ""}>
                   <div class="flex items-center gap-2 px-1 pb-1">
                     <button
                       type="button"

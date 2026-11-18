@@ -41,8 +41,40 @@ async function fixture() {
       const chunks = [];
       return new Writable({ write(chunk, _, done) { chunks.push(chunk); done(); }, final(done) { files.set(name, Buffer.concat(chunks)); done(); } });
     } }),
-    './audio-source.mjs': synthetic({ identifyAudio: () => 'audio/mpeg', fetchAudio: async () => {
+    './audio-source.mjs': synthetic({ identifyAudio: () => 'audio/mpeg', fetchAudio: async (url, opts = {}) => {
       fetches++;
+      if (url.includes('terminate-once')) {
+        if (!opts.range) {
+          // First connection drops ('terminated') after delivering 1024 bytes out of 4096
+          let sent = false;
+          const stream = new ReadableStream({
+            async pull(controller) {
+              if (!sent) {
+                sent = true;
+                await new Promise(resolve => setTimeout(resolve, 10));
+                controller.enqueue(media.subarray(0, 1024));
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 10));
+              controller.error(new TypeError('terminated'));
+            }
+          });
+          return new Response(stream, { status: 200, headers: { 'Content-Length': String(media.length), 'Content-Type': 'audio/mpeg' } });
+        }
+        // Resume connection with Range: bytes=1024-4095 succeeds
+        const m = /^bytes=(\d+)-(\d+)$/.exec(opts.range);
+        const start = Number(m[1]);
+        const end = Number(m[2]);
+        const slice = media.subarray(start, end + 1);
+        return new Response(Readable.toWeb(Readable.from([slice])), {
+          status: 206,
+          headers: {
+            'Content-Length': String(slice.length),
+            'Content-Range': `bytes ${start}-${end}/${media.length}`,
+            'Content-Type': 'audio/mpeg'
+          }
+        });
+      }
       // Simulate progressive multi-chunk upstream delivery (first chunk at 15ms, second chunk at 60ms)
       const stream = new ReadableStream({
         async start(controller) {
@@ -101,4 +133,16 @@ test('progressive stream-tee delivers early range slices before full download fi
   const invalid = await f.request('bytes=99999-');
   assert.equal(invalid.status, 416); assert.equal(invalid.headers['Content-Range'], 'bytes */4096');
   assert.equal(head.headers['Cache-Control'], 'public, max-age=86400, immutable, no-transform');
+
+  // Mid-stream upstream 'terminated' error transparently resumes via Range without dropping connected clients
+  const [clientTab1, clientTab2] = await Promise.all([
+    f.request(undefined, 'GET', 'https://example.invalid/terminate-once', 'qq:term1'),
+    f.request('bytes=0-4095', 'GET', 'https://example.invalid/terminate-once', 'qq:term1')
+  ]);
+  assert.equal(clientTab1.status, 200);
+  assert.equal(clientTab1.body.length, 4096);
+  assert.deepEqual(clientTab1.body, f.media);
+  assert.equal(clientTab2.status, 206);
+  assert.equal(clientTab2.body.length, 4096);
+  assert.deepEqual(clientTab2.body, f.media);
 });

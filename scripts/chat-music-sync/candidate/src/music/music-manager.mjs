@@ -53,6 +53,8 @@ export class MusicManager {
     this._advanceTimer = null;
     this._refreshPreparedTimer = null;
     this.preparedFallback = null;
+    this.preparedFallbackPool = [];
+    this._fillingPool = null;
     this.preparedQueue = null;
     this._prepareFallbackTimer = null;
     this._actorLastErrorAt = new Map();
@@ -138,6 +140,7 @@ export class MusicManager {
     this.fallbackTracks = playlistId || all ? tracks : [];
     this.fallbackGeneration++;
     this.preparedFallback = null;
+    this.preparedFallbackPool = [];
     if (start && (!this.current || this.current.isFallback)) {
       this.generation++;
       void this.advanceNext();
@@ -275,15 +278,18 @@ export class MusicManager {
 
     // If nothing playing or currently playing fallback, play immediately!
     if ((!this.current || this.current.isFallback) && this.queue.length === 0) {
-      clearTimeout(this._advanceTimer);
-      this.playTrack(
-        playable,
-        { userKey: requesterKey, name: requesterName, avatar: requesterAvatar },
-        false, Date.now(), uid
-      );
-      this.markOutcome(uid, 'played');
-      this.onStateChanged();
-      return { ok: true, playImmediately: true, track: playable };
+      await Promise.resolve(this.onPrefetchTrack(playable.streamUrl, 'warm')).catch(() => {});
+      if ((!this.current || this.current.isFallback) && this.queue.length === 0) {
+        clearTimeout(this._advanceTimer);
+        this.playTrack(
+          playable,
+          { userKey: requesterKey, name: requesterName, avatar: requesterAvatar },
+          false, Date.now(), uid
+        );
+        this.markOutcome(uid, 'played');
+        this.onStateChanged();
+        return { ok: true, playImmediately: true, track: playable };
+      }
     }
 
     // Otherwise add to queue
@@ -339,6 +345,11 @@ export class MusicManager {
     this.generation++;
     this.fallbackGeneration++;
     this.preparedFallback = null;
+    if (Array.isArray(this.preparedFallbackPool)) {
+      this.preparedFallbackPool = this.preparedFallbackPool.filter(
+        item => item?.playable?.id && item.playable.id !== track.id
+      );
+    }
     this.current = {
       uid: 'play_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
       track,
@@ -360,27 +371,33 @@ export class MusicManager {
 
     // Warm the next track in the background so the next switch hits VPS cache immediately.
     clearTimeout(this._prepareFallbackTimer);
-    this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 50);
+    this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 20);
   }
 
-  async resolveFallbackTrackPlayable() {
+  async resolveFallbackTrackPlayable(excludeIds = new Set()) {
     if (this.fallbackTracks.length === 0) return null;
     const tracks = this.fallbackTracks;
     const currentId = this.current?.track?.id || '';
     const currentSourceId = this.current?.track?.sourceId || '';
 
-    // Pick up to 6 distinct candidate indices, avoiding the currently playing song when possible
+    // Pick up to 8 distinct candidate indices, skipping known-unplayable and already-queued tracks
     const candidateIndices = [];
     const tried = new Set();
-    const maxAttempts = Math.min(tracks.length * 2, 16);
-    for (let i = 0; i < maxAttempts && candidateIndices.length < Math.min(6, tracks.length); i++) {
+    const maxAttempts = Math.min(tracks.length * 3, 24);
+    for (let i = 0; i < maxAttempts && candidateIndices.length < Math.min(8, tracks.length); i++) {
       const idx = Math.floor(Math.random() * tracks.length);
       if (tried.has(idx)) continue;
       tried.add(idx);
       const item = tracks[idx];
       if (!item) continue;
+      if (item._unmatchedAt && Date.now() - item._unmatchedAt < 30 * 60_000) continue;
       const itemSourceId = item.matchedTrack?.sourceId || item.sourceTrackId || '';
-      if (tracks.length > 1 && itemSourceId && (itemSourceId === currentSourceId || `qq:${itemSourceId}` === currentId)) {
+      const itemId = item.matchedTrack?.id || (itemSourceId ? `qq:${itemSourceId}` : '');
+      if (itemId && this.musicRegistry?.isKnownUnplayable?.(itemId)) continue;
+      if (tracks.length > 1 && itemSourceId && (itemSourceId === currentSourceId || itemId === currentId)) {
+        continue;
+      }
+      if (tracks.length > excludeIds.size + 1 && itemId && excludeIds.has(itemId)) {
         continue;
       }
       candidateIndices.push(idx);
@@ -389,36 +406,62 @@ export class MusicManager {
       candidateIndices.push(Math.floor(Math.random() * tracks.length));
     }
 
-    const tryCandidate = async (index) => {
+    // Resolve sequentially (1 candidate at a time) so we never burst-throttle upstream APIs
+    for (const index of candidateIndices) {
       const chosen = tracks[index];
-      if (!chosen) return null;
+      if (!chosen) continue;
       try {
         const track = await this.musicRegistry.resolvePlaylistTrack(chosen);
-        if (!track) return null;
-        return await this.resolve(track);
+        if (!track) continue;
+        if (tracks.length > 1 && (track.id === currentId || excludeIds.has(track.id))) continue;
+        if (this.musicRegistry?.isKnownUnplayable?.(track.id)) continue;
+        const playable = await this.resolve(track);
+        if (playable) return playable;
       } catch (err) {
         console.warn(`[Music:${this.roomId}] Error resolving fallback track:`, err.message);
-        return null;
-      }
-    };
-
-    // Resolve in parallel batches of 3 so dead/copyright-restricted tracks don't stall skipping for 15+ seconds
-    for (let offset = 0; offset < candidateIndices.length; offset += 3) {
-      const batch = candidateIndices.slice(offset, offset + 3);
-      try {
-        const winner = await Promise.any(
-          batch.map(async (idx) => {
-            const playable = await tryCandidate(idx);
-            if (!playable) throw new Error('unplayable');
-            return playable;
-          })
-        );
-        if (winner) return winner;
-      } catch {
-        // All candidates in this batch failed; try next batch
       }
     }
     return null;
+  }
+
+  async fillFallbackPool() {
+    if (this._fillingPool) return this._fillingPool;
+    if (!this.current || this.queue.length > 0 || !this.fallbackTracks?.length) return;
+    if (!Array.isArray(this.preparedFallbackPool)) this.preparedFallbackPool = [];
+
+    const promise = (async () => {
+      while (
+        this.current &&
+        this.queue.length === 0 &&
+        this.fallbackTracks.length > 0 &&
+        this.preparedFallbackPool.length < 2
+      ) {
+        const gen = this.fallbackGeneration;
+        const exclude = new Set();
+        if (this.current?.track?.id) exclude.add(this.current.track.id);
+        if (this.preparedFallback?.playable?.id) exclude.add(this.preparedFallback.playable.id);
+        for (const item of this.preparedFallbackPool) {
+          if (item?.playable?.id) exclude.add(item.playable.id);
+        }
+        const playable = await this.resolveFallbackTrackPlayable(exclude);
+        if (!playable || !this.current || this.queue.length > 0) break;
+        if (this.fallbackTracks.length === 0) break;
+        // Even if fallbackGeneration advanced while resolving, as long as the track is distinct, keep it!
+        if (playable.id === this.current?.track?.id) continue;
+        if (this.preparedFallback?.playable?.id === playable.id) continue;
+        if (this.preparedFallbackPool.some(item => item?.playable?.id === playable.id)) continue;
+        this.onPrefetchTrack(playable.streamUrl, false);
+        this.preparedFallbackPool.push({
+          key: this.fallbackGeneration || gen,
+          playable,
+          checkedAt: Date.now()
+        });
+      }
+    })().finally(() => {
+      if (this._fillingPool === promise) this._fillingPool = null;
+    });
+    this._fillingPool = promise;
+    return promise;
   }
 
   async prepareNext(resolved, refresh = false) {
@@ -437,6 +480,28 @@ export class MusicManager {
     }
     if (queued ? this.queue[0] !== queued : (this.queue.length || this.fallbackGeneration !== key)) return;
     if (!queued && !this.fallbackTracks.length) return;
+
+    // Fast promote from pre-warmed fallback pool if available
+    if (!queued && !resolved && !refresh && Array.isArray(this.preparedFallbackPool)) {
+      while (this.preparedFallbackPool.length > 0) {
+        const pooled = this.preparedFallbackPool.shift();
+        const usable = await this.usePrepared(pooled);
+        if (usable && usable.id !== this.current?.track?.id) {
+          if (this.queue.length || this.fallbackGeneration !== key) return;
+          this.preparedFallback = {
+            key,
+            playable: usable,
+            checkedAt: pooled.checkedAt || Date.now()
+          };
+          this.onPrefetchTrack(usable.streamUrl, false);
+          if (this.advancing?.generation !== this.generation) {
+            this.onStateChanged();
+          }
+          void this.fillFallbackPool();
+          return;
+        }
+      }
+    }
 
     const record = { key };
     this[slot] = record;
@@ -458,6 +523,8 @@ export class MusicManager {
       void this.resolve(this.queue[1].track).then(second => {
         if (second?.streamUrl) this.onPrefetchTrack(second.streamUrl, false);
       }).catch(() => {});
+    } else if (!queued) {
+      void this.fillFallbackPool();
     }
     if (this.advancing?.generation !== this.generation) {
       this.onStateChanged();
@@ -511,9 +578,12 @@ export class MusicManager {
       const playable = await this.usePrepared(prepared) || await this.resolve(next.track);
       if (generation !== this.generation) return;
       if (this.queue[0] !== next) continue;
-      this.queue.shift();
-      this.preparedQueue = null;
       if (playable) {
+        await Promise.resolve(this.onPrefetchTrack(playable.streamUrl, 'warm')).catch(() => {});
+        if (generation !== this.generation) return;
+        if (this.queue[0] !== next) continue;
+        this.queue.shift();
+        this.preparedQueue = null;
         const duration = durationOf(playable.durationSec) || 240;
         const startedAt = next.startedAt && Date.now() - next.startedAt < (duration - 2) * 1000
           ? next.startedAt : Date.now();
@@ -524,6 +594,8 @@ export class MusicManager {
         this.onStateChanged();
         return;
       }
+      this.queue.shift();
+      this.preparedQueue = null;
       this.markOutcome(next.uid, 'unavailable');
       this.onUnavailable?.(next);
       this.current = null;
@@ -534,12 +606,22 @@ export class MusicManager {
     const fallbackGeneration = this.fallbackGeneration;
     const prepared = this.preparedFallback?.key === fallbackGeneration ? this.preparedFallback : null;
     this.preparedFallback = null;
-    const known = await this.usePrepared(prepared);
-    const playable = (known && known.id !== this.current?.track?.id ? known : null) ||
-      await this.resolveFallbackTrackPlayable();
+    let known = await this.usePrepared(prepared);
+    if (known && known.id === this.current?.track?.id) known = null;
+    while (!known && Array.isArray(this.preparedFallbackPool) && this.preparedFallbackPool.length > 0) {
+      const pooled = this.preparedFallbackPool.shift();
+      const candidate = await this.usePrepared(pooled);
+      if (candidate && candidate.id !== this.current?.track?.id) {
+        known = candidate;
+      }
+    }
+    const playable = known || await this.resolveFallbackTrackPlayable();
     if (generation !== this.generation) return;
     if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation);
     if (playable) {
+      await Promise.resolve(this.onPrefetchTrack(playable.streamUrl, 'warm')).catch(() => {});
+      if (generation !== this.generation) return;
+      if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation);
       this.playTrack(playable, {
         userKey: 'system:fallback',
         name: this.fallbackPlaylistName + ' (轮播)'
@@ -665,9 +747,15 @@ export class MusicManager {
       this.onStateChanged();
       return { ok: false, error: '歌曲暂时没有可用音源' };
     }
+    await Promise.resolve(this.onPrefetchTrack(playable.streamUrl, 'warm')).catch(() => {});
+    if (generation !== this.generation || this.current?.uid !== (currentUid ?? undefined)) {
+      return { ok: false, error: '播放状态已更新，请重试' };
+    }
+    const afterWarmIndex = this.queue.indexOf(item);
+    if (afterWarmIndex < 0) return { ok: false, error: '排队曲目已变更' };
     this.queueVotes.clear();
-    this.queue.splice(index, 1);
-    if (index === 0) this.preparedQueue = null;
+    this.queue.splice(afterWarmIndex, 1);
+    if (afterWarmIndex === 0) this.preparedQueue = null;
     this.playTrack(playable, {
       userKey: item.requesterKey, name: item.requesterName, avatar: item.requesterAvatar
     }, false, Date.now(), item.uid);

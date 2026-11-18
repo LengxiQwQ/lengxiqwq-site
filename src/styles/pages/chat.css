@@ -184,6 +184,7 @@ html[data-chat-page] .scroll-down-indicator {
 	padding: 0 !important;
 	background: var(--skin-canvas);
 	overflow: hidden;
+	contain: strict;
 }
 
 @media (min-width: 1280px) {
@@ -522,14 +523,14 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 .chat-bubble-other {
 	background: var(--skin-bubble) !important;
 	color: var(--skin-text) !important;
-	border-top-left-radius: 4px !important;
+	border-top-left-radius: 0 !important;
 }
 
 /* 自己发的消息：带主题色阶的泡泡，右上角一体弧形尾巴 */
 .chat-bubble-self {
 	background: var(--skin-bubble-self) !important;
 	color: var(--skin-bubble-self-text) !important;
-	border-top-right-radius: 4px !important;
+	border-top-right-radius: 0 !important;
 }
 
 .chat-bubble-self a {
@@ -537,6 +538,36 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	text-decoration: underline;
 }
 
+.chat-bubble-tail {
+	position: absolute;
+	top: 0;
+	overflow: visible;
+	pointer-events: none;
+	z-index: 0;
+}
+
+.chat-bubble-tail.other {
+	left: -7px;
+}
+
+.chat-bubble-tail.self {
+	right: -7px;
+	transform: scaleX(-1);
+}
+
+.chat-bubble-tail-shadow {
+	fill: color-mix(in oklab, var(--skin-text) 7%, transparent);
+}
+
+.chat-bubble-other .chat-bubble-tail-shape {
+	fill: var(--skin-bubble);
+}
+
+.chat-bubble-self .chat-bubble-tail-shape {
+	fill: var(--skin-bubble-self);
+}
+
+/* 被提及消息气泡：单路径矢量轮廓，均匀 1.5px 细线框无缝包裹气泡与尖尖 */
 .chat-bubble-svg-ready {
 	background: transparent !important;
 	box-shadow: none !important;
@@ -556,16 +587,29 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	z-index: 0;
 }
 
-.chat-bubble-shadow {
+.chat-bubble-mentioned .chat-bubble-shadow {
 	fill: color-mix(in oklab, var(--skin-text) 7%, transparent);
 }
 
-.chat-bubble-other .chat-bubble-shape {
-	fill: var(--skin-bubble);
+.chat-bubble-mentioned .chat-bubble-shape {
+	fill: color-mix(in oklch, var(--skin-accent) 7%, var(--skin-bubble));
+	stroke: var(--skin-accent);
+	stroke-width: 3;
+	stroke-linejoin: round;
+	paint-order: stroke;
 }
 
-.chat-bubble-self .chat-bubble-shape {
-	fill: var(--skin-bubble-self);
+.chat-mentioned-tag {
+	display: inline-flex;
+	align-items: center;
+	padding: 0.0625rem 0.42rem;
+	border-radius: var(--radius-full);
+	background: var(--primary);
+	color: #ffffff;
+	font-size: 0.625rem;
+	font-weight: 700;
+	line-height: 1.2;
+	flex-shrink: 0;
 }
 
 /* 成员头衔与标签胶囊 */
@@ -621,6 +665,18 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	border: none;
 	border-radius: 999px;
 	margin: 0.25rem auto;
+}
+
+.chat-system-msg--error {
+	color: #dc2626;
+	background: color-mix(in oklch, #ef4444 12%, transparent);
+	border: 1px solid color-mix(in oklch, #ef4444 26%, transparent);
+}
+
+:global(.dark) .chat-system-msg--error {
+	color: #f87171;
+	background: color-mix(in oklch, #ef4444 16%, transparent);
+	border-color: color-mix(in oklch, #ef4444 32%, transparent);
 }
 
 .chat-system-msg-link {
@@ -1308,7 +1364,8 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	align-items: center;
 }
 
-.chat-read-receipts-wrap:is(:hover, :focus-within) {
+.chat-read-receipts-wrap:is(:hover, :focus-within),
+.chat-read-receipts-wrap:has(> [data-chat-floating-state="ready"]) {
 	z-index: 40;
 }
 
@@ -1325,6 +1382,16 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	border: 1px solid var(--skin-line);
 	color: var(--skin-text);
 	box-shadow: 0 10px 26px -4px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.08);
+}
+
+.chat-read-receipts-popover::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	right: 0;
+	top: -10px;
+	bottom: -10px;
+	z-index: -1;
 }
 
 .chat-read-receipts-list {
@@ -1636,30 +1703,70 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transform: scale(0.92);
 }
 
+/*
+ * 队列行尾部操作位（删除按钮 / 隐藏时的占位）
+ * 尺寸与切歌按钮保持一致的 2rem 方块，未渲染删除按钮时留空占位，
+ * 保证「即将播放」「房间待播队列」列表里切歌按钮与删除列始终逐行对齐。
+ */
+.chat-queue-row-action {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	width: 1.75rem;
+	height: 1.75rem;
+	padding: 0;
+	border-radius: 0.5rem;
+}
+
+.chat-queue-icon-btn.chat-queue-row-action {
+	background: transparent;
+	color: var(--chat-meta-color);
+}
+
+.chat-queue-icon-btn.chat-queue-row-action:hover {
+	background: color-mix(in oklch, #ef4444 12%, transparent);
+	color: #ef4444;
+}
+
 .chat-queue-play-btn {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	gap: 0.15rem;
-	min-width: 2rem;
-	height: 2rem;
-	padding: 0 0.35rem;
+	flex: none;
+	width: 1.75rem;
+	height: 1.75rem;
+	padding: 0;
 	border: 0;
-	border-radius: 0.55rem;
+	border-radius: 0.5rem;
 	background: color-mix(in oklch, var(--primary) 10%, transparent);
 	color: var(--chat-accent-text);
 	cursor: pointer;
 	transition: background-color 160ms ease, color 160ms ease, transform 140ms ease;
+}
+.chat-queue-play-btn.has-votes {
+	width: auto;
+	min-width: 1.75rem;
+	padding: 0 0.35rem 0 0.4rem;
+	gap: 0.2rem;
 }
 .chat-queue-play-btn:hover, .chat-queue-play-btn.is-voted {
 	background: color-mix(in oklch, var(--primary) 22%, transparent);
 }
 .chat-queue-play-btn:active { transform: scale(0.92); }
 .chat-queue-play-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+/* 投票数直接内嵌在切歌按钮左侧，按钮向左扩展，保持右侧与删除按钮对齐 */
 .chat-queue-vote-count {
-	font-size: 0.625rem;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: none;
+	font-size: 0.65rem;
 	font-weight: 700;
+	line-height: 1;
+	letter-spacing: -0.01em;
 	font-variant-numeric: tabular-nums;
+	pointer-events: none;
 	animation: chat-queue-vote-appear 180ms ease-out;
 }
 @keyframes chat-queue-vote-appear {
@@ -2672,6 +2779,12 @@ div.chat-sticker-large svg {
 	font-weight: 700;
 }
 
+.chat-mention-pill.self::selection,
+.chat-mentioned-tag::selection {
+	background-color: rgba(255, 255, 255, 0.92);
+	color: var(--primary);
+}
+
 .chat-msg-images {
 	display: flex;
 	flex-wrap: wrap;
@@ -2861,19 +2974,19 @@ div.chat-sticker-large svg {
 
 /* 弹窗开启时：提升 #content-panel 层级越过 #top-row 实现全屏真居中，只对背景柔和虚化而不压暗（保持弹窗透亮质感）；
    外围深色遮罩由弹窗自身 box-shadow: 0 0 0 100vmax 自动绕过圆角边框向外铺满，中心区域 100% 原汁原味透出壁纸毛玻璃，无需抠洞、零错位 */
-html[data-chat-page]:has(.chat-modal-backdrop) body #content-panel {
+html[data-chat-page][data-chat-modal-open="true"] body #content-panel {
 	z-index: 95 !important;
 }
 
-html[data-chat-page]:has(.chat-modal-backdrop) body #top-row,
-html[data-chat-page]:has(.chat-modal-backdrop) #chat-page .chat-mobile-stage {
+html[data-chat-page][data-chat-modal-open="true"] body #top-row,
+html[data-chat-page][data-chat-modal-open="true"] #chat-page .chat-mobile-stage {
 	filter: blur(5px) brightness(0.84);
 	pointer-events: none;
 	transition: filter 180ms ease;
 }
 
-html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]):has(.chat-modal-backdrop) body #top-row,
-html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]):has(.chat-modal-backdrop) #chat-page .chat-mobile-stage {
+html[data-chat-page][data-chat-modal-open="true"]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) body #top-row,
+html[data-chat-page][data-chat-modal-open="true"]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-mobile-stage {
 	filter: blur(6px) brightness(0.76);
 }
 
@@ -3659,6 +3772,17 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 		pointer-events: auto;
 		transition: opacity var(--chat-toolbar-enter) var(--ease-decelerate);
 	}
+
+	/* 悬停表情回应 / 已读成员气泡或其悬浮卡处于展开态时，隐去消息悬浮操作栏，避免跨越间隙时闪烁遮挡 */
+	[data-msg-uid]:has(
+		.chat-reaction-item:is(:hover, :focus-within),
+		.chat-read-receipts-wrap:is(:hover, :focus-within),
+		.chat-reaction-popover[data-chat-floating-state="ready"],
+		.chat-read-receipts-popover[data-chat-floating-state="ready"]
+	) .chat-msg-floating-actions:not(.is-active) {
+		opacity: 0;
+		pointer-events: none;
+	}
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4137,18 +4261,24 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	z-index: 5;
 	display: flex;
 	flex-wrap: wrap;
-	gap: 0.35rem;
-	margin-top: 0.35rem;
+	gap: 0;
+	margin: 0.35rem -0.175rem -0.2rem;
 	user-select: none;
+}
+
+.chat-reaction-pills:has(.chat-reaction-item:is(:hover, :focus-within), [data-chat-floating-state="ready"]) {
+	z-index: 35;
 }
 
 .chat-reaction-item {
 	position: relative;
 	display: inline-flex;
 	align-items: center;
+	padding: 0 0.175rem 0.2rem;
 }
 
-.chat-reaction-item:is(:hover, :focus-within) {
+.chat-reaction-item:is(:hover, :focus-within),
+.chat-reaction-item:has(> [data-chat-floating-state="ready"]) {
 	z-index: 40;
 }
 
@@ -4505,6 +4635,12 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 		font-size: 16px !important;
 	}
 }
+
+/* 虚拟滚动已将长列表裁剪为可视区附近节点，此处仅保留无图层切换副作用的样式隔离 */
+[data-msg-uid] {
+	contain: style;
+}
+
 
 
 

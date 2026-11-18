@@ -244,3 +244,166 @@ test('superseded play rejection cannot put the latest track into a blocked state
     assert.equal(audio.src, 'https://example.invalid/new');
   } finally { player.destroy(); }
 });
+
+test('mid-song listen() seeks before emitting sound (zero 0.0s audio blip) and never double-seeks when Range seek takes 700ms', async () => {
+  let now = 55000; // 45.0s into the song (startedAt = 10000)
+  const audio = new FakeAudio();
+  audio.readyState = 0;
+  let currentTimeAtPlay = -1;
+  let volumeAtPlay = -1;
+  let seekCount = 0;
+  let _ct = 0;
+  Object.defineProperty(audio, 'currentTime', {
+    get() { return _ct; },
+    set(val) {
+      if (val !== 0) {
+        seekCount++;
+        this.seeking = true;
+      }
+      _ct = val;
+    }
+  });
+  let resolvePlay;
+  audio.play = () => {
+    audio.paused = false;
+    currentTimeAtPlay = audio.currentTime;
+    volumeAtPlay = audio.volume;
+    return new Promise(resolve => { resolvePlay = resolve; });
+  };
+  const player = new RoomAudioPlayer(audio, {
+    now: () => now, status() {}, ready() {}, error() {}, ended() {}, duration() {}
+  });
+  try {
+    player.setTrack({
+      uid: 'mid-song',
+      track: { streamUrl: 'https://chat-server.lengxiqwq.com/api/music/stream/qq_3.mp3?token=mid' },
+      startedAt: 10000,
+      phase: 'playing',
+      sourceRevision: 0
+    });
+    seekCount = 0;
+    player.listen();
+    // While readyState is 0 at play(), volume MUST be held at 0 so frame 0 is never audible!
+    assert.equal(volumeAtPlay, 0);
+
+    // Metadata arrives at t=45.1s while play() is still pending
+    now = 55100;
+    audio.readyState = 1;
+    audio.dispatchEvent(new Event('loadedmetadata'));
+    assert.equal(audio.currentTime, 45.1);
+    assert.equal(seekCount, 1);
+    assert.equal(audio.volume, 0, 'must remain silent while seeking');
+
+    // Range request completes 700ms later (now = 55800 => target = 45.8s, currentTime = 45.1s, drift = 0.7s)
+    now = 55800;
+    audio.seeking = false;
+    audio.readyState = 4;
+    resolvePlay();
+    await Promise.resolve();
+    audio.dispatchEvent(new Event('seeked'));
+
+    // Must unmute/restore volume immediately with ONLY 1 seek (no second stutter seek!)
+    assert.equal(seekCount, 1);
+    assert.equal(audio.volume, 1);
+    assert.equal(audio.muted, false);
+  } finally {
+    player.destroy();
+  }
+});
+
+test('fresh track switch (< 500ms) plays from 0.0s immediately with zero seek and full volume', async () => {
+  let now = 10250; // 250ms after startedAt (10000)
+  const audio = new FakeAudio();
+  let seekCount = 0;
+  let _ct = 0;
+  Object.defineProperty(audio, 'currentTime', {
+    get() { return _ct; },
+    set(val) {
+      if (val !== 0) {
+        seekCount++;
+        this.seeking = true;
+      }
+      _ct = val;
+    }
+  });
+  const player = new RoomAudioPlayer(audio, {
+    now: () => now, status() {}, ready() {}, error() {}, ended() {}, duration() {}
+  });
+  try {
+    player.setTrack({
+      uid: 'fresh-song',
+      track: { streamUrl: 'https://chat-server.lengxiqwq.com/api/music/stream/qq_4.mp3?token=fresh' },
+      startedAt: 10000,
+      phase: 'playing',
+      sourceRevision: 0
+    });
+    seekCount = 0;
+    player.listen();
+    await Promise.resolve();
+    assert.equal(seekCount, 0, 'fresh track start within 500ms must not seek');
+    assert.equal(audio.currentTime, 0);
+    assert.equal(audio.volume, 1);
+    assert.equal(audio.muted, false);
+  } finally {
+    player.destroy();
+  }
+});
+
+test('3-track fallback pool enables 3 consecutive 0ms skips and awaits warm first-chunk before stamping startedAt', async () => {
+  let warmDelayMs = 35;
+  let warmCalls = 0;
+  const tracks = [
+    { id: 'qq:t1', sourceId: 't1', sourcePlatform: 'qqmusic', sourceTrackId: 't1', title: 'Song 1', artist: 'A', durationSec: 200 },
+    { id: 'qq:t2', sourceId: 't2', sourcePlatform: 'qqmusic', sourceTrackId: 't2', title: 'Song 2', artist: 'A', durationSec: 200 },
+    { id: 'qq:t3', sourceId: 't3', sourcePlatform: 'qqmusic', sourceTrackId: 't3', title: 'Song 3', artist: 'A', durationSec: 200 },
+    { id: 'qq:t4', sourceId: 't4', sourcePlatform: 'qqmusic', sourceTrackId: 't4', title: 'Song 4', artist: 'A', durationSec: 200 }
+  ];
+  const m = Object.create(MusicManager.prototype);
+  Object.assign(m, {
+    roomId: 'test',
+    current: { uid: 'p0', track: { id: 'qq:t1', sourceId: 't1', streamUrl: 'https://example.invalid/t1' }, sourceRevision: 0, isFallback: true },
+    queue: [],
+    fallbackTracks: tracks,
+    fallbackPlaylistName: 'TestList',
+    generation: 1,
+    fallbackGeneration: 1,
+    preparedFallback: null,
+    preparedFallbackPool: [],
+    _fillingPool: null,
+    musicRegistry: {
+      isKnownUnplayable: () => false,
+      resolvePlaylistTrack: async (item) => ({ id: 'qq:' + item.sourceTrackId, provider: 'qq', sourceId: item.sourceTrackId, title: item.title, artist: item.artist, durationSec: 200 }),
+      resolvePlayable: async (track) => ({ ...track, streamUrl: 'https://example.invalid/' + track.sourceId })
+    },
+    onPrefetchTrack: (_url, mode) => {
+      if (mode === 'warm') {
+        warmCalls++;
+        return new Promise(resolve => setTimeout(() => resolve(true), warmDelayMs));
+      }
+    },
+    onStateChanged() {},
+    savePlayback() {},
+    scheduleAdvance() {}
+  });
+
+  try {
+    await m.prepareNext();
+    await m._fillingPool;
+    assert.ok(m.preparedFallback?.playable, 'primary fallback prepared');
+    assert.equal(m.preparedFallbackPool.length, 2, '2 additional backup tracks pre-warmed in pool');
+
+    // When a skip occurs and warm takes 35ms, startedAt must be stamped AFTER warm finishes (not 35ms earlier!)
+    const playedIds = [m.current.track.id];
+    for (let i = 0; i < 3; i++) {
+      const beforeSkip = Date.now();
+      await m.advanceNext();
+      clearTimeout(m._prepareFallbackTimer);
+      assert.ok(m.current.startedAt >= beforeSkip + 25, 'startedAt must be stamped after warm first-chunk completes');
+      assert.ok(!playedIds.slice(-1).includes(m.current.track.id), 'consecutive skips must never repeat the same track');
+      playedIds.push(m.current.track.id);
+    }
+    assert.equal(warmCalls, 3);
+  } finally {
+    clearTimeout(m._prepareFallbackTimer);
+  }
+});

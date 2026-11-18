@@ -21,6 +21,7 @@ interface ChatFloatingOptions {
 
 const tooltipExitDuration = 90;
 let dismissActiveTooltip: (() => void) | undefined;
+let dismissActiveCard: (() => void) | undefined;
 
 export function positionChatFloating(
 	node: HTMLElement,
@@ -44,9 +45,18 @@ export function positionChatFloating(
 		if (dismissActiveTooltip === dismissTooltip) {
 			dismissActiveTooltip = undefined;
 		}
+		if (dismissActiveCard === dismissCard) {
+			dismissActiveCard = undefined;
+		}
 	}
 
 	function dismissTooltip() {
+		hovered = false;
+		focused = false;
+		stop();
+	}
+
+	function dismissCard() {
 		hovered = false;
 		focused = false;
 		stop();
@@ -65,6 +75,10 @@ export function positionChatFloating(
 			} else if (dismissActiveTooltip !== dismissTooltip) {
 				dismissActiveTooltip?.();
 				dismissActiveTooltip = dismissTooltip;
+			}
+		} else if (options.hover === "card") {
+			if (options.forceOpen && dismissActiveCard === dismissCard) {
+				dismissActiveCard = undefined;
 			}
 		}
 		if (stopPositioning) return;
@@ -116,6 +130,11 @@ export function positionChatFloating(
 				node.style.setProperty("--chat-floating-y", `${y}px`);
 				if (options.hover === "tooltip") {
 					node.dataset.chatTooltipSide = placement.split("-")[0];
+				} else if (options.hover === "card" && !options.forceOpen) {
+					if (dismissActiveCard && dismissActiveCard !== dismissCard) {
+						dismissActiveCard();
+					}
+					dismissActiveCard = dismissCard;
 				}
 				node.dataset.chatFloatingState = "ready";
 			});
@@ -156,17 +175,8 @@ export function positionChatFloating(
 	}
 
 	function handlePointerLeave() {
-		if (options.hover === "tooltip") {
-			hovered = false;
-			sync();
-		} else {
-			window.clearTimeout(closeTimer);
-			// Give the pointer time to cross the gap to an interactive hover card.
-			closeTimer = window.setTimeout(() => {
-				hovered = false;
-				sync();
-			}, 120);
-		}
+		hovered = false;
+		sync();
 	}
 
 	function handleFocusIn() {

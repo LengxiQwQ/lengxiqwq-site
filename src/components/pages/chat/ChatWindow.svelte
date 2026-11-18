@@ -16,9 +16,11 @@ import {
 	isExternalMatrixIdentity,
 	isMentionedForUser,
 	resolveExternalOrigin,
+	sanitizeChatUrl,
 	uploadChatImage,
 	uploadChatMedia,
 } from "./chatClient";
+import { setChatLightboxSourceProvider } from "./chatLightbox";
 import type {
 	ChatMentionCandidate,
 	ChatMessageRecord,
@@ -64,6 +66,7 @@ interface Props {
 	isSkippingTrack?: boolean;
 	onSkipTrack?: () => void;
 	onVoteSkip?: () => void;
+	onPlayQueued?: (uid: string) => void;
 	onClearTargetMessage?: () => void;
 	onLoadHistory?: (sinceCreatedAt?: number, jumpTarget?: boolean) => void;
 	onMarkRead?: (timestamp: number, msgUid?: string) => void;
@@ -158,6 +161,7 @@ const {
 	isSkippingTrack = false,
 	onSkipTrack,
 	onVoteSkip,
+	onPlayQueued,
 	onClearTargetMessage,
 	onLoadHistory,
 	onMarkRead,
@@ -453,6 +457,43 @@ const skipVoteBanner = $derived.by(() => {
 	};
 });
 
+const queueVoteBanners = $derived.by(() => {
+	const queue = musicState?.queue ?? [];
+	const items = queue.filter((item) => (item.playVotes?.length ?? 0) > 0);
+	if (items.length === 0) return [];
+
+	const voteThreshold = musicState?.voteThreshold ?? 2;
+	const nameMap = new Map<string, string>();
+	for (const m of [...onlineMembers, ...roomOnlineMembers, ...observers]) {
+		if (m.userKey && m.name) nameMap.set(m.userKey, m.name);
+	}
+	if (currentUser?.userKey && currentUser?.name) {
+		nameMap.set(currentUser.userKey, currentUser.name);
+	}
+
+	return items.map((item) => {
+		const votes = item.playVotes ?? [];
+		const names = votes
+			.map((key) => nameMap.get(key))
+			.filter((n): n is string => Boolean(n));
+		const voterLabel =
+			names.length === 0
+				? "房友"
+				: names.length <= 2
+					? names.join("、")
+					: `${names.slice(0, 2).join("、")} 等`;
+		const hasVoted = Boolean(currentUser && votes.includes(currentUser.userKey));
+		return {
+			uid: item.uid,
+			voterLabel,
+			title: item.track.title,
+			voteCount: votes.length,
+			voteThreshold,
+			hasVoted,
+		};
+	});
+});
+
 const RECALL_WINDOW_MS = 5 * 60_000;
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
 
@@ -526,13 +567,203 @@ function isMusicNoticeMessage(msg: ChatMessageRecord): boolean {
 	);
 }
 
+const VIRTUAL_THRESHOLD = 60;
+const VIRTUAL_OVERSCAN_PX = 900;
+const VIRTUAL_GAP_PX = 12;
+
+const measuredMsgHeights = new Map<string, number>();
+let heightMapVersion = $state(0);
+let heightFlushRafId: number | null = null;
+let virtualScrollTop = $state(0);
+let virtualViewportH = $state(760);
+let forcedRenderUid = $state("");
+
+function estimateMessageHeight(msg: ChatMessageRecord): number {
+	if (msg.kind === "system") return 34;
+	let h = 58;
+	if (msg.replyTo) h += 44;
+	const hasMedia =
+		(msg.attachments && msg.attachments.length > 0) ||
+		msg.content.includes("![");
+	if (hasMedia) h += 160;
+	else if (msg.content.length > 160) h += 72;
+	else if (msg.content.length > 70) h += 36;
+	if (msg.poll) h += 140;
+	if (msg.reactions && Object.keys(msg.reactions).length > 0) h += 30;
+	return h;
+}
+
+function getMsgSlotHeight(msg: ChatMessageRecord): number {
+	return measuredMsgHeights.get(msg.msgUid) ?? estimateMessageHeight(msg);
+}
+
+function scheduleHeightMapFlush() {
+	if (heightFlushRafId !== null) return;
+	heightFlushRafId = requestAnimationFrame(() => {
+		heightFlushRafId = null;
+		heightMapVersion += 1;
+	});
+}
+
+let sharedRowObserver: ResizeObserver | null = null;
+const rowUidMap = new WeakMap<Element, string>();
+
+function getSharedRowObserver(): ResizeObserver | null {
+	if (typeof ResizeObserver === "undefined") return null;
+	if (!sharedRowObserver) {
+		sharedRowObserver = new ResizeObserver((entries) => {
+			let changed = false;
+			let topCompensation = 0;
+			const container = messageContainer;
+			const curTop = container ? container.scrollTop : virtualScrollTop;
+			const shouldCompensate = Boolean(container && !followsLayoutAtBottom);
+
+			for (const entry of entries) {
+				const uid = rowUidMap.get(entry.target);
+				if (!uid) continue;
+				const box = entry.borderBoxSize?.[0];
+				const h = Math.round((box ? box.blockSize : entry.contentRect.height) * 10) / 10;
+				if (h <= 0) continue;
+				const prev = measuredMsgHeights.get(uid);
+				if (prev === undefined || Math.abs(prev - h) > 0.5) {
+					if (shouldCompensate && prev !== undefined) {
+						const el = entry.target as HTMLElement;
+						if (el.offsetTop + el.offsetHeight < curTop + 40) {
+							topCompensation += h - prev;
+						}
+					}
+					measuredMsgHeights.set(uid, h);
+					changed = true;
+				}
+			}
+
+			if (topCompensation !== 0 && container) {
+				container.scrollTop = Math.max(0, container.scrollTop + topCompensation);
+				virtualScrollTop = container.scrollTop;
+			}
+			if (changed) {
+				scheduleHeightMapFlush();
+			}
+		});
+	}
+	return sharedRowObserver;
+}
+
+function measureVirtualRow(node: HTMLElement, uid: string) {
+	const ro = getSharedRowObserver();
+	if (!ro) return {};
+	rowUidMap.set(node, uid);
+	ro.observe(node);
+	return {
+		update(nextUid: string) {
+			rowUidMap.set(node, nextUid);
+		},
+		destroy() {
+			ro.unobserve(node);
+			rowUidMap.delete(node);
+		},
+	};
+}
+
+function findOffsetIndex(offsets: number[], targetY: number): number {
+	let lo = 0;
+	let hi = offsets.length - 2;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (offsets[mid + 1] <= targetY) {
+			lo = mid + 1;
+		} else {
+			hi = mid;
+		}
+	}
+	return Math.max(0, lo);
+}
+
 const visibleMessages = $derived(
 	showMusicNotices
 		? messages
 		: messages.filter((msg) => !isMusicNoticeMessage(msg)),
 );
 
-const renderedMessages = $derived(visibleMessages);
+const virtualLayout = $derived.by(() => {
+	const list = visibleMessages;
+	const len = list.length;
+	void heightMapVersion;
+
+	if (len <= VIRTUAL_THRESHOLD) {
+		return {
+			start: 0,
+			end: len,
+			topSpacerPx: 0,
+			bottomSpacerPx: 0,
+			offsets: [] as number[],
+		};
+	}
+
+	const offsets = new Array<number>(len + 1);
+	offsets[0] = 0;
+	for (let i = 0; i < len; i++) {
+		offsets[i + 1] =
+			offsets[i] + getMsgSlotHeight(list[i]) + (i < len - 1 ? VIRTUAL_GAP_PX : 0);
+	}
+	const totalHeight = offsets[len];
+
+	const viewTop = followsLayoutAtBottom
+		? Math.max(0, totalHeight - virtualViewportH)
+		: virtualScrollTop;
+	const minTop = Math.max(0, viewTop - VIRTUAL_OVERSCAN_PX);
+	const maxBottom = viewTop + virtualViewportH + VIRTUAL_OVERSCAN_PX;
+
+	let start = findOffsetIndex(offsets, minTop);
+	let end = findOffsetIndex(offsets, maxBottom) + 1;
+	start = Math.max(0, start - 2);
+	end = Math.min(len, end + 2);
+
+	const pinnedUid = forcedRenderUid || highlightedMsgUid;
+	if (pinnedUid) {
+		const idx = list.findIndex((m) => m.msgUid === pinnedUid);
+		if (idx >= 0) {
+			if (idx < start) start = Math.max(0, idx - 3);
+			if (idx >= end) end = Math.min(len, idx + 4);
+		}
+	}
+
+	const topSpacerPx =
+		start > 0 ? Math.max(0, offsets[start] - VIRTUAL_GAP_PX) : 0;
+	const bottomSpacerPx =
+		end < len ? Math.max(0, totalHeight - offsets[end] - VIRTUAL_GAP_PX) : 0;
+
+	return { start, end, topSpacerPx, bottomSpacerPx, offsets };
+});
+
+const renderedMessages = $derived(
+	visibleMessages.slice(virtualLayout.start, virtualLayout.end),
+);
+
+function collectChatImageSources(): Array<{ src: string }> {
+	const items: Array<{ src: string }> = [];
+	const mdImgRe = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+	for (const msg of visibleMessages) {
+		if (msg.attachments) {
+			for (const att of msg.attachments) {
+				if (att.type === "image" && !att.isSticker && att.url) {
+					items.push({ src: att.url });
+				}
+			}
+		}
+		if (msg.content && msg.content.includes("![")) {
+			mdImgRe.lastIndex = 0;
+			let m: RegExpExecArray | null;
+			while ((m = mdImgRe.exec(msg.content)) !== null) {
+				const safe = sanitizeChatUrl(m[1]);
+				if (safe && !safe.includes("/assets/stickers/")) {
+					items.push({ src: safe });
+				}
+			}
+		}
+	}
+	return items;
+}
 
 const hasUnloadedUnread = $derived(
 	Boolean(
@@ -745,15 +976,15 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 		const bGroup = !b.online ? 2 : b.isFocused === false ? 1 : 0;
 		if (aGroup !== bGroup) return aGroup - bGroup;
 		if (aGroup <= 1) {
-			// 在线用户：最新连接的排在最下面（升序，小的在前）
+			// 在线用户：最新连接的排在最下面（column-reverse 下数组越靠前视觉越靠下，故时间降序）
 			const aTime = a.connectedAt || 0;
 			const bTime = b.connectedAt || 0;
-			return aTime - bTime || a.name.localeCompare(b.name, "zh-CN");
+			return bTime - aTime || a.name.localeCompare(b.name, "zh-CN");
 		}
-		// 离线用户：最近离线的排在最下面（降序，大的在后）
+		// 离线用户：最近离线的排在最下面（column-reverse 下数组越靠前视觉越靠下，故时间降序）
 		const aTime = a.lastSeenAt || 0;
 		const bTime = b.lastSeenAt || 0;
-		return aTime - bTime || a.name.localeCompare(b.name, "zh-CN");
+		return bTime - aTime || a.name.localeCompare(b.name, "zh-CN");
 	});
 });
 
@@ -937,6 +1168,8 @@ function snapScrollToBottom() {
 	if (scrollHeight - clientHeight - scrollTop > bottomScrollTolerance) {
 		messageContainer.scrollTop = scrollHeight;
 	}
+	virtualScrollTop = Math.max(0, messageContainer.scrollTop);
+	if (clientHeight > 0) virtualViewportH = clientHeight;
 	lastScrollHeight = scrollHeight;
 	lastClientHeight = clientHeight;
 	isPinnedToBottom = true;
@@ -945,10 +1178,17 @@ function snapScrollToBottom() {
 	newMessagesWhileScrolled = 0;
 }
 
-function handleMessageScroll() {
+let scrollRafId: number | null = null;
+let lastWrittenSeenMsgKey = "";
+
+function flushMessageScroll() {
+	scrollRafId = null;
 	if (!messageContainer) return;
 	const sh = messageContainer.scrollHeight;
 	const ch = messageContainer.clientHeight;
+	if (ch > 0 && Math.abs(ch - virtualViewportH) > 1) {
+		virtualViewportH = ch;
+	}
 	const layoutChanged =
 		(lastScrollHeight > 0 && sh !== lastScrollHeight) ||
 		(lastClientHeight > 0 && ch !== lastClientHeight);
@@ -957,6 +1197,8 @@ function handleMessageScroll() {
 
 	// Layout-induced scroll events must not cancel a pinned position before ResizeObserver runs.
 	if (layoutChanged && followsLayoutAtBottom) return;
+
+	virtualScrollTop = messageContainer.scrollTop;
 
 	const gap = getScrollGap();
 	isPinnedToBottom = gap <= bottomScrollTolerance;
@@ -973,12 +1215,16 @@ function handleMessageScroll() {
 	) {
 		const latestMsg = messages[messages.length - 1];
 		const latestTs = latestMsg.createdAt;
-		writeLastSeenAt(
-			roomId,
-			currentUser.userKey,
-			latestTs,
-		);
-		onMarkRead?.(latestTs, latestMsg.msgUid);
+		const seenKey = `${roomId}:${currentUser.userKey}:${latestMsg.msgUid}:${latestTs}`;
+		if (seenKey !== lastWrittenSeenMsgKey) {
+			lastWrittenSeenMsgKey = seenKey;
+			writeLastSeenAt(
+				roomId,
+				currentUser.userKey,
+				latestTs,
+			);
+			onMarkRead?.(latestTs, latestMsg.msgUid);
+		}
 	}
 
 	// 向上滚动到接近顶部时自动触发加载更早历史消息
@@ -987,19 +1233,49 @@ function handleMessageScroll() {
 	}
 }
 
+function handleMessageScroll() {
+	if (!messageContainer) return;
+	if (scrollRafId !== null) return;
+	scrollRafId = requestAnimationFrame(flushMessageScroll);
+}
+
 async function scrollToBottom(smooth = false) {
 	await tick();
 	if (!messageContainer) return;
 	if (smooth) {
-		messageContainer.scrollTo({
-			top: messageContainer.scrollHeight,
-			behavior: "smooth",
-		});
-		lastScrollHeight = messageContainer.scrollHeight;
-		lastClientHeight = messageContainer.clientHeight;
+		const seq = ++jumpSeq;
+		const lastUid = visibleMessages[visibleMessages.length - 1]?.msgUid || "";
+		if (lastUid) forcedRenderUid = lastUid;
 		isStickyAtBottom = true;
 		showScrollBottomBtn = false;
 		newMessagesWhileScrolled = 0;
+
+		const container = messageContainer;
+		const maxStartGap = Math.max(800, container.clientHeight * 1.6);
+		const preTarget = Math.max(
+			0,
+			container.scrollHeight - container.clientHeight - maxStartGap,
+		);
+		if (container.scrollTop < preTarget) {
+			container.scrollTop = preTarget;
+			virtualScrollTop = preTarget;
+		}
+		await tick();
+		if (seq !== jumpSeq || !messageContainer) return;
+		const targetTop = Math.max(
+			0,
+			messageContainer.scrollHeight - messageContainer.clientHeight,
+		);
+		const completed = await smoothScrollContainerTo(
+			messageContainer,
+			targetTop,
+			seq,
+		);
+		if (seq !== jumpSeq) return;
+		forcedRenderUid = "";
+		if (completed) {
+			snapScrollToBottom();
+		}
 		return;
 	}
 	snapScrollToBottom();
@@ -1057,9 +1333,22 @@ async function jumpToMessage(msgUid: string) {
 		alertAutoHideTimer = null;
 	}
 	highlightedMsgUid = "";
+	forcedRenderUid = msgUid;
 	if (highlightClearTimer !== null) {
 		window.clearTimeout(highlightClearTimer);
 		highlightClearTimer = null;
+	}
+	const targetIdx = visibleMessages.findIndex((m) => m.msgUid === msgUid);
+	if (
+		targetIdx >= 0 &&
+		messageContainer &&
+		virtualLayout.offsets.length > targetIdx
+	) {
+		const estTop = Math.max(
+			0,
+			virtualLayout.offsets[targetIdx] - virtualViewportH / 2,
+		);
+		virtualScrollTop = estTop;
 	}
 	await tick();
 	if (seq !== jumpSeq) return;
@@ -1067,7 +1356,10 @@ async function jumpToMessage(msgUid: string) {
 	const el = container?.querySelector<HTMLElement>(
 		`[data-msg-uid="${CSS.escape(msgUid)}"]`,
 	);
-	if (!el || !container) return;
+	if (!el || !container) {
+		forcedRenderUid = "";
+		return;
+	}
 
 	const cRect = container.getBoundingClientRect();
 	const eRect = el.getBoundingClientRect();
@@ -1080,6 +1372,8 @@ async function jumpToMessage(msgUid: string) {
 
 	const completed = await smoothScrollContainerTo(container, targetTop, seq);
 	if (!completed || seq !== jumpSeq) return;
+	virtualScrollTop = container.scrollTop;
+	forcedRenderUid = "";
 
 	highlightedMsgUid = msgUid;
 	highlightClearTimer = window.setTimeout(() => {
@@ -1092,6 +1386,13 @@ async function jumpToMessage(msgUid: string) {
 async function scrollToUnreadDivider() {
 	isStickyAtBottom = false;
 	isPinnedToBottom = false;
+	if (firstUnreadMsgUid) {
+		forcedRenderUid = firstUnreadMsgUid;
+		const idx = visibleMessages.findIndex((m) => m.msgUid === firstUnreadMsgUid);
+		if (idx >= 0 && virtualLayout.offsets.length > idx) {
+			virtualScrollTop = Math.max(0, virtualLayout.offsets[idx] - 120);
+		}
+	}
 	await tick();
 	const dividerEl = messageContainer?.querySelector<HTMLElement>(
 		"[data-unread-divider]",
@@ -1101,6 +1402,7 @@ async function scrollToUnreadDivider() {
 	} else if (messageContainer) {
 		messageContainer.scrollTo({ top: 0, behavior: "smooth" });
 	}
+	forcedRenderUid = "";
 	highlightUnreadDivider = true;
 	unreadBarDismissed = true;
 	if (messages.length > 0) {
@@ -1184,6 +1486,10 @@ onMount(() => {
 		}
 	};
 	window.addEventListener("chat-music-notices-change", handleMusicNoticesSync);
+	setChatLightboxSourceProvider(collectChatImageSources);
+	if (messageContainer && messageContainer.clientHeight > 0) {
+		virtualViewportH = messageContainer.clientHeight;
+	}
 
 	void scrollToBottom();
 
@@ -1255,6 +1561,15 @@ onMount(() => {
 		if (highlightClearTimer !== null) window.clearTimeout(highlightClearTimer);
 		if (unreadHighlightTimer !== null)
 			window.clearTimeout(unreadHighlightTimer);
+		if (scrollRafId !== null) {
+			window.cancelAnimationFrame(scrollRafId);
+			scrollRafId = null;
+		}
+		if (heightFlushRafId !== null) {
+			window.cancelAnimationFrame(heightFlushRafId);
+			heightFlushRafId = null;
+		}
+		setChatLightboxSourceProvider(null);
 	};
 });
 
@@ -1268,6 +1583,8 @@ $effect(() => {
 		initializedRoom = currentRoomId;
 		hydratedRoomKey = "";
 		seenMessageUids = new Set();
+		measuredMsgHeights.clear();
+		virtualScrollTop = 0;
 		unreadMentionUids = [];
 		alertBannerUid = null;
 		replyingTo = null;
@@ -1346,6 +1663,7 @@ $effect(() => {
 							? Math.max(0, anchor.prevScrollTop + delta - 120)
 							: anchor.prevScrollTop + delta;
 					messageContainer.scrollTop = targetTop;
+					virtualScrollTop = targetTop;
 					lastScrollHeight = messageContainer.scrollHeight;
 					lastClientHeight = messageContainer.clientHeight;
 				});
@@ -2405,7 +2723,7 @@ function removePendingImage(index: number) {
 
   <!-- 消息展示流区域（含悬浮 切歌投票 / @你 / 未读定位 横幅） -->
   <div class="relative flex-1 min-h-0 flex flex-col">
-    {#if skipVoteBanner || activeAlertMessage || showUnreadJumpBar}
+    {#if skipVoteBanner || queueVoteBanners.length > 0 || activeAlertMessage || showUnreadJumpBar}
       <div class="chat-floating-alerts-stack">
         {#if skipVoteBanner}
           <div class="chat-mention-floating-bar" role="status" aria-live="polite">
@@ -2463,6 +2781,55 @@ function removePendingImage(index: number) {
             {/if}
           </div>
         {/if}
+
+        {#each queueVoteBanners as qBanner (qBanner.uid)}
+          <div class="chat-mention-floating-bar" role="status" aria-live="polite">
+            <div class="flex-1 min-w-0 flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+              </svg>
+              <span class="font-bold text-[var(--chat-accent-text)] shrink-0 truncate max-w-32">
+                {qBanner.voterLabel}
+              </span>
+              <span class="truncate text-[var(--deep-text)] dark:text-white/85">
+                申请切到：《{qBanner.title}》（{qBanner.voteCount}/{qBanner.voteThreshold}）
+              </span>
+            </div>
+            {#if isSkippingTrack}
+              <button
+                type="button"
+                disabled
+                class="chat-mention-jump-pill opacity-80 border-none cursor-wait shrink-0 flex items-center gap-1.5"
+              >
+                <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                  <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                </svg>
+                <span>切歌中...</span>
+              </button>
+            {:else if qBanner.hasVoted}
+              <ChatTooltip text="取消切歌申请" position="bottom" align="right">
+                <button
+                  type="button"
+                  class="chat-mention-jump-pill opacity-90 hover:opacity-100 border-none cursor-pointer shrink-0"
+                  onclick={() => onPlayQueued?.(qBanner.uid)}
+                >
+                  取消
+                </button>
+              </ChatTooltip>
+            {:else}
+              <ChatTooltip text="同意切到该歌曲" position="bottom" align="right">
+                <button
+                  type="button"
+                  class="chat-mention-jump-pill border-none cursor-pointer shrink-0 active:scale-95"
+                  onclick={() => onPlayQueued?.(qBanner.uid)}
+                >
+                  同意
+                </button>
+              </ChatTooltip>
+            {/if}
+          </div>
+        {/each}
 
         {#if activeAlertMessage}
           <div class="chat-mention-floating-bar" role="status" aria-live="polite">
@@ -2567,7 +2934,7 @@ function removePendingImage(index: number) {
           </div>
         {/if}
 
-        {#if renderedMessages.length === 0}
+        {#if visibleMessages.length === 0}
           <div class="flex-1 flex flex-col items-center justify-center text-center py-8 text-xs text-[var(--chat-meta-color)]">
             {#if messages.length > 0 && !showMusicNotices}
               <p class="m-0">当前已隐藏聊天中的点歌记录，发条消息开启话题吧~</p>
@@ -2576,20 +2943,10 @@ function removePendingImage(index: number) {
             {/if}
           </div>
         {:else}
+          {#if virtualLayout.topSpacerPx > 0}
+            <div style="height: {virtualLayout.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
+          {/if}
           {#each renderedMessages as msg (msg.msgUid)}
-            {#if firstUnreadMsgUid === msg.msgUid}
-              <div
-                data-unread-divider
-                class="chat-unread-divider {highlightUnreadDivider ? 'highlight' : ''}"
-                role="separator"
-              >
-                <span class="chat-unread-divider-line"></span>
-                <span class="chat-unread-divider-label">
-                  上次 {formatUnreadTime(sessionUnreadSince)} 阅读到这里
-                </span>
-                <span class="chat-unread-divider-line"></span>
-              </div>
-            {/if}
             {@const isSelf = Boolean(
               currentUser && (
                 msg.userKey === currentUser.userKey ||
@@ -2618,39 +2975,58 @@ function removePendingImage(index: number) {
             {@const canDelete = Boolean(
               currentUser && msg.kind === "user" && isAdmin && roomId !== "interconnect",
             )}
-            <ChatMessage
-              message={msg}
-              isSelf={isSelf}
-              isHighlighted={highlightedMsgUid === msg.msgUid}
-              currentUserName={currentUser?.name || ""}
-              currentUserKey={currentUser?.userKey}
-              isAdmin={isAdmin}
-              isPinned={pinnedUids.includes(msg.msgUid)}
-              canRecall={canRecall}
-              canEdit={canEdit}
-              canDelete={canDelete}
-              stickerMap={stickerMap}
-              chatServerUrl={chatServerUrl}
-              interconnectSites={interconnectSites}
-              userNameMap={userNameMap}
-              userProfileMap={userProfileMap}
-              readReceipts={readReceipts[msg.msgUid] || []}
-              onRecall={onRecallMessage}
-              onDelete={onDeleteMessage}
-              onReply={msg.kind === "user" ? handleStartReply : undefined}
-              onEdit={handleStartEdit}
-              onPin={onPinMessage}
-              onReaction={onReaction}
-              onVotePoll={onVotePoll}
-              onEndPoll={onEndPoll}
-              onJumpToMessage={handleJumpToReply}
-              onOpenUserProfile={onOpenUserProfile}
-              onMention={onMentionUser}
-              onOpenMobileActions={(m, meta) => {
-                mobileActionTarget = { message: m, ...meta };
-              }}
-            />
+            <div use:measureVirtualRow={msg.msgUid}>
+              {#if firstUnreadMsgUid === msg.msgUid}
+                <div
+                  data-unread-divider
+                  class="chat-unread-divider {highlightUnreadDivider ? 'highlight' : ''}"
+                  role="separator"
+                >
+                  <span class="chat-unread-divider-line"></span>
+                  <span class="chat-unread-divider-label">
+                    上次 {formatUnreadTime(sessionUnreadSince)} 阅读到这里
+                  </span>
+                  <span class="chat-unread-divider-line"></span>
+                </div>
+              {/if}
+              <ChatMessage
+                message={msg}
+                isSelf={isSelf}
+                isMentionedMe={isMentionedToMe(msg)}
+                isHighlighted={highlightedMsgUid === msg.msgUid}
+                currentUserName={currentUser?.name || ""}
+                currentUserKey={currentUser?.userKey}
+                isAdmin={isAdmin}
+                isPinned={pinnedUids.includes(msg.msgUid)}
+                canRecall={canRecall}
+                canEdit={canEdit}
+                canDelete={canDelete}
+                stickerMap={stickerMap}
+                chatServerUrl={chatServerUrl}
+                interconnectSites={interconnectSites}
+                userNameMap={userNameMap}
+                userProfileMap={userProfileMap}
+                readReceipts={readReceipts[msg.msgUid] || []}
+                onRecall={onRecallMessage}
+                onDelete={onDeleteMessage}
+                onReply={msg.kind === "user" ? handleStartReply : undefined}
+                onEdit={handleStartEdit}
+                onPin={onPinMessage}
+                onReaction={onReaction}
+                onVotePoll={onVotePoll}
+                onEndPoll={onEndPoll}
+                onJumpToMessage={handleJumpToReply}
+                onOpenUserProfile={onOpenUserProfile}
+                onMention={onMentionUser}
+                onOpenMobileActions={(m, meta) => {
+                  mobileActionTarget = { message: m, ...meta };
+                }}
+              />
+            </div>
           {/each}
+          {#if virtualLayout.bottomSpacerPx > 0}
+            <div style="height: {virtualLayout.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
+          {/if}
         {/if}
       </div>
     </div>

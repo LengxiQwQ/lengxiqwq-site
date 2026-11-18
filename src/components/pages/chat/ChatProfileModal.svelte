@@ -137,7 +137,7 @@ function handleSubmit(e: SubmitEvent) {
                   {roleBadge.label}
                 </span>
                 {#if currentUser.customBadges && currentUser.customBadges.length > 0}
-                  {#each currentUser.customBadges as b (b.text)}
+                  {#each currentUser.customBadges as b, idx (`${b.text}:${idx}`)}
                     <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
                   {/each}
                 {/if}

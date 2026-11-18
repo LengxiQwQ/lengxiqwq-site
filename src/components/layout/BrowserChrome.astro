@@ -6,16 +6,28 @@
     canvas.width = canvas.height = 1;
     const context = canvas.getContext("2d", { willReadFrequently: true });
     let updatePending = false;
+    let themeProbe: HTMLSpanElement | null = null;
+    let lastDarkState = document.documentElement.classList.contains("dark");
+    let lastHueValue = document.documentElement.style.getPropertyValue("--hue");
+
+    function getThemeProbe(): HTMLSpanElement | null {
+        if (!document.body) return null;
+        if (!themeProbe || !themeProbe.isConnected) {
+            themeProbe = document.createElement("span");
+            themeProbe.setAttribute("aria-hidden", "true");
+            themeProbe.style.cssText = "position:fixed;width:0;height:0;pointer-events:none;visibility:hidden;contain:strict;background-color:var(--page-bg)";
+            document.body.append(themeProbe);
+        }
+        return themeProbe;
+    }
 
     function syncBrowserTheme(): void {
         updatePending = false;
         const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-        if (!meta || !context || !document.body) return;
-        const probe = document.createElement("span");
-        probe.style.cssText = "position:absolute;width:0;height:0;visibility:hidden;background-color:var(--page-bg)";
-        document.body.append(probe);
+        if (!meta || !context) return;
+        const probe = getThemeProbe();
+        if (!probe) return;
         const color = getComputedStyle(probe).backgroundColor;
-        probe.remove();
         context.clearRect(0, 0, 1, 1);
         context.fillStyle = color;
         context.fillRect(0, 0, 1, 1);
@@ -32,9 +44,15 @@
         requestAnimationFrame(syncBrowserTheme);
     }
 
-    const observer = new MutationObserver(scheduleBrowserTheme);
+    const observer = new MutationObserver(() => {
+        const darkState = document.documentElement.classList.contains("dark");
+        const hueValue = document.documentElement.style.getPropertyValue("--hue");
+        if (darkState === lastDarkState && hueValue === lastHueValue) return;
+        lastDarkState = darkState;
+        lastHueValue = hueValue;
+        scheduleBrowserTheme();
+    });
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style"] });
-    observer.observe(document.body, { attributes: true, attributeFilter: ["class"] });
     document.addEventListener("astro:page-load", scheduleBrowserTheme);
     document.addEventListener("swup:contentReplaced", scheduleBrowserTheme);
     syncBrowserTheme();

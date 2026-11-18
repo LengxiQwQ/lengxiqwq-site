@@ -1,3 +1,7 @@
+<script module lang="ts">
+let activeChatModalCount = 0;
+</script>
+
 <script lang="ts">
 import type { Snippet } from "svelte";
 
@@ -47,13 +51,21 @@ function placeBackdrop(node: HTMLDivElement) {
 
 $effect(() => {
 	if (!open) return;
+	activeChatModalCount += 1;
+	document.documentElement.setAttribute("data-chat-modal-open", "true");
 	const handleKeydown = (e: KeyboardEvent) => {
 		if (e.key === "Escape") {
 			onClose();
 		}
 	};
 	document.addEventListener("keydown", handleKeydown);
-	return () => document.removeEventListener("keydown", handleKeydown);
+	return () => {
+		document.removeEventListener("keydown", handleKeydown);
+		activeChatModalCount = Math.max(0, activeChatModalCount - 1);
+		if (activeChatModalCount === 0) {
+			document.documentElement.removeAttribute("data-chat-modal-open");
+		}
+	};
 });
 
 function handlePointerDown(e: PointerEvent) {

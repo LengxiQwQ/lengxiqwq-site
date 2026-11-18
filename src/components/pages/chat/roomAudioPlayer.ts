@@ -18,10 +18,10 @@ export const audioStatusLabel: Record<AudioStatus, string> = {
 	error: "加载失败，点击重试",
 };
 
-const INITIAL_ALIGN_THRESHOLD_SEC = 0.35;
+const INITIAL_ALIGN_THRESHOLD_SEC = 0.5;
 const PLAYBACK_DRIFT_SEEK_SEC = 2.2;
 const SEEK_COOLDOWN_MS = 5000;
-const INITIAL_SEEK_COOLDOWN_MS = 1200;
+const INITIAL_SEEK_COOLDOWN_MS = 900;
 
 export function correctionForDrift(
 	drift: number,
@@ -141,7 +141,9 @@ export class RoomAudioPlayer {
 
 	setVolume(volume: number): void {
 		this.volume = Math.min(1, Math.max(0, volume));
-		this.audio.volume = this.volume;
+		if (this.initialAligned || !this.intent || !this.play) {
+			this.audio.volume = this.volume;
+		}
 	}
 
 	setTrack(play: CurrentPlayback | null): void {
@@ -364,13 +366,7 @@ export class RoomAudioPlayer {
 	}
 
 	private align(force = false): void {
-		if (
-			!this.play ||
-			this.starting ||
-			this.audio.paused ||
-			this.audio.readyState < 2 ||
-			this.audio.seeking
-		) {
+		if (!this.play || this.audio.readyState < 1 || this.audio.seeking) {
 			return;
 		}
 		if (this.audio.playbackRate !== 1) {
@@ -387,13 +383,20 @@ export class RoomAudioPlayer {
 
 		// 1. Initial alignment on track start / late join / unmute
 		if (force || !this.initialAligned) {
-			const threshold = force ? 0.15 : INITIAL_ALIGN_THRESHOLD_SEC;
+			const threshold =
+				this.initialSeeks === 0
+					? INITIAL_ALIGN_THRESHOLD_SEC
+					: PLAYBACK_DRIFT_SEEK_SEC;
 			const needsSeek =
-				Math.abs(drift) > threshold &&
-				(force || target > INITIAL_ALIGN_THRESHOLD_SEC);
+				Math.abs(drift) > threshold && target > INITIAL_ALIGN_THRESHOLD_SEC;
 			if (!needsSeek) {
-				if (this.audio.readyState >= 3) {
+				if (
+					!this.starting &&
+					!this.audio.paused &&
+					this.audio.readyState >= 2
+				) {
 					this.initialAligned = true;
+					this.audio.volume = this.volume;
 				}
 				return;
 			}
@@ -403,12 +406,29 @@ export class RoomAudioPlayer {
 				this.audio.currentTime = target;
 				this.lastSeek = mono;
 				this.initialSeeks++;
-				if (this.initialSeeks >= 2) {
+				if (
+					!this.starting &&
+					!this.audio.paused &&
+					!this.audio.seeking &&
+					this.audio.readyState >= 2
+				) {
 					this.initialAligned = true;
+					this.audio.volume = this.volume;
+				} else if (
+					this.initialSeeks >= 2 &&
+					!this.starting &&
+					!this.audio.paused
+				) {
+					this.initialAligned = true;
+					this.audio.volume = this.volume;
 				}
 			} catch {
 				return;
 			}
+			return;
+		}
+
+		if (this.starting || this.audio.paused || this.audio.readyState < 2) {
 			return;
 		}
 
@@ -431,9 +451,18 @@ export class RoomAudioPlayer {
 		this.starting = true;
 		this.waitingSince = performance.now();
 		this.progressAt = this.waitingSince;
-		this.audio.volume = this.volume;
 		this.audio.playbackRate = 1;
 		const isScheduledFuture = this.scheduled();
+		const needsInitialSeek =
+			!this.initialAligned && this.expected() > INITIAL_ALIGN_THRESHOLD_SEC;
+		if (needsInitialSeek && this.audio.readyState >= 1) {
+			this.align(true);
+		}
+		// Hold volume at 0 while seeking to a mid-song offset so the listener never hears a 0.0s blip before the seek lands.
+		this.audio.volume =
+			needsInitialSeek && (!this.initialAligned || this.audio.seeking)
+				? 0
+				: this.volume;
 		this.audio.muted = isScheduledFuture;
 		this.emit(
 			isScheduledFuture ? "preparing" : this.retries ? "recovering" : "loading",
@@ -476,8 +505,8 @@ export class RoomAudioPlayer {
 			return;
 		this.audio.muted = true;
 		this.audio.playbackRate = 1;
-		if (this.retries < 2) {
-			this.retryAt = performance.now() + [750, 2000][this.retries++];
+		if (this.retries < 3) {
+			this.retryAt = performance.now() + [350, 900, 1800][this.retries++];
 			this.emit("recovering");
 		} else {
 			this.emit("error");
@@ -503,6 +532,12 @@ export class RoomAudioPlayer {
 				this.retryAt = 0;
 				this.epoch++;
 				this.starting = false;
+				this.activeSrc = this.buildStreamSrc(
+					this.play.track.streamUrl,
+					this.play.sourceRevision ?? 0,
+					`r${this.retries}`,
+				);
+				this.audio.src = this.activeSrc;
 				this.audio.load();
 				this.start();
 			}
@@ -522,11 +557,23 @@ export class RoomAudioPlayer {
 		if (this.scheduled()) {
 			audio.muted = true;
 			this.emitIfChanged("preparing");
-		} else if (!this.starting && audio.readyState >= 2 && !audio.paused) {
-			const wasMutedOrPreparing =
-				audio.muted || this.status === "preparing" || !this.initialAligned;
-			this.align(wasMutedOrPreparing);
-			if (!audio.seeking) {
+		} else if (audio.readyState >= 1) {
+			if (!this.initialAligned) {
+				if (this.expected() > INITIAL_ALIGN_THRESHOLD_SEC) {
+					audio.volume = 0;
+				}
+				this.align(true);
+			} else if (!this.starting && audio.readyState >= 2 && !audio.paused) {
+				this.align(false);
+			}
+			if (
+				!this.starting &&
+				audio.readyState >= 2 &&
+				!audio.paused &&
+				!audio.seeking &&
+				this.initialAligned
+			) {
+				audio.volume = this.volume;
 				audio.muted = false;
 				this.waitingSince = 0;
 				this.emitIfChanged("playing");
@@ -537,7 +584,8 @@ export class RoomAudioPlayer {
 			this.lastProgress = audio.currentTime;
 			this.progressAt = mono;
 		}
-		const timeout = audio.readyState < 1 ? 15_000 : 12_000;
+		const timeout =
+			!this.initialAligned || audio.readyState < 3 ? 4_500 : 9_000;
 		if (!this.scheduled() && !audio.ended && mono - this.progressAt > timeout)
 			this.fail();
 		if (

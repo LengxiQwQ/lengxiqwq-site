@@ -238,48 +238,46 @@ export class QQMusicProvider {
     if (!cleanMid || cleanMid === '0') return null;
     const id = encodeURIComponent(cleanMid);
 
+    // Primary: vkeys quality=6 (128kbps MP3 M500 on Tencent Singapore CDN ws.stream.qqmusic.qq.com, ~3.8MB, ~120ms)
+    const vkeys128Source = {
+      name: 'vkeys-128',
+      timeoutMs: 2400,
+      endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=6&mid=' + id,
+      read: data => data?.data
+    };
+
+    // Secondary: vkeys quality=4 (192kbps M4A C600 on Tencent Singapore CDN ws.stream.qqmusic.qq.com, ~4.5MB, ~120ms)
+    const vkeys192Source = {
+      name: 'vkeys-192',
+      timeoutMs: 2400,
+      endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=4&mid=' + id,
+      read: data => data?.data
+    };
+
+    // Tertiary: cyapi (fallback MP3 stream)
     const cyapiSource = this.cyapiKey ? {
       name: 'cyapi',
-      timeoutMs: 6500,
+      timeoutMs: 3200,
       endpoint: 'https://cyapi.top/API/qq_music.php?type=json&quality=128&mid=' + id +
         '&apikey=' + encodeURIComponent(this.cyapiKey),
       read: data => data
     } : null;
 
-    const vkeysSources = [
-      {
-        name: 'vkeys-192',
-        timeoutMs: 4500,
-        endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=4&mid=' + id,
-        read: data => data?.data
-      },
-      {
-        name: 'vkeys-96',
-        timeoutMs: 4500,
-        endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=1&mid=' + id,
-        read: data => data?.data
-      }
-    ];
-
-    const runVkeys = async () => {
-      for (const src of vkeysSources) {
-        const res = await this.trySource(cleanMid, src);
-        if (res) return res;
-      }
-      return null;
+    // Quaternary: vkeys quality=8 (320kbps MP3 M800 backup)
+    const vkeys320Source = {
+      name: 'vkeys-320',
+      timeoutMs: 2200,
+      endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=8&mid=' + id,
+      read: data => data?.data
     };
 
-    if (!cyapiSource) {
-      return runVkeys();
-    }
-
-    // Hedged resolution: start cyapi first; if it doesn't finish within 1200ms, race with vkeys.
-    const cyapiPromise = this.trySource(cleanMid, cyapiSource);
+    // 1. Launch primary vkeys-128 (MP3 M500) first; if it resolves within 650ms, return immediately.
+    const primaryPromise = this.trySource(cleanMid, vkeys128Source);
     let hedgeTimer;
     const earlyResult = await Promise.race([
-      cyapiPromise,
+      primaryPromise,
       new Promise(resolve => {
-        hedgeTimer = setTimeout(() => resolve('HEDGE_TIMEOUT'), 1200);
+        hedgeTimer = setTimeout(() => resolve('HEDGE_TIMEOUT'), 650);
       })
     ]);
     clearTimeout(hedgeTimer);
@@ -288,18 +286,30 @@ export class QQMusicProvider {
       return earlyResult;
     }
 
-    if (earlyResult === null) {
-      return runVkeys();
+    // 2. If primary returned null (e.g. transient worker error) or exceeded 650ms, race vkeys-192 and cyapi.
+    const candidates = [];
+    if (earlyResult === 'HEDGE_TIMEOUT') {
+      candidates.push(primaryPromise);
+    }
+    candidates.push(this.trySource(cleanMid, vkeys192Source));
+    if (cyapiSource) {
+      candidates.push(this.trySource(cleanMid, cyapiSource));
     }
 
-    // cyapi is still in-flight after 1200ms; launch vkeys in parallel and take the first non-null result.
-    const vkeysPromise = runVkeys();
-    const firstDone = await Promise.race([
-      cyapiPromise.then(res => ({ which: 'cyapi', res })),
-      vkeysPromise.then(res => ({ which: 'vkeys', res }))
-    ]);
-    if (firstDone.res) return firstDone.res;
-    return firstDone.which === 'cyapi' ? await vkeysPromise : await cyapiPromise;
+    try {
+      const winner = await Promise.any(
+        candidates.map(async p => {
+          const res = await p;
+          if (!res) throw new Error('null source');
+          return res;
+        })
+      );
+      if (winner) return winner;
+    } catch {
+      // All hedged sources returned null
+    }
+
+    return this.trySource(cleanMid, vkeys320Source);
   }
 
   async getLyric(mid) {

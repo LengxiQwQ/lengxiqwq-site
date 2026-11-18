@@ -49,7 +49,7 @@ export async function probeAudio(url) {
   if (!isAllowedStreamTarget(url)) throw new Error('untrusted audio host');
   const response = await fetchAudio(url, {
     range: 'bytes=0-4095',
-    signal: AbortSignal.timeout(4000)
+    signal: AbortSignal.timeout(2200)
   });
   if (!response.ok || !response.body ||
       (response.status === 206 && !/^bytes 0-\d+\/\d+$/.test(response.headers.get('content-range') || ''))) {

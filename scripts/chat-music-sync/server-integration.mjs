@@ -15,11 +15,11 @@ export function integrateMusicSync(source) {
   }
   replace(
     `    onPrefetchTrack: (streamUrl) => {\n      prefetchTrackStream(streamUrl);\n    }\n  }),\n  interconnect:`,
-    `    onPrefetchTrack: (streamUrl, priority = false) => {\n      prefetchTrackStream(streamUrl, priority);\n    }\n  }),\n  interconnect:`
+    `    onPrefetchTrack: (streamUrl, priority = false) => {\n      return prefetchTrackStream(streamUrl, priority);\n    }\n  }),\n  interconnect:`
   );
   replace(
     `    onUnavailable: (entry) => notifyUnavailable('interconnect', entry),\n    onPrefetchTrack: (streamUrl) => {\n      prefetchTrackStream(streamUrl);\n    }`,
-    `    onUnavailable: (entry) => notifyUnavailable('interconnect', entry),\n    onPrefetchTrack: (streamUrl, priority = false) => {\n      prefetchTrackStream(streamUrl, priority);\n    }`
+    `    onUnavailable: (entry) => notifyUnavailable('interconnect', entry),\n    onPrefetchTrack: (streamUrl, priority = false) => {\n      return prefetchTrackStream(streamUrl, priority);\n    }`
   );
   replace(
     `function prefetchTrackStream(streamUrl) {\n  if (!streamUrl || typeof streamUrl !== 'string') return;\n  if (!streamUrl.includes('/api/music/stream?token=')) return;`,
@@ -27,7 +27,7 @@ export function integrateMusicSync(source) {
   );
   replace(
     `void prefetchAudio(verified.url, verified.referer, verified.mimeType);`,
-    `void prefetchAudio(verified.url, priority, verified.mimeType, verified.trackKey);`
+    `return prefetchAudio(verified.url, priority, verified.mimeType, verified.trackKey);`
   );
   replace(
     `if (url.pathname === '/api/music/stream' && ['GET', 'HEAD'].includes(req.method)) {`,

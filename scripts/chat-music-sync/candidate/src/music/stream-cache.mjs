@@ -11,7 +11,8 @@ const MAX_BYTES = 500 * 1024 * 1024;
 const MAX_FILE = 32 * 1024 * 1024;
 const MAX_FILES = 150;
 const FETCH_TIMEOUT = 90_000;
-const IN_FLIGHT_LOOKAHEAD_BYTES = 256 * 1024;
+const IN_FLIGHT_LOOKAHEAD_BYTES = 2 * 1024 * 1024;
+const FIRST_CHUNK_WARM_BYTES = 65_536;
 
 const queue = [];
 let downloading = 0;
@@ -144,6 +145,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
   }
 
   let resolveHeader;
+  let resolveFirstChunk;
   let resolveDone;
   const entry = {
     key: files.key,
@@ -151,6 +153,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
     files,
     started: false,
     ready: false,
+    firstChunkReady: false,
     complete: false,
     persisted: false,
     failed: false,
@@ -161,10 +164,18 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
     chunks: [],
     waiters: new Set(),
     headerPromise: new Promise(resolve => { resolveHeader = resolve; }),
+    firstChunkPromise: new Promise(resolve => { resolveFirstChunk = resolve; }),
     donePromise: new Promise(resolve => { resolveDone = resolve; })
   };
 
   inFlight.set(files.key, entry);
+
+  const markFirstChunk = (ok) => {
+    if (!entry.firstChunkReady) {
+      entry.firstChunkReady = true;
+      resolveFirstChunk(ok);
+    }
+  };
 
   const run = async () => {
     entry.started = true;
@@ -176,6 +187,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
       entry.ready = true;
       await cached.file.close().catch(() => {});
       resolveHeader(true);
+      markFirstChunk(true);
       notifyWaiters(entry);
       return;
     }
@@ -187,66 +199,110 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
       await fs.mkdir(directory, { recursive: true });
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(FETCH_TIMEOUT)]);
-      const headerTimer = setTimeout(() => controller.abort(new Error('prefetch first-byte timeout')), 10_000);
-      let upstream;
-      try {
-        upstream = await fetchAudio(url, { signal });
-      } finally {
-        clearTimeout(headerTimer);
-      }
-      const length = Number(upstream.headers.get('content-length')) || 0;
-      if (upstream.status !== 200 || !upstream.body || length > MAX_FILE) {
-        await upstream.body?.cancel();
-        throw new Error('invalid prefetch response HTTP ' + upstream.status);
-      }
 
       diskStream = createWriteStream(part);
       let diskError = null;
       diskStream.on('error', err => { diskError = err; });
 
       let headerBuffer = Buffer.alloc(0);
-      for await (const rawChunk of Readable.fromWeb(upstream.body)) {
-        if (signal.aborted) throw signal.reason || new Error('prefetch aborted');
-        if (diskError) throw diskError;
-        const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
-        if (chunk.length === 0) continue;
+      let length = 0;
+      const maxAttempts = 4;
 
-        if (entry.bytesReceived + chunk.length > MAX_FILE) {
-          throw new Error('audio file too large');
+      for (let attempt = 0; attempt < maxAttempts; attempt++) {
+        const isResume = attempt > 0 && entry.ready && length > 0 && entry.bytesReceived > 0 && entry.bytesReceived < length;
+        if (attempt > 0 && !isResume) break;
+        if (isResume) {
+          await new Promise(resolve => setTimeout(resolve, 120 * attempt));
+        }
+        const rangeHeader = isResume ? `bytes=${entry.bytesReceived}-${length - 1}` : undefined;
+        const headerTimer = setTimeout(() => controller.abort(new Error('prefetch first-byte timeout')), 8_000);
+        let upstream;
+        try {
+          upstream = await fetchAudio(url, { range: rangeHeader, signal });
+        } finally {
+          clearTimeout(headerTimer);
         }
 
-        entry.chunks.push(chunk);
-        entry.bytesReceived += chunk.length;
-
-        if (!entry.ready) {
-          if (headerBuffer.length < 12) {
-            const needed = 12 - headerBuffer.length;
-            headerBuffer = Buffer.concat([headerBuffer, chunk.subarray(0, needed)]);
+        if (!isResume) {
+          length = Number(upstream.headers.get('content-length')) || 0;
+          if (upstream.status !== 200 || !upstream.body || length > MAX_FILE) {
+            await upstream.body?.cancel();
+            throw new Error('invalid prefetch response HTTP ' + upstream.status);
           }
-          if (headerBuffer.length >= 12) {
-            const detected = identifyAudio(headerBuffer);
-            if (!detected) throw new Error('invalid audio header');
-            entry.type = detected;
-            entry.totalSize = length;
-            entry.ready = true;
-            resolveHeader(true);
+        } else {
+          const contentRange = upstream.headers.get('content-range') || '';
+          if (upstream.status !== 206 || !upstream.body || !contentRange.startsWith(`bytes ${entry.bytesReceived}-`)) {
+            await upstream.body?.cancel();
+            throw new Error('invalid resume response HTTP ' + upstream.status);
           }
         }
 
-        notifyWaiters(entry);
-        if (!diskStream.write(chunk)) {
-          await new Promise((resolve, reject) => {
-            const onDrain = () => {
-              diskStream.removeListener('error', onError);
-              resolve();
-            };
-            const onError = err => {
-              diskStream.removeListener('drain', onDrain);
-              reject(err);
-            };
-            diskStream.once('drain', onDrain);
-            diskStream.once('error', onError);
-          });
+        try {
+          for await (const rawChunk of Readable.fromWeb(upstream.body)) {
+            if (signal.aborted) throw signal.reason || new Error('prefetch aborted');
+            if (diskError) throw diskError;
+            const chunk = Buffer.isBuffer(rawChunk) ? rawChunk : Buffer.from(rawChunk);
+            if (chunk.length === 0) continue;
+
+            if (entry.bytesReceived + chunk.length > MAX_FILE) {
+              throw new Error('audio file too large');
+            }
+
+            entry.chunks.push(chunk);
+            entry.bytesReceived += chunk.length;
+
+            if (!entry.ready) {
+              if (headerBuffer.length < 12) {
+                const needed = 12 - headerBuffer.length;
+                headerBuffer = Buffer.concat([headerBuffer, chunk.subarray(0, needed)]);
+              }
+              if (headerBuffer.length >= 12) {
+                const detected = identifyAudio(headerBuffer);
+                if (!detected) throw new Error('invalid audio header');
+                entry.type = detected;
+                entry.totalSize = length;
+                entry.ready = true;
+                resolveHeader(true);
+              }
+            }
+
+            if (entry.ready && (entry.bytesReceived >= FIRST_CHUNK_WARM_BYTES || (length > 0 && entry.bytesReceived >= length))) {
+              markFirstChunk(true);
+            }
+
+            notifyWaiters(entry);
+            if (!diskStream.write(chunk)) {
+              await new Promise((resolve, reject) => {
+                const onDrain = () => {
+                  diskStream.removeListener('error', onError);
+                  resolve();
+                };
+                const onError = err => {
+                  diskStream.removeListener('drain', onDrain);
+                  reject(err);
+                };
+                diskStream.once('drain', onDrain);
+                diskStream.once('error', onError);
+              });
+            }
+          }
+
+          if (length === 0 || entry.bytesReceived >= length) {
+            break;
+          }
+        } catch (streamErr) {
+          if (
+            signal.aborted ||
+            diskError ||
+            !entry.ready ||
+            length <= 0 ||
+            entry.bytesReceived <= 0 ||
+            entry.bytesReceived >= length ||
+            attempt === maxAttempts - 1
+          ) {
+            throw streamErr;
+          }
+          // Transient upstream socket drop ('terminated'): resume seamlessly from entry.bytesReceived
         }
       }
 
@@ -264,6 +320,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
       }
       entry.totalSize = entry.bytesReceived;
       entry.complete = true;
+      markFirstChunk(true);
       notifyWaiters(entry);
 
       await new Promise((resolve, reject) => {
@@ -280,6 +337,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
       entry.failed = true;
       entry.error = error;
       if (!entry.ready) resolveHeader(false);
+      markFirstChunk(false);
       notifyWaiters(entry);
       console.warn('[StreamCache] download:', files.key, error.message);
     } finally {
@@ -313,6 +371,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
     } else {
       inFlight.delete(files.key);
       resolveHeader(false);
+      markFirstChunk(false);
       resolveDone();
     }
   }
@@ -321,8 +380,17 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
 }
 
 export function prefetchAudio(url, priorityOrReferer = false, _mimeType, trackKey = '') {
-  const priority = typeof priorityOrReferer === 'boolean' ? priorityOrReferer : false;
+  const isWarm = priorityOrReferer === 'warm';
+  const priority = isWarm || (typeof priorityOrReferer === 'boolean' ? priorityOrReferer : false);
   const entry = startInFlightDownload(url, trackKey, priority);
+  if (isWarm) {
+    if (entry.firstChunkReady) return entry.firstChunkPromise;
+    let timer;
+    return Promise.race([
+      entry.firstChunkPromise,
+      new Promise(resolve => { timer = setTimeout(() => resolve(false), 1200); })
+    ]).finally(() => clearTimeout(timer));
+  }
   return entry.donePromise;
 }
 

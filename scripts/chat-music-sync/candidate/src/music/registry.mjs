@@ -4,7 +4,8 @@ import { hasCachedAudio } from './stream-cache.mjs';
 import { normalizeMusicTrack } from './music-input.mjs';
 
 const RESOLVED_CACHE_TTL_MS = 30 * 60_000; // 30 minutes (QQ Music vkey TTL is 2+ hours)
-const FAILED_CACHE_TTL_MS = 10_000;
+const FAILED_CACHE_TTL_MS = 15 * 60_000; // 15 minutes negative cache for unplayable tracks
+const UNMATCHED_PLAYLIST_TTL_MS = 30 * 60_000;
 
 export class MusicRegistry {
   constructor(providers = []) {
@@ -16,6 +17,13 @@ export class MusicRegistry {
       this.providers.set(p.id, p);
       this.defaultOrder.push(p.id);
     }
+  }
+
+  isKnownUnplayable(trackKey) {
+    if (!trackKey) return false;
+    const key = trackKey.includes(':') ? trackKey : 'qq:' + trackKey;
+    const entry = this.resolved.get(key);
+    return Boolean(entry && !entry.source && entry.expiresAt > Date.now());
   }
 
   listProviders() {
@@ -31,10 +39,14 @@ export class MusicRegistry {
   }
 
   async resolvePlaylistTrack(item) {
+    if (!item || typeof item !== 'object') return null;
     const existing = normalizeMusicTrack(item.matchedTrack);
     if (existing) return existing;
+    if (item._unmatchedAt && Date.now() - item._unmatchedAt < UNMATCHED_PLAYLIST_TTL_MS) {
+      return null;
+    }
     if (item.sourcePlatform === 'qqmusic' && item.sourceTrackId) {
-      return {
+      const direct = {
         id: 'qq:' + item.sourceTrackId,
         provider: 'qq',
         sourceId: item.sourceTrackId,
@@ -44,12 +56,17 @@ export class MusicRegistry {
         cover: item.cover,
         durationSec: item.durationSec
       };
+      item.matchedTrack = direct;
+      return direct;
     }
     const cleanStr = (value) => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\s\-_·.,'"!?！？，。、()（）/&]+/g, '');
     const cleanTitle = cleanStr(item.title);
     const primaryArtist = cleanStr((item.artist || '').split(/[/,&、;；]+/)[0]);
     const { tracks: matches } = await this.search(item.title + ' ' + (item.artist || ''), 10, 'qq');
-    if (!matches || matches.length === 0) return null;
+    if (!matches || matches.length === 0) {
+      item._unmatchedAt = Date.now();
+      return null;
+    }
 
     const match = matches.find((candidate) => {
       const cTitle = cleanStr(candidate.title);
@@ -60,7 +77,12 @@ export class MusicRegistry {
       return titleMatch && artistMatch && durMatch;
     });
 
-    return match ?? null;
+    if (match) {
+      item.matchedTrack = match;
+      return match;
+    }
+    item._unmatchedAt = Date.now();
+    return null;
   }
 
   async resolvePlayable(track, origin, signSecret, { fresh = false } = {}) {

@@ -31,6 +31,7 @@ import {
 interface Props {
 	message: ChatMessageRecord;
 	isSelf: boolean;
+	isMentionedMe?: boolean;
 	isHighlighted?: boolean;
 	currentUserName?: string;
 	currentUserKey?: string;
@@ -72,6 +73,7 @@ interface Props {
 const {
 	message,
 	isSelf,
+	isMentionedMe = false,
 	isHighlighted = false,
 	currentUserName = "",
 	currentUserKey = "",
@@ -102,51 +104,10 @@ const {
 
 let showQuickReaction = $state(false);
 let showMoreActions = $state(false);
+let actionsMounted = $state(false);
 let copySuccess = $state(false);
 let reactionEl = $state<HTMLElement | null>(null);
 let moreActionsEl = $state<HTMLElement | null>(null);
-let bubbleW = $state(0);
-let bubbleH = $state(0);
-
-function trackBubbleBox(node: HTMLElement) {
-	const sync = () => {
-		const rect = node.getBoundingClientRect();
-		const w = Math.round(rect.width * 100) / 100;
-		const h = Math.round(rect.height * 100) / 100;
-		if (w !== bubbleW) bubbleW = w;
-		if (h !== bubbleH) bubbleH = h;
-	};
-	sync();
-	if (typeof ResizeObserver === "undefined") return {};
-	const ro = new ResizeObserver(sync);
-	ro.observe(node);
-	return {
-		destroy() {
-			ro.disconnect();
-		},
-	};
-}
-
-const bubblePath = $derived.by(() => {
-	const w = bubbleW;
-	const h = bubbleH;
-	if (w <= 0 || h <= 0) return "";
-	const r = Math.max(6, Math.min(16, Math.floor(Math.min(w, h) / 2)));
-	const ty = Math.min(13, Math.max(8, h - r));
-	return [
-		"M -5 0",
-		`L ${w - r} 0`,
-		`A ${r} ${r} 0 0 1 ${w} ${r}`,
-		`L ${w} ${h - r}`,
-		`A ${r} ${r} 0 0 1 ${w - r} ${h}`,
-		`L ${r} ${h}`,
-		`A ${r} ${r} 0 0 1 0 ${h - r}`,
-		`L 0 ${ty}`,
-		`C 0 ${ty * 0.58}, -2.4 2.8, -5.8 1.3`,
-		"Q -7 0, -5 0",
-		"Z",
-	].join(" ");
-});
 
 async function handleCopy(e: MouseEvent) {
 	e.stopPropagation();
@@ -161,6 +122,61 @@ async function handleCopy(e: MouseEvent) {
 		// ignore
 	}
 }
+
+let bubbleW = $state(0);
+let bubbleH = $state(0);
+
+function trackBubbleBox(node: HTMLElement, active: boolean) {
+	let ro: ResizeObserver | null = null;
+	const sync = () => {
+		const rect = node.getBoundingClientRect();
+		const w = Math.round(rect.width * 100) / 100;
+		const h = Math.round(rect.height * 100) / 100;
+		if (w !== bubbleW) bubbleW = w;
+		if (h !== bubbleH) bubbleH = h;
+	};
+	const start = () => {
+		sync();
+		if (typeof ResizeObserver === "undefined" || ro) return;
+		ro = new ResizeObserver(sync);
+		ro.observe(node);
+	};
+	const stop = () => {
+		ro?.disconnect();
+		ro = null;
+	};
+	if (active) start();
+	return {
+		update(nextActive: boolean) {
+			if (nextActive) start();
+			else stop();
+		},
+		destroy: stop,
+	};
+}
+
+const mentionedBubblePath = $derived.by(() => {
+	if (!isMentionedMe) return "";
+	const w = bubbleW;
+	const h = bubbleH;
+	if (w <= 0 || h <= 0) return "";
+	const r = Math.max(6, Math.min(18, Math.floor(Math.min(w, h) / 2)));
+	const ty = Math.min(13, Math.max(8, h - r));
+	return [
+		"M -5 0",
+		`L ${w - r} 0`,
+		`A ${r} ${r} 0 0 1 ${w} ${r}`,
+		`L ${w} ${h - r}`,
+		`A ${r} ${r} 0 0 1 ${w - r} ${h}`,
+		`L ${r} ${h}`,
+		`A ${r} ${r} 0 0 1 0 ${h - r}`,
+		`L 0 ${ty}`,
+		`C 0 ${ty * 0.58}, -2.4 2.8, -5.8 1.3`,
+		"C -6.1 1.15, -6.2 0.7, -6.0 0.35",
+		"C -5.8 0.08, -5.45 0, -5 0",
+		"Z",
+	].join(" ");
+});
 
 $effect(() => {
 	if (!showQuickReaction && !showMoreActions) return;
@@ -627,21 +643,24 @@ function handleBubbleClick(e: MouseEvent) {
 }
 </script>
 
-{#snippet renderBubbleBg(mirrored: boolean)}
-  {#if bubblePath}
-    <svg
-      class="chat-bubble-bg"
-      viewBox="0 0 {bubbleW} {bubbleH}"
-      style="width: {bubbleW}px; height: {bubbleH}px;"
-      shape-rendering="geometricPrecision"
-      aria-hidden="true"
-    >
-      <g transform={mirrored ? `translate(${bubbleW} 0) scale(-1 1)` : undefined}>
-        <path class="chat-bubble-shadow" transform="translate(0 1)" d={bubblePath} />
-        <path class="chat-bubble-shape" d={bubblePath} />
-      </g>
-    </svg>
-  {/if}
+{#snippet renderBubbleTail(isSelfMsg: boolean)}
+  <svg
+    class="chat-bubble-tail {isSelfMsg ? 'self' : 'other'}"
+    width="8"
+    height="14"
+    viewBox="-7 0 8 14"
+    aria-hidden="true"
+  >
+    <path
+      class="chat-bubble-tail-shadow"
+      transform="translate(0 1)"
+      d="M 1 0 L 1 13 L 0 13 C 0 7.5, -2.4 2.8, -5.8 1.3 C -6.1 1.15, -6.2 0.7, -6.0 0.35 C -5.8 0.08, -5.45 0, -5 0 Z"
+    />
+    <path
+      class="chat-bubble-tail-shape"
+      d="M 1 0 L 1 13 L 0 13 C 0 7.5, -2.4 2.8, -5.8 1.3 C -6.1 1.15, -6.2 0.7, -6.0 0.35 C -5.8 0.08, -5.45 0, -5 0 Z"
+    />
+  </svg>
 {/snippet}
 
 {#snippet replyQuoteBlock()}
@@ -1232,9 +1251,10 @@ function handleBubbleClick(e: MouseEvent) {
 {/snippet}
 
 {#if message.kind === "system"}
+  {@const isMusicErrorSystem = /(匹配失败|音源解析失败|播放失败|不可用)/.test(message.content)}
   <div class="w-full flex justify-center my-1.5">
-    <div class="chat-system-msg">
-      <span class="w-1.5 h-1.5 rounded-full bg-[var(--primary)] opacity-80 shrink-0"></span>
+    <div class="chat-system-msg {isMusicErrorSystem ? 'chat-system-msg--error' : ''}">
+      <span class="w-1.5 h-1.5 rounded-full {isMusicErrorSystem ? 'bg-red-500' : 'bg-[var(--primary)]'} opacity-85 shrink-0"></span>
       {#if recallNoticeParsed}
         <span class="inline-flex flex-wrap items-center justify-center gap-x-1">
           <button
@@ -1260,7 +1280,13 @@ function handleBubbleClick(e: MouseEvent) {
     </div>
   </div>
 {:else if isSelf}
-  <div data-msg-uid={message.msgUid} class="flex flex-row-reverse items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}">
+  <div
+    data-msg-uid={message.msgUid}
+    class="flex flex-row-reverse items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}"
+    onpointerenter={() => { actionsMounted = true; }}
+    onfocusin={() => { actionsMounted = true; }}
+    onpointerleave={() => { if (!showQuickReaction && !showMoreActions) actionsMounted = false; }}
+  >
     <button
       type="button"
       class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
@@ -1282,7 +1308,7 @@ function handleBubbleClick(e: MouseEvent) {
             <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
           {/if}
           {#if message.customBadges && message.customBadges.length > 0}
-            {#each message.customBadges as b (b.text)}
+            {#each message.customBadges as b, idx (`${b.text}:${idx}`)}
               <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
             {/each}
           {/if}
@@ -1302,18 +1328,17 @@ function handleBubbleClick(e: MouseEvent) {
         onpointercancel={cancelBubblePress}
         onclick={handleBubbleClick}
       >
-        {@render renderFloatingActions(true)}
+        {#if actionsMounted || showQuickReaction || showMoreActions}
+          {@render renderFloatingActions(true)}
+        {/if}
 
         {#if isStickerOnly}
           {@render renderStickerOnlyBody(true)}
         {:else if isStickerAttachmentOnly}
           {@render renderStickerAttachmentOnlyBody(true)}
         {:else}
-          <div
-            use:trackBubbleBox
-            class="chat-bubble chat-bubble-self {bubblePath ? 'chat-bubble-svg-ready' : ''}"
-          >
-            {@render renderBubbleBg(true)}
+          <div class="chat-bubble chat-bubble-self">
+            {@render renderBubbleTail(true)}
             {#if message.replyTo}
               {@render replyQuoteBlock()}
             {/if}
@@ -1355,7 +1380,13 @@ function handleBubbleClick(e: MouseEvent) {
     </div>
   </div>
 {:else}
-  <div data-msg-uid={message.msgUid} class="flex items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}">
+  <div
+    data-msg-uid={message.msgUid}
+    class="flex items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}"
+    onpointerenter={() => { actionsMounted = true; }}
+    onfocusin={() => { actionsMounted = true; }}
+    onpointerleave={() => { if (!showQuickReaction && !showMoreActions) actionsMounted = false; }}
+  >
     <button
       type="button"
       class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
@@ -1371,7 +1402,7 @@ function handleBubbleClick(e: MouseEvent) {
     </button>
 
     <div class="flex flex-col items-start max-w-[82%] md:max-w-[74%] min-w-0">
-      {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0)}
+      {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0) || isMentionedMe}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
           {#if effectiveSenderUrl}
             <a
@@ -1389,9 +1420,12 @@ function handleBubbleClick(e: MouseEvent) {
             <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
           {/if}
           {#if message.customBadges && message.customBadges.length > 0}
-            {#each message.customBadges as b (b.text)}
+            {#each message.customBadges as b, idx (`${b.text}:${idx}`)}
               <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
             {/each}
+          {/if}
+          {#if isMentionedMe}
+            <span class="chat-mentioned-tag">被提及</span>
           {/if}
         </div>
       {/if}
@@ -1406,7 +1440,9 @@ function handleBubbleClick(e: MouseEvent) {
         onpointercancel={cancelBubblePress}
         onclick={handleBubbleClick}
       >
-        {@render renderFloatingActions(false)}
+        {#if actionsMounted || showQuickReaction || showMoreActions}
+          {@render renderFloatingActions(false)}
+        {/if}
 
         {#if isStickerOnly}
           {@render renderStickerOnlyBody(false)}
@@ -1414,10 +1450,23 @@ function handleBubbleClick(e: MouseEvent) {
           {@render renderStickerAttachmentOnlyBody(false)}
         {:else}
           <div
-            use:trackBubbleBox
-            class="chat-bubble chat-bubble-other {bubblePath ? 'chat-bubble-svg-ready' : ''}"
+            use:trackBubbleBox={isMentionedMe}
+            class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''} {mentionedBubblePath ? 'chat-bubble-svg-ready' : ''}"
           >
-            {@render renderBubbleBg(false)}
+            {#if mentionedBubblePath}
+              <svg
+                class="chat-bubble-bg"
+                viewBox="0 0 {bubbleW} {bubbleH}"
+                style="width: {bubbleW}px; height: {bubbleH}px;"
+                shape-rendering="geometricPrecision"
+                aria-hidden="true"
+              >
+                <path class="chat-bubble-shadow" transform="translate(0 1)" d={mentionedBubblePath} />
+                <path class="chat-bubble-shape" d={mentionedBubblePath} />
+              </svg>
+            {:else}
+              {@render renderBubbleTail(false)}
+            {/if}
             {#if message.replyTo}
               {@render replyQuoteBlock()}
             {/if}

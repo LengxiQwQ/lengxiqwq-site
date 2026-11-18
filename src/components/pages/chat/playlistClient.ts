@@ -81,6 +81,14 @@ const PLATFORM_LABELS: Record<string, string> = {
 	kuwo: "酷我音乐",
 	qishui: "汽水音乐",
 	migu: "咪咕音乐",
+	applemusic: "Apple Music",
+	apple_music: "Apple Music",
+	apple: "Apple Music",
+	spotify: "Spotify",
+	youtubemusic: "YouTube Music",
+	youtube_music: "YouTube Music",
+	ytmusic: "YouTube Music",
+	youtube: "YouTube Music",
 };
 
 export function formatPlatformLabel(platform: string): string {
