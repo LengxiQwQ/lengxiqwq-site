@@ -56,7 +56,7 @@ export interface MusicAudience {
 
 export type ServerPacket =
 	| RoomInitPacket
-	| { type: "pong"; serverTime: number }
+	| { type: "pong"; serverTime: number; id?: number }
 	| {
 			type: "auth:result";
 			user: ChatSessionUser | null;

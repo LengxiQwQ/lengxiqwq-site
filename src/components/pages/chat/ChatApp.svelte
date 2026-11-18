@@ -49,6 +49,8 @@ import type {
 	RoomMusicState,
 } from "./chatTypes";
 import MusicPanel from "./MusicPanel.svelte";
+import { MusicClock } from "./musicClock";
+import type { AudioStatus } from "./roomAudioPlayer";
 import type { ChatMusicTrack } from "./musicTypes";
 import RoomPanel from "./RoomPanel.svelte";
 import {
@@ -211,7 +213,11 @@ let isSkippingTrack = $state(false);
 let skipPendingTimer: number | null = null;
 let clockOffsetMs = $state(0);
 let hasClockSample = false;
-const pendingClockPings = new WeakMap<WebSocket, { wall: number; monotonic: number }>();
+const musicClock = new MusicClock();
+const serverNow = () => musicClock.now();
+let clockPingSeq = 0;
+let clockBurstRemaining = 0;
+const pendingClockPings = new WeakMap<WebSocket, { wall: number; monotonic: number; id: number }>();
 let chatAudio: HTMLAudioElement | null = $state(null);
 let noticeText = $state("");
 let noticeVisible = $state(false);
@@ -226,6 +232,7 @@ let musicPanelRef: {
 } | null = $state(null);
 let mobilePlaybackStatus = $state<{
 	isListening: boolean;
+	audioStatus?: AudioStatus;
 	isMuted: boolean;
 	elapsedSec: number;
 	durationSec: number;
@@ -248,6 +255,7 @@ let mobilePlaybackStatus = $state<{
 
 // 全局收听意愿管理（仅在同一次页面会话内跨房间切换时保持，刚进页面默认未收听）
 let isListeningIntent = $state(false);
+let lastListenPacket = "";
 let memoryVolume = $state(initialMusicVolume);
 let hasAppMounted = false;
 
@@ -858,11 +866,16 @@ function getFixedRoleBadge(user: ChatSessionUser): string {
 	return user.authType === "waline" ? "认证" : "访客";
 }
 
-function sampleRoomClock(socket: WebSocket | null) {
+function sampleRoomClock(socket: WebSocket | null, refresh = false) {
+	if (refresh && socket?.readyState === WebSocket.OPEN) {
+		musicClock.resetSamples();
+		pendingClockPings.delete(socket);
+		clockBurstRemaining = 3;
+	}
 	if (socket?.readyState !== WebSocket.OPEN || pendingClockPings.has(socket)) return;
-	const sample = { wall: Date.now(), monotonic: performance.now() };
+	const sample = { wall: Date.now(), monotonic: performance.now(), id: ++clockPingSeq };
 	pendingClockPings.set(socket, sample);
-	socket.send(JSON.stringify({ type: "ping" }));
+	socket.send(JSON.stringify({ type: "ping", id: sample.id, musicSyncVersion: 2, musicListening: isListeningIntent && mobilePlaybackStatus.audioStatus !== "blocked" }));
 	window.setTimeout(() => {
 		if (pendingClockPings.get(socket) === sample) pendingClockPings.delete(socket);
 	}, 5000);
@@ -1027,8 +1040,9 @@ function connectRoom(roomId: string) {
 				readReceipts = packet.readReceipts ?? {};
 				typingUsers = [];
 				clearSkipPending();
+				musicClock.seed(packet.music.serverTime);
 				if (!hasClockSample) clockOffsetMs = packet.music.serverTime - Date.now();
-				sampleRoomClock(socket);
+				sampleRoomClock(socket, true);
 				if (packet.mergedGuestHistory) {
 					showNotice("已自动合并同邮箱的历史访客记录至当前账号");
 				}
@@ -1063,15 +1077,17 @@ function connectRoom(roomId: string) {
 			}
 			case "pong": {
 				const sent = pendingClockPings.get(socket);
+				if (!sent || (packet.id !== undefined && packet.id !== sent.id)) break;
 				pendingClockPings.delete(socket);
-				if (!sent) break;
-				const rtt = performance.now() - sent.monotonic;
-				if (rtt > 1000 || Math.abs(Date.now() - sent.wall - rtt) > 100) break;
-				const offset = packet.serverTime - sent.wall - rtt / 2;
-				clockOffsetMs = !hasClockSample || Math.abs(offset - clockOffsetMs) > 1000
-					? offset
-					: clockOffsetMs * 0.75 + offset * 0.25;
-				hasClockSample = true;
+				if (musicClock.sample(packet.serverTime, sent.monotonic)) {
+					clockOffsetMs = musicClock.now() - Date.now();
+					hasClockSample = true;
+				}
+				// Collect a small initial burst; prefer low-RTT samples over network outliers.
+				if (clockBurstRemaining > 0) {
+					clockBurstRemaining--;
+					window.setTimeout(() => sampleRoomClock(socket), 150);
+				}
 				break;
 			}
 			case "auth:result": {
@@ -1440,8 +1456,12 @@ function connectRoom(roomId: string) {
 					if (!nextUid || nextUid !== prevUid) {
 						clearSkipPending();
 					}
+					musicClock.seed(packet.serverTime);
 					if (!hasClockSample) clockOffsetMs = packet.serverTime - Date.now();
 					musicState = {
+						protocolVersion: packet.protocolVersion,
+						stateVersion: packet.stateVersion,
+						next: packet.next,
 						current: packet.current,
 						queue: packet.queue,
 						history: packet.history ?? musicState?.history ?? [],
@@ -2290,7 +2310,7 @@ onMount(() => {
 			void refreshMemberDirectory();
 			void refreshSpectatorHistory();
 			if (ws && ws.readyState === WebSocket.OPEN) {
-				sampleRoomClock(ws);
+				sampleRoomClock(ws, true);
 			} else if (!ws && !isUnmounted) {
 				connectRoom(currentRoom);
 			}
@@ -2706,6 +2726,7 @@ onMount(() => {
       <MusicPanel
         bind:this={musicPanelRef}
         audioEl={chatAudio}
+        serverNow={serverNow}
         roomId={currentRoom}
         chatServerUrl={normalizedChatServer}
         playlistOutApiUrl={playlistOutApiUrl}
@@ -2728,6 +2749,12 @@ onMount(() => {
         onOpenUserProfile={handleOpenUserProfile}
         onPlaybackStatusChange={(status) => {
           mobilePlaybackStatus = status;
+          const listening = Boolean(status.listenIntent && status.audioStatus !== "blocked");
+          const listenKey = currentRoom + ":" + listening;
+          if (ws?.readyState === WebSocket.OPEN && listenKey !== lastListenPacket) {
+            ws.send(JSON.stringify({ type: "music:listen", listening }));
+            lastListenPacket = listenKey;
+          }
           if (!hasAppMounted) return;
           if (typeof status.listenIntent === "boolean") {
             isListeningIntent = status.listenIntent;
@@ -2757,8 +2784,8 @@ onMount(() => {
           sendPacket({ type: "music:report_duration", playUid, durationSec })
         }
         onTrackEnded={(playUid) => sendPacket({ type: "music:ended", playUid })}
-        onReportError={(playUid) =>
-          sendPacket({ type: "music:report_error", playUid })
+        onReportError={(playUid, sourceRevision) =>
+          sendPacket({ type: "music:report_error", playUid, sourceRevision })
         }
         onRequestAuth={() => (showAuthModal = true)}
         onRequestWalineAuth={handleDirectWalineLogin}

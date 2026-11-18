@@ -330,9 +330,13 @@ export interface CurrentPlayback {
 	durationSec: number;
 	skipVotes: string[];
 	sourceRevision?: number;
+	phase?: "preparing" | "scheduled" | "playing";
 }
 
 export interface RoomMusicState {
+	protocolVersion?: number;
+	stateVersion?: number;
+	next?: CurrentPlayback | null;
 	current: CurrentPlayback | null;
 	queue: QueueEntry[];
 	history?: MusicHistoryEntry[];

@@ -110,6 +110,7 @@ interface Props {
 	otherRoomsUnreadCount?: number;
 	mobilePlaybackStatus?: {
 		isListening: boolean;
+		audioStatus?: import("./roomAudioPlayer").AudioStatus;
 		isMuted: boolean;
 		elapsedSec: number;
 		durationSec: number;
@@ -2335,6 +2336,7 @@ function removePendingImage(index: number) {
       <MiniPlayerBar
         currentPlay={musicState.current}
         isListening={mobilePlaybackStatus.isListening}
+        audioStatus={mobilePlaybackStatus.audioStatus}
         elapsedSec={mobilePlaybackStatus.elapsedSec}
         durationSec={mobilePlaybackStatus.durationSec}
         canDirectSkip={mobilePlaybackStatus.canDirectSkip}

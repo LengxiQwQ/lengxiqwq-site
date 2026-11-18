@@ -1,11 +1,13 @@
 <script lang="ts">
 import { formatClockSeconds } from "./chatClient";
+import { audioStatusLabel, type AudioStatus } from "./roomAudioPlayer";
 import ChatTooltip from "./ChatTooltip.svelte";
 import type { CurrentPlayback } from "./chatTypes";
 
 interface Props {
 	currentPlay: CurrentPlayback;
 	isListening: boolean;
+	audioStatus?: AudioStatus;
 	elapsedSec: number;
 	durationSec: number;
 	canDirectSkip: boolean;
@@ -35,6 +37,7 @@ const {
 	voteThreshold,
 	isSkippingTrack = false,
 	variant = "panel",
+	audioStatus = "idle",
 	onOpenLyrics,
 	onToggleListen,
 	onSkipTrack,
@@ -47,6 +50,9 @@ $effect(() => {
 	currentPlay.uid;
 	coverFailed = false;
 });
+
+const isBusy = $derived(["loading", "preparing", "recovering"].includes(audioStatus));
+const listenAction = $derived(isBusy ? "取消收听" : audioStatus === "blocked" || audioStatus === "error" ? "重试收听" : isListening ? "停止收听" : "开启收听");
 
 const progressRatio = $derived(
 	durationSec > 0 ? Math.min(1, Math.max(0, elapsedSec / durationSec)) : 0,
@@ -99,20 +105,22 @@ const skipTooltipText = $derived.by(() => {
         {currentPlay.track.title}
       </div>
       <div class="{variant === 'mobile' ? 'text-[11.5px]' : 'text-[10px]'} text-[var(--chat-meta-color)] truncate tabular-nums leading-tight mt-0.5">
-        {currentPlay.track.artist} · {formatClockSeconds(elapsedSec)}{durationSec > 0 ? ` / ${formatClockSeconds(durationSec)}` : ""}
+        {audioStatus !== "playing" && audioStatus !== "idle" ? audioStatusLabel[audioStatus] : currentPlay.track.artist} · {formatClockSeconds(elapsedSec)}{durationSec > 0 ? ` / ${formatClockSeconds(durationSec)}` : ""}
       </div>
     </div>
   </button>
 
   <div class="flex items-center {variant === 'mobile' ? 'gap-1.5' : 'gap-1'} shrink-0">
-    <ChatTooltip text={isListening ? "静音电台" : "开启收听"}>
+    <ChatTooltip text={listenAction}>
       <button
         type="button"
         class="chat-queue-icon-btn {variant === 'mobile' ? 'w-9! h-9! rounded-xl!' : 'w-7! h-7! rounded-lg!'} {isListening ? 'bg-(--primary)/14! text-[var(--chat-accent-text)]!' : ''}"
-        aria-label={isListening ? "静音电台" : "开启收听"}
+        aria-label={listenAction}
         onclick={onToggleListen}
       >
-        {#if isListening}
+        {#if isBusy}
+          <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2"/></svg>
+        {:else if audioStatus === "playing"}
           <span class="chat-eq-bars" aria-hidden="true">
             <span class="chat-eq-bar"></span>
             <span class="chat-eq-bar"></span>

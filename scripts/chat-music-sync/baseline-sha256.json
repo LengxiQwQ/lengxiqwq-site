@@ -1,0 +1,10 @@
+{
+  "src/music/music-manager.mjs": "50b1f82ff45c1eabfc7964991f98ab2f7bbcadd6d64ffe0b3db7b52c8af0bdbc",
+  "src/music/stream-cache.mjs": "c96e3c672a2d5a8d7bcbdb487e2a7011ca391007553cdfbaa906c170c95416c1",
+  "src/music/registry.mjs": "42d0f0ea2c4a398a1d43ccaaf3ac1972bcf65f584965d72299571ffe84fb945c",
+  "src/music/audio-source.mjs": "9a5d0352487ebc2bba3ee1448c03094d6db27f8ee2b36ecfbd07ee0971de825f",
+  "src/music/stream-signer.mjs": "2e52a1e59a2b261538f6b6c9b8e2f2b23fa1574cf9d2d038c31eaa69e3cea231",
+  "src/music/music-input.mjs": "5db8d94b433d52326b26ed08aee70dd521b77ded1b8432361c5be009352e6c15",
+  "src/music/qq-music.mjs": "772043da71193c6ba5341f0a16cdfe8e500e2e18f438258bddee5ed43977eff4",
+  "server.mjs": "e2865b204d298b09552b190f73530bb844e3669a39df95ada722b7319b77cc23"
+}
