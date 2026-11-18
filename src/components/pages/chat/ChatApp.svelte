@@ -221,6 +221,7 @@ const pendingClockPings = new WeakMap<WebSocket, { wall: number; monotonic: numb
 let chatAudio: HTMLAudioElement | null = $state(null);
 let noticeText = $state("");
 let noticeVisible = $state(false);
+let noticeTone = $state<"default" | "error">("default");
 let targetMessageUid = $state("");
 let showInterconnect = $state(false);
 let totalChatterCount = $state(0);
@@ -694,7 +695,7 @@ function startSkipPending() {
 	skipPendingTimer = window.setTimeout(() => {
 		isSkippingTrack = false;
 		skipPendingTimer = null;
-	}, 12000);
+	}, 4500);
 }
 
 function handleSkipTrack() {
@@ -725,6 +726,14 @@ function handleVoteSkip() {
 	}
 }
 
+function handlePlayQueued(uid: string) {
+	if (!currentUser) {
+		showAuthModal = true;
+		return;
+	}
+	sendPacket({ type: "music:play_queued", uid, playUid: musicState?.current?.uid });
+}
+
 function placeGlobalToast(node: HTMLDivElement) {
 	document.body.appendChild(node);
 	return {
@@ -734,8 +743,13 @@ function placeGlobalToast(node: HTMLDivElement) {
 	};
 }
 
-function showNotice(msg: string) {
+function showNotice(msg: string, tone?: "default" | "error") {
 	noticeText = msg;
+	noticeTone =
+		tone ??
+		(/(失败|不可用|异常|错误|无法|未找到|超时|拒绝|拦截)/.test(msg)
+			? "error"
+			: "default");
 	noticeVisible = true;
 	if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 	noticeTimer = window.setTimeout(() => {
@@ -1444,7 +1458,7 @@ function connectRoom(roomId: string) {
 				pending.finish(packet.ok);
 				if (packet.roomId === currentRoom) {
 					if (packet.code === "AUTH_REQUIRED") openAuthModal();
-					else if (!packet.ok) showNotice(packet.error || "点歌失败，请重试");
+					else if (!packet.ok) showNotice(packet.error || "点歌失败，请重试", "error");
 					else if (!packet.playImmediately && packet.position) showNotice("已加入待播队列，第 " + packet.position + " 首");
 				}
 				break;
@@ -1453,9 +1467,16 @@ function connectRoom(roomId: string) {
 				if (packet.roomId === currentRoom) {
 					const prevUid = musicState?.current?.uid ?? "";
 					const nextUid = packet.current?.uid ?? "";
-					if (!nextUid || nextUid !== prevUid) {
+					const prevVotes = musicState?.voteCount ?? 0;
+					if (
+						!nextUid ||
+						nextUid !== prevUid ||
+						packet.voteCount !== prevVotes
+					) {
 						clearSkipPending();
-						if (nextUid) sampleRoomClock(socket);
+					}
+					if (nextUid && nextUid !== prevUid) {
+						sampleRoomClock(socket);
 					}
 					musicClock.seed(packet.serverTime);
 					if (!hasClockSample) clockOffsetMs = packet.serverTime - Date.now();
@@ -1507,7 +1528,7 @@ function connectRoom(roomId: string) {
 					lastMarkedServerReadAt = 0;
 				}
 				if (packet.message) {
-					showNotice(packet.message);
+					showNotice(packet.message, "error");
 				}
 				break;
 			}
@@ -1768,34 +1789,6 @@ async function handleUpdateMemberBadges(
 	badges: ChatCustomBadge[],
 ): Promise<boolean> {
 	if (!currentUser?.isAdmin) return false;
-	const packet: Record<string, unknown> = {
-		type: "admin:update_member_badges",
-		targetUserKey,
-		customBadges: badges,
-	};
-	const sent = sendPacket(packet);
-	if (sent) {
-		if (currentUser.userKey === targetUserKey) {
-			currentUser = { ...currentUser, customBadges: badges };
-		}
-		roomOnlineMembers = roomOnlineMembers.map((m) =>
-			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
-		);
-		roomMentionMembers = roomMentionMembers.map((m) =>
-			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
-		);
-		globalMemberDirectory = globalMemberDirectory.map((m) =>
-			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
-		);
-		messages = messages.map((m) =>
-			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
-		);
-		if (userDetailSeed && userDetailSeed.userKey === targetUserKey) {
-			userDetailSeed = { ...userDetailSeed, customBadges: badges };
-		}
-		showNotice("头衔已更新");
-		return true;
-	}
 	const token = readStoredWalineToken();
 	const httpOk = await saveMemberBadges(
 		normalizedChatServer,
@@ -2624,6 +2617,7 @@ onMount(() => {
           isSkippingTrack={isSkippingTrack}
           onSkipTrack={handleSkipTrack}
           onVoteSkip={handleVoteSkip}
+          onPlayQueued={handlePlayQueued}
           onLoadHistory={handleLoadHistory}
           onMarkRead={handleMarkRead}
           onClearTargetMessage={() => {
@@ -2771,13 +2765,7 @@ onMount(() => {
           }
           sendPacket({ type: "music:remove", uid });
         }}
-        onPlayQueued={(uid) => {
-          if (!currentUser) {
-            showAuthModal = true;
-            return;
-          }
-          sendPacket({ type: "music:play_queued", uid, playUid: musicState?.current?.uid });
-        }}
+        onPlayQueued={handlePlayQueued}
         isSkippingTrack={isSkippingTrack}
         onSkipTrack={handleSkipTrack}
         onVoteSkip={handleVoteSkip}
@@ -2857,11 +2845,18 @@ onMount(() => {
   <!-- 全局底部悬浮提示气泡（挂载至 body 顶层，避免被弹窗/抽屉/壁纸遮挡） -->
   <div
     use:placeGlobalToast
-    class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[2147483647] px-4 py-2.5 rounded-xl bg-black/85 dark:bg-neutral-800/90 text-white text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md transition-all duration-300 max-w-[90vw] text-center border border-white/10 pointer-events-none select-none {noticeVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-95'}"
+    class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[2147483647] px-4 py-2.5 rounded-xl text-white text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md transition-all duration-300 max-w-[90vw] text-center border pointer-events-none select-none inline-flex items-center gap-2 {noticeTone === 'error' ? 'bg-red-600/95 dark:bg-red-600/90 border-red-400/50 shadow-red-950/35' : 'bg-black/85 dark:bg-neutral-800/90 border-white/10'} {noticeVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-95'}"
     role="status"
     aria-live="polite"
     aria-hidden={!noticeVisible}
   >
-    {noticeText}
+    {#if noticeTone === "error"}
+      <svg class="w-4 h-4 shrink-0 text-red-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+    {/if}
+    <span>{noticeText}</span>
   </div>
 </div>

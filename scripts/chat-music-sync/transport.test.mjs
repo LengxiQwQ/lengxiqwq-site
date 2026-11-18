@@ -100,4 +100,5 @@ test('progressive stream-tee delivers early range slices before full download fi
   assert.equal(head.headers['Content-Length'], 4096); assert.equal(f.fetches(), 1);
   const invalid = await f.request('bytes=99999-');
   assert.equal(invalid.status, 416); assert.equal(invalid.headers['Content-Range'], 'bytes */4096');
+  assert.equal(head.headers['Cache-Control'], 'public, max-age=86400, immutable, no-transform');
 });

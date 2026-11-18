@@ -18,35 +18,22 @@ export const audioStatusLabel: Record<AudioStatus, string> = {
 	error: "加载失败，点击重试",
 };
 
-const DRIFT_DEADBAND_SEC = 0.15;
-const DRIFT_GENTLE_MAX_SEC = 0.65;
-const DRIFT_HARD_SEEK_SEC = 2.5;
-const MIN_BUFFER_FOR_ACCEL_SEC = 1.8;
-const BUFFERED_SEEK_COOLDOWN_MS = 3000;
-const NETWORK_SEEK_COOLDOWN_MS = 8000;
-const FORCE_SEEK_COOLDOWN_MS = 1800;
-const RATE_CHANGE_COOLDOWN_MS = 1000;
-const PRELOAD_SAFE_BUFFER_SEC = 8;
+const INITIAL_ALIGN_THRESHOLD_SEC = 0.35;
+const PLAYBACK_DRIFT_SEEK_SEC = 2.2;
+const SEEK_COOLDOWN_MS = 5000;
+const INITIAL_SEEK_COOLDOWN_MS = 1200;
 
 export function correctionForDrift(
 	drift: number,
-	bufferedHeadroom: number = Number.POSITIVE_INFINITY,
+	_bufferedHeadroom: number = Number.POSITIVE_INFINITY,
 ): {
 	seek: boolean;
 	rate: number;
 } {
-	const abs = Math.abs(drift);
-	if (abs >= DRIFT_HARD_SEEK_SEC) return { seek: true, rate: 1 };
-	if (abs <= DRIFT_DEADBAND_SEC) return { seek: false, rate: 1 };
-	// Never accelerate playback when local buffer is running low on a weak connection.
-	if (drift > 0 && bufferedHeadroom < MIN_BUFFER_FOR_ACCEL_SEC) {
-		return { seek: false, rate: 1 };
+	if (Math.abs(drift) >= PLAYBACK_DRIFT_SEEK_SEC) {
+		return { seek: true, rate: 1 };
 	}
-	const step = abs <= DRIFT_GENTLE_MAX_SEC ? 0.02 : 0.035;
-	return {
-		seek: false,
-		rate: Number((1 + Math.sign(drift) * step).toFixed(3)),
-	};
+	return { seek: false, rate: 1 };
 }
 
 interface Callbacks {
@@ -58,10 +45,20 @@ interface Callbacks {
 	duration: (uid: string, duration: number) => void;
 }
 
-/** Owns the persistent audio element; UI effects never start competing play promises. */
+let instanceCounter = 0;
+
+/**
+ * Simple, deterministic timestamp-offset audio controller.
+ * - Never uses a second <audio> element (prevents Chromium HttpCache exclusive write lock deadlocks).
+ * - Never mutates playbackRate during playback (prevents iPad/iOS CoreAudio Time-Pitch DSP stutters).
+ * - Aligns playhead directly to (serverNow - startedAt) / 1000 once active playback begins.
+ */
 export class RoomAudioPlayer {
+	private readonly cid =
+		`${Date.now().toString(36)}_${(++instanceCounter).toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 	private play: CurrentPlayback | null = null;
 	private key = "";
+	private activeSrc = "";
 	private intent = false;
 	private status: AudioStatus = "idle";
 	private volume = 1;
@@ -70,8 +67,8 @@ export class RoomAudioPlayer {
 	private retryAt = 0;
 	private waitingSince = 0;
 	private lastSeek = Number.NEGATIVE_INFINITY;
-	private lastRateChange = Number.NEGATIVE_INFINITY;
 	private initialAligned = false;
+	private initialSeeks = 0;
 	private lastProgress = 0;
 	private progressAt = 0;
 	private readySent = false;
@@ -81,15 +78,17 @@ export class RoomAudioPlayer {
 	private starting = false;
 	private destroyed = false;
 	private timer: ReturnType<typeof setTimeout> | undefined;
-	private preload: HTMLAudioElement | null = null;
 	private preloadUrl = "";
+	private preloadAbort: AbortController | null = null;
 	private desiredPreload: CurrentPlayback | null = null;
 	private listeners: [string, EventListener][] = [];
+
 	private resume = () => {
 		if (document.hidden || !this.intent || this.status === "blocked") return;
 		if (this.status === "error") this.listen();
 		else this.check();
 	};
+
 	constructor(
 		private readonly audio: HTMLAudioElement,
 		private readonly callbacks: Callbacks,
@@ -98,8 +97,10 @@ export class RoomAudioPlayer {
 			"loadedmetadata",
 			"durationchange",
 			"canplay",
+			"canplaythrough",
 			"progress",
 			"playing",
+			"timeupdate",
 			"waiting",
 			"stalled",
 			"seeked",
@@ -116,14 +117,33 @@ export class RoomAudioPlayer {
 		window.addEventListener("pageshow", this.resume);
 		this.tick();
 	}
+
 	private emit(status: AudioStatus): void {
 		this.status = status;
 		this.callbacks.status(status, this.intent);
 	}
+
+	private emitIfChanged(status: AudioStatus): void {
+		if (this.status !== status) this.emit(status);
+	}
+
+	/**
+	 * Attach a per-tab client instance ID (_cid) to real HTTP stream URLs so that multiple tabs
+	 * in the same browser never block each other on Chromium's HttpCache exclusive media lock.
+	 */
+	private buildStreamSrc(rawUrl: string, revision = 0, suffix = ""): string {
+		if (!rawUrl) return "";
+		if (!rawUrl.includes("/api/music/stream")) return rawUrl;
+		const sep = rawUrl.includes("?") ? "&" : "?";
+		const clientTag = suffix ? `${this.cid}_${suffix}` : this.cid;
+		return `${rawUrl}${sep}_cid=${clientTag}${revision > 0 ? `&_rev=${revision}` : ""}`;
+	}
+
 	setVolume(volume: number): void {
 		this.volume = Math.min(1, Math.max(0, volume));
 		this.audio.volume = this.volume;
 	}
+
 	setTrack(play: CurrentPlayback | null): void {
 		const key = play
 			? `${play.uid}:${play.sourceRevision ?? 0}:${play.track.streamUrl}`
@@ -133,12 +153,14 @@ export class RoomAudioPlayer {
 			this.check();
 			return;
 		}
+		this.cancelPreloadFetch();
 		this.key = key;
 		this.epoch++;
 		this.starting = false;
 		this.retries = 0;
 		this.retryAt = 0;
 		this.waitingSince = 0;
+		this.initialSeeks = 0;
 		this.readySent =
 			this.reported =
 			this.durationSent =
@@ -146,73 +168,126 @@ export class RoomAudioPlayer {
 			this.initialAligned =
 				false;
 		this.lastSeek = Number.NEGATIVE_INFINITY;
-		this.lastRateChange = Number.NEGATIVE_INFINITY;
 		this.progressAt = performance.now();
 		this.lastProgress = 0;
-		this.audio.muted = true;
 		this.audio.pause();
 		this.audio.playbackRate = 1;
 		if (!play?.track.streamUrl) {
+			this.activeSrc = "";
+			this.audio.muted = true;
 			this.audio.removeAttribute("src");
 			this.audio.load();
 			this.emit("idle");
 			return;
 		}
-		// A repeated song with the same URL must still restart; a source revision must reload.
-		this.audio.src = play.track.streamUrl;
+		this.activeSrc = this.buildStreamSrc(
+			play.track.streamUrl,
+			play.sourceRevision ?? 0,
+		);
+		this.audio.src = this.activeSrc;
 		this.audio.load();
 		if (this.intent) this.start();
-		else this.emit("idle");
+		else {
+			this.audio.muted = true;
+			this.emit("idle");
+		}
 	}
+
+	private cancelPreloadFetch(): void {
+		if (this.preloadAbort) {
+			this.preloadAbort.abort();
+			this.preloadAbort = null;
+		}
+	}
+
 	preloadNext(play: CurrentPlayback | null): void {
 		this.desiredPreload = play;
+		if (!play) {
+			this.preloadUrl = "";
+			this.cancelPreloadFetch();
+			return;
+		}
 		this.maybeRunPreload();
 	}
+
 	private maybeRunPreload(): void {
+		if (typeof fetch !== "function") return;
 		const connection = (
 			navigator as Navigator & {
 				connection?: { saveData?: boolean; effectiveType?: string };
 			}
 		).connection;
-		const canPreloadNow =
-			this.intent &&
-			!connection?.saveData &&
-			!/^(slow-)?2g$/.test(connection?.effectiveType ?? "") &&
-			(!this.play ||
-				(this.status === "playing" &&
-					(this.bufferedAhead(this.audio.currentTime) >=
-						PRELOAD_SAFE_BUFFER_SEC ||
-						this.isFullyBuffered())));
-		const url = canPreloadNow
-			? (this.desiredPreload?.track.streamUrl ?? "")
-			: "";
-		if (!url) {
-			if (!this.desiredPreload && this.preloadUrl) {
-				this.preloadUrl = "";
-				if (this.preload) {
-					this.preload.removeAttribute("src");
-					this.preload.load();
-				}
-			}
+		if (
+			!this.intent ||
+			connection?.saveData ||
+			/^(slow-)?2g$/.test(connection?.effectiveType ?? "")
+		) {
 			return;
 		}
-		if (url === this.preloadUrl || url === this.play?.track.streamUrl) return;
-		this.preloadUrl = url;
-		if (this.preload) {
-			this.preload.removeAttribute("src");
-			this.preload.load();
+		if (
+			this.status !== "playing" ||
+			!this.play ||
+			!this.initialAligned ||
+			this.starting ||
+			this.audio.seeking ||
+			this.audio.paused
+		) {
+			return;
 		}
-		this.preload ??= new Audio();
-		this.preload.preload = "auto";
-		this.preload.muted = true;
-		this.preload.src = url;
-		this.preload.load();
+		const url = this.desiredPreload?.track.streamUrl ?? "";
+		if (!url || url === this.preloadUrl || url === this.play.track.streamUrl) {
+			return;
+		}
+		// Only warm the next track once the current track has buffered at least 10s ahead
+		const ranges = this.audio.buffered;
+		let bufferedAhead = 0;
+		if (ranges && typeof ranges.length === "number") {
+			for (let i = 0; i < ranges.length; i++) {
+				const s = ranges.start(i);
+				const e = ranges.end(i);
+				if (
+					this.audio.currentTime >= s - 0.5 &&
+					this.audio.currentTime <= e + 0.5
+				) {
+					bufferedAhead = e - this.audio.currentTime;
+					break;
+				}
+			}
+		}
+		const duration = this.audio.duration;
+		const fullyBuffered =
+			Number.isFinite(duration) &&
+			duration > 0 &&
+			ranges?.length > 0 &&
+			ranges.end(ranges.length - 1) >= duration - 0.5;
+		if (bufferedAhead < 10 && !fullyBuffered) return;
+
+		this.preloadUrl = url;
+		this.cancelPreloadFetch();
+		// Use a distinct "_pre" _cid suffix and drain the bounded 256KB slice cleanly:
+		// warms Cloudflare CDN edge + VPS RAM/disk cache without ever colliding with this.audio's cache entry!
+		const controller = new AbortController();
+		this.preloadAbort = controller;
+		const warmUrl = this.buildStreamSrc(url, 0, "pre");
+		void fetch(warmUrl, {
+			method: "GET",
+			headers: { Range: "bytes=0-262143" },
+			signal: controller.signal,
+		})
+			.then<unknown>((res) => (res.ok ? res.arrayBuffer() : res.body?.cancel()))
+			.catch(() => {})
+			.finally(() => {
+				if (this.preloadAbort === controller) {
+					this.preloadAbort = null;
+				}
+			});
 	}
+
 	listen(): void {
 		this.intent = true;
 		this.lastSeek = Number.NEGATIVE_INFINITY;
-		this.lastRateChange = Number.NEGATIVE_INFINITY;
 		this.initialAligned = false;
+		this.initialSeeks = 0;
 		this.retries = 0;
 		this.retryAt = 0;
 		this.reported = false;
@@ -222,135 +297,134 @@ export class RoomAudioPlayer {
 			this.emit("idle");
 			return;
 		}
+		if (!this.activeSrc && this.play.track.streamUrl) {
+			this.activeSrc = this.buildStreamSrc(
+				this.play.track.streamUrl,
+				this.play.sourceRevision ?? 0,
+			);
+			this.audio.src = this.activeSrc;
+		}
 		if (this.audio.error || this.status === "error") this.audio.load();
 		this.start(); // Synchronous play() retains the explicit user gesture on Safari.
 	}
+
 	stop(): void {
 		this.intent = false;
 		this.epoch++;
 		this.starting = false;
 		this.retryAt = this.waitingSince = 0;
+		this.cancelPreloadFetch();
 		this.audio.muted = true;
 		this.audio.playbackRate = 1;
 		this.audio.pause();
 		this.preloadNext(null);
 		this.emit("idle");
 	}
+
 	private scheduled(): boolean {
 		return (
 			!!this.play &&
-			(this.play.phase === "preparing" ||
-				this.callbacks.now() < this.play.startedAt)
+			this.play.phase === "scheduled" &&
+			this.callbacks.now() < this.play.startedAt
 		);
 	}
+
 	private expected(): number {
 		return this.play
 			? Math.max(0, (this.callbacks.now() - this.play.startedAt) / 1000)
 			: 0;
 	}
-	private bufferedAhead(atTime: number): number {
-		const ranges = this.audio.buffered;
-		if (!ranges || typeof ranges.length !== "number") return 0;
-		for (let i = 0; i < ranges.length; i++) {
-			const start = ranges.start(i);
-			const end = ranges.end(i);
-			if (atTime >= start - 0.25 && atTime <= end + 0.05) {
-				return Math.max(0, end - atTime);
-			}
-		}
-		return 0;
-	}
-	private isFullyBuffered(): boolean {
+
+	private isTargetSeekable(target: number): boolean {
 		const duration = this.audio.duration;
-		const ranges = this.audio.buffered;
+		if (!Number.isFinite(duration) || duration <= 0) {
+			return this.audio.readyState >= 1;
+		}
+		const seekable = (
+			this.audio as HTMLAudioElement & {
+				seekable?: TimeRanges;
+			}
+		).seekable;
 		if (
-			!Number.isFinite(duration) ||
-			duration <= 0 ||
-			!ranges ||
-			!ranges.length
-		)
+			seekable &&
+			typeof seekable.length === "number" &&
+			seekable.length > 0
+		) {
+			for (let i = 0; i < seekable.length; i++) {
+				if (
+					target >= seekable.start(i) - 0.25 &&
+					target <= seekable.end(i) + 0.25
+				) {
+					return true;
+				}
+			}
 			return false;
-		return ranges.end(ranges.length - 1) >= duration - 0.5;
+		}
+		return true;
 	}
-	private setRateSafely(rate: number, mono: number): void {
-		const currentRate = this.audio.playbackRate;
-		if (Math.abs(currentRate - rate) < 0.005) return;
-		if (rate !== 1 && mono - this.lastRateChange < RATE_CHANGE_COOLDOWN_MS)
-			return;
-		this.audio.playbackRate = rate;
-		this.lastRateChange = mono;
-	}
+
 	private align(force = false): void {
-		if (!this.play || this.audio.readyState < 1 || this.audio.seeking) return;
+		if (
+			!this.play ||
+			this.starting ||
+			this.audio.paused ||
+			this.audio.readyState < 2 ||
+			this.audio.seeking
+		) {
+			return;
+		}
+		if (this.audio.playbackRate !== 1) {
+			this.audio.playbackRate = 1;
+		}
 		const mono = performance.now();
 		const duration = this.audio.duration;
-		const maxTime = Number.isFinite(duration)
-			? Math.max(0, duration - 0.1)
-			: Number.POSITIVE_INFINITY;
+		const maxTime =
+			Number.isFinite(duration) && duration > 0
+				? Math.max(0, duration - 0.2)
+				: Number.POSITIVE_INFINITY;
 		const target = Math.min(this.expected(), maxTime);
 		const drift = target - this.audio.currentTime;
-		const currentHeadroom = this.bufferedAhead(this.audio.currentTime);
-		const targetHeadroom = this.bufferedAhead(target);
-		const isTargetBuffered =
-			targetHeadroom >= 0.8 ||
-			(Number.isFinite(duration) &&
-				target >= duration - 1 &&
-				targetHeadroom > 0);
-		const correction = correctionForDrift(drift, currentHeadroom);
 
-		if (force && Math.abs(drift) > DRIFT_DEADBAND_SEC) {
-			if (mono - this.lastSeek < FORCE_SEEK_COOLDOWN_MS) return;
-			try {
-				this.audio.currentTime = target;
-				this.lastSeek = mono;
-				this.initialAligned = true;
-			} catch {
-				return;
-			}
-			this.setRateSafely(1, mono);
-			return;
-		}
-
-		if (correction.seek) {
-			const cooldown = isTargetBuffered
-				? BUFFERED_SEEK_COOLDOWN_MS
-				: this.initialAligned
-					? NETWORK_SEEK_COOLDOWN_MS
-					: FORCE_SEEK_COOLDOWN_MS;
-			if (mono - this.lastSeek < cooldown) return;
-
-			// Avoid aborting an active progressive stream for moderate unbuffered forward drift;
-			// let smooth playbackRate catch up unless drift is extreme or it's the initial join.
-			if (
-				!isTargetBuffered &&
-				this.initialAligned &&
-				drift > 0 &&
-				drift < 4.8
-			) {
-				if (currentHeadroom >= MIN_BUFFER_FOR_ACCEL_SEC) {
-					this.setRateSafely(1.035, mono);
-				} else {
-					this.setRateSafely(1, mono);
+		// 1. Initial alignment on track start / late join / unmute
+		if (force || !this.initialAligned) {
+			const threshold = force ? 0.15 : INITIAL_ALIGN_THRESHOLD_SEC;
+			const needsSeek =
+				Math.abs(drift) > threshold &&
+				(force || target > INITIAL_ALIGN_THRESHOLD_SEC);
+			if (!needsSeek) {
+				if (this.audio.readyState >= 3) {
+					this.initialAligned = true;
 				}
 				return;
 			}
-
-			const leadComp = !isTargetBuffered && drift > 1.5 ? 0.18 : 0;
-			const seekTarget = Math.min(target + leadComp, maxTime);
+			if (mono - this.lastSeek < INITIAL_SEEK_COOLDOWN_MS) return;
+			if (!this.isTargetSeekable(target)) return;
 			try {
-				this.audio.currentTime = seekTarget;
+				this.audio.currentTime = target;
 				this.lastSeek = mono;
-				this.initialAligned = true;
+				this.initialSeeks++;
+				if (this.initialSeeks >= 2) {
+					this.initialAligned = true;
+				}
 			} catch {
 				return;
 			}
-			this.setRateSafely(1, mono);
 			return;
 		}
 
-		this.initialAligned = true;
-		this.setRateSafely(correction.rate, mono);
+		// 2. Ongoing playback guard: only seek if drift exceeds 2.2s (e.g. after a major network stall)
+		if (Math.abs(drift) >= PLAYBACK_DRIFT_SEEK_SEC) {
+			if (mono - this.lastSeek < SEEK_COOLDOWN_MS) return;
+			if (!this.isTargetSeekable(target)) return;
+			try {
+				this.audio.currentTime = target;
+				this.lastSeek = mono;
+			} catch {
+				return;
+			}
+		}
 	}
+
 	private start(): void {
 		if (this.destroyed || !this.intent || !this.play || this.starting) return;
 		const epoch = this.epoch;
@@ -358,11 +432,11 @@ export class RoomAudioPlayer {
 		this.waitingSince = performance.now();
 		this.progressAt = this.waitingSince;
 		this.audio.volume = this.volume;
-		this.audio.preservesPitch = true;
-		this.audio.muted = this.scheduled();
-		if (!this.scheduled()) this.align(true);
+		this.audio.playbackRate = 1;
+		const isScheduledFuture = this.scheduled();
+		this.audio.muted = isScheduledFuture;
 		this.emit(
-			this.scheduled() ? "preparing" : this.retries ? "recovering" : "loading",
+			isScheduledFuture ? "preparing" : this.retries ? "recovering" : "loading",
 		);
 		try {
 			void this.audio.play().then(
@@ -380,7 +454,9 @@ export class RoomAudioPlayer {
 					) {
 						this.audio.muted = true;
 						this.emit("blocked");
-					} else this.fail();
+					} else {
+						this.fail();
+					}
 				},
 			);
 		} catch {
@@ -388,6 +464,7 @@ export class RoomAudioPlayer {
 			this.fail();
 		}
 	}
+
 	private fail(): void {
 		if (
 			!this.intent ||
@@ -404,13 +481,13 @@ export class RoomAudioPlayer {
 			this.emit("recovering");
 		} else {
 			this.emit("error");
-			// An offline device cannot diagnose the room's source.
 			if (!this.reported && navigator.onLine) {
 				this.reported = true;
 				this.callbacks.error(this.play.uid, this.play.sourceRevision ?? 0);
 			}
 		}
 	}
+
 	private check(): void {
 		if (
 			!this.play ||
@@ -436,24 +513,19 @@ export class RoomAudioPlayer {
 			!this.readySent &&
 			audio.readyState >= 3 &&
 			audio.buffered.length &&
-			audio.buffered.start(0) <= 0.25 &&
-			audio.buffered.end(0) >= 0.6
+			audio.buffered.start(0) <= 0.5 &&
+			audio.buffered.end(0) >= 0.5
 		) {
 			this.readySent = true;
 			this.callbacks.ready(this.play.uid, this.play.sourceRevision ?? 0);
 		}
 		if (this.scheduled()) {
 			audio.muted = true;
-			// Prime-and-Park: keep playhead parked at 0.000s during preparation so that when
-			// startedAt arrives, unmuting at 0.000s requires ZERO backward seek.
-			if (audio.readyState >= 2 && !audio.seeking && audio.currentTime > 0.06) {
-				try {
-					audio.currentTime = 0;
-				} catch {}
-			}
 			this.emitIfChanged("preparing");
-		} else if (audio.readyState >= 3 && !audio.paused) {
-			this.align(audio.muted);
+		} else if (!this.starting && audio.readyState >= 2 && !audio.paused) {
+			const wasMutedOrPreparing =
+				audio.muted || this.status === "preparing" || !this.initialAligned;
+			this.align(wasMutedOrPreparing);
 			if (!audio.seeking) {
 				audio.muted = false;
 				this.waitingSince = 0;
@@ -475,21 +547,13 @@ export class RoomAudioPlayer {
 		)
 			this.fail();
 	}
-	private emitIfChanged(status: AudioStatus): void {
-		if (this.status !== status) this.emit(status);
-	}
+
 	private onEvent(event: string): void {
-		if (
-			!this.play ||
-			this.audio.getAttribute("src") !== this.play.track.streamUrl
-		)
+		if (!this.play) return;
+		const attrSrc = this.audio.getAttribute("src") || "";
+		if (attrSrc !== this.activeSrc && attrSrc !== this.play.track.streamUrl) {
 			return;
-		if (
-			this.audio.currentSrc &&
-			this.audio.currentSrc !==
-				new URL(this.play.track.streamUrl, document.baseURI).href
-		)
-			return;
+		}
 		if (event === "error") {
 			this.fail();
 			return;
@@ -517,12 +581,12 @@ export class RoomAudioPlayer {
 			!this.scheduled() &&
 			this.status !== "error" &&
 			this.status !== "blocked" &&
-			!this.retryAt
+			!this.retryAt &&
+			this.audio.readyState < 3
 		) {
 			this.waitingSince ||= performance.now();
 			this.emitIfChanged("loading");
 		}
-		// Unexpected OS pauses preserve intent and surface a recovery action; never loop play().
 		if (
 			event === "pause" &&
 			this.intent &&
@@ -537,6 +601,7 @@ export class RoomAudioPlayer {
 		}
 		this.check();
 	}
+
 	private tick(): void {
 		this.check();
 		const remaining = this.play
@@ -544,11 +609,13 @@ export class RoomAudioPlayer {
 			: Number.POSITIVE_INFINITY;
 		this.timer = setTimeout(
 			() => this.tick(),
-			remaining > 0 && remaining < 250 ? Math.max(8, remaining) : 250,
+			remaining > 0 && remaining < 250 ? Math.max(10, remaining) : 250,
 		);
 	}
+
 	destroy(): void {
 		this.destroyed = true;
+		this.cancelPreloadFetch();
 		this.stop();
 		clearTimeout(this.timer);
 		for (const [event, listener] of this.listeners)

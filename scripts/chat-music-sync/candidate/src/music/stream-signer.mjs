@@ -32,7 +32,19 @@ export function signStreamProxyUrl(
   const encodedPayload = toBase64Url(payload);
   const sig = createHmac('sha256', secret).update(encodedPayload).digest('base64url');
   const base = origin.replace(/\/+$/, '');
-  return `${base}/api/music/stream?token=${encodeURIComponent(`${encodedPayload}.${sig}`)}`;
+  const ext =
+    mimeType === 'audio/mp4' || mimeType === 'audio/aac'
+      ? 'm4a'
+      : mimeType === 'audio/flac'
+        ? 'flac'
+        : mimeType === 'audio/ogg'
+          ? 'ogg'
+          : 'mp3';
+  const safeName =
+    typeof trackKey === 'string' && /^[A-Za-z0-9:_-]+$/.test(trackKey)
+      ? trackKey.replace(/:/g, '_')
+      : 'track';
+  return `${base}/api/music/stream/${safeName}.${ext}?token=${encodeURIComponent(`${encodedPayload}.${sig}`)}`;
 }
 
 export function verifyStreamProxyToken(token, secret) {

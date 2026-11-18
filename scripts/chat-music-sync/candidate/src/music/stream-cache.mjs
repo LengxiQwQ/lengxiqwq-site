@@ -172,10 +172,8 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
     if (cached) {
       entry.type = cached.type;
       entry.totalSize = cached.size;
-      entry.bytesReceived = cached.size;
-      entry.ready = true;
-      entry.complete = true;
       entry.persisted = true;
+      entry.ready = true;
       await cached.file.close().catch(() => {});
       resolveHeader(true);
       notifyWaiters(entry);
@@ -217,6 +215,9 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
           throw new Error('audio file too large');
         }
 
+        entry.chunks.push(chunk);
+        entry.bytesReceived += chunk.length;
+
         if (!entry.ready) {
           if (headerBuffer.length < 12) {
             const needed = 12 - headerBuffer.length;
@@ -232,8 +233,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
           }
         }
 
-        entry.chunks.push(chunk);
-        entry.bytesReceived += chunk.length;
+        notifyWaiters(entry);
         if (!diskStream.write(chunk)) {
           await new Promise((resolve, reject) => {
             const onDrain = () => {
@@ -248,7 +248,6 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
             diskStream.once('error', onError);
           });
         }
-        notifyWaiters(entry);
       }
 
       if (!entry.ready) {
@@ -382,7 +381,7 @@ async function* generateInFlightSlice(entry, start, end, signal) {
 }
 
 const responseHeaders = {
-  'Cache-Control': 'private, max-age=3600, no-transform',
+  'Cache-Control': 'public, max-age=86400, immutable, no-transform',
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Expose-Headers': 'Content-Length, Content-Range, Accept-Ranges, X-Audio-Cache',
   'X-Content-Type-Options': 'nosniff'
@@ -449,7 +448,33 @@ export async function handleStreamProxyRequest(req, res, url, _referer, mimeType
       const headerOk = await shared.headerPromise;
       if (signal.aborted) return;
 
-      if (headerOk && shared.ready && shared.totalSize > 0) {
+      if (shared.persisted && shared.chunks.length === 0) {
+        const diskHit = await openCachedWithFallback(url, trackKey);
+        cached = diskHit.cached;
+        activeFiles = diskHit.files;
+        if (cached) {
+          const { size, type, file } = cached;
+          const slice = parseRange(range, size);
+          if (slice === false) {
+            res.writeHead(416, { ...responseHeaders, 'Content-Range': 'bytes */' + size });
+            res.end();
+            return;
+          }
+          res.writeHead(slice ? 206 : 200, {
+            ...responseHeaders,
+            'X-Audio-Cache': 'HIT',
+            'Content-Type': type,
+            'Accept-Ranges': 'bytes',
+            'Content-Length': slice ? slice.end - slice.start + 1 : size,
+            ...(slice && { 'Content-Range': 'bytes ' + slice.start + '-' + slice.end + '/' + size })
+          });
+          if (req.method === 'HEAD') res.end();
+          else await pipeline(file.createReadStream({ ...slice, autoClose: false, start: slice?.start ?? 0 }), progress, res, { signal });
+          return;
+        }
+      }
+
+      if (headerOk && shared.ready && shared.totalSize > 0 && shared.chunks.length > 0) {
         const size = shared.totalSize;
         const slice = parseRange(range, size);
         if (slice === false) {

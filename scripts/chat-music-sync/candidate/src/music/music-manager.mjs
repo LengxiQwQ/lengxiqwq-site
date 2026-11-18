@@ -25,10 +25,6 @@ function writeJsonAtomic(filePath, data) {
   }
 }
 
-const MAX_PREPARE_WAIT_MS = 2100;
-const QUORUM_PREPARE_WAIT_MS = 1500;
-const MULTI_LISTENER_LEAD_MS = 280;
-const SINGLE_LISTENER_LEAD_MS = 120;
 const PREPARED_REUSE_TTL_MS = 25 * 60_000;
 
 export class MusicManager {
@@ -56,9 +52,6 @@ export class MusicManager {
     this._nextLogId = 1;
     this._advanceTimer = null;
     this._refreshPreparedTimer = null;
-    this._prepareBarrierTimer = null;
-    this._quorumBarrierTimer = null;
-    this.readyClients = new Set();
     this.preparedFallback = null;
     this.preparedQueue = null;
     this._prepareFallbackTimer = null;
@@ -200,7 +193,7 @@ export class MusicManager {
         ...this.current,
         phase: (this.current.phase === 'scheduled' || this.current.phase === 'preparing') &&
           Date.now() >= this.current.startedAt
-          ? 'playing' : this.current.phase
+          ? 'playing' : (this.current.phase || 'playing')
       },
       queue: this.queue.map(item => ({
         ...item,
@@ -320,13 +313,6 @@ export class MusicManager {
     }
   }
 
-  clearBarrierTimers() {
-    clearTimeout(this._prepareBarrierTimer);
-    clearTimeout(this._quorumBarrierTimer);
-    this._prepareBarrierTimer = null;
-    this._quorumBarrierTimer = null;
-  }
-
   scheduleAdvance() {
     clearTimeout(this._advanceTimer);
     clearTimeout(this._refreshPreparedTimer);
@@ -343,61 +329,24 @@ export class MusicManager {
     }
   }
 
-  commitScheduledStart(play, leadMs = MULTI_LISTENER_LEAD_MS) {
-    if (!play || this.current !== play || play.phase !== 'preparing') return;
-    this.clearBarrierTimers();
-    const nextStart = Date.now() + leadMs;
-    play.phase = 'scheduled';
-    // Only pull startedAt earlier or set the authoritative launch timestamp
-    if (nextStart < play.startedAt || play.startedAt <= Date.now()) {
-      play.startedAt = nextStart;
-    }
-    this.savePlayback();
-    this.scheduleAdvance();
-    this.onStateChanged();
-  }
-
-  ready(playUid, clientId, revision) {
-    const play = this.current;
-    if (!play || play.uid !== playUid) return false;
-    if (revision !== undefined && revision !== (play.sourceRevision ?? 0)) return false;
-    if (!this.readyClients) this.readyClients = new Set();
-    if (clientId) this.readyClients.add(clientId);
-    this.recheckReady();
+  ready() {
     return true;
   }
 
-  recheckReady() {
-    const play = this.current;
-    if (!play || play.phase !== 'preparing') return;
-    const listeners = (this.getListeners?.() || []).filter(client => client.modern);
-    if (listeners.length === 0) {
-      this.commitScheduledStart(play, SINGLE_LISTENER_LEAD_MS);
-      return;
-    }
-    const readyCount = listeners.filter(client => this.readyClients?.has(client.id)).length;
-    if (readyCount >= listeners.length) {
-      const leadMs = listeners.length === 1 ? SINGLE_LISTENER_LEAD_MS : MULTI_LISTENER_LEAD_MS;
-      this.commitScheduledStart(play, leadMs);
-    }
-  }
+  recheckReady() {}
 
   playTrack(track, requester, isFallback = false, startedAt = Date.now(), requestUid) {
     this.generation++;
-    this.clearBarrierTimers();
-    this.readyClients = new Set();
-    const listeners = this.getListeners ? this.getListeners() : [];
-    const restored = startedAt < Date.now() - 1000;
-    // Mixed-version rooms remain immediate until old listeners reload.
-    const synchronized = !restored && listeners.length > 0 && listeners.every(client => client.modern);
-    const play = {
+    this.fallbackGeneration++;
+    this.preparedFallback = null;
+    this.current = {
       uid: 'play_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
       track,
       requesterKey: requester.userKey,
       requesterName: requester.name,
       requesterAvatar: requester.avatar || '',
-      startedAt: synchronized ? Date.now() + MAX_PREPARE_WAIT_MS : startedAt,
-      phase: synchronized ? 'preparing' : 'playing',
+      startedAt,
+      phase: 'playing',
       durationSec: durationOf(track.durationSec) || 240,
       isFallback,
       requestUid,
@@ -405,53 +354,68 @@ export class MusicManager {
       skipVotes: [],
       skipVoteNames: []
     };
-    this.current = play;
-
-    if (synchronized) {
-      this._quorumBarrierTimer = setTimeout(() => {
-        if (this.current !== play || play.phase !== 'preparing') return;
-        const active = (this.getListeners?.() || []).filter(client => client.modern);
-        const readyCount = active.filter(client => this.readyClients?.has(client.id)).length;
-        if (active.length === 0 || (readyCount > 0 && readyCount >= Math.ceil(active.length * 0.75))) {
-          this.commitScheduledStart(play, MULTI_LISTENER_LEAD_MS);
-        }
-      }, QUORUM_PREPARE_WAIT_MS);
-      this._quorumBarrierTimer.unref?.();
-
-      this._prepareBarrierTimer = setTimeout(() => {
-        if (this.current === play && play.phase === 'preparing') {
-          this.commitScheduledStart(play, MULTI_LISTENER_LEAD_MS);
-        }
-      }, MAX_PREPARE_WAIT_MS - MULTI_LISTENER_LEAD_MS);
-      this._prepareBarrierTimer.unref?.();
-    }
-
     this.onPrefetchTrack(track.streamUrl, true);
     this.savePlayback();
     this.scheduleAdvance();
 
-    // Warm the current song first and then the next choice for this room.
+    // Warm the next track in the background so the next switch hits VPS cache immediately.
     clearTimeout(this._prepareFallbackTimer);
-    this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 800);
+    this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 50);
   }
 
   async resolveFallbackTrackPlayable() {
     if (this.fallbackTracks.length === 0) return null;
     const tracks = this.fallbackTracks;
-    const candidates = new Set();
-    while (candidates.size < Math.min(5, tracks.length)) {
-      candidates.add(Math.floor(Math.random() * tracks.length));
+    const currentId = this.current?.track?.id || '';
+    const currentSourceId = this.current?.track?.sourceId || '';
+
+    // Pick up to 6 distinct candidate indices, avoiding the currently playing song when possible
+    const candidateIndices = [];
+    const tried = new Set();
+    const maxAttempts = Math.min(tracks.length * 2, 16);
+    for (let i = 0; i < maxAttempts && candidateIndices.length < Math.min(6, tracks.length); i++) {
+      const idx = Math.floor(Math.random() * tracks.length);
+      if (tried.has(idx)) continue;
+      tried.add(idx);
+      const item = tracks[idx];
+      if (!item) continue;
+      const itemSourceId = item.matchedTrack?.sourceId || item.sourceTrackId || '';
+      if (tracks.length > 1 && itemSourceId && (itemSourceId === currentSourceId || `qq:${itemSourceId}` === currentId)) {
+        continue;
+      }
+      candidateIndices.push(idx);
     }
-    for (const index of candidates) {
+    if (candidateIndices.length === 0 && tracks.length > 0) {
+      candidateIndices.push(Math.floor(Math.random() * tracks.length));
+    }
+
+    const tryCandidate = async (index) => {
       const chosen = tracks[index];
-      if (!chosen) continue;
+      if (!chosen) return null;
       try {
         const track = await this.musicRegistry.resolvePlaylistTrack(chosen);
-        if (!track) continue;
-        const playable = await this.resolve(track);
-        if (playable) return playable;
+        if (!track) return null;
+        return await this.resolve(track);
       } catch (err) {
         console.warn(`[Music:${this.roomId}] Error resolving fallback track:`, err.message);
+        return null;
+      }
+    };
+
+    // Resolve in parallel batches of 3 so dead/copyright-restricted tracks don't stall skipping for 15+ seconds
+    for (let offset = 0; offset < candidateIndices.length; offset += 3) {
+      const batch = candidateIndices.slice(offset, offset + 3);
+      try {
+        const winner = await Promise.any(
+          batch.map(async (idx) => {
+            const playable = await tryCandidate(idx);
+            if (!playable) throw new Error('unplayable');
+            return playable;
+          })
+        );
+        if (winner) return winner;
+      } catch {
+        // All candidates in this batch failed; try next batch
       }
     }
     return null;
@@ -495,12 +459,24 @@ export class MusicManager {
         if (second?.streamUrl) this.onPrefetchTrack(second.streamUrl, false);
       }).catch(() => {});
     }
-    this.onStateChanged();
+    if (this.advancing?.generation !== this.generation) {
+      this.onStateChanged();
+    }
   }
 
   async usePrepared(record) {
     if (!record) return null;
-    if (!record.checkedAt) return await record.pending;
+    if (!record.checkedAt) {
+      if (!record.pending) return null;
+      let timer;
+      const playable = await Promise.race([
+        record.pending,
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve(null), 2500);
+        })
+      ]).finally(() => clearTimeout(timer));
+      return playable || null;
+    }
     if (Date.now() - record.checkedAt < PREPARED_REUSE_TTL_MS) return record.playable;
     const cached = await this.musicRegistry.isCached?.(record.playable, this.signSecret).catch(() => false);
     return cached ? record.playable : null;
@@ -518,7 +494,6 @@ export class MusicManager {
   advanceNext() {
     const generation = this.generation;
     if (this.advancing?.generation === generation) return this.advancing.promise;
-    this.clearBarrierTimers();
     clearTimeout(this._advanceTimer);
     clearTimeout(this._refreshPreparedTimer);
     clearTimeout(this._prepareFallbackTimer);
@@ -559,9 +534,9 @@ export class MusicManager {
     const fallbackGeneration = this.fallbackGeneration;
     const prepared = this.preparedFallback?.key === fallbackGeneration ? this.preparedFallback : null;
     this.preparedFallback = null;
-    const known = await this.usePrepared(prepared) ||
-      (prepared?.playable ? await this.resolve(prepared.playable) : null);
-    const playable = known || await this.resolveFallbackTrackPlayable();
+    const known = await this.usePrepared(prepared);
+    const playable = (known && known.id !== this.current?.track?.id ? known : null) ||
+      await this.resolveFallbackTrackPlayable();
     if (generation !== this.generation) return;
     if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation);
     if (playable) {
@@ -712,10 +687,12 @@ export class MusicManager {
     play.track.durationSec = duration;
     const history = this.historyMap.get(play.track.id);
     if (history) history.track.durationSec = duration;
-    if (this.advancing?.generation !== this.generation) this.scheduleAdvance();
+    if (this.advancing?.generation !== this.generation) {
+      this.scheduleAdvance();
+      this.onStateChanged();
+    }
     this.savePlayback();
     this.saveDataDebounced();
-    this.onStateChanged();
   }
 
   async reportError(playUid, actorKey, revision) {
@@ -744,8 +721,6 @@ export class MusicManager {
         this.onPrefetchTrack(playable.streamUrl, true);
         this.onStateChanged();
       }
-      // Never skip the whole room on one device report or a transient resolver outage.
-      // Normal end/skip remains authoritative; another bounded probe can recover later.
     } finally {
       if (this.recovering === play) this.recovering = null;
     }

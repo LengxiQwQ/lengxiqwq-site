@@ -840,6 +840,19 @@ function openRequesterProfile(requesterKey: string, requesterName: string) {
 	});
 }
 
+function resolveOwnerAvatar(ownerKey: string, fallbackAvatar?: string): string {
+	if (fallbackAvatar) return fallbackAvatar;
+	if (!ownerKey) return "";
+	if (currentUser?.userKey === ownerKey && currentUser.avatar) {
+		return currentUser.avatar;
+	}
+	const online = onlineMembers.find((m) => m.userKey === ownerKey);
+	if (online?.avatar) return online.avatar;
+	const mention = mentionMembers.find((m) => m.userKey === ownerKey);
+	if (mention?.avatar) return mention.avatar;
+	return "";
+}
+
 async function getOrFetchPlaylistDetail(
 	playlistId: string,
 	authSeg: string,
@@ -1935,14 +1948,15 @@ $effect(() => {
 const displayedBrowseTracks = $derived(
 	dedupeTracksById(submittedSearchQuery ? searchResults : fallbackTracks),
 );
+const elapsedWholeSec = $derived(Math.floor(roomElapsed));
 
 $effect(() => {
 	onPlaybackStatusChange?.({
 		isListening,
 		audioStatus,
 		listenIntent,
-		isMuted: audioStatus !== "playing" || volume <= 0,
-		elapsedSec: Math.floor(roomElapsed),
+		isMuted: !isListening || volume <= 0,
+		elapsedSec: elapsedWholeSec,
 		durationSec: effectiveDuration,
 		canDirectSkip,
 		isSoloCoolingDown,
@@ -2174,18 +2188,18 @@ $effect(() => {
     {@const voted = Boolean(currentUser && votes.includes(currentUser.userKey))}
     {@const direct = !currentPlay || canDirectSkip}
     {@const action = direct ? "切到" : voted ? "取消投票切到" : "投票切到"}
-    {#if !direct && votes.length > 0}
-      {#key votes.length}<span class="chat-queue-vote-count" aria-hidden="true">{votes.length}/2</span>{/key}
-    {/if}
     <button
       type="button"
-      class="chat-queue-play-btn {voted ? 'is-voted' : ''}"
+      class="chat-queue-play-btn {voted ? 'is-voted' : ''} {!direct && votes.length > 0 ? 'has-votes' : ''}"
       aria-label={`${action} ${item.track.title}${!direct ? `，${votes.length}/2 票` : ""}`}
       title={`${action} ${item.track.title}${!direct ? `（${votes.length}/2）` : ""}`}
       aria-pressed={!direct ? voted : undefined}
       onclick={() => onPlayQueued(item.uid)}
     >
-      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      {#if !direct && votes.length > 0}
+        {#key votes.length}<span class="chat-queue-vote-count" aria-hidden="true">{votes.length}/2</span>{/key}
+      {/if}
+      <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <path d="m7.07 18.62 8.43-5.95c.56-.39.56-1.24 0-1.64L7.07 5.08c-.65-.46-1.57 0-1.57.8v11.94c0 .8.92 1.26 1.57.8zM17 6c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1s-1-.45-1-1V7c0-.55.45-1 1-1z" />
       </svg>
     </button>
@@ -2571,14 +2585,14 @@ $effect(() => {
                 : "flex: 0 1 auto; max-height: 42%;"
               : "flex: 1 1 0%;"}
           >
-            <div class="flex items-center justify-between mb-2 shrink-0">
+            <div class="flex items-center justify-between mb-1.5 shrink-0">
               <span class="text-xs font-medium text-[var(--chat-meta-color)]">
                 即将播放 ({queue.length})
               </span>
             </div>
 
             {#if queue.length === 0}
-              <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 py-3">
+              <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 pt-2 pb-7">
                 {#if currentPlay?.isFallback}
                   <span class="text-xs font-medium text-[var(--deep-text)]">
                     正在冷场轮播
@@ -2598,7 +2612,7 @@ $effect(() => {
                 onscroll={triggerQueueScroll}
               >
                 {#each queue as item (item.uid)}
-                  <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+                  <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                     <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
                       {#if item.track.cover}
                         <img src={item.track.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
@@ -2627,7 +2641,8 @@ $effect(() => {
                       </div>
                     </div>
 
-                    <div class="flex items-center gap-1 shrink-0">
+                    <div class="flex items-center gap-1.5 shrink-0">
+                      {@render queuedPlayButton(item)}
                       {#if canRemoveEntry(item)}
                         <button
                           type="button"
@@ -2643,7 +2658,6 @@ $effect(() => {
                       {:else}
                         <span class="chat-queue-row-action" aria-hidden="true"></span>
                       {/if}
-                      {@render queuedPlayButton(item)}
                     </div>
                   </div>
                 {/each}
@@ -2799,7 +2813,7 @@ $effect(() => {
       <div class="border-t border-[var(--chat-divider-color)]"></div>
 
       <div>
-        <div class="flex items-center justify-between mb-2 px-0.5">
+        <div class="flex items-center justify-between mb-1 px-0.5">
           <span class="text-xs font-medium text-[var(--chat-meta-color)]">
             房间待播队列 ({queue.length})
           </span>
@@ -2810,7 +2824,7 @@ $effect(() => {
             待播队列为空，去挑一首歌加入电台吧
           </div>
         {:else}
-          <div class="space-y-1">
+          <div class="space-y-0.5">
             {#each queue as item (item.uid)}
               <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
                 <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
@@ -2840,7 +2854,8 @@ $effect(() => {
                   </div>
                 </div>
 
-                <div class="flex items-center gap-1 shrink-0">
+                <div class="flex items-center gap-1.5 shrink-0">
+                  {@render queuedPlayButton(item)}
                   {#if canRemoveEntry(item)}
                     <button
                       type="button"
@@ -2856,7 +2871,6 @@ $effect(() => {
                   {:else}
                     <span class="chat-queue-row-action" aria-hidden="true"></span>
                   {/if}
-                  {@render queuedPlayButton(item)}
                 </div>
               </div>
             {/each}
@@ -3135,16 +3149,22 @@ $effect(() => {
                           selectedPlaylist.ownerName,
                         )}
                     >
-                      {#if selectedPlaylist.ownerAvatar}
-                        <img src={selectedPlaylist.ownerAvatar} alt="" class="w-3 h-3 rounded-full object-cover shrink-0" />
-                      {/if}
+                      <ChatAvatar
+                        src={resolveOwnerAvatar(selectedPlaylist.ownerKey, selectedPlaylist.ownerAvatar)}
+                        name={selectedPlaylist.ownerName}
+                        size="2xs"
+                        class="w-3.5! h-3.5! text-[8px]!"
+                      />
                       <span class="truncate">{selectedPlaylist.ownerName}</span>
                     </button>
                   {:else}
                     <span class="inline-flex items-center gap-1 min-w-0">
-                      {#if selectedPlaylist.ownerAvatar}
-                        <img src={selectedPlaylist.ownerAvatar} alt="" class="w-3 h-3 rounded-full object-cover shrink-0" />
-                      {/if}
+                      <ChatAvatar
+                        src={resolveOwnerAvatar(selectedPlaylist.ownerKey, selectedPlaylist.ownerAvatar)}
+                        name={selectedPlaylist.ownerName}
+                        size="2xs"
+                        class="w-3.5! h-3.5! text-[8px]!"
+                      />
                       <span class="truncate">{selectedPlaylist.ownerName}</span>
                     </span>
                   {/if}
@@ -3498,7 +3518,7 @@ $effect(() => {
                       aria-label={`查看 ${group.ownerName} 的个人资料`}
                       onclick={() => openRequesterProfile(group.ownerKey, group.ownerName)}
                     >
-                      <ChatAvatar src={group.ownerAvatar} name={group.ownerName} size="2xs" />
+                      <ChatAvatar src={resolveOwnerAvatar(group.ownerKey, group.ownerAvatar)} name={group.ownerName} size="2xs" />
                       <span class="text-[11px] font-semibold text-[var(--deep-text)] truncate">{group.ownerName}</span>
                     </button>
                     <span class="text-[10px] text-[var(--chat-meta-color)] tabular-nums shrink-0">{group.playlists.length} 张</span>

@@ -1,7 +1,8 @@
 /** Pure transformation. Does not read credentials, write files, deploy or restart anything. */
 export function integrateMusicSync(source) {
   const replace = (from, to) => {
-    if (source.split(from).length !== 2) throw new Error('Gateway integration context changed; re-review required');
+    if (source.includes(to)) return;
+    if (source.split(from).length !== 2) throw new Error('Gateway integration context changed; re-review required: ' + from.slice(0, 40));
     source = source.replace(from, to);
   };
   for (const room of ['chat', 'interconnect']) {
@@ -21,12 +22,16 @@ export function integrateMusicSync(source) {
     `    onUnavailable: (entry) => notifyUnavailable('interconnect', entry),\n    onPrefetchTrack: (streamUrl, priority = false) => {\n      prefetchTrackStream(streamUrl, priority);\n    }`
   );
   replace(
-    `function prefetchTrackStream(streamUrl) {`,
-    `function prefetchTrackStream(streamUrl, priority = false) {`
+    `function prefetchTrackStream(streamUrl) {\n  if (!streamUrl || typeof streamUrl !== 'string') return;\n  if (!streamUrl.includes('/api/music/stream?token=')) return;`,
+    `function prefetchTrackStream(streamUrl, priority = false) {\n  if (!streamUrl || typeof streamUrl !== 'string') return;\n  if (!streamUrl.includes('/api/music/stream')) return;`
   );
   replace(
     `void prefetchAudio(verified.url, verified.referer, verified.mimeType);`,
     `void prefetchAudio(verified.url, priority, verified.mimeType, verified.trackKey);`
+  );
+  replace(
+    `if (url.pathname === '/api/music/stream' && ['GET', 'HEAD'].includes(req.method)) {`,
+    `if ((url.pathname === '/api/music/stream' || url.pathname.startsWith('/api/music/stream/')) && ['GET', 'HEAD'].includes(req.method)) {`
   );
   replace(
     `await handleStreamProxyRequest(req, res, verified.url, verified.referer, verified.mimeType);`,
@@ -53,6 +58,10 @@ export function integrateMusicSync(source) {
   replace(`await targetMgr.reportError(packet.playUid, actor?.userKey || 'anonymous');`,
     `await targetMgr.reportError(packet.playUid, actor?.userKey || 'anonymous', packet.sourceRevision);`);
   replace(
+    `if (packet.playUid && packet.playUid !== targetMgr.current?.uid) return;`,
+    `if (packet.playUid && packet.playUid !== targetMgr.current?.uid) {\n            if (ws.readyState === 1) {\n              ws.send(JSON.stringify({ type: 'music:state', roomId: ws.currentRoom, ...targetMgr.getSnapshot(getOnlineUserKeys(ws.currentRoom)) }));\n            }\n            return;\n          }`
+  );
+  replace(
     `  ws.on('close', () => {\n    clients.delete(ws);`,
     `  ws.on('close', () => {\n    clients.delete(ws);\n    getMusicManager(ws.currentRoom)?.recheckReady?.();`
   );
@@ -68,4 +77,3 @@ if (typeof process !== 'undefined' && process.argv[1]?.endsWith('server-integrat
     console.log('[OK] Integrated server.mjs written to', process.argv[3], 'bytes:', output.length);
   });
 }
-

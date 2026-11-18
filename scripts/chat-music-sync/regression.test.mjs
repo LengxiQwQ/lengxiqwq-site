@@ -10,19 +10,13 @@ import { correctionForDrift, RoomAudioPlayer } from '../../src/components/pages/
 function manager({ healthy = false, resolved = null, listeners = [] } = {}) {
   const m = Object.create(MusicManager.prototype);
   Object.assign(m, {
-    current: { uid: 'p1', track: { streamUrl: 'https://example.invalid/song' }, sourceRevision: 0 },
-    generation: 1, _actorLastErrorAt: new Map(), readyClients: new Set(),
+    current: { uid: 'p1', track: { id: 'qq:1', streamUrl: 'https://example.invalid/song' }, sourceRevision: 0 },
+    generation: 1, fallbackGeneration: 1, _actorLastErrorAt: new Map(),
     getListeners: () => listeners, events: { changed: 0, advance: 0, resolve: 0 },
     musicRegistry: { isHealthy: async () => healthy },
     resolve: async () => { m.events.resolve++; return resolved; },
     onStateChanged: () => m.events.changed++, advanceNext: () => m.events.advance++,
-    savePlayback() {}, scheduleAdvance() {}, onPrefetchTrack() {}, prepareNext() {},
-    clearBarrierTimers() {
-      clearTimeout(this._prepareBarrierTimer);
-      clearTimeout(this._quorumBarrierTimer);
-      this._prepareBarrierTimer = null;
-      this._quorumBarrierTimer = null;
-    }
+    savePlayback() {}, scheduleAdvance() {}, onPrefetchTrack() {}, prepareNext() {}
   });
   return m;
 }
@@ -57,56 +51,38 @@ test('old recovery cannot overwrite a newer track', async () => {
   assert.equal(m.current.uid, 'p2'); assert.equal(m.events.changed, 0);
 });
 
-test('two-phase adaptive ready barrier commits early when all active listeners report ready', () => {
-  const listeners = [{ id: 'phone', modern: true }, { id: 'tablet', modern: true }];
-  const m = manager({ listeners });
-  try {
-    m.playTrack({ streamUrl: 'x' }, { userKey: 'a' });
-    const initialDeadline = m.current.startedAt;
-    assert.equal(m.current.phase, 'preparing');
-    assert.ok(initialDeadline >= Date.now() + 1900);
-
-    // First listener ready -> still preparing until second listener is ready
-    m.ready(m.current.uid, 'phone', 0);
-    assert.equal(m.current.phase, 'preparing');
-
-    // Second listener ready -> barrier immediately commits to scheduled with a tight lead window
-    m.ready(m.current.uid, 'tablet', 0);
-    assert.equal(m.current.phase, 'scheduled');
-    assert.ok(m.current.startedAt < initialDeadline);
-    assert.ok(m.current.startedAt <= Date.now() + 350);
-  } finally {
-    m.clearBarrierTimers();
-    clearTimeout(m._prepareFallbackTimer);
-  }
-});
-
-test('legacy listening clients keep compatible immediate playback', () => {
-  const m = manager({ listeners: [{ id: 'legacy', modern: false }] });
-  m.playTrack({ streamUrl: 'x' }, { userKey: 'a' });
+test('playTrack starts immediately with authoritative startedAt timestamp and increments fallbackGeneration to invalidate stale prepared tracks', () => {
+  const m = manager();
+  m.preparedFallback = { key: 1, playable: { id: 'qq:stale' }, checkedAt: Date.now() };
+  const beforeGen = m.fallbackGeneration;
+  const t0 = Date.now();
+  m.playTrack({ id: 'qq:new', streamUrl: 'x' }, { userKey: 'a' });
   assert.equal(m.current.phase, 'playing');
-  m.clearBarrierTimers();
+  assert.ok(m.current.startedAt >= t0 && m.current.startedAt <= Date.now() + 50);
+  assert.equal(m.fallbackGeneration, beforeGen + 1);
+  assert.equal(m.preparedFallback, null, 'stale preparedFallback must be cleared on every track switch');
   clearTimeout(m._prepareFallbackTimer);
 });
 
-test('deterministic stream signer produces identical URLs within the same bucket and preserves trackKey', () => {
+test('deterministic CDN-friendly stream signer includes static extension and preserves trackKey', () => {
   const urlA = signStreamProxyUrl('https://chat-server.lengxiqwq.com', 'https://ws.stream.qqmusic.qq.com/song.mp3', 'secret', 'https://y.qq.com/', 'audio/mpeg', 'qq:004IM0wx49gYJq');
   const urlB = signStreamProxyUrl('https://chat-server.lengxiqwq.com', 'https://ws.stream.qqmusic.qq.com/song.mp3', 'secret', 'https://y.qq.com/', 'audio/mpeg', 'qq:004IM0wx49gYJq');
   assert.equal(urlA, urlB);
+  assert.match(new URL(urlA).pathname, /^\/api\/music\/stream\/qq_004IM0wx49gYJq\.mp3$/);
   const token = new URL(urlA).searchParams.get('token');
   const verified = verifyStreamProxyToken(token, 'secret');
   assert.equal(verified.trackKey, 'qq:004IM0wx49gYJq');
   assert.equal(verified.mimeType, 'audio/mpeg');
 });
 
-test('sync snapshot preserves newly deployed queue votes and schedules', () => {
+test('sync snapshot preserves newly deployed queue votes', () => {
   const m = manager();
   Object.assign(m, { historyMap: new Map(), historyLogs: [], queue: [{uid:'q1',track:{id:'t1'}}],
     queueVotes: new Map([['listener','q1']]), queueVotePlayUid:'p1', stateVersion:0 });
-  Object.assign(m.current, {skipVotes:[],startedAt:Date.now()+2000,phase:'scheduled'});
+  Object.assign(m.current, {skipVotes:[],startedAt:Date.now(),phase:'playing'});
   const snapshot = m.getSnapshot();
   assert.equal(snapshot.protocolVersion,2);
-  assert.equal(snapshot.current.phase,'scheduled');
+  assert.equal(snapshot.current.phase,'playing');
   assert.deepEqual(snapshot.queue[0].playVotes,['listener']);
 });
 
@@ -147,13 +123,11 @@ test('clock ignores wall-clock changes and filters high-latency outliers', () =>
   assert.equal(c.now(), 100050, 'resume discards pre-sleep samples');
 });
 
-test('drift control has a deadband, quantized PLL rate, buffer-starvation protection, and 2.5s hard seek', () => {
+test('drift control keeps rate locked at 1.0 (iPad safe) and only seeks when drift >= 2.2s', () => {
   assert.deepEqual(correctionForDrift(0.08), { seek: false, rate: 1 });
-  assert.equal(correctionForDrift(0.5).rate, 1.02);
-  assert.equal(correctionForDrift(-0.5).rate, 0.98);
-  assert.deepEqual(correctionForDrift(1.2), { seek: false, rate: 1.035 });
-  assert.deepEqual(correctionForDrift(1.2, 0.5), { seek: false, rate: 1 });
-  assert.equal(correctionForDrift(8).seek, true);
+  assert.deepEqual(correctionForDrift(0.5), { seek: false, rate: 1 });
+  assert.deepEqual(correctionForDrift(1.5), { seek: false, rate: 1 });
+  assert.deepEqual(correctionForDrift(2.5), { seek: true, rate: 1 });
 });
 
 class FakeAudio extends EventTarget {
@@ -168,61 +142,88 @@ class FakeAudio extends EventTarget {
   pause() { this.paused = true; }
 }
 
-test('player holds future start, aligns late join, reloads same URL and supports explicit unblock', async () => {
+test('multiple tabs on the same device get distinct _cid stream URLs and align directly to (serverNow - startedAt)/1000', async () => {
   const doc = new EventTarget(); doc.hidden = false;
   const win = new EventTarget();
   Object.defineProperty(globalThis, 'document', { value: doc, configurable: true });
   Object.defineProperty(globalThis, 'window', { value: win, configurable: true });
   Object.defineProperty(globalThis, 'navigator', { value: { onLine: true }, configurable: true });
-  let now = 10000; const statuses = []; const ready = [];
-  const audio = new FakeAudio();
-  const player = new RoomAudioPlayer(audio, {
-    now: () => now, status: (s) => statuses.push(s), ready: (uid) => ready.push(uid),
-    error() {}, ended() {}, duration() {}
-  });
-  const play = { uid: 'p1', track: { streamUrl: 'https://example.invalid/a' }, startedAt: 12000, phase: 'scheduled', sourceRevision: 0 };
+
+  let now = 10800; // 0.8s after startedAt (10000)
+  const audio1 = new FakeAudio();
+  const audio2 = new FakeAudio();
+  const p1 = new RoomAudioPlayer(audio1, { now: () => now, status() {}, ready() {}, error() {}, ended() {}, duration() {} });
+  const p2 = new RoomAudioPlayer(audio2, { now: () => now, status() {}, ready() {}, error() {}, ended() {}, duration() {} });
+
+  const play = {
+    uid: 'p1',
+    track: { streamUrl: 'https://chat-server.lengxiqwq.com/api/music/stream/qq_1.mp3?token=abc' },
+    startedAt: 10000,
+    phase: 'playing',
+    sourceRevision: 0
+  };
+
   try {
-    player.setTrack(play); player.listen(); await Promise.resolve();
-    assert.equal(audio.muted, true); assert.equal(statuses.at(-1), 'preparing');
-    now = 12010; audio.currentTime = 2; audio.dispatchEvent(new Event('canplay'));
-    assert.equal(audio.muted, false); assert.ok(audio.currentTime < 0.1);
-    assert.equal(statuses.at(-1), 'playing'); assert.deepEqual(ready, ['p1']);
-    now = 20000; audio.currentTime = 0; player.stop(); player.listen(); await Promise.resolve();
-    assert.equal(audio.currentTime, 8, 'late join must catch up');
-    const loads = audio.loads;
-    player.setTrack({ ...play, sourceRevision: 1 }); await Promise.resolve();
-    assert.equal(audio.loads, loads + 1);
-    player.stop(); audio.reject = true; player.listen(); await Promise.resolve();
-    assert.equal(statuses.at(-1), 'blocked');
-    audio.reject = false; player.listen(); await Promise.resolve();
-    assert.equal(statuses.at(-1), 'playing');
-    player.stop(); audio.dispatchEvent(new Event('canplay')); assert.equal(audio.muted, true);
-  } finally { player.destroy(); }
+    p1.setTrack(play); p1.listen();
+    p2.setTrack(play); p2.listen();
+    await Promise.resolve();
+
+    // Crucial: distinct URLs per tab prevent Chromium HttpCache exclusive media lock deadlocks!
+    assert.notEqual(audio1.src, audio2.src);
+    assert.ok(audio1.src.includes('_cid='));
+    assert.ok(audio2.src.includes('_cid='));
+
+    // Both tabs immediately align to (10800 - 10000) / 1000 = 0.8s and unmute
+    assert.equal(audio1.currentTime, 0.8);
+    assert.equal(audio2.currentTime, 0.8);
+    assert.equal(audio1.muted, false);
+    assert.equal(audio2.muted, false);
+    assert.equal(audio1.playbackRate, 1);
+    assert.equal(audio2.playbackRate, 1);
+  } finally {
+    p1.destroy();
+    p2.destroy();
+  }
 });
 
-test('prime-and-park starts at 0.000s with ZERO seek when startedAt arrives, and tablet 1.2s lag uses PLL rate without 1.8s seek loop', async () => {
-  let now = 10000, position = 0, seeks = 0;
+test('slow buffering device does not prematurely lock initialAligned during early metadata/progress events before play() resolves', async () => {
+  let now = 10000;
   const audio = new FakeAudio();
-  Object.defineProperty(audio, 'currentTime', { get: () => position, set(value) { position = value; seeks++; audio.seeking = false; } });
-  audio.load = () => { audio.loads++; position = 0; audio.seeking = false; };
+  let resolvePlay;
+  audio.play = () => {
+    audio.paused = false; // HTML5 spec: play() sets paused=false synchronously before resolving
+    audio.readyState = 2; // HAVE_CURRENT_DATA at t=100ms
+    return new Promise(resolve => { resolvePlay = resolve; });
+  };
   const player = new RoomAudioPlayer(audio, {
     now: () => now, status() {}, ready() {}, error() {}, ended() {}, duration() {}
   });
   try {
-    player.setTrack({ uid: 'tablet-sync', track: { streamUrl: 'https://example.invalid/audio' }, startedAt: 11000, phase: 'scheduled' });
-    player.listen(); await Promise.resolve();
-    // Playhead remains parked at 0 during preparing; at startedAt (11020), drift is 0.02s <= 0.15s deadband -> ZERO seeks!
-    now = 11020;
-    audio.dispatchEvent(new Event('canplay'));
-    assert.equal(seeks, 0, 'zero seeks at start when parked at 0.000s');
-    assert.equal(audio.muted, false);
-
-    // Simulate tablet falling 1.2s behind (which used to trigger an infinite 1.8s hard-seek loop)
-    now = 15200; position = 3.0; // expected = 4.2s, drift = +1.2s
+    player.setTrack({
+      uid: 'slow-ipad',
+      track: { streamUrl: 'https://chat-server.lengxiqwq.com/api/music/stream/qq_2.mp3?token=xyz' },
+      startedAt: 10000,
+      phase: 'playing',
+      sourceRevision: 0
+    });
+    player.listen();
+    // At t=100ms (now=10100), early progress/loadedmetadata arrives while play() is still pending
+    now = 10100;
+    audio.dispatchEvent(new Event('loadedmetadata'));
     audio.dispatchEvent(new Event('progress'));
-    assert.equal(seeks, 0, '1.2s drift on tablet must NOT trigger a hard seek');
-    assert.equal(audio.playbackRate, 1.035, 'uses smooth 1.035x PLL rate to catch up');
-  } finally { player.destroy(); }
+    assert.equal(audio.currentTime, 0);
+
+    // At t=1200ms (now=11200), buffering finishes and play() finally resolves
+    now = 11200;
+    audio.readyState = 4;
+    resolvePlay();
+    await Promise.resolve();
+
+    // Must align to 1.2s instead of being stuck at 0.0s!
+    assert.equal(audio.currentTime, 1.2);
+  } finally {
+    player.destroy();
+  }
 });
 
 test('superseded play rejection cannot put the latest track into a blocked state', async () => {
