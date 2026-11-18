@@ -11,7 +11,9 @@ import {
 	type ChatAppearanceSettings,
 	type ChatPanelSlot,
 	type ChatWallpaperConfig,
+	getStoredMusicNoticesEnabled,
 	isChatPanelSlot,
+	isMusicNoticeMessage,
 	loadChatAppearanceSettings,
 	loadDevPanelWallpaperPreviews,
 	resolveSlotWallpaperSrc,
@@ -165,7 +167,17 @@ const mentionMembers = $derived.by<ChatMentionCandidate[]>(() => {
 });
 let totalOnlineCount = $state(0);
 let messages = $state<ChatMessageRecord[]>([]);
+const MAX_CACHED_MSGS_PER_ROOM = 120;
 const roomMessageCache = new Map<string, ChatMessageRecord[]>();
+
+function cacheRoomMessages(roomKey: string, list: ChatMessageRecord[]): void {
+	roomMessageCache.set(
+		roomKey,
+		list.length > MAX_CACHED_MSGS_PER_ROOM
+			? list.slice(-MAX_CACHED_MSGS_PER_ROOM)
+			: list,
+	);
+}
 
 function mergeRoomMessages(
 	serverMessages: ChatMessageRecord[],
@@ -198,6 +210,8 @@ let sessionUnreadSince = $state(0);
 let serverUnreadCount = $state(0);
 let serverUnreadUserCount = $state(0);
 let unreadJumpSeq = $state(0);
+let roomInitSeq = $state(0);
+let isRoomReady = $state(false);
 let pinnedUids = $state<string[]>([]);
 let roomTopic = $state<string>("");
 let roomAvatars = $state<Record<string, string>>({});
@@ -263,7 +277,16 @@ let hasAppMounted = false;
 const NOTIFICATION_STORAGE_KEY = "fireflyChatDesktopNotification";
 let desktopNotificationEnabled = $state(false);
 let desktopNotificationPermission = $state<NotificationPermission>("default");
-let roomUnreadCounts = $state<Record<string, number>>({});
+let roomUnreadUids = $state<Record<string, string[]>>({});
+const roomUnreadCounts = $derived.by<Record<string, number>>(() => {
+	const counts: Record<string, number> = {};
+	for (const [rId, uids] of Object.entries(roomUnreadUids)) {
+		if (uids && uids.length > 0) {
+			counts[rId] = uids.length;
+		}
+	}
+	return counts;
+});
 const otherRoomsUnreadCount = $derived.by(() =>
 	Object.entries(roomUnreadCounts).reduce(
 		(acc, [rId, cnt]) => (rId !== currentRoom ? acc + (cnt || 0) : acc),
@@ -373,6 +396,7 @@ function handleStageTouchEnd(e: TouchEvent) {
 }
 
 let lastMarkedServerReadAt = 0;
+let lastMarkedServerReadUid = "";
 let lastReportedAudioKey = "";
 const socketHandshakeAuth = new WeakMap<WebSocket, string>();
 
@@ -436,25 +460,6 @@ function mergeRoomPresence(
 	}
 }
 
-function readAnyStoredLastSeen(roomId: string): number {
-	if (typeof localStorage === "undefined") return 0;
-	let best = 0;
-	try {
-		const prefix = `${LAST_SEEN_PREFIX}${roomId}:`;
-		for (let i = 0; i < localStorage.length; i += 1) {
-			const k = localStorage.key(i);
-			if (!k?.startsWith(prefix)) continue;
-			const val = Number(localStorage.getItem(k) || 0);
-			if (Number.isFinite(val) && val > best) {
-				best = val;
-			}
-		}
-	} catch {
-		// Ignore
-	}
-	return best;
-}
-
 function readUserLastSeen(roomId: string, userKey: string): number {
 	if (typeof localStorage === "undefined") return 0;
 	try {
@@ -463,10 +468,42 @@ function readUserLastSeen(roomId: string, userKey: string): number {
 				`${LAST_SEEN_PREFIX}${roomId}:${userKey || "guest"}`,
 			) || 0,
 		);
-		if (Number.isFinite(specific) && specific > 0) return specific;
-		return readAnyStoredLastSeen(roomId);
+		return Number.isFinite(specific) && specific > 0 ? specific : 0;
 	} catch {
 		return 0;
+	}
+}
+
+function applyUnreadInitState(
+	roomId: string,
+	userKey: string,
+	roomMessages: ChatMessageRecord[],
+	lastReadAt = 0,
+	unreadCount = 0,
+	unreadUserCount = 0,
+	hasMore = false,
+) {
+	const showMusic = getStoredMusicNoticesEnabled();
+	const localSeen = readUserLastSeen(roomId, userKey);
+	const baseline = Math.max(lastReadAt, localSeen);
+	const visibleUnreadInBatch = roomMessages.some(
+		(m) => m.createdAt > baseline && (showMusic || !isMusicNoticeMessage(m)),
+	);
+	const serverVisibleUnread = showMusic ? unreadCount : unreadUserCount;
+	const oldestLoadedTs = roomMessages[0]?.createdAt ?? 0;
+	const hasOlderUnloadedUnread =
+		baseline > 0 &&
+		hasMore &&
+		oldestLoadedTs > 0 &&
+		baseline < oldestLoadedTs &&
+		serverVisibleUnread > 0;
+	const hasNewSinceBaseline =
+		baseline > 0 && (visibleUnreadInBatch || hasOlderUnloadedUnread);
+	sessionUnreadSince = hasNewSinceBaseline ? baseline : 0;
+	serverUnreadCount = unreadCount;
+	serverUnreadUserCount = unreadUserCount;
+	if (!hasNewSinceBaseline && lastReadAt > 0 && lastReadAt > localSeen) {
+		persistUserLastSeen(roomId, userKey, lastReadAt);
 	}
 }
 
@@ -941,6 +978,9 @@ function connectRoom(roomId: string) {
 	}
 
 	connectionState = reconnectAttempt > 0 ? "reconnecting" : "connecting";
+	isRoomReady = false;
+	lastMarkedServerReadAt = 0;
+	lastMarkedServerReadUid = "";
 	const storedLastRead = readUserLastSeen(roomId, currentUser?.userKey || "");
 	const wsUrl = buildWsUrl(
 		normalizedChatServer,
@@ -1005,22 +1045,22 @@ function connectRoom(roomId: string) {
 				clearHistoryLoadTimer();
 				isLoadingHistory = false;
 				const userKey = packet.self?.userKey || "guest";
-				const localSeen = readUserLastSeen(packet.roomId, userKey);
-				const baseline = Math.max(packet.lastReadAt ?? 0, localSeen);
-				const hasNewSinceBaseline =
-					baseline > 0 &&
-					((packet.unreadCount ?? 0) > 0 ||
-						packet.messages.some((m) => m.createdAt > baseline));
-				sessionUnreadSince = hasNewSinceBaseline ? baseline : 0;
-				serverUnreadCount = packet.unreadCount ?? 0;
-				serverUnreadUserCount = packet.unreadUserCount ?? 0;
-				if (!hasNewSinceBaseline && packet.messages.length > 0) {
-					persistUserLastSeen(
-						packet.roomId,
-						userKey,
-						packet.messages[packet.messages.length - 1].createdAt,
-					);
+				lastMarkedServerReadAt = 0;
+				lastMarkedServerReadUid = "";
+				if (roomUnreadUids[packet.roomId]?.length) {
+					const nextUnread = { ...roomUnreadUids };
+					delete nextUnread[packet.roomId];
+					roomUnreadUids = nextUnread;
 				}
+				applyUnreadInitState(
+					packet.roomId,
+					userKey,
+					messages,
+					packet.lastReadAt ?? 0,
+					packet.unreadCount ?? 0,
+					packet.unreadUserCount ?? 0,
+					hasMoreHistory,
+				);
 
 				roomOnlineMembers = packet.members.filter(
 					(m) => !m.roomId || m.roomId === packet.roomId,
@@ -1054,6 +1094,8 @@ function connectRoom(roomId: string) {
 				readReceipts = packet.readReceipts ?? {};
 				typingUsers = [];
 				clearSkipPending();
+				roomInitSeq += 1;
+				isRoomReady = true;
 				musicClock.seed(packet.music.serverTime);
 				if (!hasClockSample) clockOffsetMs = packet.music.serverTime - Date.now();
 				sampleRoomClock(socket, true);
@@ -1109,7 +1151,29 @@ function connectRoom(roomId: string) {
 				if (packet.user?.authType !== "waline") {
 					walineToken = "";
 				}
+				lastMarkedServerReadAt = 0;
+				lastMarkedServerReadUid = "";
 				playlistRefreshSeq += 1;
+				if (!packet.user) {
+					sessionUnreadSince = 0;
+					serverUnreadCount = 0;
+					serverUnreadUserCount = 0;
+					roomInitSeq += 1;
+				} else if (!packet.roomId || packet.roomId === currentRoom) {
+					if (packet.readReceipts) {
+						readReceipts = packet.readReceipts;
+					}
+					applyUnreadInitState(
+						currentRoom,
+						packet.user.userKey,
+						messages,
+						packet.lastReadAt ?? 0,
+						packet.unreadCount ?? 0,
+						packet.unreadUserCount ?? 0,
+						hasMoreHistory,
+					);
+					roomInitSeq += 1;
+				}
 				if (packet.mergedGuestHistory) {
 					showNotice("已自动合并同邮箱的历史访客记录至当前账号");
 				}
@@ -1211,6 +1275,33 @@ function connectRoom(roomId: string) {
 							isAdmin: targetUser.isAdmin,
 						};
 					}
+					const remappedReceipts: Record<string, ChatReadReceipt[]> = {};
+					let seenTargetReceipt: ChatReadReceipt | null = null;
+					for (const [uid, list] of Object.entries(readReceipts)) {
+						const kept: ChatReadReceipt[] = [];
+						for (const r of list) {
+							if (fromSet.has(r.userKey) || r.userKey === targetUser.userKey) {
+								if (!seenTargetReceipt || r.ts > seenTargetReceipt.ts) {
+									seenTargetReceipt = {
+										...r,
+										userKey: targetUser.userKey,
+										name: targetUser.name,
+										avatar: targetUser.avatar || r.avatar,
+									};
+								}
+							} else {
+								kept.push(r);
+							}
+						}
+						if (kept.length > 0) remappedReceipts[uid] = kept;
+					}
+					if (seenTargetReceipt?.msgUid) {
+						remappedReceipts[seenTargetReceipt.msgUid] = [
+							seenTargetReceipt,
+							...(remappedReceipts[seenTargetReceipt.msgUid] || []),
+						];
+					}
+					readReceipts = remappedReceipts;
 				}
 				break;
 			}
@@ -1293,12 +1384,17 @@ function connectRoom(roomId: string) {
 				} else {
 					const cached = roomMessageCache.get(packet.roomId);
 					if (cached && !cached.some((m) => m.msgUid === packet.message.msgUid)) {
-						roomMessageCache.set(packet.roomId, [...cached, packet.message]);
+						cacheRoomMessages(packet.roomId, [...cached, packet.message]);
 					}
-					roomUnreadCounts = {
-						...roomUnreadCounts,
-						[packet.roomId]: (roomUnreadCounts[packet.roomId] || 0) + 1,
-					};
+					if (packet.message.kind !== "system") {
+						const prevUids = roomUnreadUids[packet.roomId] || [];
+						if (!prevUids.includes(packet.message.msgUid)) {
+							roomUnreadUids = {
+								...roomUnreadUids,
+								[packet.roomId]: [...prevUids, packet.message.msgUid],
+							};
+						}
+					}
 				}
 				triggerDesktopNotification(packet.roomId, packet.message);
 				break;
@@ -1339,6 +1435,26 @@ function connectRoom(roomId: string) {
 									}
 								: m,
 						);
+					if (readReceipts[packet.msgUid]) {
+						const nextReceipts = { ...readReceipts };
+						delete nextReceipts[packet.msgUid];
+						readReceipts = nextReceipts;
+					}
+				} else {
+					const cached = roomMessageCache.get(packet.roomId);
+					if (cached) {
+						roomMessageCache.set(
+							packet.roomId,
+							cached.filter((m) => m.msgUid !== packet.msgUid),
+						);
+					}
+					const prevUids = roomUnreadUids[packet.roomId];
+					if (prevUids?.includes(packet.msgUid)) {
+						roomUnreadUids = {
+							...roomUnreadUids,
+							[packet.roomId]: prevUids.filter((id) => id !== packet.msgUid),
+						};
+					}
 				}
 				break;
 			}
@@ -1440,14 +1556,18 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "chat:receipt_update": {
-				if (packet.roomId === currentRoom && packet.reader?.msgUid && packet.reader?.userKey) {
+				if (packet.roomId === currentRoom && packet.reader?.userKey) {
 					const nextMap: Record<string, ChatReadReceipt[]> = {};
 					for (const [uid, list] of Object.entries(readReceipts)) {
 						const filtered = list.filter((r) => r.userKey !== packet.reader.userKey);
 						if (filtered.length > 0) nextMap[uid] = filtered;
 					}
-					const targetList = nextMap[packet.reader.msgUid] || [];
-					nextMap[packet.reader.msgUid] = [packet.reader, ...targetList];
+					if (packet.reader.msgUid) {
+						const targetList = nextMap[packet.reader.msgUid] || [];
+						nextMap[packet.reader.msgUid] = [packet.reader, ...targetList].sort(
+							(a, b) => (b.ts || 0) - (a.ts || 0),
+						);
+					}
 					readReceipts = nextMap;
 				}
 				break;
@@ -1508,6 +1628,7 @@ function connectRoom(roomId: string) {
 						currentAuth = null;
 					}
 					lastMarkedServerReadAt = 0;
+					lastMarkedServerReadUid = "";
 					showAuthModal = true;
 				} else if (packet.code === "TOKEN_INVALID") {
 					const invalidKind = packet.authKind ?? currentAuth?.kind;
@@ -1526,6 +1647,7 @@ function connectRoom(roomId: string) {
 						}
 					}
 					lastMarkedServerReadAt = 0;
+					lastMarkedServerReadUid = "";
 				}
 				if (packet.message) {
 					showNotice(packet.message, "error");
@@ -1571,15 +1693,17 @@ function closePendingSocket() {
 function handleRoomSelect(roomId: string) {
 	showInterconnect = false;
 	closeSplitRoom(roomPanelEl?.contains(document.activeElement));
-	roomUnreadCounts = {
-		...roomUnreadCounts,
-		[roomId]: 0,
-	};
+	if (roomUnreadUids[roomId]?.length) {
+		const nextUnread = { ...roomUnreadUids };
+		delete nextUnread[roomId];
+		roomUnreadUids = nextUnread;
+	}
 	if (roomId === currentRoom) {
 		mobileDrawer = "none";
 		return;
 	}
-	roomMessageCache.set(currentRoom, messages);
+	cacheRoomMessages(currentRoom, messages);
+	isRoomReady = false;
 	currentRoom = roomId;
 	persistStoredRoom(roomId);
 	syncRoomUrl(roomId);
@@ -1602,6 +1726,7 @@ function handleRoomSelect(roomId: string) {
 	serverUnreadCount = 0;
 	serverUnreadUserCount = 0;
 	lastMarkedServerReadAt = 0;
+	lastMarkedServerReadUid = "";
 	roomOnlineMembers = [];
 	musicState = null;
 	musicAudience = { onlineCount: 0, listeningCount: 0 };
@@ -1671,6 +1796,7 @@ function handleAuthenticated(
 	currentAuth = auth;
 	walineToken = auth.kind === "waline" ? auth.token : "";
 	lastMarkedServerReadAt = 0;
+	lastMarkedServerReadUid = "";
 	if (user) {
 		currentUser = user;
 	}
@@ -1692,6 +1818,7 @@ function handleLogout() {
 	walineToken = "";
 	currentUser = null;
 	lastMarkedServerReadAt = 0;
+	lastMarkedServerReadUid = "";
 	playlistRefreshSeq += 1;
 	sendPacket({ type: "auth:logout" });
 	showNotice("已退出当前聊天身份，进入只读旁观模式");
@@ -1872,23 +1999,30 @@ function handleLoadHistory(sinceCreatedAt = 0, jumpTarget = false) {
 }
 
 function handleMarkRead(timestamp: number, msgUid?: string) {
-	if (!Number.isFinite(timestamp) || timestamp <= 0) return;
-	const userKey = currentUser?.userKey || "guest";
-	persistUserLastSeen(currentRoom, userKey, timestamp);
-	if (
-		currentUser &&
-		timestamp > lastMarkedServerReadAt &&
-		ws?.readyState === WebSocket.OPEN
-	) {
-		lastMarkedServerReadAt = timestamp;
-		ws.send(
-			JSON.stringify({
-				type: "chat:mark_read",
-				timestamp,
-				...(msgUid ? { msgUid } : {}),
-			}),
-		);
+	if (!isRoomReady || !Number.isFinite(timestamp) || timestamp <= 0) return;
+	if (!currentUser) {
+		persistUserLastSeen(currentRoom, "guest", timestamp);
+		return;
 	}
+	if (ws?.readyState !== WebSocket.OPEN) return;
+	const shouldSend =
+		timestamp > lastMarkedServerReadAt ||
+		(Boolean(msgUid) &&
+			msgUid !== lastMarkedServerReadUid &&
+			timestamp >= lastMarkedServerReadAt);
+	if (!shouldSend) return;
+	lastMarkedServerReadAt = Math.max(lastMarkedServerReadAt, timestamp);
+	if (msgUid) {
+		lastMarkedServerReadUid = msgUid;
+	}
+	persistUserLastSeen(currentRoom, currentUser.userKey, timestamp);
+	ws.send(
+		JSON.stringify({
+			type: "chat:mark_read",
+			timestamp,
+			...(msgUid ? { msgUid } : {}),
+		}),
+	);
 }
 
 function handleRecallMessage(msgUid: string) {
@@ -2004,6 +2138,9 @@ async function handleEnqueueTrack(track: ChatMusicTrack): Promise<boolean> {
 	});
 }
 
+let lastPresenceRaw = "";
+let lastMemberDirectoryRaw = "";
+
 async function refreshGlobalPresence() {
 	if (!normalizedChatServer || isUnmounted) return;
 	const reqRoom = currentRoom;
@@ -2014,12 +2151,16 @@ async function refreshGlobalPresence() {
 			{ cache: "no-store" },
 		);
 		if (!response.ok) return;
-		const data = (await response.json()) as {
+		const rawText = await response.text();
+		const cacheKey = `${reqRoom}:${rawText}`;
+		if (cacheKey === lastPresenceRaw) return;
+		const data = JSON.parse(rawText) as {
 			members: ChatOnlineMember[];
 			observers?: ChatObserverItem[];
 			totalCount: number;
 		};
 		if (!isUnmounted && currentRoom === reqRoom && Array.isArray(data.members)) {
+			lastPresenceRaw = cacheKey;
 			hasGlobalPresence = true;
 			const currentKey = currentUser?.userKey;
 			onlineMembers = data.members.map((m) => {
@@ -2044,7 +2185,9 @@ async function refreshMemberDirectory() {
 		const separator = normalizedChatServer.includes("?") ? "&" : "?";
 		const response = await fetch(`${normalizedChatServer}/api/members${separator}_t=${Date.now()}`, { cache: "no-store" });
 		if (!response.ok) return;
-		const data = (await response.json()) as {
+		const rawText = await response.text();
+		if (rawText === lastMemberDirectoryRaw) return;
+		const data = JSON.parse(rawText) as {
 			members: Array<{
 				userKey: string;
 				authType: "waline" | "guest";
@@ -2061,6 +2204,7 @@ async function refreshMemberDirectory() {
 			}>;
 		};
 		if (isUnmounted || !Array.isArray(data.members)) return;
+		lastMemberDirectoryRaw = rawText;
 		globalMemberDirectory = data.members.map((member) => ({
 			userKey: member.userKey,
 			authType: member.authType,
@@ -2189,16 +2333,25 @@ onMount(() => {
 	void refreshMemberDirectory();
 	void refreshSpectatorHistory();
 
+	let presenceTick = 0;
 	const presenceTimer = window.setInterval(() => {
 		if (!document.hidden) {
-			void refreshGlobalPresence();
+			presenceTick += 1;
 			sampleRoomClock(ws);
+			// WebSocket 已连上时会实时推 presence:update，HTTP 兜底降频到 45s 一次
+			if (connectionState !== "connected" || presenceTick % 3 === 0) {
+				void refreshGlobalPresence();
+			}
 		}
 	}, 15000);
+	let memberTick = 0;
 	const memberTimer = window.setInterval(() => {
 		if (!document.hidden) {
-			void refreshMemberDirectory();
-			void refreshSpectatorHistory();
+			memberTick += 1;
+			if (connectionState !== "connected" || memberTick % 4 === 0) {
+				void refreshMemberDirectory();
+				void refreshSpectatorHistory();
+			}
 		}
 	}, 15000);
 
@@ -2604,6 +2757,8 @@ onMount(() => {
           serverUnreadCount={serverUnreadCount}
           serverUnreadUserCount={serverUnreadUserCount}
           unreadJumpSeq={unreadJumpSeq}
+          roomReady={isRoomReady}
+          roomInitSeq={roomInitSeq}
           currentUser={currentUser}
           onlineMembers={onlineMembers}
           roomOnlineMembers={roomOnlineMembers}

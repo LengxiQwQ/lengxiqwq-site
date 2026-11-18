@@ -9,6 +9,7 @@ import { positionChatFloating } from "./chatFloating";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import {
 	getStoredMusicNoticesEnabled,
+	isMusicNoticeMessage,
 	saveDevPanelWallpaperPreview,
 	trackBgImgAspectRatio,
 } from "./chatAppearance";
@@ -53,6 +54,8 @@ interface Props {
 	serverUnreadCount?: number;
 	serverUnreadUserCount?: number;
 	unreadJumpSeq?: number;
+	roomReady?: boolean;
+	roomInitSeq?: number;
 	currentUser: ChatSessionUser | null;
 	onlineMembers?: ChatOnlineMember[];
 	roomOnlineMembers?: ChatOnlineMember[];
@@ -148,6 +151,8 @@ const {
 	serverUnreadCount = 0,
 	serverUnreadUserCount = 0,
 	unreadJumpSeq = 0,
+	roomReady = true,
+	roomInitSeq = 0,
 	currentUser = null,
 	onlineMembers = [],
 	roomOnlineMembers = [],
@@ -398,6 +403,7 @@ function closeMobileActions() {
 
 let unreadBarDismissed = $state(false);
 let isUnreadDividerInView = $state(false);
+let hasVisitedUnreadDivider = $state(false);
 let highlightUnreadDivider = $state(false);
 let showScrollBottomBtn = $state(false);
 let newMessagesWhileScrolled = $state(0);
@@ -514,9 +520,10 @@ let alertAutoHideTimer: number | null = null;
 let highlightClearTimer: number | null = null;
 let unreadHighlightTimer: number | null = null;
 let lastRenderedVisibleLen = 0;
-let isStickyAtBottom = true;
+let isStickyAtBottom = $state(true);
 const bottomScrollTolerance = 2;
 let isPinnedToBottom = $state(true);
+let suppressStickyScrollUntil = 0;
 const followsLayoutAtBottom = $derived(
 	isPinnedToBottom && !targetMessageUid && !highlightedMsgUid && !highlightUnreadDivider,
 );
@@ -558,13 +565,6 @@ function isChatPaneFocused(): boolean {
 	if (!isWindowFocused) return false;
 	const usesPanelTabs = window.matchMedia("(width < 768px)").matches;
 	return !usesPanelTabs || isChatTabActive;
-}
-
-function isMusicNoticeMessage(msg: ChatMessageRecord): boolean {
-	if (msg.kind !== "system") return false;
-	return /(点播了|切到了下一首|投票切歌通过|切播了|音源解析失败|播放失败)/.test(
-		msg.content,
-	);
 }
 
 const VIRTUAL_THRESHOLD = 60;
@@ -631,6 +631,10 @@ function getSharedRowObserver(): ResizeObserver | null {
 						if (el.offsetTop + el.offsetHeight < curTop + 40) {
 							topCompensation += h - prev;
 						}
+					}
+					if (measuredMsgHeights.size >= 1500 && !measuredMsgHeights.has(uid)) {
+						const oldestUid = measuredMsgHeights.keys().next().value;
+						if (oldestUid !== undefined) measuredMsgHeights.delete(oldestUid);
 					}
 					measuredMsgHeights.set(uid, h);
 					changed = true;
@@ -751,7 +755,7 @@ function collectChatImageSources(): Array<{ src: string }> {
 				}
 			}
 		}
-		if (msg.content && msg.content.includes("![")) {
+		if (msg.content?.includes("![")) {
 			mdImgRe.lastIndex = 0;
 			let m: RegExpExecArray | null;
 			while ((m = mdImgRe.exec(msg.content)) !== null) {
@@ -1181,6 +1185,63 @@ function snapScrollToBottom() {
 let scrollRafId: number | null = null;
 let lastWrittenSeenMsgKey = "";
 
+function getLatestReadTargets(): {
+	tailTs: number;
+	receiptMsg: ChatMessageRecord | undefined;
+} {
+	const tailTs = messages.reduce(
+		(max, m) => Math.max(max, m.createdAt || 0),
+		0,
+	);
+	let receiptMsg: ChatMessageRecord | undefined;
+	for (let i = visibleMessages.length - 1; i >= 0; i--) {
+		const m = visibleMessages[i];
+		if ((m.kind === "user" || m.kind === "poll") && !m.recalled) {
+			receiptMsg = m;
+			break;
+		}
+	}
+	if (!receiptMsg) {
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const m = messages[i];
+			if ((m.kind === "user" || m.kind === "poll") && !m.recalled) {
+				receiptMsg = m;
+				break;
+			}
+		}
+	}
+	return { tailTs, receiptMsg };
+}
+
+function hasUnreadBlockingAutoRead(): boolean {
+	if (sessionUnreadSince <= 0 || unreadBadgeCount <= 0 || unreadBarDismissed) {
+		return false;
+	}
+	return (
+		hasUnloadedUnread || (!isUnreadDividerInView && !hasVisitedUnreadDivider)
+	);
+}
+
+function markCurrentRoomReadIfReady(forceIgnoreSticky = false): void {
+	if (!roomReady || !currentUser) return;
+	if (!forceIgnoreSticky) {
+		if (targetMessageUid || !isChatPaneFocused() || !isStickyAtBottom) {
+			return;
+		}
+		if (hasUnreadBlockingAutoRead()) {
+			return;
+		}
+	}
+	const { tailTs, receiptMsg } = getLatestReadTargets();
+	const readTs = Math.max(tailTs, receiptMsg?.createdAt || 0);
+	if (readTs <= 0) return;
+	const seenKey = `${roomId}:${currentUser.userKey}:${receiptMsg?.msgUid || ""}:${readTs}`;
+	if (seenKey === lastWrittenSeenMsgKey && !forceIgnoreSticky) return;
+	lastWrittenSeenMsgKey = seenKey;
+	writeLastSeenAt(roomId, currentUser.userKey, readTs);
+	onMarkRead?.(readTs, receiptMsg?.msgUid);
+}
+
 function flushMessageScroll() {
 	scrollRafId = null;
 	if (!messageContainer) return;
@@ -1201,30 +1262,20 @@ function flushMessageScroll() {
 	virtualScrollTop = messageContainer.scrollTop;
 
 	const gap = getScrollGap();
-	isPinnedToBottom = gap <= bottomScrollTolerance;
-	isStickyAtBottom = gap < 120;
+	if (gap >= 120) {
+		suppressStickyScrollUntil = 0;
+	}
+	if (Date.now() < suppressStickyScrollUntil) {
+		isPinnedToBottom = false;
+		isStickyAtBottom = false;
+	} else {
+		isPinnedToBottom = gap <= bottomScrollTolerance;
+		isStickyAtBottom = gap < 120;
+	}
 	showScrollBottomBtn = gap > 180;
 	if (isStickyAtBottom) {
 		newMessagesWhileScrolled = 0;
-	}
-	if (
-		isStickyAtBottom &&
-		currentUser &&
-		messages.length > 0 &&
-		isChatPaneFocused()
-	) {
-		const latestMsg = messages[messages.length - 1];
-		const latestTs = latestMsg.createdAt;
-		const seenKey = `${roomId}:${currentUser.userKey}:${latestMsg.msgUid}:${latestTs}`;
-		if (seenKey !== lastWrittenSeenMsgKey) {
-			lastWrittenSeenMsgKey = seenKey;
-			writeLastSeenAt(
-				roomId,
-				currentUser.userKey,
-				latestTs,
-			);
-			onMarkRead?.(latestTs, latestMsg.msgUid);
-		}
+		markCurrentRoomReadIfReady();
 	}
 
 	// 向上滚动到接近顶部时自动触发加载更早历史消息
@@ -1240,6 +1291,7 @@ function handleMessageScroll() {
 }
 
 async function scrollToBottom(smooth = false) {
+	suppressStickyScrollUntil = 0;
 	await tick();
 	if (!messageContainer) return;
 	if (smooth) {
@@ -1318,6 +1370,7 @@ function smoothScrollContainerTo(
 async function jumpToMessage(msgUid: string) {
 	const seq = ++jumpSeq;
 	showMentionHistory = false;
+	suppressStickyScrollUntil = Date.now() + 700;
 	isStickyAtBottom = false;
 	isPinnedToBottom = false;
 	const targetMsg = messages.find((m) => m.msgUid === msgUid);
@@ -1384,8 +1437,12 @@ async function jumpToMessage(msgUid: string) {
 }
 
 async function scrollToUnreadDivider() {
+	const seq = ++jumpSeq;
+	suppressStickyScrollUntil = Date.now() + 900;
 	isStickyAtBottom = false;
 	isPinnedToBottom = false;
+	hasVisitedUnreadDivider = true;
+	unreadBarDismissed = true;
 	if (firstUnreadMsgUid) {
 		forcedRenderUid = firstUnreadMsgUid;
 		const idx = visibleMessages.findIndex((m) => m.msgUid === firstUnreadMsgUid);
@@ -1394,21 +1451,30 @@ async function scrollToUnreadDivider() {
 		}
 	}
 	await tick();
-	const dividerEl = messageContainer?.querySelector<HTMLElement>(
+	if (seq !== jumpSeq) return;
+	const container = messageContainer;
+	const dividerEl = container?.querySelector<HTMLElement>(
 		"[data-unread-divider]",
 	);
-	if (dividerEl) {
-		dividerEl.scrollIntoView({ behavior: "smooth", block: "center" });
-	} else if (messageContainer) {
-		messageContainer.scrollTo({ top: 0, behavior: "smooth" });
+	if (dividerEl && container) {
+		const cRect = container.getBoundingClientRect();
+		const dRect = dividerEl.getBoundingClientRect();
+		const rawTargetTop =
+			container.scrollTop +
+			(dRect.top + dRect.height / 2) -
+			(cRect.top + cRect.height / 2);
+		const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+		const targetTop = Math.max(0, Math.min(maxScroll, rawTargetTop));
+		await smoothScrollContainerTo(container, targetTop, seq);
+		if (seq !== jumpSeq) return;
+		virtualScrollTop = container.scrollTop;
+	} else if (container) {
+		await smoothScrollContainerTo(container, 0, seq);
+		if (seq !== jumpSeq) return;
+		virtualScrollTop = container.scrollTop;
 	}
 	forcedRenderUid = "";
 	highlightUnreadDivider = true;
-	unreadBarDismissed = true;
-	if (messages.length > 0) {
-		const lastMsg = messages[messages.length - 1];
-		onMarkRead?.(lastMsg.createdAt, lastMsg.msgUid);
-	}
 	if (unreadHighlightTimer !== null) {
 		window.clearTimeout(unreadHighlightTimer);
 	}
@@ -1418,6 +1484,7 @@ async function scrollToUnreadDivider() {
 }
 
 function handleJumpToUnread() {
+	suppressStickyScrollUntil = Date.now() + 900;
 	isStickyAtBottom = false;
 	isPinnedToBottom = false;
 	if (hasUnloadedUnread) {
@@ -1429,10 +1496,7 @@ function handleJumpToUnread() {
 
 function dismissUnreadBar() {
 	unreadBarDismissed = true;
-	if (messages.length > 0) {
-		const lastMsg = messages[messages.length - 1];
-		onMarkRead?.(lastMsg.createdAt, lastMsg.msgUid);
-	}
+	markCurrentRoomReadIfReady(true);
 }
 
 function triggerAutoLoadOlderHistory(manualClick = false) {
@@ -1578,10 +1642,13 @@ $effect(() => {
 	const msgs = messages;
 	const visLen = visibleMessages.length;
 	const userKey = currentUser?.userKey || "";
+	const initSeq = roomInitSeq;
+	const ready = roomReady;
 
 	if (initializedRoom !== currentRoomId) {
 		initializedRoom = currentRoomId;
 		hydratedRoomKey = "";
+		lastWrittenSeenMsgKey = "";
 		seenMessageUids = new Set();
 		measuredMsgHeights.clear();
 		virtualScrollTop = 0;
@@ -1590,6 +1657,7 @@ $effect(() => {
 		replyingTo = null;
 		unreadBarDismissed = false;
 		isUnreadDividerInView = false;
+		hasVisitedUnreadDivider = false;
 		highlightUnreadDivider = false;
 		showScrollBottomBtn = false;
 		newMessagesWhileScrolled = 0;
@@ -1600,9 +1668,17 @@ $effect(() => {
 		}
 	}
 
-	const roomHydrationTag = `${currentRoomId}:${userKey}`;
+	if (!ready) {
+		return;
+	}
+
+	const roomHydrationTag = `${currentRoomId}:${userKey}:${initSeq}`;
 	if (msgs.length > 0 && hydratedRoomKey !== roomHydrationTag) {
 		hydratedRoomKey = roomHydrationTag;
+		lastWrittenSeenMsgKey = "";
+		unreadBarDismissed = false;
+		isUnreadDividerInView = false;
+		hasVisitedUnreadDivider = false;
 		seenMessageUids = new Set(msgs.map((m) => m.msgUid));
 		maxKnownCreatedAt = msgs.reduce((max, m) => Math.max(max, m.createdAt), 0);
 		const latestCreatedAt = maxKnownCreatedAt;
@@ -1622,8 +1698,11 @@ $effect(() => {
 				if (missedMentions.length > 0) {
 					unreadMentionUids = missedMentions.map((m) => m.msgUid);
 					alertBannerUid = missedMentions[missedMentions.length - 1].msgUid;
+				} else {
+					unreadMentionUids = [];
+					alertBannerUid = null;
 				}
-			} else if (latestCreatedAt > 0) {
+			} else if (latestCreatedAt > 0 && isChatPaneFocused() && isStickyAtBottom) {
 				writeLastSeenAt(currentRoomId, userKey, latestCreatedAt);
 			}
 		}
@@ -1674,28 +1753,24 @@ $effect(() => {
 
 		// 2. 真正的新到达消息（底部实时推送）：
 		if (liveIncoming.length > 0) {
+			const canAutoReadLive =
+				isChatPaneFocused() &&
+				isStickyAtBottom &&
+				!hasUnreadBlockingAutoRead();
 			for (const m of liveIncoming) {
 				if (m.createdAt > maxKnownCreatedAt) {
 					maxKnownCreatedAt = m.createdAt;
 				}
 				if (isDirectToMe(m)) {
-					const inChatNow = isChatPaneFocused() && isStickyAtBottom;
-					if (!inChatNow) {
+					if (!canAutoReadLive) {
 						unreadMentionUids = [...unreadMentionUids, m.msgUid];
 						alertBannerUid = m.msgUid;
-					} else if (userKey) {
-						writeLastSeenAt(currentRoomId, userKey, m.createdAt);
 					}
-				} else if (userKey && isChatPaneFocused() && isStickyAtBottom) {
-					writeLastSeenAt(currentRoomId, userKey, m.createdAt);
 				}
 			}
 
-			if (isChatPaneFocused() && isStickyAtBottom) {
-				const latestIncoming = liveIncoming[liveIncoming.length - 1];
-				if (latestIncoming) {
-					onMarkRead?.(latestIncoming.createdAt, latestIncoming.msgUid);
-				}
+			if (canAutoReadLive) {
+				markCurrentRoomReadIfReady();
 			}
 
 			if (isStickyAtBottom && !targetMessageUid) {
@@ -1721,20 +1796,13 @@ $effect(() => {
 });
 
 $effect(() => {
-	if (!currentUser || targetMessageUid || !isChatPaneFocused() || !isStickyAtBottom) {
-		return;
-	}
-	let latestMsg: ChatMessageRecord | undefined;
-	for (let i = visibleMessages.length - 1; i >= 0; i--) {
-		const m = visibleMessages[i];
-		if (m.kind === "user" && !m.recalled) {
-			latestMsg = m;
-			break;
-		}
-	}
-	if (!latestMsg) return;
-	writeLastSeenAt(roomId, currentUser.userKey, latestMsg.createdAt);
-	onMarkRead?.(latestMsg.createdAt, latestMsg.msgUid);
+	void visibleMessages;
+	void messages;
+	void isUnreadDividerInView;
+	void hasVisitedUnreadDivider;
+	void unreadBarDismissed;
+	void isStickyAtBottom;
+	markCurrentRoomReadIfReady();
 });
 
 $effect(() => {
@@ -1802,6 +1870,7 @@ $effect(() => {
 $effect(() => {
 	const container = messageContainer;
 	const markerUid = firstUnreadMsgUid;
+	void renderedMessages;
 	if (
 		!container ||
 		!markerUid ||
@@ -1823,9 +1892,7 @@ $effect(() => {
 			for (const entry of entries) {
 				if (entry.isIntersecting) {
 					isUnreadDividerInView = true;
-					if (messages.length > 0) {
-						onMarkRead?.(messages[messages.length - 1].createdAt);
-					}
+					hasVisitedUnreadDivider = true;
 					observer.disconnect();
 				}
 			}
@@ -1850,6 +1917,7 @@ $effect(() => {
 $effect(() => {
 	const container = messageContainer;
 	const pending = unreadMentionUids;
+	void renderedMessages;
 	if (
 		!container ||
 		pending.length === 0 ||
@@ -2102,6 +2170,7 @@ function handleSend() {
 	uploadError = "";
 	mentionMenuOpen = false;
 	activePopover = "none";
+	unreadBarDismissed = true;
 	void scrollToBottom();
 }
 
@@ -3038,16 +3107,9 @@ function removePendingImage(index: number) {
           class="chat-scroll-bottom-btn"
           aria-label="滚动到底部最新消息"
           onclick={() => {
+            unreadBarDismissed = true;
             void scrollToBottom(true);
-            if (currentUser && messages.length > 0) {
-              const lastMsg = messages[messages.length - 1];
-              writeLastSeenAt(
-                roomId,
-                currentUser.userKey,
-                lastMsg.createdAt,
-              );
-              onMarkRead?.(lastMsg.createdAt, lastMsg.msgUid);
-            }
+            markCurrentRoomReadIfReady(true);
           }}
         >
           <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

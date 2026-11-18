@@ -1,4 +1,5 @@
 <script lang="ts">
+import { onMount } from "svelte";
 import Icon from "@/components/common/Icon.svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
@@ -170,6 +171,87 @@ const offlineMembers = $derived.by(() => {
 		})
 		.slice()
 		.sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0));
+});
+
+const VIRTUAL_OFFLINE_THRESHOLD = 60;
+const VIRTUAL_OFFLINE_OVERSCAN = 10;
+const VIRTUAL_OFFLINE_STEP = 6;
+
+let memberScrollEl: HTMLDivElement | null = $state(null);
+let offlineListEl: HTMLDivElement | null = $state(null);
+let memberScrollTop = $state(0);
+let memberViewportH = $state(520);
+let offlineSectionOffset = $state(120);
+let memberRowHeight = $state(48);
+let memberScrollRaf: number | null = null;
+
+function syncMemberScrollMetrics() {
+	if (!memberScrollEl) return;
+	memberScrollTop = memberScrollEl.scrollTop;
+	if (memberScrollEl.clientHeight > 0) {
+		memberViewportH = memberScrollEl.clientHeight;
+	}
+	if (offlineListEl) {
+		offlineSectionOffset = Math.max(
+			0,
+			offlineListEl.offsetTop - memberScrollEl.offsetTop,
+		);
+	}
+	const nextRowH =
+		typeof window !== "undefined" && window.innerWidth < 768 ? 56 : 48;
+	if (nextRowH !== memberRowHeight) {
+		memberRowHeight = nextRowH;
+	}
+}
+
+function handleMemberScroll() {
+	if (!memberScrollEl || memberScrollRaf !== null) return;
+	memberScrollRaf = requestAnimationFrame(() => {
+		memberScrollRaf = null;
+		syncMemberScrollMetrics();
+	});
+}
+
+onMount(() => {
+	syncMemberScrollMetrics();
+	return () => {
+		if (memberScrollRaf !== null) {
+			window.cancelAnimationFrame(memberScrollRaf);
+			memberScrollRaf = null;
+		}
+	};
+});
+
+const offlineVirtual = $derived.by(() => {
+	const list = offlineMembers;
+	const len = list.length;
+	if (len <= VIRTUAL_OFFLINE_THRESHOLD) {
+		return {
+			items: list,
+			start: 0,
+			topSpacerPx: 0,
+			bottomSpacerPx: 0,
+		};
+	}
+	const rowH = Math.max(40, memberRowHeight);
+	const viewH = Math.max(240, memberViewportH);
+	const relTop = Math.max(0, memberScrollTop - offlineSectionOffset);
+	const rawStart = Math.floor(relTop / rowH) - VIRTUAL_OFFLINE_OVERSCAN;
+	const start = Math.max(
+		0,
+		Math.floor(rawStart / VIRTUAL_OFFLINE_STEP) * VIRTUAL_OFFLINE_STEP,
+	);
+	const visibleCount =
+		Math.ceil(viewH / rowH) +
+		VIRTUAL_OFFLINE_OVERSCAN * 2 +
+		VIRTUAL_OFFLINE_STEP;
+	const end = Math.min(len, start + visibleCount);
+	return {
+		items: list.slice(start, end),
+		start,
+		topSpacerPx: start * rowH,
+		bottomSpacerPx: Math.max(0, (len - end) * rowH),
+	};
 });
 
 const connLabel = $derived(
@@ -379,7 +461,11 @@ function formatOfflineTime(ts?: number): string {
   <div class="chat-divider"></div>
 
   <!-- 成员名录：在线成员 + 离线成员 -->
-  <div class="flex-1 overflow-y-auto custom-scrollbar px-2.5 py-1.5 space-y-3 min-h-0">
+  <div
+    bind:this={memberScrollEl}
+    onscroll={handleMemberScroll}
+    class="flex-1 overflow-y-auto custom-scrollbar px-2.5 py-1.5 space-y-3 min-h-0"
+  >
     {#if isCurrentInterconnect}
       <!-- 互联茶室模式：直接平铺“本站在线”、“其他站点”、“离线成员” -->
 
@@ -442,10 +528,16 @@ function formatOfflineTime(ts?: number): string {
             </span>
           </div>
 
-          <div class="space-y-1 mt-0.5">
-            {#each offlineMembers as member (member.userKey)}
-              {@render memberItem(member, false, isExternalMember(member))}
+          <div bind:this={offlineListEl} class="space-y-1 mt-0.5">
+            {#if offlineVirtual.topSpacerPx > 0}
+              <div style="height: {offlineVirtual.topSpacerPx}px;" aria-hidden="true"></div>
+            {/if}
+            {#each offlineVirtual.items as member, idx (member.userKey)}
+              {@render memberItem(member, false, isExternalMember(member), offlineVirtual.start + idx >= 12)}
             {/each}
+            {#if offlineVirtual.bottomSpacerPx > 0}
+              <div style="height: {offlineVirtual.bottomSpacerPx}px;" aria-hidden="true"></div>
+            {/if}
           </div>
         </section>
       {/if}
@@ -491,17 +583,23 @@ function formatOfflineTime(ts?: number): string {
             </span>
           </div>
 
-          <div class="space-y-1 mt-0.5">
-            {#each offlineMembers as member (member.userKey)}
-              {@render memberItem(member, false, false)}
+          <div bind:this={offlineListEl} class="space-y-1 mt-0.5">
+            {#if offlineVirtual.topSpacerPx > 0}
+              <div style="height: {offlineVirtual.topSpacerPx}px;" aria-hidden="true"></div>
+            {/if}
+            {#each offlineVirtual.items as member, idx (member.userKey)}
+              {@render memberItem(member, false, false, offlineVirtual.start + idx >= 12)}
             {/each}
+            {#if offlineVirtual.bottomSpacerPx > 0}
+              <div style="height: {offlineVirtual.bottomSpacerPx}px;" aria-hidden="true"></div>
+            {/if}
           </div>
         </section>
       {/if}
     {/if}
   </div>
 
-  {#snippet memberItem(member: ChatOnlineMember | ChatMentionCandidate, isOnline: boolean, isExternal = false)}
+  {#snippet memberItem(member: ChatOnlineMember | ChatMentionCandidate, isOnline: boolean, isExternal = false, lazyAvatar = false)}
     {@const roleBadge = resolveMemberRoleBadge(member)}
     {@const muted = isOnline ? isMemberMuted(member as ChatOnlineMember) : false}
     {@const isFocused = isOnline ? isMemberFocused(member as ChatOnlineMember) : false}
@@ -565,6 +663,7 @@ function formatOfflineTime(ts?: number): string {
             size="sm"
             grayscale={!isOnline}
             mutedTone={!isOnline}
+            lazy={lazyAvatar || isExternal}
           />
           {#if isOnline}
             <span

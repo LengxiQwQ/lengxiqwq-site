@@ -514,6 +514,19 @@ export function trackBgImgAspectRatio(
 	};
 }
 
+export function isMusicNoticeContent(content: string): boolean {
+	return /(点播了|切到了下一首|投票切歌通过|切播了|音源解析失败|播放失败)/.test(
+		content,
+	);
+}
+
+export function isMusicNoticeMessage(msg: {
+	kind: string;
+	content: string;
+}): boolean {
+	return msg.kind === "system" && isMusicNoticeContent(msg.content);
+}
+
 export function getStoredMusicNoticesEnabled(): boolean {
 	if (typeof window === "undefined" || !window.localStorage) return false;
 	try {

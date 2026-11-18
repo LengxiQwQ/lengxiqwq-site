@@ -61,6 +61,11 @@ export type ServerPacket =
 			type: "auth:result";
 			user: ChatSessionUser | null;
 			mergedGuestHistory?: boolean;
+			roomId?: string;
+			lastReadAt?: number;
+			unreadCount?: number;
+			unreadUserCount?: number;
+			readReceipts?: Record<string, ChatReadReceipt[]>;
 	  }
 	| {
 			type: "member:merged";

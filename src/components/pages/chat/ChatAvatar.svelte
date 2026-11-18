@@ -1,3 +1,126 @@
+<script module lang="ts">
+const failedAvatarUrls = new Set<string>();
+const loadedAvatarUrls = new Set<string>();
+const downscaledAvatarUrls = new Map<string, string>();
+const corsDisabledAvatarUrls = new Set<string>();
+const pendingDownscaleUrls = new Map<string, Promise<string | null>>();
+const MAX_AVATAR_URL_CACHE = 500;
+const MAX_DOWNSCALED_CACHE = 300;
+const AVATAR_THUMB_SIZE = 96;
+let sharedThumbCanvas: HTMLCanvasElement | null = null;
+
+function markAvatarFailed(url: string): void {
+	if (!url) return;
+	if (failedAvatarUrls.size >= MAX_AVATAR_URL_CACHE) {
+		failedAvatarUrls.clear();
+	}
+	failedAvatarUrls.add(url);
+}
+
+function markAvatarLoaded(url: string): void {
+	if (!url) return;
+	if (loadedAvatarUrls.size >= MAX_AVATAR_URL_CACHE) {
+		loadedAvatarUrls.clear();
+	}
+	loadedAvatarUrls.add(url);
+}
+
+function canAttemptCorsDownscale(url: string): boolean {
+	if (!url || typeof window === "undefined") return false;
+	if (corsDisabledAvatarUrls.has(url)) return false;
+	if (url.startsWith("blob:") || url.startsWith("data:")) return false;
+	if (/\.gif(?:$|\?)/i.test(url)) return false;
+	try {
+		const parsed = new URL(url, window.location.href);
+		if (parsed.origin === window.location.origin) return true;
+		if (
+			parsed.hostname === "chat-server.lengxiqwq.com" &&
+			parsed.pathname.startsWith("/api/media/")
+		) {
+			return true;
+		}
+	} catch {
+		return false;
+	}
+	return false;
+}
+
+function downscaleAvatarToBlobUrl(
+	img: HTMLImageElement,
+	sourceUrl: string,
+): Promise<string | null> {
+	const existing = downscaledAvatarUrls.get(sourceUrl);
+	if (existing) return Promise.resolve(existing);
+	const inflight = pendingDownscaleUrls.get(sourceUrl);
+	if (inflight) return inflight;
+
+	const task = new Promise<string | null>((resolve) => {
+		try {
+			const w = img.naturalWidth;
+			const h = img.naturalHeight;
+			if (!w || !h || (w <= 160 && h <= 160)) {
+				resolve(null);
+				return;
+			}
+			if (!sharedThumbCanvas) {
+				sharedThumbCanvas = document.createElement("canvas");
+				sharedThumbCanvas.width = AVATAR_THUMB_SIZE;
+				sharedThumbCanvas.height = AVATAR_THUMB_SIZE;
+			}
+			const ctx = sharedThumbCanvas.getContext("2d");
+			if (!ctx) {
+				resolve(null);
+				return;
+			}
+			ctx.clearRect(0, 0, AVATAR_THUMB_SIZE, AVATAR_THUMB_SIZE);
+			const side = Math.min(w, h);
+			const sx = Math.floor((w - side) / 2);
+			const sy = Math.floor((h - side) / 2);
+			ctx.drawImage(
+				img,
+				sx,
+				sy,
+				side,
+				side,
+				0,
+				0,
+				AVATAR_THUMB_SIZE,
+				AVATAR_THUMB_SIZE,
+			);
+			sharedThumbCanvas.toBlob(
+				(blob) => {
+					if (!blob) {
+						resolve(null);
+						return;
+					}
+					if (downscaledAvatarUrls.size >= MAX_DOWNSCALED_CACHE) {
+						const oldestKey = downscaledAvatarUrls.keys().next().value;
+						if (oldestKey !== undefined) {
+							const oldUrl = downscaledAvatarUrls.get(oldestKey);
+							if (oldUrl) URL.revokeObjectURL(oldUrl);
+							downscaledAvatarUrls.delete(oldestKey);
+						}
+					}
+					const blobUrl = URL.createObjectURL(blob);
+					downscaledAvatarUrls.set(sourceUrl, blobUrl);
+					resolve(blobUrl);
+				},
+				"image/webp",
+				0.86,
+			);
+		} catch {
+			corsDisabledAvatarUrls.add(sourceUrl);
+			resolve(null);
+		}
+	}).finally(() => {
+		pendingDownscaleUrls.delete(sourceUrl);
+	});
+
+	pendingDownscaleUrls.set(sourceUrl, task);
+	return task;
+}
+</script>
+
 <script lang="ts">
 import { getAvatarInitials, resolveChatAvatarUrl } from "./chatClient";
 
@@ -11,6 +134,7 @@ interface Props {
 	size?: AvatarSize;
 	grayscale?: boolean;
 	mutedTone?: boolean;
+	lazy?: boolean;
 	class?: string;
 }
 
@@ -22,17 +146,61 @@ const {
 	size = "md",
 	grayscale = false,
 	mutedTone = false,
+	lazy = false,
 	class: extraClass = "",
 }: Props = $props();
 
 let imgError = $state(false);
+let imgLoaded = $state(false);
+let downscaledSrc = $state("");
+let disableCorsForCurrent = $state(false);
 
 const resolvedSrc = $derived(resolveChatAvatarUrl(src));
 
 $effect(() => {
-	resolvedSrc;
-	imgError = false;
+	const cur = resolvedSrc;
+	disableCorsForCurrent = false;
+	imgError = Boolean(cur && failedAvatarUrls.has(cur));
+	const thumb = cur ? downscaledAvatarUrls.get(cur) || "" : "";
+	downscaledSrc = thumb;
+	imgLoaded = Boolean(thumb || (cur && loadedAvatarUrls.has(cur)));
 });
+
+const displaySrc = $derived(downscaledSrc || resolvedSrc);
+const useCors = $derived(
+	!downscaledSrc &&
+		!disableCorsForCurrent &&
+		canAttemptCorsDownscale(resolvedSrc),
+);
+
+function handleAvatarLoad(img: HTMLImageElement): void {
+	const raw = resolvedSrc;
+	if (!raw) return;
+	markAvatarLoaded(raw);
+	imgLoaded = true;
+	if (
+		!downscaledSrc &&
+		useCors &&
+		(img.naturalWidth > 160 || img.naturalHeight > 160)
+	) {
+		void downscaleAvatarToBlobUrl(img, raw).then((blobUrl) => {
+			if (blobUrl && resolvedSrc === raw) {
+				downscaledSrc = blobUrl;
+			}
+		});
+	}
+}
+
+function handleAvatarError(): void {
+	const raw = resolvedSrc;
+	if (useCors && raw) {
+		corsDisabledAvatarUrls.add(raw);
+		disableCorsForCurrent = true;
+		return;
+	}
+	markAvatarFailed(raw);
+	imgError = true;
+}
 
 const showImage = $derived(Boolean(resolvedSrc) && !imgError);
 const initials = $derived(getAvatarInitials(name, fallback));
@@ -77,15 +245,40 @@ const fallbackTextColorClass = $derived(
 </script>
 
 {#if showImage}
-  <img
-    src={resolvedSrc}
-    loading="eager"
-    decoding="async"
-    referrerpolicy="no-referrer"
-    alt={alt || name}
-    class="{boxClass} object-cover shrink-0 {grayscale ? 'grayscale-[35%]' : ''} {extraClass}"
-    onerror={() => (imgError = true)}
-  />
+  {#if imgLoaded}
+    <img
+      src={displaySrc}
+      loading={lazy ? "lazy" : "eager"}
+      fetchpriority={lazy ? "low" : undefined}
+      decoding="async"
+      crossorigin={useCors ? "anonymous" : undefined}
+      referrerpolicy="no-referrer"
+      alt={alt || name}
+      class="{boxClass} object-cover shrink-0 {grayscale ? 'grayscale-[35%]' : ''} {extraClass}"
+      onload={(e) => handleAvatarLoad(e.currentTarget)}
+      onerror={handleAvatarError}
+    />
+  {:else}
+    <span class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden {extraClass}">
+      <span
+        class="absolute inset-0 {fallbackBgClass} {textSizeClass} {fallbackTextColorClass} inline-flex items-center justify-center font-bold leading-none select-none"
+      >
+        {initials}
+      </span>
+      <img
+        src={displaySrc}
+        loading={lazy ? "lazy" : "eager"}
+        fetchpriority={lazy ? "low" : undefined}
+        decoding="async"
+        crossorigin={useCors ? "anonymous" : undefined}
+        referrerpolicy="no-referrer"
+        alt={alt || name}
+        class="relative w-full h-full object-cover opacity-0 transition-opacity duration-150 {grayscale ? 'grayscale-[35%]' : ''}"
+        onload={(e) => handleAvatarLoad(e.currentTarget)}
+        onerror={handleAvatarError}
+      />
+    </span>
+  {/if}
 {:else}
   <div
     class="{boxClass} {fallbackBgClass} {textSizeClass} {fallbackTextColorClass} inline-flex items-center justify-center font-bold leading-none select-none shrink-0 {extraClass}"

@@ -1124,20 +1124,28 @@ function handleBubbleClick(e: MouseEvent) {
 {/snippet}
 
 {#snippet renderReadReceipts()}
-  {@const readers = readReceipts.filter((r) => r.userKey === currentUserKey || r.userKey !== message.userKey)}
+  {@const readers = readReceipts.filter((r) => {
+    if (r.userKey === message.userKey) return false;
+    if (isSelf && currentUserKey && r.userKey === currentUserKey) return false;
+    return true;
+  })}
   {#if readers.length > 0}
-    {@const shown = readers.slice(0, 4)}
-    {@const restCount = readers.length - shown.length}
+    {@const resolvedReaders = readers.map((r) => ({
+      reader: r,
+      resolved: resolveUserProfileSeed(r.userKey, r.name, r.avatar),
+    }))}
+    {@const shown = resolvedReaders.slice(0, 4)}
+    {@const restCount = resolvedReaders.length - shown.length}
     <span
       class="chat-read-receipts-wrap ml-1 select-none"
-      aria-label={`已读：${readers.map((r) => r.name).join("、")}`}
+      aria-label={`已读：${resolvedReaders.map((item) => item.resolved.displayName).join("、")}`}
     >
       <span class="inline-flex items-center -space-x-1">
-        {#each shown as reader (reader.userKey)}
+        {#each shown as item (item.reader.userKey)}
           <span class="inline-flex rounded-full ring-1 ring-[var(--card-bg)] overflow-hidden">
             <ChatAvatar
-              src={reader.avatar}
-              name={reader.name}
+              src={item.resolved.seed.avatar}
+              name={item.resolved.seed.name}
               size="xs"
               class="w-3.5! h-3.5! text-[8px]!"
             />
@@ -1156,27 +1164,26 @@ function handleBubbleClick(e: MouseEvent) {
       >
         <div class="text-[0.6875rem] font-semibold text-[var(--deep-text)] dark:text-white/90 px-1 pb-1 mb-1 border-b border-[var(--chat-divider-color)] flex items-center justify-between gap-2">
           <span>已读成员</span>
-          <span class="text-[0.625rem] font-normal text-[var(--chat-meta-color)] tabular-nums">{readers.length} 人</span>
+          <span class="text-[0.625rem] font-normal text-[var(--chat-meta-color)] tabular-nums">{resolvedReaders.length} 人</span>
         </div>
         <div class="chat-read-receipts-list custom-scrollbar space-y-0.5">
-          {#each readers as reader (reader.userKey)}
-            {@const resolved = resolveUserProfileSeed(reader.userKey, reader.name, reader.avatar)}
+          {#each resolvedReaders as item (item.reader.userKey)}
             <button
               type="button"
               class="chat-reaction-user-btn"
               onclick={(e) => {
                 e.stopPropagation();
-                onOpenUserProfile?.(resolved.seed);
+                onOpenUserProfile?.(item.resolved.seed);
               }}
             >
               <ChatAvatar
-                src={resolved.seed.avatar}
-                name={resolved.seed.name}
+                src={item.resolved.seed.avatar}
+                name={item.resolved.seed.name}
                 size="xs"
                 class="w-4! h-4! text-[8px]! shrink-0"
               />
               <span class="truncate flex-1 text-left">
-                {resolved.displayName}{resolved.isMe ? " (你)" : ""}
+                {item.resolved.displayName}{item.resolved.isMe ? " (你)" : ""}
               </span>
               <svg class="w-3 h-3 shrink-0 opacity-45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="m9 18 6-6-6-6" />

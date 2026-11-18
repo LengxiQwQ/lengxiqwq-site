@@ -1,3 +1,21 @@
+<script module lang="ts">
+const loadedCoverUrls = new Set<string>();
+const failedCoverUrls = new Set<string>();
+const MAX_COVER_URL_CACHE = 1000;
+
+function markCoverLoaded(url: string): void {
+	if (!url) return;
+	if (loadedCoverUrls.size >= MAX_COVER_URL_CACHE) loadedCoverUrls.clear();
+	loadedCoverUrls.add(url);
+}
+
+function markCoverFailed(url: string): void {
+	if (!url) return;
+	if (failedCoverUrls.size >= MAX_COVER_URL_CACHE) failedCoverUrls.clear();
+	failedCoverUrls.add(url);
+}
+</script>
+
 <script lang="ts">
 import { onMount, tick, untrack } from "svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
@@ -322,6 +340,8 @@ let isLoadingPlaylistDetail = $state(false);
 let enqueuingTrackIds = $state(new Set<string>());
 let isRandomizing = $state(false);
 let playlistTrackFilter = $state("");
+let debouncedPlaylistFilter = $state("");
+let playlistFilterTimer: number | null = null;
 let importInput = $state("");
 let isImportingPlaylist = $state(false);
 let importStatusText = $state("");
@@ -340,7 +360,22 @@ let isUpdatingFlagsId = $state("");
 let confirmDeletePlaylistId = $state("");
 let isDeletingPlaylistId = $state("");
 let confirmDeleteTimer: number | null = null;
-let playlistVisibleLimit = $state(100);
+
+// 歌单与历史列表虚拟滚动状态
+const VIRTUAL_MUSIC_THRESHOLD = 60;
+const VIRTUAL_MUSIC_OVERSCAN = 12;
+let playlistScrollEl: HTMLDivElement | null = $state(null);
+let playlistMetaBoxEl: HTMLDivElement | null = $state(null);
+let isCompactPlaylistHeader = $state(false);
+let playlistScrollTop = $state(0);
+let playlistViewportH = $state(480);
+let playlistRowHeight = $state(52);
+let playlistScrollRaf: number | null = null;
+
+let historyScrollEl: HTMLDivElement | null = $state(null);
+let historyScrollTop = $state(0);
+let historyViewportH = $state(480);
+let historyScrollRaf: number | null = null;
 
 // 歌词状态
 let lyrics = $state<LyricLine[]>([]);
@@ -536,6 +571,45 @@ const displayedHistoryEntries = $derived.by<MusicHistoryEntry[]>(() => {
 	}
 	return sortHistory([...mergedMap.values()]);
 });
+
+const historyVirtual = $derived.by(() => {
+	const list = displayedHistoryEntries;
+	const len = list.length;
+	if (len <= VIRTUAL_MUSIC_THRESHOLD) {
+		return {
+			items: list,
+			start: 0,
+			topSpacerPx: 0,
+			bottomSpacerPx: 0,
+		};
+	}
+	const rowH = Math.max(44, playlistRowHeight);
+	const viewH = Math.max(240, historyViewportH);
+	const rawStart = Math.floor(historyScrollTop / rowH) - VIRTUAL_MUSIC_OVERSCAN;
+	const STEP = 6;
+	const steppedStart = Math.max(0, Math.floor(rawStart / STEP) * STEP);
+	const visibleCount = Math.ceil(viewH / rowH) + VIRTUAL_MUSIC_OVERSCAN * 2 + STEP;
+	const start = steppedStart;
+	const end = Math.min(len, start + visibleCount);
+	return {
+		items: list.slice(start, end),
+		start,
+		topSpacerPx: start * rowH,
+		bottomSpacerPx: Math.max(0, (len - end) * rowH),
+	};
+});
+
+function handleHistoryScroll(): void {
+	if (!historyScrollEl || historyScrollRaf !== null) return;
+	historyScrollRaf = requestAnimationFrame(() => {
+		historyScrollRaf = null;
+		if (!historyScrollEl) return;
+		historyScrollTop = historyScrollEl.scrollTop;
+		if (historyScrollEl.clientHeight > 0) {
+			historyViewportH = historyScrollEl.clientHeight;
+		}
+	});
+}
 const effectiveDuration = $derived.by(() => {
 	if (currentPlay && currentPlay.durationSec > 0) {
 		return currentPlay.durationSec;
@@ -728,12 +802,25 @@ function resolveSafeExternalUrl(raw?: string): string {
 
 const PLAYLIST_CACHE_TTL_MS = 30 * 1000;
 const SEARCH_CACHE_TTL_MS = 30 * 1000;
+const MAX_PLAYLIST_DETAIL_CACHE = 3;
 let lastLoadedPlaylistKey = "";
 let lastLoadedPlaylistAt = 0;
 const playlistDetailCache = new Map<
 	string,
 	{ detail: PlaylistDetail; fetchedAt: number }
 >();
+
+function setPlaylistDetailCache(
+	key: string,
+	value: { detail: PlaylistDetail; fetchedAt: number },
+): void {
+	playlistDetailCache.delete(key);
+	if (playlistDetailCache.size >= MAX_PLAYLIST_DETAIL_CACHE) {
+		const oldest = playlistDetailCache.keys().next().value;
+		if (oldest !== undefined) playlistDetailCache.delete(oldest);
+	}
+	playlistDetailCache.set(key, value);
+}
 const pendingPlaylistDetails = new Map<string, Promise<PlaylistDetail>>();
 let playlistHoverTimer: number | null = null;
 const searchResultCache = new Map<
@@ -755,6 +842,9 @@ function invalidatePlaylistCaches(playlistId?: string): void {
 	}
 }
 
+let lastPlaylistSummarySigs = new Map<string, string>();
+let lastRoomPlaylistSnapshot = "";
+
 async function loadPlaylists(force = false): Promise<void> {
 	if (!chatServerUrl) return;
 	const authSeg = isWalineLoggedIn ? walineToken : "";
@@ -770,14 +860,40 @@ async function loadPlaylists(force = false): Promise<void> {
 	playlistsError = "";
 	try {
 		const res = await fetchRoomPlaylists(chatServerUrl, roomId, authSeg);
-		featuredPlaylists = res.featured;
-		myPlaylists = res.mine;
-		membersPlaylists = res.members;
-		rotation = res.rotation ?? null;
 		const now = Date.now();
+		const allSummaries = [...res.featured, ...res.mine, ...res.members];
+		const nextSigs = new Map<string, string>();
+		let summaryChanged = false;
+		const snapshotKey = allSummaries
+			.map((p) => `${p.id}:${p.updatedAt ?? 0}:${p.trackCount}:${p.isFeatured}:${p.isFallback}:${p.isPublic}`)
+			.join("|") + `#${JSON.stringify(res.rotation ?? null)}`;
+
+		for (const p of allSummaries) {
+			const sig = `${p.updatedAt ?? 0}:${p.trackCount}:${p.title}`;
+			nextSigs.set(p.id, sig);
+			const prevSig = lastPlaylistSummarySigs.get(p.id);
+			if (prevSig !== undefined && prevSig !== sig) {
+				playlistDetailCache.delete(`${roomId}|${authSeg}|${p.id}`);
+			}
+		}
+		for (const oldId of lastPlaylistSummarySigs.keys()) {
+			if (!nextSigs.has(oldId)) {
+				playlistDetailCache.delete(`${roomId}|${authSeg}|${oldId}`);
+			}
+		}
+		lastPlaylistSummarySigs = nextSigs;
+		summaryChanged = snapshotKey !== lastRoomPlaylistSnapshot;
+		lastRoomPlaylistSnapshot = snapshotKey;
+
+		if (summaryChanged) {
+			featuredPlaylists = res.featured;
+			myPlaylists = res.mine;
+			membersPlaylists = res.members;
+			rotation = res.rotation ?? null;
+		}
 		if (res.details) {
 			for (const [pid, detail] of Object.entries(res.details)) {
-				playlistDetailCache.set(`${roomId}|${authSeg}|${pid}`, {
+				setPlaylistDetailCache(`${roomId}|${authSeg}|${pid}`, {
 					detail,
 					fetchedAt: now,
 				});
@@ -785,8 +901,8 @@ async function loadPlaylists(force = false): Promise<void> {
 		}
 		lastLoadedPlaylistKey = cacheKey;
 		lastLoadedPlaylistAt = now;
-		if (selectedPlaylist) {
-			const stillExists = [...res.featured, ...res.mine, ...res.members].find(
+		if (selectedPlaylist && summaryChanged) {
+			const stillExists = allSummaries.find(
 				(p) => p.id === selectedPlaylist?.id,
 			);
 			if (stillExists) {
@@ -874,7 +990,7 @@ async function getOrFetchPlaylistDetail(
 		playlistId,
 		authSeg,
 	).then((detail) => {
-		playlistDetailCache.set(detailKey, { detail, fetchedAt: Date.now() });
+		setPlaylistDetailCache(detailKey, { detail, fetchedAt: Date.now() });
 		return detail;
 	});
 	pendingPlaylistDetails.set(detailKey, task);
@@ -1232,35 +1348,61 @@ function normalizeMatchTitle(raw: string): string {
 	return raw.toLowerCase().replace(/[\s\-_·.,'"!?！？，。、()（）]+/g, "");
 }
 
+const currentPlayMatchInfo = $derived.by(() => {
+	if (!currentPlay) return null;
+	return {
+		id: currentPlay.track.id,
+		titleNorm: normalizeMatchTitle(currentPlay.track.title),
+		artistNorm: normalizeMatchTitle(currentPlay.track.artist),
+	};
+});
+
+const queueLookupIndex = $derived.by(() => {
+	const byId = new Map<string, QueueEntry>();
+	const byTitleNorm = new Map<string, Array<{ entry: QueueEntry; artistNorm: string }>>();
+	for (const item of queue) {
+		byId.set(item.track.id, item);
+		const titleNorm = normalizeMatchTitle(item.track.title);
+		const artistNorm = normalizeMatchTitle(item.track.artist);
+		const bucket = byTitleNorm.get(titleNorm);
+		if (bucket) {
+			bucket.push({ entry: item, artistNorm });
+		} else {
+			byTitleNorm.set(titleNorm, [{ entry: item, artistNorm }]);
+		}
+	}
+	return { byId, byTitleNorm };
+});
+
 function isTrackCurrent(song: ChatMusicTrack): boolean {
-	if (!currentPlay) return false;
-	if (currentPlay.track.id === song.id) return true;
+	const info = currentPlayMatchInfo;
+	if (!info) return false;
+	if (info.id === song.id) return true;
 	if (song.provider === "external") {
-		return (
-			normalizeMatchTitle(currentPlay.track.title) ===
-				normalizeMatchTitle(song.title) &&
-			normalizeMatchTitle(currentPlay.track.artist).includes(
-				normalizeMatchTitle(song.artist.split(/[/,&、;；]+/)[0] || ""),
-			)
+		if (info.titleNorm !== normalizeMatchTitle(song.title)) return false;
+		const firstArtist = normalizeMatchTitle(
+			song.artist.split(/[/,&、;；]+/)[0] || "",
 		);
+		return info.artistNorm.includes(firstArtist);
 	}
 	return false;
 }
 
 function findQueuedEntryForSong(song: ChatMusicTrack): QueueEntry | undefined {
-	const direct = queue.find((item) => item.track.id === song.id);
+	const { byId, byTitleNorm } = queueLookupIndex;
+	const direct = byId.get(song.id);
 	if (direct) return direct;
 	if (song.provider === "external") {
-		const targetTitle = normalizeMatchTitle(song.title);
+		const bucket = byTitleNorm.get(normalizeMatchTitle(song.title));
+		if (!bucket) return undefined;
 		const targetArtist = normalizeMatchTitle(
 			song.artist.split(/[/,&、;；]+/)[0] || "",
 		);
-		return queue.find(
-			(item) =>
-				normalizeMatchTitle(item.track.title) === targetTitle &&
-				(!targetArtist ||
-					normalizeMatchTitle(item.track.artist).includes(targetArtist)),
-		);
+		for (const candidate of bucket) {
+			if (!targetArtist || candidate.artistNorm.includes(targetArtist)) {
+				return candidate.entry;
+			}
+		}
 	}
 	return undefined;
 }
@@ -1269,9 +1411,25 @@ function isTrackQueued(song: ChatMusicTrack): boolean {
 	return Boolean(findQueuedEntryForSong(song));
 }
 
+$effect(() => {
+	const raw = playlistTrackFilter;
+	if (playlistFilterTimer !== null) {
+		window.clearTimeout(playlistFilterTimer);
+		playlistFilterTimer = null;
+	}
+	if (!raw.trim()) {
+		debouncedPlaylistFilter = "";
+		return;
+	}
+	playlistFilterTimer = window.setTimeout(() => {
+		playlistFilterTimer = null;
+		debouncedPlaylistFilter = raw;
+	}, 120);
+});
+
 const filteredPlaylistTracks = $derived.by<PlaylistTrackItem[]>(() => {
 	if (!selectedPlaylist) return [];
-	const q = playlistTrackFilter.trim().toLowerCase();
+	const q = debouncedPlaylistFilter.trim().toLowerCase();
 	if (!q) return selectedPlaylist.tracks;
 	return selectedPlaylist.tracks.filter(
 		(t) =>
@@ -1281,38 +1439,78 @@ const filteredPlaylistTracks = $derived.by<PlaylistTrackItem[]>(() => {
 	);
 });
 
-const displayedPlaylistTracks = $derived(
-	filteredPlaylistTracks.slice(0, playlistVisibleLimit),
-);
-const hasMorePlaylistTracks = $derived(
-	filteredPlaylistTracks.length > playlistVisibleLimit,
-);
+const playlistVirtual = $derived.by(() => {
+	const list = filteredPlaylistTracks;
+	const len = list.length;
+	if (len <= VIRTUAL_MUSIC_THRESHOLD) {
+		return {
+			items: list,
+			start: 0,
+			topSpacerPx: 0,
+			bottomSpacerPx: 0,
+		};
+	}
+	const rowH = Math.max(44, playlistRowHeight);
+	const viewH = Math.max(240, playlistViewportH);
+	const metaOffset =
+		isCompactPlaylistHeader && playlistMetaBoxEl
+			? playlistMetaBoxEl.offsetHeight + 6
+			: 0;
+	const relScrollTop = Math.max(0, playlistScrollTop - metaOffset);
+	const rawStart = Math.floor(relScrollTop / rowH) - VIRTUAL_MUSIC_OVERSCAN;
+	const STEP = 6;
+	const steppedStart = Math.max(0, Math.floor(rawStart / STEP) * STEP);
+	const visibleCount = Math.ceil(viewH / rowH) + VIRTUAL_MUSIC_OVERSCAN * 2 + STEP;
+	const start = steppedStart;
+	const end = Math.min(len, start + visibleCount);
+	return {
+		items: list.slice(start, end),
+		start,
+		topSpacerPx: start * rowH,
+		bottomSpacerPx: Math.max(0, (len - end) * rowH),
+	};
+});
 
 $effect(() => {
 	selectedPlaylist?.id;
-	playlistTrackFilter;
-	playlistVisibleLimit = 100;
+	debouncedPlaylistFilter;
+	playlistScrollTop = 0;
+	if (playlistScrollEl) {
+		playlistScrollEl.scrollTop = 0;
+	}
 });
 
 function handlePlaylistScroll(e: Event): void {
 	const el = e.currentTarget as HTMLDivElement | null;
-	if (!el || !hasMorePlaylistTracks) return;
-	if (el.scrollHeight - el.scrollTop - el.clientHeight < 180) {
-		playlistVisibleLimit += 100;
-	}
+	if (!el) return;
+	if (playlistScrollRaf !== null) return;
+	playlistScrollRaf = requestAnimationFrame(() => {
+		playlistScrollRaf = null;
+		if (!playlistScrollEl) return;
+		playlistScrollTop = playlistScrollEl.scrollTop;
+		if (playlistScrollEl.clientHeight > 0) {
+			playlistViewportH = playlistScrollEl.clientHeight;
+		}
+	});
 }
 
-let lastObservedRefreshSeq = 0;
+// 行高由容器宽度与断点确定一次即可，避免虚拟滚动换页时反复重建 ResizeObserver
+$effect(() => {
+	const el = playlistScrollEl;
+	if (!el) return;
+	const syncRowH = () => {
+		const isDesktop = window.innerWidth >= 768;
+		const nextH = isDesktop ? 50 : 62;
+		if (nextH !== playlistRowHeight) playlistRowHeight = nextH;
+	};
+	syncRowH();
+});
 
 $effect(() => {
 	roomId;
 	chatServerUrl;
 	walineToken;
-	const seq = playlistRefreshSeq;
-	if (seq !== lastObservedRefreshSeq) {
-		lastObservedRefreshSeq = seq;
-		playlistDetailCache.clear();
-	}
+	void playlistRefreshSeq;
 	if (activeTab === "playlist") {
 		void loadPlaylists();
 	}
@@ -1856,8 +2054,18 @@ function handleToggleQueueTrack(song: ChatMusicTrack) {
 }
 
 onMount(() => {
+	const compactQuery = window.matchMedia(
+		"(max-width: 1023px), (pointer: coarse) and (max-width: 1279px)",
+	);
+	const syncCompactHeader = () => {
+		isCompactPlaylistHeader = compactQuery.matches;
+	};
+	syncCompactHeader();
+	compactQuery.addEventListener("change", syncCompactHeader);
+
 	// 房间时钟独立走时（即使本地处于静音模式也始终跟随全网进度推进与滚动歌词）
 	const roomClock = window.setInterval(() => {
+		if (document.hidden) return;
 		refreshSoloCooldown();
 		if (!currentPlay) return;
 
@@ -1888,6 +2096,7 @@ onMount(() => {
 	document.addEventListener("keydown", handleKeydown);
 
 	return () => {
+		compactQuery.removeEventListener("change", syncCompactHeader);
 		lyricRequest?.abort();
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleKeydown);
@@ -1902,6 +2111,15 @@ onMount(() => {
 		}
 		if (queueScrollHideTimer !== null) {
 			window.clearTimeout(queueScrollHideTimer);
+		}
+		if (playlistFilterTimer !== null) {
+			window.clearTimeout(playlistFilterTimer);
+		}
+		if (playlistScrollRaf !== null) {
+			window.cancelAnimationFrame(playlistScrollRaf);
+		}
+		if (historyScrollRaf !== null) {
+			window.cancelAnimationFrame(historyScrollRaf);
 		}
 		if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
 			navigator.mediaSession.playbackState = "none";
@@ -2082,10 +2300,27 @@ $effect(() => {
   {#snippet trackRequestRow(song: ChatMusicTrack, subtitle: string, countBadge?: string)}
     {@const isCurrent = isTrackCurrent(song)}
     {@const isQueued = isTrackQueued(song)}
+    {@const coverFailed = Boolean(song.cover && failedCoverUrls.has(song.cover))}
+    {@const coverLoaded = Boolean(song.cover && loadedCoverUrls.has(song.cover))}
     <div class="flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-10 h-10 md:w-8 md:h-8 rounded-lg md:rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
-        {#if song.cover}
-          <img src={song.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
+        {#if song.cover && !coverFailed}
+          <span class="text-xs text-(--primary)/70 select-none" aria-hidden="true">♪</span>
+          <img
+            src={song.cover}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            class="absolute inset-0 w-full h-full object-cover {coverLoaded ? 'opacity-100' : 'opacity-0 transition-opacity duration-150'}"
+            onload={(e) => {
+              markCoverLoaded(song.cover);
+              e.currentTarget.style.opacity = "1";
+            }}
+            onerror={(e) => {
+              markCoverFailed(song.cover);
+              e.currentTarget.style.display = "none";
+            }}
+          />
         {:else}
           <span class="text-xs text-(--primary)">♪</span>
         {/if}
@@ -2885,10 +3120,6 @@ $effect(() => {
         <button
           type="button"
           class="flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-0 cursor-pointer"
-          onmouseenter={() => schedulePlaylistDetailPrefetch(pl.id)}
-          onmouseleave={cancelPlaylistDetailPrefetch}
-          onfocus={() => schedulePlaylistDetailPrefetch(pl.id)}
-          onblur={cancelPlaylistDetailPrefetch}
           onclick={() => openPlaylistDetail(pl.id)}
         >
           <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
@@ -3060,54 +3291,8 @@ $effect(() => {
 
     {#if selectedPlaylist}
       {@const safeSourceUrl = resolveSafeExternalUrl(selectedPlaylist.sourceUrl)}
-      <!-- 歌单详情视图 -->
-      <div class="flex-1 min-h-0 flex flex-col">
-        <div class="px-3 pt-2.5 pb-2 border-b border-[var(--chat-divider-color)] space-y-2 shrink-0">
-          <!-- 第 1 行：返回按钮 + 歌单内搜索框 -->
-          <div class="flex items-center gap-1.5">
-            <button
-              type="button"
-              class="chat-queue-icon-btn w-7! h-7! shrink-0"
-              aria-label="返回歌单列表"
-              onclick={() => {
-                selectedPlaylist = null;
-                playlistTrackFilter = "";
-                confirmDeletePlaylistId = "";
-              }}
-            >
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polyline points="15 18 9 12 15 6" />
-              </svg>
-            </button>
-
-            <div class="relative flex-1 min-w-0">
-              <svg class="w-3.5 h-3.5 text-[var(--chat-meta-color)] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                type="text"
-                class="chat-music-search is-immersive py-1.5! pl-8! pr-7! text-xs!"
-                placeholder="搜歌名或歌手"
-                aria-label="歌单内搜索"
-                bind:value={playlistTrackFilter}
-              />
-              {#if playlistTrackFilter.trim().length > 0}
-                <button
-                  type="button"
-                  class="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
-                  aria-label="清除筛选"
-                  onclick={() => (playlistTrackFilter = "")}
-                >
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              {/if}
-            </div>
-          </div>
-
+      {#snippet playlistMetaHeader()}
+        {#if selectedPlaylist}
           <!-- 第 2 行：封面图齐整靠左 + 歌单信息 -->
           <div class="flex items-center gap-2.5">
             <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
@@ -3312,12 +3497,72 @@ $effect(() => {
               {/if}
             </div>
           </div>
+            {/if}
+          {/snippet}
+
+      <!-- 歌单详情视图 -->
+      <div class="flex-1 min-h-0 flex flex-col">
+        <div class="px-3 pt-2.5 pb-2 border-b border-[var(--chat-divider-color)] space-y-2 shrink-0">
+          <!-- 第 1 行：返回按钮 + 歌单内搜索框 -->
+          <div class="flex items-center gap-1.5">
+            <button
+              type="button"
+              class="chat-queue-icon-btn w-7! h-7! shrink-0"
+              aria-label="返回歌单列表"
+              onclick={() => {
+                selectedPlaylist = null;
+                playlistTrackFilter = "";
+                confirmDeletePlaylistId = "";
+              }}
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </button>
+
+            <div class="relative flex-1 min-w-0">
+              <svg class="w-3.5 h-3.5 text-[var(--chat-meta-color)] absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                class="chat-music-search is-immersive py-1.5! pl-8! pr-7! text-xs!"
+                placeholder="搜歌名或歌手"
+                aria-label="歌单内搜索"
+                bind:value={playlistTrackFilter}
+              />
+              {#if playlistTrackFilter.trim().length > 0}
+                <button
+                  type="button"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
+                  aria-label="清除筛选"
+                  onclick={() => (playlistTrackFilter = "")}
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          {#if !isCompactPlaylistHeader}
+            {@render playlistMetaHeader()}
+          {/if}
         </div>
 
         <div
+          bind:this={playlistScrollEl}
           class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-1.5"
           onscroll={handlePlaylistScroll}
         >
+          {#if isCompactPlaylistHeader}
+            <div bind:this={playlistMetaBoxEl} class="pb-2 mb-1.5 border-b border-[var(--chat-divider-color)] space-y-2">
+              {@render playlistMetaHeader()}
+            </div>
+          {/if}
           {#if isLoadingPlaylistDetail}
             <div class="text-center py-6 text-xs text-[var(--chat-meta-color)]">
               正在加载歌单曲目...
@@ -3327,23 +3572,18 @@ $effect(() => {
               {playlistTrackFilter.trim() ? "没有匹配的歌曲" : "歌单暂无曲目"}
             </div>
           {:else}
-            <div class="space-y-0.5">
-              {#each displayedPlaylistTracks as item (`${selectedPlaylist.id}-${item.position}`)}
+            {#if playlistVirtual.topSpacerPx > 0}
+              <div style="height: {playlistVirtual.topSpacerPx}px;" aria-hidden="true"></div>
+            {/if}
+            <div class="space-y-0.5" style="contain: layout style;">
+              {#each playlistVirtual.items as item (`${selectedPlaylist.id}-${item.position}`)}
                 {@const track = toEnqueueableTrack(item, selectedPlaylist.id)}
                 {@const subtitle = `${item.artist}${item.durationSec ? ` · ${formatTime(item.durationSec)}` : ""}`}
                 {@render trackRequestRow(track, subtitle)}
               {/each}
             </div>
-            {#if hasMorePlaylistTracks}
-              <div class="py-2 flex justify-center">
-                <button
-                  type="button"
-                  class="chat-queue-toggle-btn"
-                  onclick={() => (playlistVisibleLimit += 100)}
-                >
-                  加载更多（剩余 {filteredPlaylistTracks.length - displayedPlaylistTracks.length} 首）
-                </button>
-              </div>
+            {#if playlistVirtual.bottomSpacerPx > 0}
+              <div style="height: {playlistVirtual.bottomSpacerPx}px;" aria-hidden="true"></div>
             {/if}
           {/if}
         </div>
@@ -3628,7 +3868,11 @@ $effect(() => {
       </div>
     </div>
 
-    <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-1.5">
+    <div
+      bind:this={historyScrollEl}
+      class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-1.5"
+      onscroll={handleHistoryScroll}
+    >
       {#if displayedHistoryEntries.length === 0}
         <div class="text-center py-8 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-2">
           <p class="text-xs text-[var(--chat-meta-color)] m-0">
@@ -3653,8 +3897,11 @@ $effect(() => {
           {/if}
         </div>
       {:else}
+        {#if historyVirtual.topSpacerPx > 0}
+          <div style="height: {historyVirtual.topSpacerPx}px;" aria-hidden="true"></div>
+        {/if}
         <div class="space-y-0.5">
-          {#each displayedHistoryEntries as entry (`${entry.track.id}-${historySort}-${selectedRequesterKey}`)}
+          {#each historyVirtual.items as entry (`${entry.track.id}-${historySort}-${selectedRequesterKey}`)}
             {@const subtitle = [
               entry.track.artist,
               entry.track.durationSec ? formatTime(entry.track.durationSec) : "",
@@ -3667,6 +3914,9 @@ $effect(() => {
             )}
           {/each}
         </div>
+        {#if historyVirtual.bottomSpacerPx > 0}
+          <div style="height: {historyVirtual.bottomSpacerPx}px;" aria-hidden="true"></div>
+        {/if}
       {/if}
     </div>
   {/if}

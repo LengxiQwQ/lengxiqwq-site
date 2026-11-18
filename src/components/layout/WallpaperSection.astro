@@ -521,35 +521,63 @@ const wallpaperPosition = state.isFullscreenMode
                 }
             });
 
-            // 随机首张：只有被抽中的这一张会真的下载，其余仍留在 <template> 里
-            // 优先与 <head> 中秒开预选的壁纸同步，确保首帧主题色与壁纸零闪烁秒对齐
-            var slides = getVisibleSlides();
-            var firstSlide = null;
-            var isForcedMobileSlide = false;
-            if (window.__initialWallpaperSrc) {
-                var initVisIdx = findSlideIndexBySrc(slides, window.__initialWallpaperSrc);
-                if (initVisIdx >= 0) {
-                    firstSlide = slides[initVisIdx];
-                } else {
-                    var initAllSlides = container.querySelectorAll('.slide-item');
-                    var initAnyIdx = findSlideIndexBySrc(initAllSlides, window.__initialWallpaperSrc);
-                    if (initAnyIdx >= 0) {
-                        firstSlide = initAllSlides[initAnyIdx];
-                        isForcedMobileSlide = true;
+            var firstSlideMaterialized = false;
+
+            function initFirstSlideIfAllowed() {
+                if (firstSlideMaterialized) return;
+                if (document.documentElement.hasAttribute('data-chat-page')) return;
+                firstSlideMaterialized = true;
+
+                // 随机首张：只有被抽中的这一张会真的下载，其余仍留在 <template> 里
+                // 优先与 <head> 中秒开预选的壁纸同步，确保首帧主题色与壁纸零闪烁秒对齐
+                var slides = getVisibleSlides();
+                var firstSlide = null;
+                var isForcedMobileSlide = false;
+                if (window.__initialWallpaperSrc) {
+                    var initVisIdx = findSlideIndexBySrc(slides, window.__initialWallpaperSrc);
+                    if (initVisIdx >= 0) {
+                        firstSlide = slides[initVisIdx];
+                    } else {
+                        var initAllSlides = container.querySelectorAll('.slide-item');
+                        var initAnyIdx = findSlideIndexBySrc(initAllSlides, window.__initialWallpaperSrc);
+                        if (initAnyIdx >= 0) {
+                            firstSlide = initAllSlides[initAnyIdx];
+                            isForcedMobileSlide = true;
+                        }
                     }
                 }
+                if (!firstSlide && slides.length > 0) {
+                    var randIdx = slides.length > 1 ? Math.floor(Math.random() * slides.length) : 0;
+                    firstSlide = slides[randIdx];
+                }
+                // .slide-item 自带 1000ms 的 opacity 过渡，首张不该吃它（它是 LCP 元素）。
+                activateSpecificSlide(firstSlide, true, isForcedMobileSlide);
+
+                // 空闲时预取下一张（轮播关掉时其余图片永远不会显示，一张都不下）
+                if (isCarouselEnabled()) {
+                    var schedulePrefetch = function () {
+                        var idle = window.requestIdleCallback || function (cb) { return setTimeout(cb, 1500); };
+                        idle(function () {
+                            if (document.documentElement.hasAttribute('data-chat-page')) return;
+                            var vis = getVisibleSlides();
+                            materializeAhead(vis, getCurrentIndex(vis));
+                        });
+                    };
+                    if (document.readyState === 'complete') schedulePrefetch();
+                    else window.addEventListener('load', schedulePrefetch, { once: true });
+                }
             }
-            if (!firstSlide && slides.length > 0) {
-                var randIdx = slides.length > 1 ? Math.floor(Math.random() * slides.length) : 0;
-                firstSlide = slides[randIdx];
-            }
-            // .slide-item 自带 1000ms 的 opacity 过渡，首张不该吃它（它是 LCP 元素）。
-            activateSpecificSlide(firstSlide, true, isForcedMobileSlide);
+
+            initFirstSlideIfAllowed();
+
+            document.addEventListener('swup:content:replace', initFirstSlideIfAllowed);
+            document.addEventListener('swup:contentReplaced', initFirstSlideIfAllowed);
 
             // 断点跨过 1024px 时，另一侧那组还没有实例化过的 active，需要补上
             if (window.matchMedia) {
                 var lgQuery = window.matchMedia('(min-width: 1024px)');
                 var onBreakpointChange = function () {
+                    if (document.documentElement.hasAttribute('data-chat-page')) return;
                     var s = getVisibleSlides();
                     if (!s.length) return;
                     var hasActive = false;
@@ -564,19 +592,6 @@ const wallpaperPosition = state.isFullscreenMode
                 };
                 if (lgQuery.addEventListener) lgQuery.addEventListener('change', onBreakpointChange);
                 else if (lgQuery.addListener) lgQuery.addListener(onBreakpointChange);
-            }
-
-            // 空闲时预取下一张（轮播关掉时其余图片永远不会显示，一张都不下）
-            if (isCarouselEnabled()) {
-                var schedulePrefetch = function () {
-                    var idle = window.requestIdleCallback || function (cb) { return setTimeout(cb, 1500); };
-                    idle(function () {
-                        var vis = getVisibleSlides();
-                        materializeAhead(vis, getCurrentIndex(vis));
-                    });
-                };
-                if (document.readyState === 'complete') schedulePrefetch();
-                else window.addEventListener('load', schedulePrefetch, { once: true });
             }
 
             // 启动
@@ -650,6 +665,7 @@ const wallpaperPosition = state.isFullscreenMode
             }
 
             function sync() {
+                if (document.documentElement.hasAttribute('data-chat-page')) return;
                 var all = container.querySelectorAll('.banner-image-slot');
                 var isLg = window.matchMedia ? window.matchMedia('(min-width: 1024px)').matches : window.innerWidth >= 1024;
                 for (var i = 0; i < all.length; i++) {
@@ -662,6 +678,8 @@ const wallpaperPosition = state.isFullscreenMode
             }
 
             sync();
+            document.addEventListener('swup:content:replace', sync);
+            document.addEventListener('swup:contentReplaced', sync);
 
             if (window.matchMedia) {
                 var lgQuery = window.matchMedia('(min-width: 1024px)');
