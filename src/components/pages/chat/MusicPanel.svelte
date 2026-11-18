@@ -14,6 +14,24 @@ function markCoverFailed(url: string): void {
 	if (failedCoverUrls.size >= MAX_COVER_URL_CACHE) failedCoverUrls.clear();
 	failedCoverUrls.add(url);
 }
+
+function resolveMusicThumbUrl(raw?: string): string {
+	if (!raw) return "";
+	if (raw.includes("music.126.net/") && !raw.includes("param=")) {
+		return `${raw}${raw.includes("?") ? "&" : "?"}param=100y100`;
+	}
+	if (
+		raw.includes("is1-ssl.mzstatic.com/") &&
+		!raw.includes("/thumb/gen/") &&
+		!raw.includes("signature=")
+	) {
+		return raw.replace(/\/\d+x\d+bb(\.[a-zA-Z0-9]+(?:\?.*)?)$/, "/100x100bb$1");
+	}
+	if (raw.includes("y.gtimg.cn/music/photo_new/")) {
+		return raw.replace(/T002R(?:300|500|800)x(?:300|500|800)M000/, "T002R150x150M000");
+	}
+	return raw;
+}
 </script>
 
 <script lang="ts">
@@ -2300,24 +2318,25 @@ $effect(() => {
   {#snippet trackRequestRow(song: ChatMusicTrack, subtitle: string, countBadge?: string)}
     {@const isCurrent = isTrackCurrent(song)}
     {@const isQueued = isTrackQueued(song)}
-    {@const coverFailed = Boolean(song.cover && failedCoverUrls.has(song.cover))}
-    {@const coverLoaded = Boolean(song.cover && loadedCoverUrls.has(song.cover))}
+    {@const thumbCover = resolveMusicThumbUrl(song.cover)}
+    {@const coverFailed = Boolean(thumbCover && failedCoverUrls.has(thumbCover))}
+    {@const coverLoaded = Boolean(thumbCover && loadedCoverUrls.has(thumbCover))}
     <div class="flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-10 h-10 md:w-8 md:h-8 rounded-lg md:rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
-        {#if song.cover && !coverFailed}
+        {#if thumbCover && !coverFailed}
           <span class="text-xs text-(--primary)/70 select-none" aria-hidden="true">♪</span>
           <img
-            src={song.cover}
+            src={thumbCover}
             alt=""
             loading="lazy"
             decoding="async"
             class="absolute inset-0 w-full h-full object-cover {coverLoaded ? 'opacity-100' : 'opacity-0 transition-opacity duration-150'}"
             onload={(e) => {
-              markCoverLoaded(song.cover);
+              markCoverLoaded(thumbCover);
               e.currentTarget.style.opacity = "1";
             }}
             onerror={(e) => {
-              markCoverFailed(song.cover);
+              markCoverFailed(thumbCover);
               e.currentTarget.style.display = "none";
             }}
           />
@@ -3124,7 +3143,7 @@ $effect(() => {
         >
           <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
             {#if pl.coverUrl}
-              <img src={pl.coverUrl} alt="" loading="lazy" class="w-full h-full object-cover" />
+              <img src={resolveMusicThumbUrl(pl.coverUrl)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
             {:else}
               <span class="text-sm text-(--primary)">♪</span>
             {/if}
@@ -3149,7 +3168,7 @@ $effect(() => {
                 <span>·</span>
                 <span class="inline-flex items-center gap-1 min-w-0">
                   {#if pl.ownerAvatar}
-                    <img src={pl.ownerAvatar} alt="" class="w-3 h-3 rounded-full object-cover shrink-0" />
+                    <ChatAvatar src={pl.ownerAvatar} name={pl.ownerName} size="2xs" lazy class="w-3! h-3! text-[7px]!" />
                   {/if}
                   <span class="truncate">{pl.ownerName}</span>
                 </span>

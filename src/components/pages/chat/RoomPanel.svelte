@@ -2,7 +2,11 @@
 import { onMount } from "svelte";
 import Icon from "@/components/common/Icon.svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
-import ChatAvatar from "./ChatAvatar.svelte";
+import ChatAvatar, {
+	canCorsDownscaleAvatar,
+	downscaleImgElementInPlace,
+	getDownscaledAvatarUrl,
+} from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import {
@@ -423,12 +427,15 @@ function formatOfflineTime(ts?: number): string {
       onclick={() => onRoomSelect?.(room.id)}
     >
       {#if hasRoomAvatar}
+        {@const thumbUrl = getDownscaledAvatarUrl(rawRoomAvatar)}
         <img
-          src={rawRoomAvatar}
+          src={thumbUrl || rawRoomAvatar}
           alt={room.name}
           class="w-9 h-9 md:w-8 md:h-8 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
           loading="eager"
           decoding="async"
+          crossorigin={!thumbUrl && canCorsDownscaleAvatar(rawRoomAvatar) ? "anonymous" : undefined}
+          onload={(e) => downscaleImgElementInPlace(e.currentTarget, rawRoomAvatar)}
           onerror={() => {
             failedRoomAvatars = { ...failedRoomAvatars, [rawRoomAvatar]: true };
           }}

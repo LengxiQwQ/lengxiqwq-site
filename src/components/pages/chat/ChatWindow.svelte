@@ -2,7 +2,11 @@
 import { onMount, tick } from "svelte";
 import { KAOMOJI_PRESETS } from "@/constants/kaomoji";
 import type { InterconnectSite } from "@/types/chatConfig";
-import ChatAvatar from "./ChatAvatar.svelte";
+import ChatAvatar, {
+	canCorsDownscaleAvatar,
+	downscaleImgElementInPlace,
+	getDownscaledAvatarUrl,
+} from "./ChatAvatar.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import { positionChatFloating } from "./chatFloating";
@@ -2448,11 +2452,14 @@ function removePendingImage(index: number) {
         >
           <span class="relative inline-flex items-center justify-center w-7 h-7 rounded-lg bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] shrink-0">
             {#if hasRoomAvatar}
+              {@const thumbUrl = getDownscaledAvatarUrl(effectiveRoomAvatar)}
               <img
-                src={effectiveRoomAvatar}
+                src={thumbUrl || effectiveRoomAvatar}
                 alt={roomName}
                 class="w-full h-full rounded-lg object-cover"
                 decoding="async"
+                crossorigin={!thumbUrl && canCorsDownscaleAvatar(effectiveRoomAvatar) ? "anonymous" : undefined}
+                onload={(e) => downscaleImgElementInPlace(e.currentTarget, effectiveRoomAvatar)}
                 onerror={() => {
                   failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
                 }}
@@ -2484,11 +2491,14 @@ function removePendingImage(index: number) {
         <!-- 桌面端 / iPad 左侧：独立房间头像框、名称（互联茶室为可下拉框）与副标题 -->
         <div class="chat-header-room-avatar chat-desktop-only">
           {#if hasRoomAvatar}
+            {@const thumbUrl = getDownscaledAvatarUrl(effectiveRoomAvatar)}
             <img
-              src={effectiveRoomAvatar}
+              src={thumbUrl || effectiveRoomAvatar}
               alt={roomName}
               class="w-full h-full object-cover"
               decoding="async"
+              crossorigin={!thumbUrl && canCorsDownscaleAvatar(effectiveRoomAvatar) ? "anonymous" : undefined}
+              onload={(e) => downscaleImgElementInPlace(e.currentTarget, effectiveRoomAvatar)}
               onerror={() => {
                 failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
               }}

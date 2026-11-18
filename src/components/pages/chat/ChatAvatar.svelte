@@ -25,6 +25,27 @@ function markAvatarLoaded(url: string): void {
 	loadedAvatarUrls.add(url);
 }
 
+export function getDownscaledAvatarUrl(url: string): string {
+	return downscaledAvatarUrls.get(url) || "";
+}
+
+export function canCorsDownscaleAvatar(url: string): boolean {
+	return canAttemptCorsDownscale(url);
+}
+
+export function downscaleImgElementInPlace(
+	img: HTMLImageElement,
+	rawUrl: string,
+): void {
+	if (!rawUrl || !canAttemptCorsDownscale(rawUrl)) return;
+	if (img.naturalWidth <= 160 && img.naturalHeight <= 160) return;
+	void downscaleAvatarToBlobUrl(img, rawUrl).then((blobUrl) => {
+		if (blobUrl && img.isConnected) {
+			img.src = blobUrl;
+		}
+	});
+}
+
 function canAttemptCorsDownscale(url: string): boolean {
 	if (!url || typeof window === "undefined") return false;
 	if (corsDisabledAvatarUrls.has(url)) return false;
