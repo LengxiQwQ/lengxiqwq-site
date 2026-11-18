@@ -1,0 +1,103 @@
+--- a/src/music/music-manager.mjs
++++ b/src/music/music-manager.mjs
+@@ -38,6 +38,8 @@
+ 
+     this.current = null;
+     this.queue = [];
++    this.queueVotes = new Map();
++    this.queueVotePlayUid = null;
+     this.historyMap = new Map(); // trackId -> MusicHistoryEntry
+     this.historyLogs = []; // Array of MusicHistoryLogEntry
+     this.fallbackTracks = [];
+@@ -174,7 +176,12 @@
+ 
+     return {
+       current: this.current,
+-      queue: this.queue,
++      queue: this.queue.map(item => ({
++        ...item,
++        playVotes: this.queueVotePlayUid === this.current?.uid
++          ? [...this.queueVotes.entries()].filter(([, target]) => target === item.uid).map(([key]) => key)
++          : []
++      })),
+       history: histList,
+       historyLogs: logsList,
+       requesterOnline,
+@@ -466,8 +473,8 @@
+     const isFallback = Boolean(this.current.isFallback);
+ 
+     // 轮播歌单、自己点的歌、站长：随时直接切！
+-    // 房间在线人数 <= 2，或者有效听歌人数 <= 2：随时直接切！
+-    const canDirect = isFallback || isOwner || isAdmin || onlineCount <= 2 || listeningCount <= 2;
++    // 有效听歌人数 <= 2：随时直接切！
++    const canDirect = isFallback || isOwner || isAdmin || listeningCount <= 2;
+ 
+     if (canDirect) {
+       this.advanceNext();
+@@ -479,6 +486,10 @@
+ 
+   voteSkip(actor, onlineCount, listeningCount = 0) {
+     if (!this.current) return { ok: false, error: '当前没有正在播放的歌曲' };
++    if (this.current.isFallback || actor.isAdmin || actor.userKey === this.current.requesterKey || listeningCount < 3) {
++      this.advanceNext();
++      return { ok: true, skipped: true };
++    }
+ 
+     // 取消投票 (Toggle)
+     const idx = this.current.skipVotes.indexOf(actor.userKey);
+@@ -517,6 +528,7 @@
+     }
+ 
+     this.queue.splice(idx, 1);
++    for (const [key, target] of this.queueVotes) if (target === uid) this.queueVotes.delete(key);
+     this.markOutcome(uid, 'cancelled');
+     if (idx === 0) {
+       this.preparedQueue = null;
+@@ -527,15 +539,44 @@
+     return { ok: true };
+   }
+ 
+-  async playQueued(uid, actor) {
+-    if (!actor.isAdmin) return { ok: false, error: '仅站长可执行插播' };
++  async playQueued(uid, actor, listeningCount = 0, playUid) {
++    if (playUid && playUid !== this.current?.uid) return { ok: false, error: '歌曲已切换，请重试' };
+     const item = this.queue.find(entry => entry.uid === uid);
+     if (!item) return { ok: false, error: '排队曲目不存在' };
++    const currentUid = this.current?.uid ?? null;
++    if (this.queueVotePlayUid !== currentUid) {
++      this.queueVotes.clear();
++      this.queueVotePlayUid = currentUid;
++    }
++    const canDirect = !this.current || this.current.isFallback || actor.isAdmin ||
++      actor.userKey === this.current.requesterKey || listeningCount < 3;
++    if (!canDirect) {
++      if (this.queueVotes.get(actor.userKey) === uid) {
++        this.queueVotes.delete(actor.userKey);
++        this.onStateChanged();
++        return { ok: true, unvoted: true };
++      }
++      this.queueVotes.set(actor.userKey, uid);
++      const votes = [...this.queueVotes.values()].filter(target => target === uid).length;
++      if (votes < 2) {
++        this.onStateChanged();
++        return { ok: true, votes, threshold: 2 };
++      }
++    }
++    const generation = this.generation;
+     const prepared = this.preparedQueue?.key === uid ? this.preparedQueue : null;
+     const playable = await this.usePrepared(prepared) || await this.resolve(item.track);
++    if (generation !== this.generation || this.current?.uid !== (currentUid ?? undefined)) {
++      return { ok: false, error: '播放状态已更新，请重试' };
++    }
+     const index = this.queue.indexOf(item);
+     if (index < 0) return { ok: false, error: '排队曲目已变更' };
+-    if (!playable) return { ok: false, error: '歌曲暂时没有可用音源' };
++    if (!playable) {
++      this.queueVotes.clear();
++      this.onStateChanged();
++      return { ok: false, error: '歌曲暂时没有可用音源' };
++    }
++    this.queueVotes.clear();
+     this.queue.splice(index, 1);
+     if (index === 0) this.preparedQueue = null;
+     this.playTrack(playable, {

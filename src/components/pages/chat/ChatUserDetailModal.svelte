@@ -50,7 +50,6 @@ interface Props {
 }
 
 const TRACK_PAGE_SIZE = 50;
-const USER_DETAIL_CACHE_TTL_MS = 15 * 1000;
 const userDetailCache = new Map<
 	string,
 	{ profile: ChatUserDetailProfile; fetchedAt: number }
@@ -81,6 +80,7 @@ let remoteHasMore = $state(false);
 let remoteNextBeforeId = $state(0);
 let isLoading = $state(false);
 let isLoadingMore = $state(false);
+let tracksLoadFailed = $state(false);
 let localVisibleLimit = $state(TRACK_PAGE_SIZE);
 let trackTab = $state<"recent" | "top">("recent");
 let bodyContainerEl: HTMLDivElement | null = $state(null);
@@ -152,6 +152,26 @@ function formatFullDate(ts?: number): string {
 	return `${yyyy}-${mm}-${dd} ${hh}:${min}`;
 }
 
+// 每条日志代表这个人的一次点歌；日志里的 requestCount 是全站次数。
+function aggregateRequestedTracks(logs: ChatUserRequestedTrackItem[]): ChatUserRequestedTrackItem[] {
+	const tracks = new Map<string, ChatUserRequestedTrackItem>();
+	for (const log of logs) {
+		const key = log.track.id;
+		const previous = tracks.get(key);
+		if (!previous) {
+			tracks.set(key, { ...log, requestCount: 1 });
+		} else {
+			previous.requestCount += 1;
+			if (log.requestedAt > previous.requestedAt) {
+				previous.track = log.track;
+				previous.requestedAt = log.requestedAt;
+				previous.logId = log.logId;
+			}
+		}
+	}
+	return [...tracks.values()].sort((a, b) => b.requestedAt - a.requestedAt);
+}
+
 const fallbackData = $derived.by<{
 	profile: ChatUserDetailProfile;
 	allTracks: ChatUserRequestedTrackItem[];
@@ -220,12 +240,12 @@ const fallbackData = $derived.by<{
 	const userLogs = musicHistoryLogs.filter(
 		(l) => l.requesterKey === seed.userKey,
 	);
-	const allTracks: ChatUserRequestedTrackItem[] = userLogs.map((log) => ({
+	const allTracks = aggregateRequestedTracks(userLogs.map((log) => ({
 		logId: log.id,
 		track: log.track,
 		requestedAt: log.requestedAt,
-		requestCount: log.requestCount,
-	}));
+		requestCount: 1,
+	})));
 
 	const topMap = new Map<string, ChatUserTopTrackItem>();
 	const artistMap = new Map<string, number>();
@@ -425,11 +445,14 @@ const isSelf = $derived(
 	),
 );
 const displayedTracks = $derived.by<ChatUserRequestedTrackItem[]>(() => {
-	if (remoteProfile) return remoteTracks;
+	if (remoteProfile) return aggregateRequestedTracks(remoteTracks).slice(0, localVisibleLimit);
 	return (fallbackData?.allTracks ?? []).slice(0, localVisibleLimit);
 });
 const topTracks = $derived.by<ChatUserTopTrackItem[]>(() => {
-	if (remoteProfile?.topTracks) return remoteProfile.topTracks;
+	if (remoteProfile) return aggregateRequestedTracks(remoteTracks)
+		.map((item) => ({ track: item.track, requestCount: item.requestCount, lastRequestedAt: item.requestedAt }))
+		.sort((a, b) => b.requestCount - a.requestCount || b.lastRequestedAt - a.lastRequestedAt)
+		.slice(0, 50);
 	return fallbackData?.topTracks ?? [];
 });
 const topArtists = $derived.by<ChatUserTopArtistItem[]>(() => {
@@ -447,12 +470,12 @@ const recentMessages = $derived.by<ChatUserRecentMessage[]>(() => {
 });
 const hasMoreTracks = $derived.by<boolean>(() => {
 	if (trackTab !== "recent") return false;
-	if (remoteProfile) return remoteHasMore;
+	if (remoteProfile) return remoteHasMore || aggregateRequestedTracks(remoteTracks).length > localVisibleLimit;
 	return (fallbackData?.allTracks.length ?? 0) > localVisibleLimit;
 });
 const totalSongCount = $derived.by<number>(() => {
 	if (!profile) return 0;
-	return Math.max(profile.stats.songRequestCount, displayedTracks.length);
+	return remoteProfile ? aggregateRequestedTracks(remoteTracks).length : (fallbackData?.allTracks.length ?? 0);
 });
 
 $effect(() => {
@@ -462,6 +485,7 @@ $effect(() => {
 	remoteHasMore = false;
 	remoteNextBeforeId = 0;
 	isLoadingMore = false;
+	tracksLoadFailed = false;
 	trackTab = "recent";
 	lockedMinHeight = 0;
 
@@ -487,9 +511,6 @@ $effect(() => {
 
 	const detailCacheKey = `${roomId}:${currentSeed.userKey}`;
 	const cachedEntry = userDetailCache.get(detailCacheKey);
-	const hasFreshCache =
-		cachedEntry &&
-		Date.now() - cachedEntry.fetchedAt < USER_DETAIL_CACHE_TTL_MS;
 
 	if (cachedEntry) {
 		const liveOnline = onlineMembers.find(
@@ -523,12 +544,6 @@ $effect(() => {
 		remoteTracks = mergedProfile.recentTracks ?? [];
 		remoteHasMore = Boolean(mergedProfile.tracksHasMore);
 		remoteNextBeforeId = Number(mergedProfile.tracksNextBeforeId || 0);
-
-		// 若缓存仍在极短保鲜期（< 3秒），作为最终展示；否则作为 SWR 瞬时骨架并在后台刷新
-		if (hasFreshCache && Date.now() - cachedEntry.fetchedAt < 3000) {
-			isLoading = false;
-			return;
-		}
 	}
 
 	let cancelled = false;
@@ -560,22 +575,25 @@ $effect(() => {
 
 async function loadMoreTracks() {
 	if (
-		trackTab !== "recent" ||
+		isLoading ||
 		isLoadingMore ||
-		!hasMoreTracks ||
+		!(remoteProfile ? remoteHasMore || hasMoreTracks : hasMoreTracks) ||
 		!seed?.userKey
 	) {
 		return;
 	}
-	if (!remoteProfile) {
+	if (!remoteProfile || !remoteHasMore) {
 		localVisibleLimit += TRACK_PAGE_SIZE;
 		return;
 	}
 	if (remoteNextBeforeId <= 0) {
-		remoteHasMore = false;
+		tracksLoadFailed = true;
 		return;
 	}
 	const targetKey = seed.userKey;
+	const targetRoom = roomId;
+	const targetProfile = remoteProfile;
+	tracksLoadFailed = false;
 	isLoadingMore = true;
 	try {
 		const page = await fetchUserDetailTracks(
@@ -585,8 +603,11 @@ async function loadMoreTracks() {
 			remoteNextBeforeId,
 			TRACK_PAGE_SIZE,
 		);
-		if (!open || seed?.userKey !== targetKey) return;
-		if (!page) return;
+		if (!open || seed?.userKey !== targetKey || roomId !== targetRoom || remoteProfile !== targetProfile) return;
+		if (!page || (page.hasMore && (page.nextBeforeId <= 0 || page.nextBeforeId >= remoteNextBeforeId))) {
+			tracksLoadFailed = true;
+			return;
+		}
 		const seenLogIds = new Set(
 			remoteTracks
 				.map((item) => item.logId)
@@ -599,11 +620,18 @@ async function loadMoreTracks() {
 		remoteHasMore = page.hasMore && page.nextBeforeId > 0;
 		remoteNextBeforeId = page.nextBeforeId;
 	} finally {
-		if (seed?.userKey === targetKey) {
+		if (seed?.userKey === targetKey && roomId === targetRoom && remoteProfile === targetProfile) {
 			isLoadingMore = false;
 		}
 	}
 }
+
+// 读取全部分页后才能统计每首歌的真实个人次数。
+$effect(() => {
+	if (open && remoteProfile && remoteHasMore && !isLoading && !isLoadingMore && !tracksLoadFailed) {
+		void loadMoreTracks();
+	}
+});
 
 function handleSwitchTrackTab(nextTab: "recent" | "top") {
 	if (nextTab === trackTab) return;
@@ -1433,7 +1461,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
             <span class="text-[11px] text-[var(--chat-meta-color)]">累计点歌</span>
             <span class="text-xs font-bold text-[var(--deep-text)] tabular-nums">
-              {profile.stats.songRequestCount}
+              {remoteProfile ? (remoteHasMore ? "统计中" : remoteTracks.length) : profile.stats.songRequestCount}
             </span>
           </div>
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
@@ -1540,7 +1568,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           <div class="flex items-center gap-2 min-w-0">
             <span class="text-xs font-bold text-[var(--deep-text)]">点过的歌</span>
             <span class="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-(--primary)/12 text-[var(--chat-accent-text)] tabular-nums">
-              共 {totalSongCount} 首
+              {tracksLoadFailed ? "统计未完成" : remoteHasMore ? "正在统计" : `共 ${totalSongCount} 首`}
             </span>
           </div>
 
@@ -1606,7 +1634,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                         · {formatTrackTime(item.requestedAt)}
                       {/if}
                       {#if item.requestCount > 1}
-                        · 全站 {item.requestCount} 次
+                        · 点过 {remoteHasMore ? "至少 " : ""}{item.requestCount} 次
                       {/if}
                     </div>
                   </div>
@@ -1629,6 +1657,10 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                   <span class="text-[11px] text-[var(--chat-meta-color)]">
                     正在加载更多点歌记录...
                   </span>
+                {:else if tracksLoadFailed}
+                  <button type="button" class="btn-regular h-8 px-3.5 rounded-lg text-[11px] font-medium cursor-pointer border-none" onclick={() => void loadMoreTracks()}>
+                    加载失败，点击重试
+                  </button>
                 {:else if hasMoreTracks}
                   <button
                     type="button"
@@ -1674,7 +1706,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                     {item.track.title}
                   </div>
                   <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
-                    {item.track.artist} · TA 点过 {item.requestCount} 次
+                    {item.track.artist} · 点过 {remoteHasMore ? "至少 " : ""}{item.requestCount} 次
                   </div>
                 </div>
                 {#if onEnqueueTrack}

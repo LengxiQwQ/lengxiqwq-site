@@ -1067,10 +1067,18 @@ export async function fetchUserDetailProfile(
 			profile?: ChatUserDetailProfile;
 		};
 		if (!data.ok || !data.profile) return null;
-		return data.profile;
+		return {
+			...data.profile,
+			recentTracks: (data.profile.recentTracks ?? []).map(normalizeUserTrackLog),
+		};
 	} catch {
 		return null;
 	}
+}
+
+function normalizeUserTrackLog(item: ChatUserTracksPage["items"][number]): ChatUserTracksPage["items"][number] {
+	const log = item as typeof item & { id?: number };
+	return { ...item, logId: item.logId ?? log.id };
 }
 
 export async function fetchUserDetailTracks(
@@ -1092,12 +1100,14 @@ export async function fetchUserDetailTracks(
 		const data = (await resp.json()) as {
 			ok?: boolean;
 			items?: ChatUserTracksPage["items"];
+			tracks?: ChatUserTracksPage["items"];
 			hasMore?: boolean;
 			nextBeforeId?: number;
 		};
-		if (!data.ok || !Array.isArray(data.items)) return null;
+		const items = data.items ?? data.tracks;
+		if (!data.ok || !Array.isArray(items)) return null;
 		return {
-			items: data.items,
+			items: items.map(normalizeUserTrackLog),
 			hasMore: Boolean(data.hasMore),
 			nextBeforeId: Number(data.nextBeforeId || 0),
 		};

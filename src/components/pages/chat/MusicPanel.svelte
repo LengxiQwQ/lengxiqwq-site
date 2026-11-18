@@ -633,14 +633,13 @@ const isOwnRequest = $derived(
 // 1. 冷场轮播歌单：所有人随便切
 // 2. 自己点的歌：自己随便切
 // 3. 站长：随便切
-// 4. 房间在线人数 <= 2 或 正在听歌人数 <= 2：无论谁都可以随便切
+// 4. 正在听歌人数 <= 2：无论谁都可以随便切
 const canDirectSkip = $derived(
 	Boolean(currentPlay) &&
 		(currentPlay.isFallback ||
 			(Boolean(currentUser) &&
 				(isAdmin ||
 					isOwnRequest ||
-					onlineMemberCount <= 2 ||
 					listeningMemberCount <= 2))),
 );
 const isSoloCoolingDown = $derived(false);
@@ -2484,6 +2483,26 @@ $effect(() => {
     </div>
   {/snippet}
 
+  {#snippet queuedPlayButton(item: QueueEntry)}
+    {@const votes = item.playVotes ?? []}
+    {@const voted = Boolean(currentUser && votes.includes(currentUser.userKey))}
+    {@const direct = !currentPlay || canDirectSkip}
+    {@const action = direct ? "切到" : voted ? "取消投票切到" : "投票切到"}
+    <button
+      type="button"
+      class="chat-queue-play-btn {voted ? 'is-voted' : ''}"
+      aria-label={`${action} ${item.track.title}${!direct ? `，${votes.length}/2 票` : ""}`}
+      title={`${action} ${item.track.title}${!direct ? `（${votes.length}/2）` : ""}`}
+      aria-pressed={!direct ? voted : undefined}
+      onclick={() => onPlayQueued(item.uid)}
+    >
+      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="m7.07 18.62 8.43-5.95c.56-.39.56-1.24 0-1.64L7.07 5.08c-.65-.46-1.57 0-1.57.8v11.94c0 .8.92 1.26 1.57.8zM17 6c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1s-1-.45-1-1V7c0-.55.45-1 1-1z" />
+      </svg>
+      {#if !direct && votes.length > 0}{#key votes.length}<span class="chat-queue-vote-count">{votes.length}/2</span>{/key}{/if}
+    </button>
+  {/snippet}
+
   <!-- 迷你播放条：紧跟 4 个 Tab 下方，切换其它页签时常驻 -->
   {#if activeTab !== "player" && currentPlay}
     <MiniPlayerBar
@@ -2918,18 +2937,7 @@ $effect(() => {
                     </div>
 
                     <div class="flex items-center gap-0.5 shrink-0">
-                      {#if currentUser?.isAdmin}
-                        <button
-                          type="button"
-                          class="chat-queue-icon-btn"
-                          onclick={() => onPlayQueued(item.uid)}
-                          aria-label={`切到 ${item.track.title}`}
-                        >
-                          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                            <path d="m7.07 18.62 8.43-5.95c.56-.39.56-1.24 0-1.64L7.07 5.08c-.65-.46-1.57 0-1.57.8v11.94c0 .8.92 1.26 1.57.8zM17 6c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1s-1-.45-1-1V7c0-.55.45-1 1-1z" />
-                          </svg>
-                        </button>
-                      {/if}
+                      {@render queuedPlayButton(item)}
                       {#if canRemoveEntry(item)}
                         <button
                           type="button"
@@ -3140,18 +3148,7 @@ $effect(() => {
                 </div>
 
                 <div class="flex items-center gap-0.5 shrink-0">
-                  {#if currentUser?.isAdmin}
-                    <button
-                      type="button"
-                      class="chat-queue-icon-btn"
-                      onclick={() => onPlayQueued(item.uid)}
-                      aria-label={`切到 ${item.track.title}`}
-                    >
-                      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                        <path d="m7.07 18.62 8.43-5.95c.56-.39.56-1.24 0-1.64L7.07 5.08c-.65-.46-1.57 0-1.57.8v11.94c0 .8.92 1.26 1.57.8zM17 6c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1s-1-.45-1-1V7c0-.55.45-1 1-1z" />
-                      </svg>
-                    </button>
-                  {/if}
+                  {@render queuedPlayButton(item)}
                   {#if canRemoveEntry(item)}
                     <button
                       type="button"

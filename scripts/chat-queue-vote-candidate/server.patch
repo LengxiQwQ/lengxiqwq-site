@@ -1,0 +1,12 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -3869,7 +3869,8 @@
+         } else if (packet.type === 'music:remove') {
+           result = targetMgr.removeQueue(packet.uid, actor);
+         } else if (packet.type === 'music:play_queued') {
+-          result = await targetMgr.playQueued(packet.uid, actor);
++          const { listeningCount } = getRoomMusicAudience(ws.currentRoom);
++          result = await targetMgr.playQueued(packet.uid, actor, listeningCount, packet.playUid);
+         }
+         if (result?.ok === false && ws.readyState === 1) {
+           ws.send(JSON.stringify({ type: 'error', message: result.error }));

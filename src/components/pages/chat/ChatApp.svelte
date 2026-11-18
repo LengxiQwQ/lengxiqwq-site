@@ -2748,7 +2748,7 @@ onMount(() => {
             showAuthModal = true;
             return;
           }
-          sendPacket({ type: "music:play_queued", uid });
+          sendPacket({ type: "music:play_queued", uid, playUid: musicState?.current?.uid });
         }}
         isSkippingTrack={isSkippingTrack}
         onSkipTrack={handleSkipTrack}

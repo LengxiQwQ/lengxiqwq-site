@@ -291,6 +291,7 @@ export interface ChatMessageRecord {
 
 export interface QueueEntry {
 	uid: string;
+	playVotes?: string[];
 	track: ChatMusicTrack;
 	requesterKey: string;
 	requesterName: string;

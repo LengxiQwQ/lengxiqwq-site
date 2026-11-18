@@ -1636,6 +1636,42 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transform: scale(0.92);
 }
 
+.chat-queue-play-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.15rem;
+	min-width: 2rem;
+	height: 2rem;
+	padding: 0 0.35rem;
+	border: 0;
+	border-radius: 0.55rem;
+	background: color-mix(in oklch, var(--primary) 10%, transparent);
+	color: var(--chat-accent-text);
+	cursor: pointer;
+	transition: background-color 160ms ease, color 160ms ease, transform 140ms ease;
+}
+.chat-queue-play-btn:hover, .chat-queue-play-btn.is-voted {
+	background: color-mix(in oklch, var(--primary) 22%, transparent);
+}
+.chat-queue-play-btn:active { transform: scale(0.92); }
+.chat-queue-play-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.chat-queue-vote-count {
+	font-size: 0.625rem;
+	font-weight: 700;
+	font-variant-numeric: tabular-nums;
+	animation: chat-queue-vote-appear 180ms ease-out;
+}
+@keyframes chat-queue-vote-appear {
+	from { opacity: 0.4; transform: scale(0.85); }
+	to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+	.chat-queue-play-btn { transition: none; }
+	.chat-queue-vote-count { animation: none; }
+	.chat-queue-play-btn:active { transform: none; }
+}
+
 .chat-playing-pill {
 	display: inline-flex;
 	align-items: center;
