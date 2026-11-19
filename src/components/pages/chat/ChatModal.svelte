@@ -1,9 +1,27 @@
 <script module lang="ts">
-let activeChatModalCount = 0;
+const activeChatModals: HTMLDivElement[] = [];
+
+function topChatModal(): HTMLDivElement | undefined {
+	return (
+		activeChatModals
+			.filter((modal) => modal.classList.contains("chat-modal-backdrop--top"))
+			.at(-1) ?? activeChatModals.at(-1)
+	);
+}
+
+function syncModalStack(): void {
+	const top = topChatModal();
+	for (const modal of activeChatModals) {
+		const behind = modal !== top;
+		modal.inert = behind;
+		modal.toggleAttribute("data-chat-modal-behind", behind);
+	}
+}
 </script>
 
 <script lang="ts">
 import type { Snippet } from "svelte";
+import { fadeChatSheetBackdrop, slideChatSheetOut } from "./chatSheetMotion";
 
 interface Props {
 	open: boolean;
@@ -11,6 +29,7 @@ interface Props {
 	subtitle?: string;
 	ariaLabel?: string;
 	size?: "sm" | "md" | "lg";
+	mobile?: "compact" | "expandable" | "full";
 	fillHeightOnDesktop?: boolean;
 	lockedMinHeight?: number;
 	topPriority?: boolean;
@@ -26,6 +45,7 @@ const {
 	subtitle = "",
 	ariaLabel = "",
 	size = "sm",
+	mobile = "compact",
 	fillHeightOnDesktop = false,
 	lockedMinHeight = 0,
 	topPriority = false,
@@ -36,7 +56,12 @@ const {
 }: Props = $props();
 
 let backdropEl: HTMLDivElement | null = $state(null);
+let dialogEl: HTMLDivElement | null = $state(null);
 let backdropPointerDown = false;
+let expanded = $state(false);
+let dragOffset = $state(0);
+let dragStart: { id: number; y: number } | null = $state(null);
+let suppressHandleClick = false;
 
 function placeBackdrop(node: HTMLDivElement) {
 	if (!portalToChatPage) return;
@@ -50,23 +75,118 @@ function placeBackdrop(node: HTMLDivElement) {
 }
 
 $effect(() => {
-	if (!open) return;
-	activeChatModalCount += 1;
+	const backdrop = backdropEl;
+	const dialog = dialogEl;
+	if (!backdrop || !dialog) return;
+	const trigger = document.activeElement;
+	activeChatModals.push(backdrop);
+	syncModalStack();
+	expanded = false;
+	dragOffset = 0;
+	dragStart = null;
+	suppressHandleClick = false;
 	document.documentElement.setAttribute("data-chat-modal-open", "true");
+	const focusFrame = requestAnimationFrame(() => {
+		if (open && topChatModal() === backdrop && !dialog.contains(document.activeElement)) {
+			dialog.focus({ preventScroll: true });
+		}
+	});
 	const handleKeydown = (e: KeyboardEvent) => {
+		if (topChatModal() !== backdrop || e.defaultPrevented || e.isComposing) return;
 		if (e.key === "Escape") {
-			onClose();
+			e.preventDefault();
+			if (open) onClose();
+			return;
+		}
+		if (e.key === "Tab") {
+			const controls = Array.from(dialog.querySelectorAll<HTMLElement>(
+				'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable="true"], [tabindex]',
+			)).filter((control) => control.tabIndex >= 0 && control.getClientRects().length > 0 && !control.closest("[inert]"));
+			const first = controls[0];
+			const last = controls.at(-1);
+			const active = document.activeElement;
+			if (!active || !controls.includes(active as HTMLElement) || active === (e.shiftKey ? first : last)) {
+				e.preventDefault();
+				(e.shiftKey ? last ?? dialog : first ?? dialog).focus({ preventScroll: true });
+			}
 		}
 	};
 	document.addEventListener("keydown", handleKeydown);
 	return () => {
+		cancelAnimationFrame(focusFrame);
 		document.removeEventListener("keydown", handleKeydown);
-		activeChatModalCount = Math.max(0, activeChatModalCount - 1);
-		if (activeChatModalCount === 0) {
+		const wasTop = topChatModal() === backdrop;
+		activeChatModals.splice(activeChatModals.indexOf(backdrop), 1);
+		syncModalStack();
+		if (activeChatModals.length === 0) {
 			document.documentElement.removeAttribute("data-chat-modal-open");
 		}
+		if (!wasTop) return;
+		const nextModal = topChatModal();
+		requestAnimationFrame(() => {
+			if (topChatModal() !== nextModal || document.activeElement !== document.body) return;
+			if (trigger instanceof HTMLElement && trigger.isConnected && (!nextModal || nextModal.contains(trigger))) {
+				trigger.focus({ preventScroll: true });
+			} else {
+				nextModal?.querySelector<HTMLElement>(".chat-dialog-card")?.focus({ preventScroll: true });
+			}
+		});
 	};
 });
+
+$effect(() => {
+	const backdrop = backdropEl;
+	const viewport = window.visualViewport;
+	const page = document.getElementById("chat-page");
+	if (!backdrop || !viewport || !page || typeof window.matchMedia !== "function") return;
+	const narrow = window.matchMedia("(width < 768px)");
+	const syncViewport = () => {
+		if (!narrow.matches) return;
+		const bounds = page.getBoundingClientRect();
+		const top = Math.max(bounds.top, viewport.offsetTop);
+		const bottom = Math.min(bounds.bottom, viewport.offsetTop + viewport.height);
+		if (bottom <= top) return;
+		backdrop.style.setProperty("--chat-sheet-top", `${top - bounds.top}px`);
+		backdrop.style.setProperty("--chat-sheet-viewport", `${bottom - top}px`);
+	};
+	syncViewport();
+	viewport.addEventListener("resize", syncViewport);
+	viewport.addEventListener("scroll", syncViewport);
+	window.addEventListener("resize", syncViewport);
+	return () => {
+		viewport.removeEventListener("resize", syncViewport);
+		viewport.removeEventListener("scroll", syncViewport);
+		window.removeEventListener("resize", syncViewport);
+	};
+});
+
+function startDrag(event: PointerEvent) {
+	if (!event.isPrimary || event.button !== 0) return;
+	suppressHandleClick = false;
+	dragStart = { id: event.pointerId, y: event.clientY };
+	(event.currentTarget as HTMLButtonElement).setPointerCapture(event.pointerId);
+}
+
+function moveDrag(event: PointerEvent) {
+	if (dragStart?.id !== event.pointerId) return;
+	const delta = event.clientY - dragStart.y;
+	if (Math.abs(delta) > 8) suppressHandleClick = true;
+	dragOffset = delta;
+}
+
+function finishDrag(event: PointerEvent, cancelled = false) {
+	if (dragStart?.id !== event.pointerId) return;
+	const delta = event.clientY - dragStart.y;
+	dragStart = null;
+	dragOffset = 0;
+	if (cancelled || Math.abs(delta) <= 8) return;
+	suppressHandleClick = true;
+	if (delta < -56) expanded = true;
+	if (delta > 80) {
+		if (expanded) expanded = false;
+		else onClose();
+	}
+}
 
 function handlePointerDown(e: PointerEvent) {
 	backdropPointerDown = e.target === backdropEl;
@@ -92,19 +212,44 @@ const sizeClass = $derived(
   <div
     bind:this={backdropEl}
     use:placeBackdrop
+    out:fadeChatSheetBackdrop
     class="chat-modal-backdrop {topPriority ? 'chat-modal-backdrop--top' : ''}"
     role="presentation"
     onpointerdown={handlePointerDown}
     onclick={handleBackdropClick}
   >
     <div
+      bind:this={dialogEl}
+      out:slideChatSheetOut
       class="chat-dialog-card {sizeClass} {fillHeightOnDesktop ? 'chat-dialog-card--fill-md' : ''}"
-      style={lockedMinHeight > 0 ? `min-height: min(${lockedMinHeight}px, 100%);` : undefined}
+      data-chat-sheet={mobile}
+      class:chat-sheet-expanded={expanded}
+      class:chat-sheet-dragging={Boolean(dragStart)}
+      style:--chat-dialog-min-height={lockedMinHeight > 0 ? `min(${lockedMinHeight}px, 100%)` : undefined}
+      style:--chat-sheet-drag={dragOffset ? `${dragOffset}px` : undefined}
       role="dialog"
       aria-modal="true"
       aria-label={ariaLabel || title}
+      tabindex="-1"
     >
-      <header class="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-(--chat-divider-color)">
+      {#if mobile === "expandable"}
+        <button
+          type="button"
+          class="chat-sheet-handle"
+          aria-label={expanded ? "收起面板" : "展开面板"}
+          aria-expanded={expanded}
+          onpointerdown={startDrag}
+          onpointermove={moveDrag}
+          onpointerup={finishDrag}
+          onpointercancel={(event) => finishDrag(event, true)}
+          onlostpointercapture={(event) => finishDrag(event, true)}
+          onclick={(event) => {
+            if (event.detail === 0 || !suppressHandleClick) expanded = !expanded;
+            suppressHandleClick = false;
+          }}
+        ><span aria-hidden="true"></span></button>
+      {/if}
+      <header class="chat-dialog-header shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b border-(--chat-divider-color)">
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-2 min-w-0">
             <h3 class="text-sm font-bold text-[var(--deep-text)] m-0 truncate">
@@ -122,7 +267,7 @@ const sizeClass = $derived(
         </div>
         <button
           type="button"
-          class="chat-tool-btn w-7! h-7! shrink-0"
+          class="chat-tool-btn chat-dialog-close shrink-0"
           aria-label="关闭弹窗"
           onclick={onClose}
         >
@@ -141,7 +286,7 @@ const sizeClass = $derived(
         </button>
       </header>
 
-      <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div class="chat-dialog-content flex-1 min-h-0 flex flex-col overflow-hidden">
         {@render children()}
       </div>
     </div>

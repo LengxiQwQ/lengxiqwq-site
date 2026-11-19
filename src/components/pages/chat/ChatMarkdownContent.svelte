@@ -54,7 +54,9 @@ function isSelfMentionTarget(target: string): boolean {
 	const myNameClean = currentUserName.trim().toLowerCase();
 	const myParts = myNameClean.split(/\s*[·•・]\s*/);
 	const myBase = myParts[0]?.trim() || myNameClean;
-	const mySiteClean = (currentUserSite || myParts.slice(1).join(" · ") || "").trim().toLowerCase();
+	const mySiteClean = (currentUserSite || myParts.slice(1).join(" · ") || "")
+		.trim()
+		.toLowerCase();
 
 	const targetParts = cleaned.split(/\s*[·•・]\s*/);
 	const targetBase = targetParts[0]?.trim() || "";
@@ -140,6 +142,8 @@ function getInlineChildren(token: Token): Token[] | undefined {
             decoding="async"
             width={cachedDims?.w}
             height={cachedDims?.h}
+            style:--chat-image-width={cachedDims ? `${cachedDims.w}px` : undefined}
+            style:--chat-image-ratio={cachedDims ? cachedDims.w / cachedDims.h : undefined}
             onload={(e) => rememberChatImageDims(safeSrc, e.currentTarget)}
             class="chat-msg-image"
           />

@@ -15,10 +15,18 @@ const { open, sites = [], onClose }: Props = $props();
 let popoverEl: HTMLDivElement | null = $state(null);
 
 function positionInterconnect(node: HTMLElement) {
-	const anchors = node.parentElement?.querySelectorAll<HTMLElement>("[data-chat-interconnect-anchor]");
-	const reference = anchors && Array.from(anchors).find((anchor) => anchor.getClientRects().length > 0);
+	const anchors = node.parentElement?.querySelectorAll<HTMLElement>(
+		"[data-chat-interconnect-anchor]",
+	);
+	const reference =
+		anchors &&
+		Array.from(anchors).find((anchor) => anchor.getClientRects().length > 0);
 	if (!reference) return;
-	return positionChatFloating(node, { reference, placement: "bottom-start", onReferenceHidden: onClose });
+	return positionChatFloating(node, {
+		reference,
+		placement: "bottom-start",
+		onReferenceHidden: onClose,
+	});
 }
 
 onMount(() => {
@@ -27,7 +35,12 @@ onMount(() => {
 		const target = e.target as HTMLElement | null;
 		if (!target) return;
 		if (popoverEl?.contains(target)) return;
-		if (target.closest("[data-chat-interconnect-trigger], [data-chat-interconnect-anchor]")) return;
+		if (
+			target.closest(
+				"[data-chat-interconnect-trigger], [data-chat-interconnect-anchor]",
+			)
+		)
+			return;
 		onClose();
 	};
 

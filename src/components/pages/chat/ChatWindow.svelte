@@ -12,8 +12,6 @@ import ChatMessage from "./ChatMessage.svelte";
 import ChatMessageSourceModal from "./ChatMessageSourceModal.svelte";
 import ChatThreadModal from "./ChatThreadModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
-import { positionChatFloating } from "./chatFloating";
-import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import {
 	getStoredMusicNoticesEnabled,
 	isMusicNoticeMessage,
@@ -30,7 +28,9 @@ import {
 	uploadChatImage,
 	uploadChatMedia,
 } from "./chatClient";
+import { positionChatFloating } from "./chatFloating";
 import { setChatLightboxSourceProvider } from "./chatLightbox";
+import { closeChatActionSheet, fadeChatSheetBackdrop } from "./chatSheetMotion";
 import type {
 	ChatActiveThreadItem,
 	ChatMentionCandidate,
@@ -43,6 +43,7 @@ import type {
 	ImageAttachment,
 	RoomMusicState,
 } from "./chatTypes";
+import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import {
 	formatChatReplyPreview,
 	type StickerItem,
@@ -143,7 +144,9 @@ interface Props {
 	onOpenRoomDrawer?: () => void;
 	splitRoomPanelId: string;
 	splitRoomOpen: boolean;
-	onToggleSplitRoom: (event: MouseEvent & { currentTarget: HTMLButtonElement }) => void;
+	onToggleSplitRoom: (
+		event: MouseEvent & { currentTarget: HTMLButtonElement },
+	) => void;
 	onOpenMusicDrawer?: () => void;
 	onOpenLyricsDrawer?: () => void;
 	onToggleListen?: () => void;
@@ -239,7 +242,9 @@ let isUploadingMedia = $state(false);
 let isPreviewingMarkdown = $state(false);
 
 const effectiveSubtitle = $derived(roomTopic ? roomTopic : roomSubtitle);
-const localSiteName = $derived(getLocalSiteName(interconnectSites) || "冷汐的杂货铺");
+const localSiteName = $derived(
+	getLocalSiteName(interconnectSites) || "冷汐的杂货铺",
+);
 let failedRoomAvatars = $state<Record<string, boolean>>({});
 const effectiveRoomAvatar = $derived((roomAvatar || "").trim());
 const hasRoomAvatar = $derived(
@@ -247,7 +252,9 @@ const hasRoomAvatar = $derived(
 );
 const pinnedMessages = $derived.by(() => {
 	if (!pinnedUids || pinnedUids.length === 0) return [];
-	return pinnedUids.map(uid => messages.find(m => m.msgUid === uid)).filter((m): m is ChatMessageRecord => Boolean(m));
+	return pinnedUids
+		.map((uid) => messages.find((m) => m.msgUid === uid))
+		.filter((m): m is ChatMessageRecord => Boolean(m));
 });
 const currentPinnedMsg = $derived.by(() => {
 	if (pinnedMessages.length === 0) return null;
@@ -387,6 +394,10 @@ let showMentionHistory = $state(false);
 let showThreadListMenu = $state(false);
 let showMobileMoreMenu = $state(false);
 let mobileMoreMenuWrapEl: HTMLDivElement | null = $state(null);
+let mobileMoreTrigger: HTMLButtonElement | null = $state(null);
+let chatHeaderWidth = $state(0);
+let mobileHeaderEndWidth = $state(0);
+let mobileRoomContentWidth = $state(0);
 let threadListWrapEl: HTMLDivElement | null = $state(null);
 let sourceModalMessage = $state<ChatMessageRecord | null>(null);
 let activeThreadRootUid = $state("");
@@ -418,10 +429,14 @@ function openMobileActionDialog(dialog: HTMLDialogElement) {
 }
 
 function closeMobileActions() {
-	// Release the modal before edit or reply transfers focus to the composer.
-	if (mobileActionDialog?.open) mobileActionDialog.close();
 	mobileActionTarget = null;
 	pressedActionBackdrop = null;
+}
+
+function releaseMobileActions() {
+	// 已选的动作可能立即打开另一面板，或将焦点交给软键盘。
+	if (mobileActionDialog?.open) mobileActionDialog.close();
+	closeMobileActions();
 }
 
 let unreadBarDismissed = $state(false);
@@ -512,7 +527,9 @@ const queueVoteBanners = $derived.by(() => {
 				: names.length <= 2
 					? names.join("、")
 					: `${names.slice(0, 2).join("、")} 等`;
-		const hasVoted = Boolean(currentUser && votes.includes(currentUser.userKey));
+		const hasVoted = Boolean(
+			currentUser && votes.includes(currentUser.userKey),
+		);
 		return {
 			uid: item.uid,
 			voterLabel,
@@ -810,7 +827,8 @@ const mergedActiveThreads = $derived.by<ChatActiveThreadItem[]>(() => {
 	for (const [rootUid, summary] of liveThreadSummaryMap.entries()) {
 		if (!summary || summary.count <= 0) continue;
 		const existing = byRoot.get(rootUid);
-		const rootMessage = rootMsgMap.get(rootUid) ?? existing?.rootMessage ?? null;
+		const rootMessage =
+			rootMsgMap.get(rootUid) ?? existing?.rootMessage ?? null;
 		const canonicalUid = rootMessage?.msgUid || rootUid;
 		byRoot.set(canonicalUid, {
 			rootUid: canonicalUid,
@@ -833,14 +851,19 @@ const visibleMessages = $derived.by(() =>
 	}),
 );
 
-const VIRTUAL_ENABLE_THRESHOLD = 75;
-const VIRTUAL_DISABLE_THRESHOLD = 60;
+const hasTouchPointer =
+	typeof window !== "undefined" &&
+	typeof window.matchMedia === "function" &&
+	window.matchMedia("(any-pointer: coarse)").matches;
+// 触屏优先保留已加载的消息行，减少惯性滚动中的 DOM 换窗。
+const VIRTUAL_ENABLE_THRESHOLD = hasTouchPointer ? 240 : 75;
+const VIRTUAL_DISABLE_THRESHOLD = hasTouchPointer ? 180 : 60;
 const WINDOW_TARGET_COUNT = 52;
 const WINDOW_HALF_COUNT = 26;
 const WINDOW_MAX_COUNT = 76;
 const EDGE_IMMEDIATE_BUFFER_PX = 380;
 const EDGE_IDLE_BUFFER_PX = 820;
-const SCROLL_SETTLE_DELAY_MS = 130;
+const SCROLL_SETTLE_DELAY_MS = hasTouchPointer ? 300 : 220;
 const EDGE_CHECK_STEP_PX = 96;
 const MAX_MEASURED_HEIGHTS = 4000;
 
@@ -892,7 +915,8 @@ function recordRowHeight(uid: string, h: number) {
 
 function measureMountedRows() {
 	if (!messageContainer) return;
-	const rows = messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
+	const rows =
+		messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
 	for (const row of rows) {
 		const uid = row.dataset.vrowUid;
 		if (!uid) continue;
@@ -965,6 +989,7 @@ function maybeTriggerAutoLoadOlderHistory(allowCommitDeviation = false) {
 		!hasInitialBottomScrolledForRoom ||
 		followsLayoutAtBottom ||
 		isShiftingWindow ||
+		(hasTouchPointer && (isActivelyScrolling || isUserTouching)) ||
 		renderedWindow.start !== 0
 	) {
 		return;
@@ -997,23 +1022,28 @@ function handleScrollSettled() {
 
 function scheduleScrollSettled() {
 	clearScrollEndTimer();
-	scrollEndTimer = window.setTimeout(handleScrollSettled, SCROLL_SETTLE_DELAY_MS);
+	scrollEndTimer = window.setTimeout(
+		handleScrollSettled,
+		SCROLL_SETTLE_DELAY_MS,
+	);
 }
 
 function findVisibleViewportAnchor(
 	nextStart: number,
 	nextEnd: number,
-): { uid: string; offsetTop: number } | null {
+): { uid: string; contentTop: number } | null {
 	if (!messageContainer) return null;
 	const cRect = messageContainer.getBoundingClientRect();
+	const scrollTop = messageContainer.scrollTop;
 	const viewCenterY = cRect.top + cRect.height / 2;
-	const rows = messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
+	const rows =
+		messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
 	const allowedUids = new Set<string>();
 	for (let i = nextStart; i < nextEnd; i++) {
 		const msg = visibleMessages[i];
 		if (msg) allowedUids.add(msg.msgUid);
 	}
-	let best: { uid: string; offsetTop: number; dist: number } | null = null;
+	let best: { uid: string; contentTop: number; dist: number } | null = null;
 	for (const row of rows) {
 		const uid = row.dataset.vrowUid;
 		if (!uid || !allowedUids.has(uid)) continue;
@@ -1021,10 +1051,10 @@ function findVisibleViewportAnchor(
 		if (rect.bottom < cRect.top || rect.top > cRect.bottom) continue;
 		const dist = Math.abs(rect.top + rect.height / 2 - viewCenterY);
 		if (!best || dist < best.dist) {
-			best = { uid, offsetTop: rect.top - cRect.top, dist };
+			best = { uid, contentTop: rect.top - cRect.top + scrollTop, dist };
 		}
 	}
-	return best ? { uid: best.uid, offsetTop: best.offsetTop } : null;
+	return best ? { uid: best.uid, contentTop: best.contentTop } : null;
 }
 
 async function shiftWindowWithAnchor(
@@ -1060,8 +1090,12 @@ async function shiftWindowWithAnchor(
 			);
 			if (el) {
 				const cRect = messageContainer.getBoundingClientRect();
-				const nextOffset = el.getBoundingClientRect().top - cRect.top;
-				const drift = nextOffset - anchor.offsetTop;
+				// 换窗前后在内容坐标中比较，避免把 tick 期间的惯性滚动算成布局偏移。
+				const nextContentTop =
+					el.getBoundingClientRect().top -
+					cRect.top +
+					messageContainer.scrollTop;
+				const drift = nextContentTop - anchor.contentTop;
 				if (Math.abs(drift) > 0.5) {
 					if (isActivelyScrolling || isUserTouching) {
 						// 滚动/触摸进行中绝不写 scrollTop（不打断 180Hz/iOS 惯性合成器），改用 GPU transform 暂存漂移
@@ -1096,7 +1130,8 @@ function computeTargetWindowAroundViewport(): {
 
 	const cRect = messageContainer.getBoundingClientRect();
 	const viewCenterY = cRect.top + cRect.height / 2;
-	const rows = messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
+	const rows =
+		messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
 	let centerUid = "";
 	let minDist = Number.POSITIVE_INFINITY;
 	for (const row of rows) {
@@ -1169,10 +1204,21 @@ function checkVirtualWindowEdges(duringActiveScroll = true) {
 		: EDGE_IDLE_BUFFER_PX;
 	const needTop = canExtendTop && topBufferPx < threshold;
 	const needBottom = canExtendBottom && bottomBufferPx < threshold;
-	if (needTop || needBottom) {
+	const trimTouchWindow =
+		hasTouchPointer &&
+		!duringActiveScroll &&
+		curEnd - curStart > WINDOW_MAX_COUNT;
+	if (needTop || needBottom || trimTouchWindow) {
 		const target = computeTargetWindowAroundViewport();
 		if (target) {
-			void shiftWindowWithAnchor(target.start, target.end, true);
+			// 长历史仍按需挂载，但惯性滚动期间只补行，停下来再移除远处的行。
+			const keepMounted =
+				hasTouchPointer && (isActivelyScrolling || isUserTouching);
+			const start = keepMounted
+				? Math.min(curStart, target.start)
+				: target.start;
+			const end = keepMounted ? Math.max(curEnd, target.end) : target.end;
+			void shiftWindowWithAnchor(start, end, true);
 		}
 	}
 }
@@ -1309,8 +1355,7 @@ function isReplyToMe(msg: ChatMessageRecord): boolean {
 				(currentUser.isAdmin &&
 					(msg.replyTo.userKey === "waline:1" ||
 						msg.replyTo.userKey === "@lengxiqwq:matrix.lengxiqwq.com" ||
-						msg.replyTo.userKey ===
-							"matrix:@lengxiqwq:matrix.lengxiqwq.com"))),
+						msg.replyTo.userKey === "matrix:@lengxiqwq:matrix.lengxiqwq.com"))),
 	);
 }
 
@@ -1319,6 +1364,29 @@ function isDirectToMe(msg: ChatMessageRecord): boolean {
 }
 
 const mentionsToMe = $derived(messages.filter(isMentionedToMe));
+const hasHeaderThreads = $derived(mergedActiveThreads.length > 0);
+const hasHeaderMentions = $derived(Boolean(currentUser && mentionsToMe.length));
+const mobileOnlineLabel = $derived(
+	`${onlineCount}/${totalChatterCount > 0 ? totalChatterCount : "—"} 人在线`,
+);
+const mobileHeaderTarget = 44;
+// 扣除右端的点歌和网站菜单、更多按钮，以及顶栏的左右内边距和间距。
+const mobileRoomBudget = $derived(
+	chatHeaderWidth - mobileHeaderEndWidth - mobileHeaderTarget - 36,
+);
+const mobileRoomButtonWidth = $derived(mobileRoomContentWidth + 8);
+const threadInMore = $derived(mobileHeaderEndWidth > 0 && hasHeaderThreads);
+const mentionsInMore = $derived(
+	mobileHeaderEndWidth > 0 &&
+		hasHeaderMentions &&
+		unreadMentionUids.length === 0 &&
+		mobileRoomButtonWidth + mobileHeaderTarget > mobileRoomBudget,
+);
+const fitsMobileRoomAvatar = $derived(
+	mobileHeaderEndWidth > 0 &&
+		mobileRoomButtonWidth + (hasHeaderMentions ? mobileHeaderTarget : 0) + 40 <=
+			mobileRoomBudget,
+);
 
 function formatOfflineTime(ts?: number): string {
 	if (!ts || !Number.isFinite(ts) || ts <= 0) return "离线";
@@ -1433,8 +1501,7 @@ const filteredMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 			return "room".includes(q) || "all".includes(q) || "所有人".includes(q);
 		}
 		return (
-			c.name.toLowerCase().includes(q) ||
-			c.userKey.toLowerCase().includes(q)
+			c.name.toLowerCase().includes(q) || c.userKey.toLowerCase().includes(q)
 		);
 	});
 });
@@ -1745,10 +1812,13 @@ function markCurrentRoomReadIfReady(forceIgnoreSticky = false): void {
 		const elapsed = now - paneFocusedSince;
 		if (elapsed < READ_FOCUS_SETTLE_MS) {
 			if (readSettleTimer === null && typeof window !== "undefined") {
-				readSettleTimer = window.setTimeout(() => {
-					readSettleTimer = null;
-					markCurrentRoomReadIfReady();
-				}, READ_FOCUS_SETTLE_MS - elapsed + 20);
+				readSettleTimer = window.setTimeout(
+					() => {
+						readSettleTimer = null;
+						markCurrentRoomReadIfReady();
+					},
+					READ_FOCUS_SETTLE_MS - elapsed + 20,
+				);
 			}
 			return;
 		}
@@ -1773,10 +1843,17 @@ function handleMessageScroll() {
 	const st = Math.min(maxScroll, Math.max(0, messageContainer.scrollTop));
 	const gap = Math.max(0, maxScroll - st);
 
+	const viewportHeightChanged = lastClientHeight > 0 && ch !== lastClientHeight;
 	const layoutChanged =
-		(lastScrollHeight > 0 && sh !== lastScrollHeight) ||
-		(lastClientHeight > 0 && ch !== lastClientHeight);
+		viewportHeightChanged || (lastScrollHeight > 0 && sh !== lastScrollHeight);
 	const movedUpward = st < prevObservedScrollTop - 2;
+	// 视口变高时，浏览器会把旧滚动位置限制到新的底部，即使用户没有滑动。
+	const clampedByViewport =
+		viewportHeightChanged &&
+		ch > lastClientHeight &&
+		prevObservedScrollTop > maxScroll &&
+		gap <= BOTTOM_SCROLL_TOLERANCE &&
+		!isSmoothScrolling;
 	const isProgrammaticEcho =
 		!isUserTouching &&
 		!isSmoothScrolling &&
@@ -1791,9 +1868,12 @@ function handleMessageScroll() {
 		return;
 	}
 
-	// 仅当纯布局变动（如新消息撑高、媒体加载）且用户未向上滚动时保留贴底态；
-	// 只要检测到用户向上滚动（movedUpward）或手指仍在拖动，立即解除贴底，绝不吞掉用户滚动意图。
-	if (layoutChanged && followsLayoutAtBottom && !movedUpward && !isUserTouching) {
+	if (
+		layoutChanged &&
+		followsLayoutAtBottom &&
+		(!movedUpward || clampedByViewport) &&
+		!isUserTouching
+	) {
 		return;
 	}
 
@@ -1922,7 +2002,10 @@ function smoothScrollContainerTo(
 	const delta = initialTarget - startTop;
 	if (Math.abs(delta) <= 8) return Promise.resolve(true);
 
-	const duration = Math.min(480, Math.max(240, Math.round(Math.abs(delta) * 0.22)));
+	const duration = Math.min(
+		480,
+		Math.max(240, Math.round(Math.abs(delta) * 0.22)),
+	);
 	isSmoothScrolling = true;
 	return new Promise((resolve) => {
 		const startTime = performance.now();
@@ -2011,7 +2094,10 @@ async function jumpToMessage(msgUid: string) {
 		container.scrollTop +
 		(eRect.top + eRect.height / 2) -
 		(cRect.top + cRect.height / 2);
-	const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+	const maxScroll = Math.max(
+		0,
+		container.scrollHeight - container.clientHeight,
+	);
 	const targetTop = Math.max(0, Math.min(maxScroll, rawTargetTop));
 
 	const maxGlide = Math.max(800, container.clientHeight * 1.6);
@@ -2060,7 +2146,10 @@ async function scrollToUnreadDivider() {
 			container.scrollTop +
 			(dRect.top + dRect.height / 2) -
 			(cRect.top + cRect.height / 2);
-		const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
+		const maxScroll = Math.max(
+			0,
+			container.scrollHeight - container.clientHeight,
+		);
 		const targetTop = Math.max(0, Math.min(maxScroll, rawTargetTop));
 		const maxGlide = Math.max(800, container.clientHeight * 1.6);
 		if (Math.abs(targetTop - container.scrollTop) > maxGlide) {
@@ -2106,7 +2195,8 @@ function triggerAutoLoadOlderHistory(manualClick = false) {
 	let anchorUid = visibleMessages[0]?.msgUid || messages[0]?.msgUid || "";
 	let anchorOffsetInViewport: number | null = null;
 	const cRect = messageContainer.getBoundingClientRect();
-	const rowEls = messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
+	const rowEls =
+		messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
 	for (const el of rowEls) {
 		const rect = el.getBoundingClientRect();
 		if (rect.bottom > cRect.top) {
@@ -2262,9 +2352,13 @@ onMount(() => {
 		}
 	};
 
-	messageContainer?.addEventListener("pointerdown", handleContainerPointerDown, {
-		passive: true,
-	});
+	messageContainer?.addEventListener(
+		"pointerdown",
+		handleContainerPointerDown,
+		{
+			passive: true,
+		},
+	);
 	messageContainer?.addEventListener("wheel", handleContainerWheel, {
 		passive: true,
 	});
@@ -2287,23 +2381,33 @@ onMount(() => {
 	const handlePointerDown = (e: PointerEvent) => {
 		const target = e.target as HTMLElement | null;
 		if (!target) return;
+		const insideMore = mobileMoreMenuWrapEl?.contains(target);
 		if (!dockEl?.contains(target)) {
 			activePopover = "none";
 			mentionMenuOpen = false;
 		}
-		if (!mentionHistoryWrapEl?.contains(target)) {
+		if (
+			!mentionHistoryWrapEl?.contains(target) &&
+			!(mentionsInMore && insideMore)
+		) {
 			showMentionHistory = false;
 		}
-		if (!threadListWrapEl?.contains(target)) {
+		if (!threadListWrapEl?.contains(target) && !(threadInMore && insideMore)) {
 			showThreadListMenu = false;
 		}
-		if (!mobileMoreMenuWrapEl?.contains(target)) {
+		if (!insideMore) {
 			showMobileMoreMenu = false;
 		}
 	};
 
 	const handleDocKeydown = (e: KeyboardEvent) => {
 		if (e.key === "Escape") {
+			if (
+				e.target instanceof Node &&
+				mobileMoreMenuWrapEl?.contains(e.target)
+			) {
+				mobileMoreTrigger?.focus({ preventScroll: true });
+			}
 			showMentionHistory = false;
 			showThreadListMenu = false;
 			showMobileMoreMenu = false;
@@ -2322,7 +2426,10 @@ onMount(() => {
 	document.addEventListener("pointerdown", handlePointerDown);
 	document.addEventListener("keydown", handleDocKeydown);
 	return () => {
-		window.removeEventListener("chat-music-notices-change", handleMusicNoticesSync);
+		window.removeEventListener(
+			"chat-music-notices-change",
+			handleMusicNoticesSync,
+		);
 		window.removeEventListener("dragover", preventWindowDrag);
 		window.removeEventListener("drop", preventWindowDrag);
 		resizeObserver?.disconnect();
@@ -2336,7 +2443,10 @@ onMount(() => {
 			"touchstart",
 			handleContainerTouchStart,
 		);
-		messageContainer?.removeEventListener("touchmove", handleContainerTouchMove);
+		messageContainer?.removeEventListener(
+			"touchmove",
+			handleContainerTouchMove,
+		);
 		messageContainer?.removeEventListener("touchend", handleContainerTouchEnd);
 		messageContainer?.removeEventListener(
 			"touchcancel",
@@ -2459,7 +2569,11 @@ $effect(() => {
 					unreadMentionUids = [];
 					alertBannerUid = null;
 				}
-			} else if (latestCreatedAt > 0 && isChatPaneFocused() && isStickyAtBottom) {
+			} else if (
+				latestCreatedAt > 0 &&
+				isChatPaneFocused() &&
+				isStickyAtBottom
+			) {
 				writeLastSeenAt(currentRoomId, userKey, latestCreatedAt);
 			}
 		}
@@ -2528,7 +2642,11 @@ $effect(() => {
 						const cRect = messageContainer.getBoundingClientRect();
 						const nextOffset = anchorEl.getBoundingClientRect().top - cRect.top;
 						let drift = nextOffset - anchor.anchorOffsetInViewport;
-						if (anchor.manualClick && anchor.prevScrollTop <= 40 && drift > 120) {
+						if (
+							anchor.manualClick &&
+							anchor.prevScrollTop <= 40 &&
+							drift > 120
+						) {
 							drift -= 120;
 						}
 						if (Math.abs(drift) > 0.5) {
@@ -2572,9 +2690,7 @@ $effect(() => {
 		// 2. 真正的新到达消息（底部实时推送）：
 		if (liveIncoming.length > 0) {
 			const canAutoReadLive =
-				isChatPaneFocused() &&
-				isStickyAtBottom &&
-				!hasUnreadBlockingAutoRead();
+				isChatPaneFocused() && isStickyAtBottom && !hasUnreadBlockingAutoRead();
 			for (const m of liveIncoming) {
 				if (m.createdAt > maxKnownCreatedAt) {
 					maxKnownCreatedAt = m.createdAt;
@@ -2870,7 +2986,11 @@ $effect(() => {
 	return () => observer.disconnect();
 });
 
-let mentionSavedRange: { textNode: Text; atIndex: number; caretOffset: number } | null = null;
+let mentionSavedRange: {
+	textNode: Text;
+	atIndex: number;
+	caretOffset: number;
+} | null = null;
 
 function focusInput(toEnd = true): void {
 	if (!inputEl) return;
@@ -3075,7 +3195,8 @@ function insertNewlineAtCursor(): void {
 
 function handleBackspaceMentionPill(): boolean {
 	const sel = window.getSelection();
-	if (!sel || !sel.isCollapsed || sel.rangeCount === 0 || !inputEl) return false;
+	if (!sel || !sel.isCollapsed || sel.rangeCount === 0 || !inputEl)
+		return false;
 	const range = sel.getRangeAt(0);
 	const container = range.startContainer;
 	const offset = range.startOffset;
@@ -3088,7 +3209,10 @@ function handleBackspaceMentionPill(): boolean {
 
 		if (offset === 0) {
 			const prev = textNode.previousSibling;
-			if (prev instanceof HTMLElement && prev.classList.contains("chat-mention-pill")) {
+			if (
+				prev instanceof HTMLElement &&
+				prev.classList.contains("chat-mention-pill")
+			) {
 				prev.remove();
 				syncInputState();
 				return true;
@@ -3097,7 +3221,10 @@ function handleBackspaceMentionPill(): boolean {
 
 		if (offset === 1 && (val.charAt(0) === " " || val.charAt(0) === "\u00A0")) {
 			const prev = textNode.previousSibling;
-			if (prev instanceof HTMLElement && prev.classList.contains("chat-mention-pill")) {
+			if (
+				prev instanceof HTMLElement &&
+				prev.classList.contains("chat-mention-pill")
+			) {
 				if (val.length === 1) {
 					textNode.remove();
 				} else {
@@ -3110,7 +3237,10 @@ function handleBackspaceMentionPill(): boolean {
 		}
 	} else if (container.nodeType === Node.ELEMENT_NODE) {
 		const childBefore = container.childNodes[offset - 1];
-		if (childBefore instanceof HTMLElement && childBefore.classList.contains("chat-mention-pill")) {
+		if (
+			childBefore instanceof HTMLElement &&
+			childBefore.classList.contains("chat-mention-pill")
+		) {
 			childBefore.remove();
 			syncInputState();
 			return true;
@@ -3120,7 +3250,10 @@ function handleBackspaceMentionPill(): boolean {
 			const val = childBefore.nodeValue || "";
 			if (val === " " || val === "\u00A0" || val === "") {
 				const prev = childBefore.previousSibling;
-				if (prev instanceof HTMLElement && prev.classList.contains("chat-mention-pill")) {
+				if (
+					prev instanceof HTMLElement &&
+					prev.classList.contains("chat-mention-pill")
+				) {
 					childBefore.remove();
 					prev.remove();
 					syncInputState();
@@ -3132,7 +3265,14 @@ function handleBackspaceMentionPill(): boolean {
 	return false;
 }
 
-function formatCandidateMentionName(candidate: { name: string; userKey?: string; badge?: string; site?: string; siteUrl?: string; url?: string }): string {
+function formatCandidateMentionName(candidate: {
+	name: string;
+	userKey?: string;
+	badge?: string;
+	site?: string;
+	siteUrl?: string;
+	url?: string;
+}): string {
 	if (candidate.userKey === "room") return "所有人";
 	const rawName = candidate.name || "";
 	if (isInterconnectRoom) {
@@ -3142,7 +3282,11 @@ function formatCandidateMentionName(candidate: { name: string; userKey?: string;
 			if (extOrigin && extOrigin.cleanName && extOrigin.siteName) {
 				return `${extOrigin.cleanName} · ${extOrigin.siteName}`;
 			}
-		} else if (!rawName.includes("·") && !rawName.includes("•") && !rawName.includes("・")) {
+		} else if (
+			!rawName.includes("·") &&
+			!rawName.includes("•") &&
+			!rawName.includes("・")
+		) {
 			return `${rawName} · 冷汐的杂货铺`;
 		}
 	}
@@ -3183,7 +3327,12 @@ function syncMentionTrigger(): void {
 		return;
 	}
 	const sel = window.getSelection();
-	if (!sel || !sel.isCollapsed || sel.rangeCount === 0 || !inputEl.contains(sel.anchorNode)) {
+	if (
+		!sel ||
+		!sel.isCollapsed ||
+		sel.rangeCount === 0 ||
+		!inputEl.contains(sel.anchorNode)
+	) {
 		mentionMenuOpen = false;
 		mentionTriggerStart = -1;
 		mentionSavedRange = null;
@@ -3321,7 +3470,9 @@ function collectMentionKeys(content: string): string[] {
 		}
 	}
 	if (inputEl) {
-		for (const pill of inputEl.querySelectorAll<HTMLElement>(".chat-mention-pill[data-user-key]")) {
+		for (const pill of inputEl.querySelectorAll<HTMLElement>(
+			".chat-mention-pill[data-user-key]",
+		)) {
 			const k = pill.dataset.userKey;
 			if (k) keys.add(k);
 		}
@@ -3622,6 +3773,46 @@ function handlePaste(e: ClipboardEvent) {
 	}
 }
 
+function openSitePanel(
+	triggerId: string,
+	panelId: string,
+	returnTriggerId: string,
+) {
+	const panel = document.getElementById(panelId);
+	if (panel) {
+		const ids = new Set(
+			(panel.dataset.floatingPanelTrigger || "").split(/\s+/).filter(Boolean),
+		);
+		ids.add(returnTriggerId);
+		panel.dataset.floatingPanelTrigger = [...ids].join(" ");
+	}
+	document.getElementById(triggerId)?.click();
+}
+
+function toggleHeaderList(list: "threads" | "mentions", fromMore = false) {
+	showThreadListMenu = list === "threads" && !showThreadListMenu;
+	showMentionHistory = list === "mentions" && !showMentionHistory;
+	showMobileMoreMenu = false;
+	if (fromMore) mobileMoreTrigger?.focus({ preventScroll: true });
+}
+
+onMount(() => {
+	const panel = document.getElementById("nav-menu-panel");
+	const restoreFocus = () => {
+		if (!window.matchMedia("(width < 768px)").matches) return;
+		if (
+			document.activeElement === document.body ||
+			panel?.contains(document.activeElement)
+		) {
+			document
+				.getElementById("chat-site-navigation-trigger")
+				?.focus({ preventScroll: true });
+		}
+	};
+	panel?.addEventListener("floating-panel:close", restoreFocus);
+	return () => panel?.removeEventListener("floating-panel:close", restoreFocus);
+});
+
 function removePendingImage(index: number) {
 	pendingImages = pendingImages.filter((_, i) => i !== index);
 }
@@ -3687,8 +3878,94 @@ function removePendingImage(index: number) {
       {/if}
     </div>
   {/if}
+  {#snippet headerThreadList(reference?: HTMLElement | null)}
+    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="活跃线程列表">
+      <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
+        <span>活跃线程</span>
+        <span>{mergedActiveThreads.length} 个</span>
+      </div>
+      <div class="my-0.5 border-t border-black/5 dark:border-white/10"></div>
+      {#each mergedActiveThreads as item (item.rootUid)}
+        {@const rootMsg = item.rootMessage}
+        {@const latest = item.summary.latestReply}
+        <button
+          type="button"
+          role="menuitem"
+          class="chat-requester-option items-start! py-2! md:py-1.5!"
+          onclick={() => handleOpenThreadByUid(item.rootUid, rootMsg)}
+        >
+          <div class="flex items-start gap-2 min-w-0 flex-1">
+            <ChatAvatar
+              src={rootMsg?.avatar || latest?.avatar || ""}
+              name={rootMsg?.name || latest?.name || "线程"}
+              size="xs"
+              class="mt-0.5"
+            />
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center justify-between gap-1">
+                <span class="font-semibold truncate text-xs md:text-[11px]">
+                  {rootMsg?.name || "主题消息"}
+                </span>
+                <span class="text-[11px] md:text-[10px] text-[var(--primary)] font-semibold tabular-nums shrink-0">
+                  {item.summary.count} 条回复
+                </span>
+              </div>
+              <div class="text-xs md:text-[11px] opacity-80 truncate mt-0.5">
+                {rootMsg
+                  ? formatChatReplyPreview(rootMsg.content, stickerMap, rootMsg.attachments.length > 0)
+                  : (latest?.content || "点击查看线程")}
+              </div>
+              {#if latest}
+                <div class="text-[11px] md:text-[10px] opacity-65 truncate mt-0.5">
+                  最新 {latest.name}：{formatChatReplyPreview(latest.content, stickerMap, latest.hasImage)}
+                </div>
+              {/if}
+            </div>
+          </div>
+        </button>
+      {/each}
+    </div>
+  {/snippet}
+
+  {#snippet headerMentionList(reference?: HTMLElement | null)}
+    <div data-chat-floating use:positionChatFloating={{ placement: reference ? "bottom-end" : "bottom-start", reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="被提及的消息列表">
+      <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
+        <span>近期提及你的消息</span>
+        <span>{mentionsToMe.length}条</span>
+      </div>
+      <div class="my-0.5 border-t border-black/5 dark:border-white/10"></div>
+      {#each mentionsToMe.slice().reverse() as item (item.msgUid)}
+        {@const isUnread = unreadMentionSet.has(item.msgUid)}
+        <button
+          type="button"
+          role="menuitem"
+          class="chat-requester-option items-start! py-2! md:py-1.5! {isUnread ? 'active' : ''}"
+          onclick={() => void jumpToMessage(item.msgUid)}
+        >
+          <div class="flex items-start gap-2 min-w-0 flex-1">
+            <ChatAvatar
+              src={item.avatar}
+              name={item.name}
+              size="xs"
+              class="mt-0.5"
+            />
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center justify-between gap-1">
+                <span class="font-semibold truncate text-xs md:text-[11px]">{item.name}</span>
+                <span class="text-[11px] md:text-[10px] opacity-70 tabular-nums shrink-0">{formatShortTime(item.createdAt)}</span>
+              </div>
+              <div class="text-xs md:text-[11px] opacity-80 truncate mt-0.5">
+                {item.content || "[图片消息]"}
+              </div>
+            </div>
+          </div>
+        </button>
+      {/each}
+    </div>
+  {/snippet}
+
   <!-- 顶栏 -->
-  <div class="chat-panel-header">
+  <div class="chat-panel-header chat-window-header" bind:clientWidth={chatHeaderWidth}>
     <div class="flex items-center gap-2 min-w-0 flex-1">
       <button
         type="button"
@@ -3729,62 +4006,65 @@ function removePendingImage(index: number) {
           <button type="button" class="px-2 py-1 rounded-lg text-xs text-[var(--chat-meta-color)] hover:bg-black/5 dark:hover:bg-white/10 border-none bg-transparent cursor-pointer" onclick={() => (editingTopic = false)}>取消</button>
         </form>
       {:else}
-        <!-- 移动端左侧：拉开「房间与成员」抽屉的大号胶囊入口 -->
         <button
           type="button"
           class="chat-mobile-header-room-btn chat-mobile-only"
-          aria-label="打开房间与成员抽屉"
+          aria-label={`#${roomName}，${mobileOnlineLabel}，打开房间与成员${otherRoomsUnreadCount > 0 ? `，其他房间有 ${otherRoomsUnreadCount} 条未读消息` : ""}`}
           onclick={() => onOpenRoomDrawer?.()}
         >
-          <span class="relative inline-flex items-center justify-center w-7 h-7 rounded-lg bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] shrink-0">
-            {#if hasRoomAvatar}
-              {@const thumbUrl = getDownscaledAvatarUrl(effectiveRoomAvatar)}
-              <img
-                src={thumbUrl || effectiveRoomAvatar}
-                alt={roomName}
-                class="w-full h-full rounded-lg object-cover"
-                decoding="async"
-                crossorigin={!thumbUrl && canCorsDownscaleAvatar(effectiveRoomAvatar) ? "anonymous" : undefined}
-                onload={(e) => downscaleImgElementInPlace(e.currentTarget, effectiveRoomAvatar)}
-                onerror={() => {
-                  failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
-                }}
-              />
-            {:else}
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                <circle cx="9" cy="7" r="4" />
-                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              </svg>
-            {/if}
-            {#if otherRoomsUnreadCount > 0}
-              <span class="chat-mobile-room-unread-dot" aria-label={`其他房间有 ${otherRoomsUnreadCount} 条未读消息`}></span>
-            {/if}
+          {#snippet onlineStatus()}
+            <span class="chat-mobile-room-online">
+              <span class="chat-online-dot" aria-hidden="true"></span>
+              <span class="truncate">{mobileOnlineLabel}</span>
+            </span>
+          {/snippet}
+          <span class="chat-mobile-room-measure" aria-hidden="true">
+            <span class="chat-mobile-room-measure-content" bind:offsetWidth={mobileRoomContentWidth}>
+              <span class="chat-mobile-room-title">#{roomName}</span>
+              {@render onlineStatus()}
+            </span>
           </span>
-          <span class="font-bold text-[15px] text-[var(--deep-text)] dark:text-white/95 truncate">
-            #{roomName}
+          {#if hasRoomAvatar && fitsMobileRoomAvatar}
+            <img
+              src={getDownscaledAvatarUrl(effectiveRoomAvatar) || effectiveRoomAvatar}
+              alt=""
+              class="size-8 shrink-0 rounded-lg object-cover"
+              decoding="async"
+              crossorigin={!getDownscaledAvatarUrl(effectiveRoomAvatar) && canCorsDownscaleAvatar(effectiveRoomAvatar) ? "anonymous" : undefined}
+              onload={(event) => downscaleImgElementInPlace(event.currentTarget, effectiveRoomAvatar)}
+
+              onerror={() => {
+                failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
+              }}
+            />
+          {/if}
+          <span class="chat-mobile-room-info">
+            <span class="chat-mobile-room-heading">
+              <span class="chat-mobile-room-title truncate">#{roomName}</span>
+              <span class="chat-mobile-room-chevron" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m9 5 7 7-7 7" />
+                </svg>
+                {#if otherRoomsUnreadCount > 0}
+                  <span class="chat-mobile-room-unread-dot"></span>
+                {/if}
+              </span>
+            </span>
+            {@render onlineStatus()}
           </span>
-          <span class="chat-mobile-room-count inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/8 text-[11.5px] font-medium text-[var(--chat-meta-color)] shrink-0 tabular-nums">
-            <span class="chat-online-dot"></span>
-            <span>{isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount}/${totalChatterCount}` : `${onlineCount}人`}</span>
-          </span>
-          <svg class="w-3.5 h-3.5 text-[var(--chat-meta-color)] opacity-70 shrink-0 -ml-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
         </button>
 
         <!-- 桌面端 / iPad 左侧：独立房间头像框、名称（互联茶室为可下拉框）与副标题 -->
         <div class="chat-header-room-avatar chat-desktop-only">
           {#if hasRoomAvatar}
-            {@const thumbUrl = getDownscaledAvatarUrl(effectiveRoomAvatar)}
             <img
-              src={thumbUrl || effectiveRoomAvatar}
+              src={getDownscaledAvatarUrl(effectiveRoomAvatar) || effectiveRoomAvatar}
               alt={roomName}
               class="w-full h-full object-cover"
               decoding="async"
-              crossorigin={!thumbUrl && canCorsDownscaleAvatar(effectiveRoomAvatar) ? "anonymous" : undefined}
-              onload={(e) => downscaleImgElementInPlace(e.currentTarget, effectiveRoomAvatar)}
+              crossorigin={!getDownscaledAvatarUrl(effectiveRoomAvatar) && canCorsDownscaleAvatar(effectiveRoomAvatar) ? "anonymous" : undefined}
+              onload={(event) => downscaleImgElementInPlace(event.currentTarget, effectiveRoomAvatar)}
+
               onerror={() => {
                 failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
               }}
@@ -3845,134 +4125,161 @@ function removePendingImage(index: number) {
         {/if}
       {/if}
     </div>
-    <div class="flex items-center gap-1.5 shrink-0">
-      {#if mergedActiveThreads.length > 0}
-        <div class="relative shrink-0" bind:this={threadListWrapEl}>
+    <div class="chat-window-header-actions flex items-center gap-1.5 shrink-0">
+      {#if hasHeaderThreads}
+        <div class="chat-desktop-only relative shrink-0" bind:this={threadListWrapEl}>
           <button
             type="button"
             class="chat-header-pill-btn"
             aria-expanded={showThreadListMenu}
             aria-label="查看活跃线程"
-            onclick={() => {
-              showMentionHistory = false;
-              showThreadListMenu = !showThreadListMenu;
-            }}
+            onclick={() => toggleHeaderList("threads")}
           >
-            <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
               <path d="M8 9h8" />
               <path d="M8 13h5" />
             </svg>
-            <span class="chat-header-thread-label font-bold text-[var(--primary)]">线程</span>
+            <span class="font-bold text-[var(--primary)]">线程</span>
             <span class="text-[11px] md:text-[10px] opacity-75 tabular-nums">{mergedActiveThreads.length}</span>
           </button>
 
-          {#if showThreadListMenu}
-            <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end" }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="活跃线程列表">
-              <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
-                <span>活跃线程</span>
-                <span>{mergedActiveThreads.length} 个</span>
-              </div>
-              <div class="my-0.5 border-t border-black/5 dark:border-white/10"></div>
-              {#each mergedActiveThreads as item (item.rootUid)}
-                {@const rootMsg = item.rootMessage}
-                {@const latest = item.summary.latestReply}
-                <button
-                  type="button"
-                  role="menuitem"
-                  class="chat-requester-option items-start! py-2! md:py-1.5!"
-                  onclick={() => handleOpenThreadByUid(item.rootUid, rootMsg)}
-                >
-                  <div class="flex items-start gap-2 min-w-0 flex-1">
-                    <ChatAvatar
-                      src={rootMsg?.avatar || latest?.avatar || ""}
-                      name={rootMsg?.name || latest?.name || "线程"}
-                      size="xs"
-                      class="mt-0.5"
-                    />
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-center justify-between gap-1">
-                        <span class="font-semibold truncate text-xs md:text-[11px]">
-                          {rootMsg?.name || "主题消息"}
-                        </span>
-                        <span class="text-[11px] md:text-[10px] text-[var(--primary)] font-semibold tabular-nums shrink-0">
-                          {item.summary.count} 条回复
-                        </span>
-                      </div>
-                      <div class="text-xs md:text-[11px] opacity-80 truncate mt-0.5">
-                        {rootMsg
-                          ? formatChatReplyPreview(rootMsg.content, stickerMap, rootMsg.attachments.length > 0)
-                          : (latest?.content || "点击查看线程")}
-                      </div>
-                      {#if latest}
-                        <div class="text-[11px] md:text-[10px] opacity-65 truncate mt-0.5">
-                          最新 {latest.name}：{formatChatReplyPreview(latest.content, stickerMap, latest.hasImage)}
-                        </div>
-                      {/if}
-                    </div>
-                  </div>
-                </button>
-              {/each}
-            </div>
+          {#if showThreadListMenu && !threadInMore}
+            {@render headerThreadList()}
           {/if}
         </div>
       {/if}
 
-      {#if currentUser && mentionsToMe.length > 0}
+      <div class="chat-mobile-only relative shrink-0" bind:this={mobileMoreMenuWrapEl}>
+        <button
+          type="button"
+          data-chat-interconnect-anchor
+          id="chat-site-controls-trigger"
+          class="chat-mobile-header-action"
+          class:is-active={showInterconnect}
+          aria-label="更多聊天室选项"
+          aria-expanded={showMobileMoreMenu || (threadInMore && showThreadListMenu) || (mentionsInMore && showMentionHistory)}
+          data-floating-panel-no-expanded
+          bind:this={mobileMoreTrigger}
+          onclick={() => {
+            showThreadListMenu = false;
+            showMentionHistory = false;
+            showMobileMoreMenu = !showMobileMoreMenu;
+          }}
+        >
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="1.25" fill="currentColor" />
+            <circle cx="19" cy="12" r="1.25" fill="currentColor" />
+            <circle cx="5" cy="12" r="1.25" fill="currentColor" />
+          </svg>
+        </button>
+
+        {#if showMobileMoreMenu}
+          <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8 }} class="chat-mobile-more-menu" role="menu" aria-label="聊天室更多选项">
+            {#if threadInMore}
+              <button type="button" role="menuitem" class="chat-mobile-more-item" onclick={() => toggleHeaderList("threads", true)}>
+                <span>活跃线程</span>
+                <span class="chat-mobile-more-count">{mergedActiveThreads.length}</span>
+              </button>
+            {/if}
+            {#if mentionsInMore}
+              <button type="button" role="menuitem" class="chat-mobile-more-item" onclick={() => toggleHeaderList("mentions", true)}>
+                <span>被提及的消息</span>
+                <span class="chat-mobile-more-count">{mentionsToMe.length}</span>
+              </button>
+            {/if}
+            {#if threadInMore || mentionsInMore}
+              <div class="mx-2 my-0.5 border-t border-[var(--skin-line)]"></div>
+            {/if}
+
+            {#each [
+              { label: "网站外观设置", id: "display-settings-switch", panel: "display-setting" },
+              { label: "切换明暗模式", id: "scheme-switch", panel: "theme-mode-panel" },
+            ] as action (action.id)}
+              <button
+                type="button"
+                role="menuitem"
+                class="chat-mobile-more-item"
+                onclick={() => {
+                  showMobileMoreMenu = false;
+                  setTimeout(() => openSitePanel(action.id, action.panel, "chat-site-controls-trigger"), 0);
+                }}
+              >
+                <span>{action.label}</span>
+                <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
+              </button>
+            {/each}
+
+            {#if isInterconnectRoom}
+              <button
+                type="button"
+                role="menuitem"
+                data-chat-interconnect-trigger
+                class="chat-mobile-more-item"
+                onclick={() => {
+                  showMobileMoreMenu = false;
+                  onToggleInterconnect?.();
+                }}
+              >
+                <span class="flex items-center gap-2.5">
+                  <span class="text-base leading-none w-4.5 text-center">🍵</span>
+                  <span>互联茶室友站列表</span>
+                </span>
+                <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
+            {/if}
+
+            {#if currentUser?.isAdmin && onSetTopic}
+              <button
+                type="button"
+                role="menuitem"
+                class="chat-mobile-more-item"
+                onclick={() => {
+                  showMobileMoreMenu = false;
+                  topicDraft = effectiveSubtitle;
+                  editingTopic = true;
+                }}
+              >
+                <span class="flex items-center gap-2.5">
+                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                  </svg>
+                  <span>编辑房间主题</span>
+                </span>
+              </button>
+            {/if}
+          </div>
+        {:else if threadInMore && showThreadListMenu}
+          {@render headerThreadList(mobileMoreTrigger)}
+        {:else if mentionsInMore && showMentionHistory}
+          {@render headerMentionList(mobileMoreTrigger)}
+        {/if}
+      </div>
+
+      {#if hasHeaderMentions}
         <div class="relative shrink-0" bind:this={mentionHistoryWrapEl}>
           <button
             type="button"
-            class="chat-header-pill-btn {unreadMentionUids.length > 0 ? 'has-unread' : ''}"
+            class="chat-header-pill-btn chat-mobile-header-action {unreadMentionUids.length > 0 ? 'has-unread' : ''}"
             aria-expanded={showMentionHistory}
-            aria-label="查看被提及的消息"
-            onclick={() => {
-              showThreadListMenu = false;
-              showMentionHistory = !showMentionHistory;
-            }}
+            aria-label={unreadMentionUids.length > 0 ? `查看被提及的消息，${unreadMentionUids.length} 条未读` : "查看被提及的消息"}
+            class:chat-mobile-header-collapsed={mentionsInMore}
+            onclick={() => toggleHeaderList("mentions")}
           >
-            <span class="font-bold text-[var(--primary)]">被提及</span>
+            <svg class="chat-mobile-only" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M16 8v5a2 2 0 0 0 4 0v-1a8 8 0 1 0-3 6.25" /></svg>
+            <span class="chat-mention-label font-bold text-[var(--primary)]">被提及</span>
             {#if unreadMentionUids.length > 0}
               <span class="chat-mention-unread-badge">{unreadMentionUids.length}</span>
             {:else}
-              <span class="text-[11px] md:text-[10px] opacity-75 tabular-nums">{mentionsToMe.length}</span>
+              <span class="chat-mention-count text-[11px] md:text-[10px] opacity-75 tabular-nums">{mentionsToMe.length}</span>
             {/if}
           </button>
 
-          {#if showMentionHistory}
-            <div data-chat-floating use:positionChatFloating={{ placement: "bottom-start" }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="被提及的消息列表">
-              <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
-                <span>近期提及你的消息</span>
-                <span>{mentionsToMe.length}条</span>
-              </div>
-              <div class="my-0.5 border-t border-black/5 dark:border-white/10"></div>
-              {#each mentionsToMe.slice().reverse() as item (item.msgUid)}
-                {@const isUnread = unreadMentionSet.has(item.msgUid)}
-                <button
-                  type="button"
-                  role="menuitem"
-                  class="chat-requester-option items-start! py-2! md:py-1.5! {isUnread ? 'active' : ''}"
-                  onclick={() => void jumpToMessage(item.msgUid)}
-                >
-                  <div class="flex items-start gap-2 min-w-0 flex-1">
-                    <ChatAvatar
-                      src={item.avatar}
-                      name={item.name}
-                      size="xs"
-                      class="mt-0.5"
-                    />
-                    <div class="min-w-0 flex-1">
-                      <div class="flex items-center justify-between gap-1">
-                        <span class="font-semibold truncate text-xs md:text-[11px]">{item.name}</span>
-                        <span class="text-[11px] md:text-[10px] opacity-70 tabular-nums shrink-0">{formatShortTime(item.createdAt)}</span>
-                      </div>
-                      <div class="text-xs md:text-[11px] opacity-80 truncate mt-0.5">
-                        {item.content || "[图片消息]"}
-                      </div>
-                    </div>
-                  </div>
-                </button>
-              {/each}
-            </div>
+          {#if showMentionHistory && !mentionsInMore}
+            {@render headerMentionList()}
           {/if}
         </div>
       {/if}
@@ -3993,125 +4300,35 @@ function removePendingImage(index: number) {
         </ChatTooltip>
       </div>
 
-      <!-- 移动端顶栏右侧：更多设置收纳菜单 + 拉开右侧「听歌/点歌」抽屉按钮 -->
-      <div class="chat-mobile-only flex items-center gap-1.5">
-        <div class="relative" bind:this={mobileMoreMenuWrapEl}>
-          <button
-            type="button"
-            data-chat-interconnect-anchor
-            class="chat-mobile-icon-btn {showMobileMoreMenu || showInterconnect ? 'is-active' : ''}"
-            aria-label="更多聊天室选项"
-            aria-expanded={showMobileMoreMenu}
-            onclick={() => (showMobileMoreMenu = !showMobileMoreMenu)}
-          >
-            <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="1.25" fill="currentColor" />
-              <circle cx="19" cy="12" r="1.25" fill="currentColor" />
-              <circle cx="5" cy="12" r="1.25" fill="currentColor" />
-            </svg>
-          </button>
-
-          {#if showMobileMoreMenu}
-            <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8 }} class="chat-mobile-more-menu" role="menu" aria-label="聊天室更多选项">
-              <div class="px-3 py-1.5 text-xs text-[var(--chat-meta-color)] border-b border-[var(--skin-line)] truncate">
-                #{roomName} · {effectiveSubtitle}
-              </div>
-
-              {#if isInterconnectRoom}
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-chat-interconnect-trigger
-                  class="chat-mobile-more-item"
-                  onclick={() => {
-                    showMobileMoreMenu = false;
-                    onToggleInterconnect?.();
-                  }}
-                >
-                  <span class="flex items-center gap-2.5">
-                    <span class="text-base leading-none w-4.5 text-center">🍵</span>
-                    <span>互联茶室友站列表</span>
-                  </span>
-                  <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polyline points="9 18 15 12 9 6" />
-                  </svg>
-                </button>
-              {/if}
-
-              {#if currentUser?.isAdmin && onSetTopic}
-                <button
-                  type="button"
-                  role="menuitem"
-                  class="chat-mobile-more-item"
-                  onclick={() => {
-                    showMobileMoreMenu = false;
-                    topicDraft = effectiveSubtitle;
-                    editingTopic = true;
-                  }}
-                >
-                  <span class="flex items-center gap-2.5">
-                    <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <path d="M12 20h9" />
-                      <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                    </svg>
-                    <span>编辑房间主题</span>
-                  </span>
-                </button>
-              {/if}
-            </div>
-          {/if}
-        </div>
-
+      <div class="chat-mobile-only flex items-center" bind:offsetWidth={mobileHeaderEndWidth}>
         <button
           type="button"
-          class="chat-mobile-music-btn {musicState?.current ? 'is-playing' : ''}"
+          class="chat-mobile-header-action"
           aria-label="打开点歌与听歌抽屉"
           onclick={() => onOpenMusicDrawer?.()}
         >
-          {#if musicState?.current && mobilePlaybackStatus?.isListening}
-            <span class="chat-eq-bars" aria-hidden="true">
-              <span class="chat-eq-bar"></span>
-              <span class="chat-eq-bar"></span>
-              <span class="chat-eq-bar"></span>
-            </span>
-            <span>电台</span>
-          {:else}
-            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M9 18V5l12-2v13" />
-              <circle cx="6" cy="18" r="3" />
-              <circle cx="18" cy="16" r="3" />
-            </svg>
-            <span>{musicState?.current ? "听歌" : "点歌"}</span>
-          {/if}
+          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M7.175 19.825Q6 18.65 6 17t1.175-2.825T10 13q.575 0 1.063.138t.937.412V4q0-.425.288-.712T13 3h4q.425 0 .713.288T18 4v2q0 .425-.288.713T17 7h-3v10q0 1.65-1.175 2.825T10 21t-2.825-1.175" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          id="chat-site-navigation-trigger"
+          name="Nav Menu"
+          class="chat-mobile-site-menu btn-plain scale-animation rounded-lg w-11 h-11 active:scale-90 lg:hidden!"
+          aria-label="打开网站导航"
+          aria-controls="nav-menu-panel"
+          aria-expanded="false"
+          onclick={() => openSitePanel("nav-menu-switch", "nav-menu-panel", "chat-site-navigation-trigger")}
+        >
+          <!-- 与 Navbar.astro 的 material-symbols:menu-rounded 一致。 -->
+          <svg width="1em" height="1em" class="text-[1.25rem]" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M4 18q-.425 0-.712-.288T3 17t.288-.712T4 16h16q.425 0 .713.288T21 17t-.288.713T20 18zm0-5q-.425 0-.712-.288T3 12t.288-.712T4 11h16q.425 0 .713.288T21 12t-.288.713T20 13zm0-5q-.425 0-.712-.288T3 7t.288-.712T4 6h16q.425 0 .713.288T21 7t-.288.713T20 8z" />
+          </svg>
         </button>
       </div>
     </div>
   </div>
-
-  <!-- 移动端顶栏正下方：超薄全局迷你播放条（不干扰底部输入法） -->
-  {#if musicState?.current && mobilePlaybackStatus}
-    <div class="chat-mobile-only shrink-0">
-      <MiniPlayerBar
-        currentPlay={musicState.current}
-        isListening={mobilePlaybackStatus.isListening}
-        audioStatus={mobilePlaybackStatus.audioStatus}
-        elapsedSec={mobilePlaybackStatus.elapsedSec}
-        durationSec={mobilePlaybackStatus.durationSec}
-        canDirectSkip={mobilePlaybackStatus.canDirectSkip}
-        isSoloCoolingDown={mobilePlaybackStatus.isSoloCoolingDown}
-        soloCooldownRemainSec={mobilePlaybackStatus.soloCooldownRemainSec}
-        hasVotedSkip={mobilePlaybackStatus.hasVotedSkip}
-        voteCount={musicState.voteCount}
-        voteThreshold={musicState.voteThreshold}
-        isSkippingTrack={isSkippingTrack}
-        variant="mobile"
-        onOpenLyrics={() => onOpenLyricsDrawer?.()}
-        onToggleListen={() => onToggleListen?.()}
-        onSkipTrack={() => onSkipTrack?.()}
-        onVoteSkip={() => onVoteSkip?.()}
-      />
-    </div>
-  {/if}
 
   <!-- 置顶消息横幅 (Pinned Messages) -->
   {#if currentPinnedMsg}
@@ -4163,6 +4380,29 @@ function removePendingImage(index: number) {
 
   <!-- 消息展示流区域（含悬浮 切歌投票 / @你 / 未读定位 横幅） -->
   <div class="relative flex-1 min-h-0 flex flex-col">
+    {#if musicState?.current && mobilePlaybackStatus}
+      <div class="chat-mobile-only chat-mobile-player-layer">
+        <MiniPlayerBar
+          currentPlay={musicState.current}
+          isListening={mobilePlaybackStatus.isListening}
+          audioStatus={mobilePlaybackStatus.audioStatus}
+          elapsedSec={mobilePlaybackStatus.elapsedSec}
+          durationSec={mobilePlaybackStatus.durationSec}
+          canDirectSkip={mobilePlaybackStatus.canDirectSkip}
+          isSoloCoolingDown={mobilePlaybackStatus.isSoloCoolingDown}
+          soloCooldownRemainSec={mobilePlaybackStatus.soloCooldownRemainSec}
+          hasVotedSkip={mobilePlaybackStatus.hasVotedSkip}
+          voteCount={musicState.voteCount}
+          voteThreshold={musicState.voteThreshold}
+          isSkippingTrack={isSkippingTrack}
+          variant="mobile"
+          onOpenLyrics={() => onOpenLyricsDrawer?.()}
+          onToggleListen={() => onToggleListen?.()}
+          onSkipTrack={() => onSkipTrack?.()}
+          onVoteSkip={() => onVoteSkip?.()}
+        />
+      </div>
+    {/if}
     {#if skipVoteBanner || queueVoteBanners.length > 0 || activeAlertMessage || showUnreadJumpBar}
       <div class="chat-floating-alerts-stack">
         {#if skipVoteBanner}
@@ -5099,6 +5339,7 @@ function removePendingImage(index: number) {
     <dialog
       bind:this={mobileActionDialog}
       use:openMobileActionDialog
+      out:fadeChatSheetBackdrop
       class="chat-mobile-action-sheet-wrap"
       aria-label="消息操作菜单"
       oncancel={(e) => {
@@ -5120,7 +5361,7 @@ function removePendingImage(index: number) {
         }}
       ></button>
 
-      <div class="chat-mobile-action-sheet">
+      <div class="chat-mobile-action-sheet" out:closeChatActionSheet>
         <div class="w-9 h-1 rounded-full bg-black/15 dark:bg-white/20 mx-auto mb-2.5 shrink-0" aria-hidden="true"></div>
 
         <!-- 选中的消息预览头部 -->
@@ -5182,7 +5423,7 @@ function removePendingImage(index: number) {
               class="chat-mobile-sheet-action-btn"
               onclick={() => {
                 const target = activeMsg;
-                closeMobileActions();
+                releaseMobileActions();
                 handleStartReply(target);
               }}
             >
@@ -5242,7 +5483,7 @@ function removePendingImage(index: number) {
               class="chat-mobile-sheet-action-btn"
               onclick={() => {
                 const target = activeMsg;
-                closeMobileActions();
+                releaseMobileActions();
                 handleOpenThread(target);
               }}
             >
@@ -5261,7 +5502,7 @@ function removePendingImage(index: number) {
               class="chat-mobile-sheet-action-btn"
               onclick={() => {
                 const m = activeMsg;
-                closeMobileActions();
+                releaseMobileActions();
                 handleStartEdit(m);
               }}
             >
@@ -5297,7 +5538,7 @@ function removePendingImage(index: number) {
               onclick={() => {
                 const name = activeMsg.name;
                 const key = activeMsg.userKey;
-                closeMobileActions();
+                releaseMobileActions();
                 onMentionUser(name, key);
               }}
             >
@@ -5312,7 +5553,7 @@ function removePendingImage(index: number) {
               class="chat-mobile-sheet-action-btn"
               onclick={() => {
                 const m = activeMsg;
-                closeMobileActions();
+                releaseMobileActions();
                 onOpenUserProfile?.({
                   userKey: m.userKey,
                   name: m.name,
@@ -5340,7 +5581,7 @@ function removePendingImage(index: number) {
             class="chat-mobile-sheet-action-btn"
             onclick={() => {
               const target = activeMsg;
-              closeMobileActions();
+              releaseMobileActions();
               handleViewSource(target);
             }}
           >

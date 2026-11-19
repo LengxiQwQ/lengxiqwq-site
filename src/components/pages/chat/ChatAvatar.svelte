@@ -26,6 +26,14 @@ function markAvatarLoaded(url: string): void {
 }
 
 export function getDownscaledAvatarUrl(url: string): string {
+	if (!url || !canAttemptCorsDownscale(url)) {
+		if (url && downscaledAvatarUrls.has(url)) {
+			const old = downscaledAvatarUrls.get(url);
+			if (old) URL.revokeObjectURL(old);
+			downscaledAvatarUrls.delete(url);
+		}
+		return "";
+	}
 	return downscaledAvatarUrls.get(url) || "";
 }
 
@@ -39,8 +47,13 @@ export function downscaleImgElementInPlace(
 ): void {
 	if (!rawUrl || !canAttemptCorsDownscale(rawUrl)) return;
 	if (img.naturalWidth <= 160 && img.naturalHeight <= 160) return;
+	const initialSrc = img.currentSrc || img.src;
 	void downscaleAvatarToBlobUrl(img, rawUrl).then((blobUrl) => {
-		if (blobUrl && img.isConnected) {
+		if (
+			blobUrl &&
+			img.isConnected &&
+			(img.currentSrc || img.src) === initialSrc
+		) {
 			img.src = blobUrl;
 		}
 	});
@@ -50,15 +63,11 @@ function canAttemptCorsDownscale(url: string): boolean {
 	if (!url || typeof window === "undefined") return false;
 	if (corsDisabledAvatarUrls.has(url)) return false;
 	if (url.startsWith("blob:") || url.startsWith("data:")) return false;
-	if (/\.gif(?:$|\?)/i.test(url)) return false;
+	if (/\.(?:gif|svg)(?:$|\?)/i.test(url)) return false;
 	try {
 		const parsed = new URL(url, window.location.href);
-		if (parsed.origin === window.location.origin) return true;
-		if (
-			parsed.hostname === "chat-server.lengxiqwq.com" &&
-			parsed.pathname.startsWith("/api/media/")
-		) {
-			return true;
+		if (parsed.origin === window.location.origin) {
+			return !/\.(?:gif|svg)(?:$|\?)/i.test(parsed.pathname);
 		}
 	} catch {
 		return false;
@@ -70,6 +79,9 @@ function downscaleAvatarToBlobUrl(
 	img: HTMLImageElement,
 	sourceUrl: string,
 ): Promise<string | null> {
+	if (!sourceUrl || !canAttemptCorsDownscale(sourceUrl)) {
+		return Promise.resolve(null);
+	}
 	const existing = downscaledAvatarUrls.get(sourceUrl);
 	if (existing) return Promise.resolve(existing);
 	const inflight = pendingDownscaleUrls.get(sourceUrl);
@@ -149,6 +161,7 @@ type AvatarSize = "2xs" | "xs" | "sm" | "md" | "lg";
 
 interface Props {
 	src?: string;
+	alternateSrc?: string;
 	name?: string;
 	fallback?: string;
 	alt?: string;
@@ -161,6 +174,7 @@ interface Props {
 
 const {
 	src = "",
+	alternateSrc = "",
 	name = "",
 	fallback = "?",
 	alt = "",
@@ -175,51 +189,63 @@ let imgError = $state(false);
 let imgLoaded = $state(false);
 let downscaledSrc = $state("");
 let disableCorsForCurrent = $state(false);
+let useAlternate = $state(false);
 
-const resolvedSrc = $derived(resolveChatAvatarUrl(src));
+const primaryUrl = $derived(resolveChatAvatarUrl(src));
+const alternateUrl = $derived(resolveChatAvatarUrl(alternateSrc));
+const resolvedSrc = $derived(
+	alternateUrl && (useAlternate || !primaryUrl || failedAvatarUrls.has(primaryUrl))
+		? alternateUrl
+		: primaryUrl,
+);
+
+$effect(() => {
+	void primaryUrl;
+	void alternateUrl;
+	useAlternate = false;
+});
 
 $effect(() => {
 	const cur = resolvedSrc;
-	disableCorsForCurrent = false;
 	imgError = Boolean(cur && failedAvatarUrls.has(cur));
-	const thumb = cur ? downscaledAvatarUrls.get(cur) || "" : "";
-	downscaledSrc = thumb;
-	imgLoaded = Boolean(thumb || (cur && loadedAvatarUrls.has(cur)));
+	disableCorsForCurrent = false;
+	downscaledSrc = size === "lg" ? "" : getDownscaledAvatarUrl(cur);
+	imgLoaded = Boolean(cur && loadedAvatarUrls.has(cur));
 });
 
-const displaySrc = $derived(downscaledSrc || resolvedSrc);
-const useCors = $derived(
-	!downscaledSrc &&
-		!disableCorsForCurrent &&
-		canAttemptCorsDownscale(resolvedSrc),
-);
+const useCors = $derived(!downscaledSrc && !disableCorsForCurrent && canCorsDownscaleAvatar(resolvedSrc));
 
 function handleAvatarLoad(img: HTMLImageElement): void {
-	const raw = resolvedSrc;
-	if (!raw) return;
-	markAvatarLoaded(raw);
+	if (!resolvedSrc) return;
+	markAvatarLoaded(resolvedSrc);
 	imgLoaded = true;
-	if (
-		!downscaledSrc &&
-		useCors &&
-		(img.naturalWidth > 160 || img.naturalHeight > 160)
-	) {
-		void downscaleAvatarToBlobUrl(img, raw).then((blobUrl) => {
-			if (blobUrl && resolvedSrc === raw) {
-				downscaledSrc = blobUrl;
-			}
-		});
+	if (size !== "lg" && useCors && (img.naturalWidth > 160 || img.naturalHeight > 160)) {
+		void downscaleAvatarToBlobUrl(img, resolvedSrc);
 	}
 }
 
 function handleAvatarError(): void {
 	const raw = resolvedSrc;
-	if (useCors && raw) {
+	imgLoaded = false;
+	if (downscaledSrc) {
+		if (downscaledAvatarUrls.get(raw) === downscaledSrc) {
+			URL.revokeObjectURL(downscaledSrc);
+			downscaledAvatarUrls.delete(raw);
+		}
+		downscaledSrc = "";
+		disableCorsForCurrent = true;
+		return;
+	}
+	if (useCors) {
 		corsDisabledAvatarUrls.add(raw);
 		disableCorsForCurrent = true;
 		return;
 	}
 	markAvatarFailed(raw);
+	if (alternateUrl && alternateUrl !== raw && !failedAvatarUrls.has(alternateUrl)) {
+		useAlternate = true;
+		return;
+	}
 	imgError = true;
 }
 
@@ -268,7 +294,7 @@ const fallbackTextColorClass = $derived(
 {#if showImage}
   {#if imgLoaded}
     <img
-      src={displaySrc}
+      src={downscaledSrc || resolvedSrc}
       loading={lazy ? "lazy" : "eager"}
       fetchpriority={lazy ? "low" : undefined}
       decoding="async"
@@ -276,7 +302,7 @@ const fallbackTextColorClass = $derived(
       referrerpolicy="no-referrer"
       alt={alt || name}
       class="{boxClass} object-cover shrink-0 {grayscale ? 'grayscale-[35%]' : ''} {extraClass}"
-      onload={(e) => handleAvatarLoad(e.currentTarget)}
+      onload={(event) => handleAvatarLoad(event.currentTarget)}
       onerror={handleAvatarError}
     />
   {:else}
@@ -287,7 +313,7 @@ const fallbackTextColorClass = $derived(
         {initials}
       </span>
       <img
-        src={displaySrc}
+        src={downscaledSrc || resolvedSrc}
         loading={lazy ? "lazy" : "eager"}
         fetchpriority={lazy ? "low" : undefined}
         decoding="async"
@@ -295,7 +321,7 @@ const fallbackTextColorClass = $derived(
         referrerpolicy="no-referrer"
         alt={alt || name}
         class="relative w-full h-full object-cover opacity-0 transition-opacity duration-150 {grayscale ? 'grayscale-[35%]' : ''}"
-        onload={(e) => handleAvatarLoad(e.currentTarget)}
+        onload={(event) => handleAvatarLoad(event.currentTarget)}
         onerror={handleAvatarError}
       />
     </span>

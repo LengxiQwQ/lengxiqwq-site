@@ -110,7 +110,9 @@ const isCurrentInterconnect = $derived(INTERCONNECT_ROOM_IDS.has(currentRoom));
 let failedRoomAvatars = $state<Record<string, boolean>>({});
 
 const isNotificationActive = $derived(
-	Boolean(desktopNotificationEnabled && desktopNotificationPermission === "granted"),
+	Boolean(
+		desktopNotificationEnabled && desktopNotificationPermission === "granted",
+	),
 );
 
 const notificationTooltip = $derived.by(() => {
@@ -191,9 +193,11 @@ let memberRowHeight = $state(48);
 let memberScrollRaf: number | null = null;
 
 function syncMemberScrollMetrics() {
-	const scrollEl = combinedScrollEl && getComputedStyle(combinedScrollEl).display !== "contents"
-		? combinedScrollEl
-		: memberScrollEl;
+	const scrollEl =
+		combinedScrollEl &&
+		getComputedStyle(combinedScrollEl).display !== "contents"
+			? combinedScrollEl
+			: memberScrollEl;
 	if (!scrollEl) return;
 	memberScrollTop = scrollEl.scrollTop;
 	if (scrollEl.clientHeight > 0) {
@@ -202,7 +206,9 @@ function syncMemberScrollMetrics() {
 	if (offlineListEl) {
 		offlineSectionOffset = Math.max(
 			0,
-			offlineListEl.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top + scrollEl.scrollTop,
+			offlineListEl.getBoundingClientRect().top -
+				scrollEl.getBoundingClientRect().top +
+				scrollEl.scrollTop,
 		);
 	}
 	const nextRowH =
@@ -280,10 +286,7 @@ function resolveMemberRoleBadge(user: {
 	badgeType?: "host" | "accent" | "tag";
 }): { label: string; type: "host" | "accent" | "tag" } {
 	if (user.isAdmin) return { label: "站长", type: "host" };
-	if (
-		user.authType === "waline" ||
-		user.userKey?.startsWith("waline:")
-	) {
+	if (user.authType === "waline" || user.userKey?.startsWith("waline:")) {
 		return { label: user.badge || "认证", type: "accent" };
 	}
 	if (user.badge && user.badgeType) {
@@ -437,16 +440,16 @@ function formatOfflineTime(ts?: number): string {
       onclick={() => onRoomSelect?.(room.id)}
     >
       {#if hasRoomAvatar}
-        {@const thumbUrl = getDownscaledAvatarUrl(rawRoomAvatar)}
         <img
-          src={thumbUrl || rawRoomAvatar}
+          src={getDownscaledAvatarUrl(rawRoomAvatar) || rawRoomAvatar}
           alt={room.name}
           class="w-9 h-9 md:w-8 md:h-8 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
           loading="eager"
           fetchpriority="low"
           decoding="async"
-          crossorigin={!thumbUrl && canCorsDownscaleAvatar(rawRoomAvatar) ? "anonymous" : undefined}
-          onload={(e) => downscaleImgElementInPlace(e.currentTarget, rawRoomAvatar)}
+              crossorigin={!getDownscaledAvatarUrl(rawRoomAvatar) && canCorsDownscaleAvatar(rawRoomAvatar) ? "anonymous" : undefined}
+              onload={(event) => downscaleImgElementInPlace(event.currentTarget, rawRoomAvatar)}
+
           onerror={() => {
             failedRoomAvatars = { ...failedRoomAvatars, [rawRoomAvatar]: true };
           }}
@@ -455,7 +458,7 @@ function formatOfflineTime(ts?: number): string {
         <span class="w-9 h-9 md:w-8 md:h-8 rounded-lg flex items-center justify-center bg-black/5 dark:bg-white/10 font-mono text-sm font-bold opacity-70 shrink-0">#</span>
       {/if}
       <div class="flex-1 min-w-0 flex flex-col">
-        <span class="truncate leading-tight">#{room.name}</span>
+        <span class="chat-room-item-name truncate leading-tight">#{room.name}</span>
         {#if room.subtitle}
           <span class="text-[12px] md:text-[0.65rem] text-[var(--chat-meta-color)] font-normal truncate leading-tight mt-0.5">
             {room.subtitle}

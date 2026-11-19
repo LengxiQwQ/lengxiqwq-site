@@ -109,7 +109,11 @@ async function loadSource(targetMsg: ChatMessageRecord, targetRoom: string) {
 	}
 
 	try {
-		const res = await fetchMessageSource(chatServerUrl, targetRoom, targetMsg.msgUid);
+		const res = await fetchMessageSource(
+			chatServerUrl,
+			targetRoom,
+			targetMsg.msgUid,
+		);
 		if (seq !== requestSeq) return;
 		responseData = res;
 		if (isInterconnectRoom && res.matrixEvent) {
@@ -148,8 +152,7 @@ const activePayload = $derived.by<Record<string, unknown> | null>(() => {
 		return responseData?.matrixEvent ?? null;
 	}
 	return (
-		responseData?.localRecord ??
-		(message as unknown as Record<string, unknown>)
+		responseData?.localRecord ?? (message as unknown as Record<string, unknown>)
 	);
 });
 
@@ -169,10 +172,7 @@ const jsonTokens = $derived.by(() =>
 const displayEventId = $derived.by(() => {
 	if (!message) return "";
 	return (
-		responseData?.matrixEventId ||
-		message.matrixEventId ||
-		message.msgUid ||
-		""
+		responseData?.matrixEventId || message.matrixEventId || message.msgUid || ""
 	);
 });
 
@@ -224,6 +224,7 @@ async function handleCopyEventId() {
 <ChatModal
   open={open && Boolean(message)}
   title="查看消息源码"
+  mobile="full"
   subtitle={modalSubtitle}
   size="md"
   topPriority={true}

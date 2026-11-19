@@ -111,7 +111,11 @@ async function loadThread(targetRoom: string, targetRootUid: string) {
 		return;
 	}
 	try {
-		const res = await fetchThreadMessages(chatServerUrl, targetRoom, targetRootUid);
+		const res = await fetchThreadMessages(
+			chatServerUrl,
+			targetRoom,
+			targetRootUid,
+		);
 		if (seq !== fetchSeq) return;
 		fetchedRoot = res.rootMessage ?? null;
 		fetchedReplies = Array.isArray(res.replies) ? res.replies : [];
@@ -153,9 +157,7 @@ const liveRootMessage = $derived.by<ChatMessageRecord | null>(() => {
 	return fromRoom ?? fetchedRoot ?? initialRootMessage ?? null;
 });
 
-const canonicalRootUid = $derived(
-	liveRootMessage?.msgUid || rootUid || "",
-);
+const canonicalRootUid = $derived(liveRootMessage?.msgUid || rootUid || "");
 const canonicalRootMatrixId = $derived(
 	liveRootMessage?.matrixEventId ||
 		(canonicalRootUid.startsWith("$") ? canonicalRootUid : ""),
@@ -172,12 +174,16 @@ const threadReplies = $derived.by<ChatMessageRecord[]>(() => {
 		return (
 			m.threadRootUid === canonicalRootUid ||
 			m.threadRootUid === rootUid ||
-			Boolean(canonicalRootMatrixId && m.threadRootUid === canonicalRootMatrixId)
+			Boolean(
+				canonicalRootMatrixId && m.threadRootUid === canonicalRootMatrixId,
+			)
 		);
 	};
 
 	const merged = new Map<string, ChatMessageRecord>();
-	const recalledIds = new Set(roomMessages.map((m) => m.recalledMsgUid).filter(Boolean));
+	const recalledIds = new Set(
+		roomMessages.map((m) => m.recalledMsgUid).filter(Boolean),
+	);
 	for (const m of fetchedReplies) {
 		if (recalledIds.has(m.msgUid)) continue;
 		const liveVersion = roomById.get(m.msgUid);
@@ -269,13 +275,16 @@ const isAdmin = $derived(Boolean(currentUser?.isAdmin));
 const threadSubtitle = $derived.by(() => {
 	const count = threadReplies.length;
 	const proto = isInterconnectRoom ? "Matrix 线程 (m.thread)" : "站内讨论线程";
-	return count > 0 ? `${proto} · 共 ${count} 条回复` : `${proto} · 发起首条线程回复`;
+	return count > 0
+		? `${proto} · 共 ${count} 条回复`
+		: `${proto} · 发起首条线程回复`;
 });
 </script>
 
 <ChatModal
   open={open && Boolean(rootUid)}
   title="线程回复"
+  mobile="full"
   subtitle={threadSubtitle}
   size="md"
   fillHeightOnDesktop={true}

@@ -111,6 +111,7 @@ function handleSubmit(e: SubmitEvent) {
 <ChatModal
   open={open && Boolean(currentUser)}
   title="个人资料"
+  mobile="full"
   subtitle="修改后将实时同步至在线成员列表与后续消息"
   ariaLabel="编辑个人资料"
   size="md"

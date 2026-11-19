@@ -1,16 +1,18 @@
-import { readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { readFile, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
-const serverPath = resolve('/opt/chat-server/server.mjs');
-const registryPath = resolve('/opt/chat-server/src/music/registry.mjs');
+const serverPath = resolve("/opt/chat-server/server.mjs");
+const registryPath = resolve("/opt/chat-server/src/music/registry.mjs");
 
-console.log('1. Patching server.mjs...');
-let serverCode = await readFile(serverPath, 'utf8');
+console.log("1. Patching server.mjs...");
+let serverCode = await readFile(serverPath, "utf8");
 
 // A. Insert publicRoomHistory before WebSocket Server
-if (!serverCode.includes('function publicRoomHistory(roomId)')) {
-  const targetWS = '// WebSocket Server\nconst wss = new WebSocketServer({ server, path: \'/ws\' });';
-  const helperCode = `function publicRoomHistory(roomId) {
+if (!serverCode.includes("function publicRoomHistory(roomId)")) {
+	const targetWS =
+		"// WebSocket Server\nconst wss = new WebSocketServer({ server, path: '/ws' });";
+	const helperCode =
+		`function publicRoomHistory(roomId) {
   const records = Object.hasOwn(messagesStore, roomId) ? messagesStore[roomId] : [];
   const hidden = new Set(records.filter((message) => message.isRecalled ||
     message.status === 'recalled' || message.status === 'deleted').map((message) => message.msgUid));
@@ -24,29 +26,35 @@ if (!serverCode.includes('function publicRoomHistory(roomId)')) {
 }
 
 ` + targetWS;
-  if (!serverCode.includes(targetWS)) {
-    throw new Error('Cannot find WebSocket Server anchor in server.mjs');
-  }
-  serverCode = serverCode.replace(targetWS, helperCode);
-  console.log('  [+] publicRoomHistory inserted');
+	if (!serverCode.includes(targetWS)) {
+		throw new Error("Cannot find WebSocket Server anchor in server.mjs");
+	}
+	serverCode = serverCode.replace(targetWS, helperCode);
+	console.log("  [+] publicRoomHistory inserted");
 } else {
-  console.log('  [=] publicRoomHistory already present');
+	console.log("  [=] publicRoomHistory already present");
 }
 
 // B. Replace roomMessages in handshake
-const initMsgTarget = '  const roomMessages = messagesStore[roomId] || [];\n  const initialMessages = roomMessages.slice(-50);';
-const initMsgReplace = '  const roomMessages = publicRoomHistory(roomId);\n  const initialMessages = roomMessages.slice(-50);';
+const initMsgTarget =
+	"  const roomMessages = messagesStore[roomId] || [];\n  const initialMessages = roomMessages.slice(-50);";
+const initMsgReplace =
+	"  const roomMessages = publicRoomHistory(roomId);\n  const initialMessages = roomMessages.slice(-50);";
 if (serverCode.includes(initMsgTarget)) {
-  serverCode = serverCode.replace(initMsgTarget, initMsgReplace);
-  console.log('  [+] room:init messagesStore replaced with publicRoomHistory');
+	serverCode = serverCode.replace(initMsgTarget, initMsgReplace);
+	console.log("  [+] room:init messagesStore replaced with publicRoomHistory");
 }
 
 // C. Replace room:switch
-const switchTarget = '        const currentRoomMsgs = messagesStore[ws.currentRoom] || [];\n        const initSlice = currentRoomMsgs.slice(-50);';
-const switchReplace = '        const currentRoomMsgs = publicRoomHistory(ws.currentRoom);\n        const initSlice = currentRoomMsgs.slice(-50);';
+const switchTarget =
+	"        const currentRoomMsgs = messagesStore[ws.currentRoom] || [];\n        const initSlice = currentRoomMsgs.slice(-50);";
+const switchReplace =
+	"        const currentRoomMsgs = publicRoomHistory(ws.currentRoom);\n        const initSlice = currentRoomMsgs.slice(-50);";
 if (serverCode.includes(switchTarget)) {
-  serverCode = serverCode.replace(switchTarget, switchReplace);
-  console.log('  [+] room:switch messagesStore replaced with publicRoomHistory');
+	serverCode = serverCode.replace(switchTarget, switchReplace);
+	console.log(
+		"  [+] room:switch messagesStore replaced with publicRoomHistory",
+	);
 }
 
 // D. Replace chat:load_history
@@ -57,24 +65,30 @@ const loadHistReplace = `      if (packet.type === 'chat:load_history') {
         const beforeId = Number(packet.beforeId) || 0;
         const roomMsgs = publicRoomHistory(ws.currentRoom);`;
 if (serverCode.includes(loadHistTarget)) {
-  serverCode = serverCode.replace(loadHistTarget, loadHistReplace);
-  console.log('  [+] chat:load_history messagesStore replaced with publicRoomHistory');
+	serverCode = serverCode.replace(loadHistTarget, loadHistReplace);
+	console.log(
+		"  [+] chat:load_history messagesStore replaced with publicRoomHistory",
+	);
 }
 
 // E. prefixMatch sender restriction
-const prefixTarget = '  const prefixMatch = /^\\[ID:(?<name>[^\\]\\r\\n]+)\\];\\[URL:(?<avatar>[^\\]\\r\\n]*?)\\](?:;\\[KEY:(?<userKey>[^\\]\\r\\n]+)\\])?(?:\\r?\\n)?(?<content>[\\s\\S]*)$/.exec(rawBody);';
-const prefixReplace = '  const prefixMatch = ev.sender === MATRIX_ADMIN_USER_ID ? /^\\[ID:(?<name>[^\\]\\r\\n]+)\\];\\[URL:(?<avatar>[^\\]\\r\\n]*?)\\](?:;\\[KEY:(?<userKey>[^\\]\\r\\n]+)\\])?(?:\\r?\\n)?(?<content>[\\s\\S]*)$/.exec(rawBody) : null;';
+const prefixTarget =
+	"  const prefixMatch = /^\\[ID:(?<name>[^\\]\\r\\n]+)\\];\\[URL:(?<avatar>[^\\]\\r\\n]*?)\\](?:;\\[KEY:(?<userKey>[^\\]\\r\\n]+)\\])?(?:\\r?\\n)?(?<content>[\\s\\S]*)$/.exec(rawBody);";
+const prefixReplace =
+	"  const prefixMatch = ev.sender === MATRIX_ADMIN_USER_ID ? /^\\[ID:(?<name>[^\\]\\r\\n]+)\\];\\[URL:(?<avatar>[^\\]\\r\\n]*?)\\](?:;\\[KEY:(?<userKey>[^\\]\\r\\n]+)\\])?(?:\\r?\\n)?(?<content>[\\s\\S]*)$/.exec(rawBody) : null;";
 if (serverCode.includes(prefixTarget)) {
-  serverCode = serverCode.replace(prefixTarget, prefixReplace);
-  console.log('  [+] prefixMatch sender restricted to MATRIX_ADMIN_USER_ID');
+	serverCode = serverCode.replace(prefixTarget, prefixReplace);
+	console.log("  [+] prefixMatch sender restricted to MATRIX_ADMIN_USER_ID");
 }
 
 // F. hasLocalPrefix sender restriction
-const hasPrefixTarget = '          const hasLocalPrefix = rawBody.startsWith(\'[ID:\') && rawBody.includes(\';[KEY:\');';
-const hasPrefixReplace = '          const hasLocalPrefix = ev.sender === MATRIX_ADMIN_USER_ID && rawBody.startsWith(\'[ID:\') && rawBody.includes(\';[KEY:\');';
+const hasPrefixTarget =
+	"          const hasLocalPrefix = rawBody.startsWith('[ID:') && rawBody.includes(';[KEY:');";
+const hasPrefixReplace =
+	"          const hasLocalPrefix = ev.sender === MATRIX_ADMIN_USER_ID && rawBody.startsWith('[ID:') && rawBody.includes(';[KEY:');";
 if (serverCode.includes(hasPrefixTarget)) {
-  serverCode = serverCode.replace(hasPrefixTarget, hasPrefixReplace);
-  console.log('  [+] hasLocalPrefix sender restricted to MATRIX_ADMIN_USER_ID');
+	serverCode = serverCode.replace(hasPrefixTarget, hasPrefixReplace);
+	console.log("  [+] hasLocalPrefix sender restricted to MATRIX_ADMIN_USER_ID");
 }
 
 // G. music:enqueue external track resolution & auth check
@@ -130,18 +144,18 @@ const enqueueReplace = `      // Music WebSocket commands
       }`;
 
 if (serverCode.includes(enqueueTarget)) {
-  serverCode = serverCode.replace(enqueueTarget, enqueueReplace);
-  console.log('  [+] music:enqueue external track resolver & auth added');
+	serverCode = serverCode.replace(enqueueTarget, enqueueReplace);
+	console.log("  [+] music:enqueue external track resolver & auth added");
 }
 
-await writeFile(serverPath, serverCode, 'utf8');
-console.log('server.mjs successfully updated.');
+await writeFile(serverPath, serverCode, "utf8");
+console.log("server.mjs successfully updated.");
 
-console.log('2. Patching src/music/registry.mjs...');
-let registryCode = await readFile(registryPath, 'utf8');
+console.log("2. Patching src/music/registry.mjs...");
+let registryCode = await readFile(registryPath, "utf8");
 
-if (!registryCode.includes('resolvePlaylistTrack(item)')) {
-  const searchEndTarget = `    for (const id of this.defaultOrder) {
+if (!registryCode.includes("resolvePlaylistTrack(item)")) {
+	const searchEndTarget = `    for (const id of this.defaultOrder) {
       const provider = this.providers.get(id);
       if (!provider) continue;
       const results = await provider.search(keyword, limit);
@@ -152,7 +166,7 @@ if (!registryCode.includes('resolvePlaylistTrack(item)')) {
     return [];
   }`;
 
-  const resolveMethodCode = `    for (const id of this.defaultOrder) {
+	const resolveMethodCode = `    for (const id of this.defaultOrder) {
       const provider = this.providers.get(id);
       if (!provider) continue;
       const results = await provider.search(keyword, limit);
@@ -184,14 +198,14 @@ if (!registryCode.includes('resolvePlaylistTrack(item)')) {
     return match ?? null;
   }`;
 
-  if (!registryCode.includes(searchEndTarget)) {
-    throw new Error('Cannot find search method in registry.mjs');
-  }
-  registryCode = registryCode.replace(searchEndTarget, resolveMethodCode);
-  await writeFile(registryPath, registryCode, 'utf8');
-  console.log('  [+] resolvePlaylistTrack added to registry.mjs');
+	if (!registryCode.includes(searchEndTarget)) {
+		throw new Error("Cannot find search method in registry.mjs");
+	}
+	registryCode = registryCode.replace(searchEndTarget, resolveMethodCode);
+	await writeFile(registryPath, registryCode, "utf8");
+	console.log("  [+] resolvePlaylistTrack added to registry.mjs");
 } else {
-  console.log('  [=] resolvePlaylistTrack already present in registry.mjs');
+	console.log("  [=] resolvePlaylistTrack already present in registry.mjs");
 }
 
-console.log('All files patched successfully.');
+console.log("All files patched successfully.");

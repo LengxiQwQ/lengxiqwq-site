@@ -154,7 +154,9 @@ function formatFullDate(ts?: number): string {
 }
 
 // 每条日志代表这个人的一次点歌；日志里的 requestCount 是全站次数。
-function aggregateRequestedTracks(logs: ChatUserRequestedTrackItem[]): ChatUserRequestedTrackItem[] {
+function aggregateRequestedTracks(
+	logs: ChatUserRequestedTrackItem[],
+): ChatUserRequestedTrackItem[] {
 	const tracks = new Map<string, ChatUserRequestedTrackItem>();
 	for (const log of logs) {
 		const key = log.track.id;
@@ -233,20 +235,26 @@ const fallbackData = $derived.by<{
 	);
 	const badge = isAdmin
 		? "站长"
-		: (seed.badge || onlineMatch?.badge || (authType === "waline" ? "认证" : "访客"));
+		: seed.badge ||
+			onlineMatch?.badge ||
+			(authType === "waline" ? "认证" : "访客");
 	const badgeType = isAdmin
 		? "host"
-		: (seed.badgeType || onlineMatch?.badgeType || (authType === "waline" ? "accent" : "tag"));
+		: seed.badgeType ||
+			onlineMatch?.badgeType ||
+			(authType === "waline" ? "accent" : "tag");
 
 	const userLogs = musicHistoryLogs.filter(
 		(l) => l.requesterKey === seed.userKey,
 	);
-	const allTracks = aggregateRequestedTracks(userLogs.map((log) => ({
-		logId: log.id,
-		track: log.track,
-		requestedAt: log.requestedAt,
-		requestCount: 1,
-	})));
+	const allTracks = aggregateRequestedTracks(
+		userLogs.map((log) => ({
+			logId: log.id,
+			track: log.track,
+			requestedAt: log.requestedAt,
+			requestCount: 1,
+		})),
+	);
 
 	const topMap = new Map<string, ChatUserTopTrackItem>();
 	const artistMap = new Map<string, number>();
@@ -321,13 +329,16 @@ const fallbackData = $derived.by<{
 				[],
 			isAdmin,
 			online: Boolean(onlineMatch ?? seed.online),
-			isFocused: onlineMatch ? onlineMatch.isFocused !== false : (seed.isFocused !== false),
+			isFocused: onlineMatch
+				? onlineMatch.isFocused !== false
+				: seed.isFocused !== false,
 			presenceMode: onlineMatch?.presenceMode ?? seed.presenceMode,
 			status: cleanCustomStatus(
 				onlineMatch?.status || selfUser?.status || seed.status,
 			),
 			bio: onlineMatch?.bio ?? selfUser?.bio ?? seed.bio ?? "",
-			location: onlineMatch?.location || selfUser?.location || seed.location || "",
+			location:
+				onlineMatch?.location || selfUser?.location || seed.location || "",
 			firstSeenAt: userMessages[0]?.createdAt || 0,
 			lastSeenAt: onlineMatch ? Date.now() : latestMsg?.createdAt || 0,
 			stats: {
@@ -466,14 +477,24 @@ const isSelf = $derived(
 	),
 );
 const displayedTracks = $derived.by<ChatUserRequestedTrackItem[]>(() => {
-	if (remoteProfile) return aggregateRequestedTracks(remoteTracks).slice(0, localVisibleLimit);
+	if (remoteProfile)
+		return aggregateRequestedTracks(remoteTracks).slice(0, localVisibleLimit);
 	return (fallbackData?.allTracks ?? []).slice(0, localVisibleLimit);
 });
 const topTracks = $derived.by<ChatUserTopTrackItem[]>(() => {
-	if (remoteProfile) return aggregateRequestedTracks(remoteTracks)
-		.map((item) => ({ track: item.track, requestCount: item.requestCount, lastRequestedAt: item.requestedAt }))
-		.sort((a, b) => b.requestCount - a.requestCount || b.lastRequestedAt - a.lastRequestedAt)
-		.slice(0, 50);
+	if (remoteProfile)
+		return aggregateRequestedTracks(remoteTracks)
+			.map((item) => ({
+				track: item.track,
+				requestCount: item.requestCount,
+				lastRequestedAt: item.requestedAt,
+			}))
+			.sort(
+				(a, b) =>
+					b.requestCount - a.requestCount ||
+					b.lastRequestedAt - a.lastRequestedAt,
+			)
+			.slice(0, 50);
 	return fallbackData?.topTracks ?? [];
 });
 const topArtists = $derived.by<ChatUserTopArtistItem[]>(() => {
@@ -491,12 +512,18 @@ const recentMessages = $derived.by<ChatUserRecentMessage[]>(() => {
 });
 const hasMoreTracks = $derived.by<boolean>(() => {
 	if (trackTab !== "recent") return false;
-	if (remoteProfile) return remoteHasMore || aggregateRequestedTracks(remoteTracks).length > localVisibleLimit;
+	if (remoteProfile)
+		return (
+			remoteHasMore ||
+			aggregateRequestedTracks(remoteTracks).length > localVisibleLimit
+		);
 	return (fallbackData?.allTracks.length ?? 0) > localVisibleLimit;
 });
 const totalSongCount = $derived.by<number>(() => {
 	if (!profile) return 0;
-	return remoteProfile ? aggregateRequestedTracks(remoteTracks).length : (fallbackData?.allTracks.length ?? 0);
+	return remoteProfile
+		? aggregateRequestedTracks(remoteTracks).length
+		: (fallbackData?.allTracks.length ?? 0);
 });
 
 $effect(() => {
@@ -566,8 +593,13 @@ $effect(() => {
 			bio: liveOnline?.bio ?? cachedEntry.profile.bio,
 			location: liveOnline?.location || cachedEntry.profile.location,
 			online: Boolean(liveOnline ?? seedOnline),
-			isFocused: liveOnline ? liveOnline.isFocused !== false : cachedEntry.profile.isFocused,
-			presenceMode: liveOnline?.presenceMode ?? cachedEntry.profile.presenceMode ?? seedPresence,
+			isFocused: liveOnline
+				? liveOnline.isFocused !== false
+				: cachedEntry.profile.isFocused,
+			presenceMode:
+				liveOnline?.presenceMode ??
+				cachedEntry.profile.presenceMode ??
+				seedPresence,
 		};
 		remoteProfile = mergedProfile;
 		remoteTracks = mergedProfile.recentTracks ?? [];
@@ -632,8 +664,18 @@ async function loadMoreTracks() {
 			remoteNextBeforeId,
 			TRACK_PAGE_SIZE,
 		);
-		if (!open || seed?.userKey !== targetKey || roomId !== targetRoom || remoteProfile !== targetProfile) return;
-		if (!page || (page.hasMore && (page.nextBeforeId <= 0 || page.nextBeforeId >= remoteNextBeforeId))) {
+		if (
+			!open ||
+			seed?.userKey !== targetKey ||
+			roomId !== targetRoom ||
+			remoteProfile !== targetProfile
+		)
+			return;
+		if (
+			!page ||
+			(page.hasMore &&
+				(page.nextBeforeId <= 0 || page.nextBeforeId >= remoteNextBeforeId))
+		) {
 			tracksLoadFailed = true;
 			return;
 		}
@@ -649,7 +691,11 @@ async function loadMoreTracks() {
 		remoteHasMore = page.hasMore && page.nextBeforeId > 0;
 		remoteNextBeforeId = page.nextBeforeId;
 	} finally {
-		if (seed?.userKey === targetKey && roomId === targetRoom && remoteProfile === targetProfile) {
+		if (
+			seed?.userKey === targetKey &&
+			roomId === targetRoom &&
+			remoteProfile === targetProfile
+		) {
 			isLoadingMore = false;
 		}
 	}
@@ -657,7 +703,14 @@ async function loadMoreTracks() {
 
 // 读取全部分页后才能统计每首歌的真实个人次数。
 $effect(() => {
-	if (open && remoteProfile && remoteHasMore && !isLoading && !isLoadingMore && !tracksLoadFailed) {
+	if (
+		open &&
+		remoteProfile &&
+		remoteHasMore &&
+		!isLoading &&
+		!isLoadingMore &&
+		!tracksLoadFailed
+	) {
 		void loadMoreTracks();
 	}
 });
@@ -745,6 +798,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
 <ChatModal
   open={open && Boolean(profile || matrixUserId || isExternalUser || (isSpectator && currentUser?.isAdmin))}
   title="成员名片"
+  mobile="expandable"
   ariaLabel={seed ? `${seed.name} 的个人资料` : "成员名片"}
   size={matrixUserId || isExternalUser || isSpectator ? "md" : "lg"}
   fillHeightOnDesktop={!(matrixUserId || isExternalUser || isSpectator)}
@@ -777,7 +831,12 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
       <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-2.5">
         <div class="flex items-center gap-3">
           <div class="relative shrink-0">
-            <ChatAvatar src={seed.avatar} name={cleanName} size="lg" />
+            <ChatAvatar
+              src={seed.avatar}
+              alternateSrc={onlineMatch?.avatar || latestMsg?.avatar}
+              name={cleanName}
+              size="lg"
+            />
             {#if isOnline}
               {@const extModalFocused = onlineMatch ? onlineMatch.isFocused !== false : (profile?.isFocused !== false)}
               {@const extPresenceMode = onlineMatch?.presenceMode ?? profile?.presenceMode ?? seed.presenceMode}
@@ -1231,6 +1290,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             <div class="relative shrink-0">
               <ChatAvatar
                 src={profile.avatar}
+                alternateSrc={seed?.avatar || fallbackData?.profile.avatar}
                 name={profile.name}
                 size="lg"
               />
@@ -1297,11 +1357,13 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           </div>
 
           <div class="chat-user-detail-subcard text-xs leading-relaxed text-[var(--deep-text)]/90 px-2.5 py-2 rounded-lg break-words">
-            {#if profile.bio?.trim()}
-              {profile.bio.trim()}
-            {:else}
-              <span class="text-[var(--chat-meta-color)] opacity-80">这个人很懒，还没有填写个人简介~</span>
-            {/if}
+            <div class="chat-member-card-bio">
+              {#if profile.bio?.trim()}
+                {profile.bio.trim()}
+              {:else}
+                <span class="text-[var(--chat-meta-color)] opacity-80">这个人很懒，还没有填写个人简介~</span>
+              {/if}
+            </div>
           </div>
 
           {#if safeProfileUrl}

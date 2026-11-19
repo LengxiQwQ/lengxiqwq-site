@@ -69,6 +69,7 @@ function handleSubmit() {
 <ChatModal
   open={open}
   title="发起投票"
+  mobile="full"
   subtitle="支持与 Matrix / Element 联邦双向同步"
   size="sm"
   onClose={onClose}
@@ -146,6 +147,7 @@ function handleSubmit() {
         <button
           type="button"
           role="switch"
+          aria-label="允许多选"
           aria-checked={isMultiple}
           class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none {isMultiple ? 'bg-[var(--skin-accent)]' : 'bg-black/15 dark:bg-white/20'}"
           onclick={() => (isMultiple = !isMultiple)}
@@ -177,23 +179,22 @@ function handleSubmit() {
     {#if error}
       <div class="text-xs text-red-500 font-medium">{error}</div>
     {/if}
+  </div>
 
-    <!-- 底部操作按钮 -->
-    <div class="flex items-center justify-end gap-2 pt-2">
-      <button
-        type="button"
-        class="chat-header-pill-btn h-8! px-3! text-xs! font-medium cursor-pointer"
-        onclick={onClose}
-      >
-        取消
-      </button>
-      <button
-        type="button"
-        class="chat-send-btn h-8! px-4! text-xs! font-semibold cursor-pointer"
-        onclick={handleSubmit}
-      >
-        发起投票
-      </button>
-    </div>
+  <div class="chat-poll-modal-actions flex shrink-0 items-center justify-end gap-2 px-4 pb-4">
+    <button
+      type="button"
+      class="chat-header-pill-btn h-8! px-3! text-xs! font-medium cursor-pointer"
+      onclick={onClose}
+    >
+      取消
+    </button>
+    <button
+      type="button"
+      class="chat-send-btn h-8! px-4! text-xs! font-semibold cursor-pointer"
+      onclick={handleSubmit}
+    >
+      发起投票
+    </button>
   </div>
 </ChatModal>

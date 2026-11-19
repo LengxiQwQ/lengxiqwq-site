@@ -93,7 +93,11 @@ export type ServerPacket =
 			totalChatters?: number;
 			musicAudience?: MusicAudience;
 	  }
-	| { type: "chat:message" | "chat:updated"; roomId: string; message: ChatMessageRecord }
+	| {
+			type: "chat:message" | "chat:updated";
+			roomId: string;
+			message: ChatMessageRecord;
+	  }
 	| {
 			type: "chat:history_batch";
 			roomId: string;
@@ -103,7 +107,12 @@ export type ServerPacket =
 			jumpTarget?: boolean;
 	  }
 	| { type: "chat:deleted"; roomId: string; msgUid: string; recalled?: boolean }
-	| { type: "chat:recalled"; roomId: string; msgUid: string; notice?: ChatMessageRecord }
+	| {
+			type: "chat:recalled";
+			roomId: string;
+			msgUid: string;
+			notice?: ChatMessageRecord;
+	  }
 	| {
 			type: "chat:reaction_updated";
 			roomId: string;
@@ -527,8 +536,7 @@ export function resolveInitialAuth(): {
 export function buildWalineLoginUrl(walineServerUrl: string): string {
 	const base = normalizeServerUrl(walineServerUrl);
 	if (!base) return "";
-	const redirect =
-		typeof window !== "undefined" ? window.location.href : "";
+	const redirect = typeof window !== "undefined" ? window.location.href : "";
 	return `${base}/ui/login?lng=zh-CN${redirect ? `&redirect=${encodeURIComponent(redirect)}` : ""}`;
 }
 
@@ -750,7 +758,10 @@ export async function searchOnlineMusic(
 	const page = Math.max(1, options?.page ?? 1);
 
 	const controller = new AbortController();
-	const timeoutId = window.setTimeout(() => controller.abort("timeout"), 10_000);
+	const timeoutId = window.setTimeout(
+		() => controller.abort("timeout"),
+		10_000,
+	);
 	const onExternalAbort = () => controller.abort(options?.signal?.reason);
 	if (options?.signal) {
 		if (options.signal.aborted) {
@@ -1085,14 +1096,18 @@ export async function fetchUserDetailProfile(
 		if (!data.ok || !data.profile) return null;
 		return {
 			...data.profile,
-			recentTracks: (data.profile.recentTracks ?? []).map(normalizeUserTrackLog),
+			recentTracks: (data.profile.recentTracks ?? []).map(
+				normalizeUserTrackLog,
+			),
 		};
 	} catch {
 		return null;
 	}
 }
 
-function normalizeUserTrackLog(item: ChatUserTracksPage["items"][number]): ChatUserTracksPage["items"][number] {
+function normalizeUserTrackLog(
+	item: ChatUserTracksPage["items"][number],
+): ChatUserTracksPage["items"][number] {
 	const log = item as typeof item & { id?: number };
 	return { ...item, logId: item.logId ?? log.id };
 }
@@ -1205,10 +1220,7 @@ function hasAsciiControlChars(value: string): boolean {
 	return false;
 }
 
-export function sanitizeChatUrl(
-	rawUrl?: string,
-	allowRelative = true,
-): string {
+export function sanitizeChatUrl(rawUrl?: string, allowRelative = true): string {
 	const trimmed = (rawUrl || "").trim();
 	if (!trimmed || hasAsciiControlChars(trimmed)) return "";
 	if (allowRelative && trimmed.startsWith("/") && !trimmed.startsWith("//")) {
@@ -1250,9 +1262,11 @@ export function isMentionedForUser(
 		Array.isArray(msg.mentionKeys) &&
 		(msg.mentionKeys.includes("room") || msg.mentionKeys.includes("@room"));
 	// 只认协议字段 mentionKeys，没有则不触发（历史消息无 mentionKeys 一律忽略）
-	if (!Array.isArray(msg.mentionKeys) || msg.mentionKeys.length === 0) return false;
+	if (!Array.isArray(msg.mentionKeys) || msg.mentionKeys.length === 0)
+		return false;
 	return msg.mentionKeys.some(
-		(k) => keys.has(k) || (hasVerifiedRoomKey && (k === "room" || k === "@room")),
+		(k) =>
+			keys.has(k) || (hasVerifiedRoomKey && (k === "room" || k === "@room")),
 	);
 }
 
@@ -1294,7 +1308,10 @@ function matchSiteByHostname(
 		if (Array.isArray(site.aliases)) {
 			for (const alias of site.aliases) {
 				const cleanAlias = alias.trim().toLowerCase();
-				if (cleanAlias && (clean.includes(cleanAlias) || cleanAlias.includes(clean))) {
+				if (
+					cleanAlias &&
+					(clean.includes(cleanAlias) || cleanAlias.includes(clean))
+				) {
 					return site;
 				}
 			}
@@ -1333,7 +1350,11 @@ function matchSiteByUrl(
 	sites: InterconnectSite[],
 ): InterconnectSite | undefined {
 	const trimmed = (rawUrl || "").trim();
-	if (!trimmed || trimmed.includes("matrix.to/") || trimmed.includes("lengxiqwq.com")) {
+	if (
+		!trimmed ||
+		trimmed.includes("matrix.to/") ||
+		trimmed.includes("lengxiqwq.com")
+	) {
 		return undefined;
 	}
 	const targetHost = extractHostname(trimmed);
@@ -1387,7 +1408,9 @@ export function resolveExternalOrigin(
 	let matchedSite: InterconnectSite | undefined;
 	const genericBadges = new Set(["互联茶友", "茶友", "站长", "访客", "认证"]);
 	const rawExplicitSite = (member.site || "").trim();
-	const explicitSite = genericBadges.has(rawExplicitSite) ? "" : rawExplicitSite;
+	const explicitSite = genericBadges.has(rawExplicitSite)
+		? ""
+		: rawExplicitSite;
 	const explicitSiteUrl = (member.siteUrl || "").trim();
 	const explicitBadge =
 		member.badge && !genericBadges.has(member.badge.trim())
@@ -1413,7 +1436,10 @@ export function resolveExternalOrigin(
 
 	// 若消息/成员明确携带了代发归属或非宿主域名直链，即使未列入 interconnectSites 也优先构造独立站点信息
 	const hasExplicitRelaySite = Boolean(
-		explicitSite || explicitSiteUrl || relaySiteKey || baseUserKey.toLowerCase().includes("@aiprate:matrix.rainzt.cn"),
+		explicitSite ||
+			explicitSiteUrl ||
+			relaySiteKey ||
+			baseUserKey.toLowerCase().includes("@aiprate:matrix.rainzt.cn"),
 	);
 	if (!matchedSite && hasExplicitRelaySite) {
 		const isAiovtueRelay =
@@ -1504,7 +1530,9 @@ export async function fetchMessageSource(
 		method: "GET",
 		cache: "no-store",
 	});
-	const data = (await res.json().catch(() => null)) as ChatMessageSourceResponse | null;
+	const data = (await res
+		.json()
+		.catch(() => null)) as ChatMessageSourceResponse | null;
 	if (!res.ok || !data?.ok) {
 		throw new Error(data?.error || `获取消息源码失败 (${res.status})`);
 	}
@@ -1537,7 +1565,9 @@ export async function fetchThreadMessages(
 		method: "GET",
 		cache: "no-store",
 	});
-	const data = (await res.json().catch(() => null)) as ChatThreadDetailResponse | null;
+	const data = (await res
+		.json()
+		.catch(() => null)) as ChatThreadDetailResponse | null;
 	if (!res.ok || !data?.ok) {
 		throw new Error(data?.error || `获取线程回复失败 (${res.status})`);
 	}
@@ -1564,4 +1594,3 @@ export async function fetchActiveThreads(
 	if (!res.ok || !data?.ok || !Array.isArray(data.threads)) return [];
 	return data.threads;
 }
-

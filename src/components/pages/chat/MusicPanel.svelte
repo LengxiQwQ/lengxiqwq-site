@@ -28,7 +28,10 @@ function resolveMusicThumbUrl(raw?: string): string {
 		return raw.replace(/\/\d+x\d+bb(\.[a-zA-Z0-9]+(?:\?.*)?)$/, "/100x100bb$1");
 	}
 	if (raw.includes("y.gtimg.cn/music/photo_new/")) {
-		return raw.replace(/T002R(?:300|500|800)x(?:300|500|800)M000/, "T002R150x150M000");
+		return raw.replace(
+			/T002R(?:300|500|800)x(?:300|500|800)M000/,
+			"T002R150x150M000",
+		);
 	}
 	return raw;
 }

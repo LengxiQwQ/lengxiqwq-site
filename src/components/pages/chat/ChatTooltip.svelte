@@ -25,8 +25,11 @@ const {
 }: Props = $props();
 
 const placement = $derived(
-	align === "left" ? `${position}-start` as const :
-	align === "right" ? `${position}-end` as const : position,
+	align === "left"
+		? (`${position}-start` as const)
+		: align === "right"
+			? (`${position}-end` as const)
+			: position,
 );
 </script>
 

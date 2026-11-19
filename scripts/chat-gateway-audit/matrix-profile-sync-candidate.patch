@@ -1,0 +1,164 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -17,6 +17,7 @@
+ import { normalizeMusicTrack, readPlaylistJson } from './src/music/music-input.mjs';
+ import { escapeHtml, inferMimeType, normalizeSiteBadge, stripSiteSuffix, normalizeDotSpacing, createMatrixPersistence, buildMentionedHtml, KNOWN_MATRIX_RELAY_SENDERS, resolveMatrixRelayMeta } from './src/matrix/matrix-utils.mjs';
+ import { restoreRelayNames } from './src/matrix/restore-relay-names.mjs';
++import { createMatrixProfileSync, ensureMatrixRoomJoined } from './src/matrix/matrix-profile-sync.mjs';
+ import { createMentionMailer, loadEnvFile } from './src/notify/mention-mailer.mjs';
+ 
+ loadEnvFile('/opt/chat-server/.env');
+@@ -1357,39 +1358,31 @@
+   return '';
+ }
+ 
+-async function syncMatrixUserAvatar(user, token, userId) {
+-  if (!user || !user.avatar || !token || !userId) return;
+-  const avatarUrl = (user.avatar || '').trim();
+-  if (!avatarUrl || !avatarUrl.startsWith('http')) return;
+-
+-  try {
+-    let mxcUri = userAvatarMxcMap.get(user.userKey);
+-    if (!mxcUri) {
+-      mxcUri = await getOrUploadMxc(avatarUrl);
+-      if (mxcUri) {
+-        userAvatarMxcMap.set(user.userKey, mxcUri);
+-      }
+-    }
+-    if (!mxcUri) return;
+-
+-    await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/profile/${encodeURIComponent(userId)}/avatar_url`, {
+-      method: 'PUT',
+-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+-      body: JSON.stringify({ avatar_url: mxcUri })
++const syncMatrixProfile = createMatrixProfileSync({ baseUrl: MATRIX_INTERNAL_URL, roomId: MATRIX_ROOM_ID });
++const avatarSyncPending = new Map();
++
++function syncMatrixUserAvatar(user, token, userId) {
++  if (!user || !token || !userId) return;
++  const snapshot = { ...user };
++  const previous = avatarSyncPending.get(userId) || Promise.resolve();
++  const current = previous.catch(() => {}).then(async () => {
++    const avatarUrl = (snapshot.avatar || '').trim();
++    const cached = userAvatarMxcMap.get(snapshot.userKey);
++    let mxcUri = cached?.source === avatarUrl ? cached.mxcUri : '';
++    if (!mxcUri && avatarUrl.startsWith('http')) mxcUri = await getOrUploadMxc(avatarUrl);
++    if (!mxcUri && avatarUrl.startsWith('mxc://')) mxcUri = avatarUrl;
++    await syncMatrixProfile({
++      userId, token,
++      displayname: `${snapshot.name} · 冷汐的杂货铺`,
++      avatarUrl: mxcUri || undefined
+     });
+-
+-    await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/rooms/${encodeURIComponent(MATRIX_ROOM_ID)}/state/m.room.member/${encodeURIComponent(userId)}`, {
+-      method: 'PUT',
+-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+-      body: JSON.stringify({
+-        membership: 'join',
+-        displayname: `${user.name} · 冷汐的杂货铺`,
+-        avatar_url: mxcUri
+-      })
+-    });
+-  } catch (err) {
+-    console.warn(`[MatrixProfile] Failed to sync avatar for ${user.name}:`, err.message);
+-  }
++    if (mxcUri) userAvatarMxcMap.set(snapshot.userKey, { source: avatarUrl, mxcUri });
++  });
++  avatarSyncPending.set(userId, current);
++  current.finally(() => { if (avatarSyncPending.get(userId) === current) avatarSyncPending.delete(userId); }).catch(() => {});
++  return current.catch((err) => {
++    console.warn(`[MatrixProfile] Failed to sync profile for ${snapshot.name}:`, err.message);
++  });
+ }
+ 
+ // Matrix Account Provisioning for Users
+@@ -1462,25 +1455,15 @@
+   }
+ 
+   try {
+-    await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/join/${encodeURIComponent(MATRIX_ROOM_ID)}`, {
+-      method: 'POST',
+-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+-      body: JSON.stringify({ server_name: ['detached.online', 'matrix.rainzt.cn', 'chat.gbk.ink'] }),
+-      signal: AbortSignal.timeout(5000)
++    await ensureMatrixRoomJoined({
++      baseUrl: MATRIX_INTERNAL_URL, roomId: MATRIX_ROOM_ID, userId,
++      userToken: token, adminToken: MATRIX_ADMIN_TOKEN
+     });
+-  } catch {}
+-
+-  (async () => {
+-    try {
+-      const displayname = `${user.name} · 冷汐的杂货铺`;
+-      await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`, {
+-        method: 'PUT',
+-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+-        body: JSON.stringify({ displayname })
+-      });
+-      await syncMatrixUserAvatar(user, token, userId);
+-    } catch {}
+-  })();
++  } catch (err) {
++    console.warn('[MatrixAuth] Could not verify room membership:', err.message);
++  }
++
++  syncMatrixUserAvatar({ ...user }, token, userId).catch(() => {});
+ 
+   const creds = { token, userId, isProxy: false };
+   userMatrixTokenCache.set(user.userKey, creds);
+@@ -4266,21 +4249,11 @@
+         m.lastSeenAt = Date.now();
+         saveStoreDebounced();
+ 
+-        // Sync to Matrix profile asynchronously if applicable
+-        getOrCreateMatrixAccountForUser(ws.user).then(async (creds) => {
++        // Sync only changed Matrix profile values, including simultaneous updates.
++        const profileSnapshot = { ...ws.user };
++        getOrCreateMatrixAccountForUser(profileSnapshot).then(async (creds) => {
+           if (creds && creds.token && !creds.isProxy) {
+-            try {
+-              const displayname = `${ws.user.name} · 冷汐的杂货铺`;
+-              await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/profile/${encodeURIComponent(creds.userId)}/displayname`, {
+-                method: 'PUT',
+-                headers: {
+-                  Authorization: `Bearer ${creds.token}`,
+-                  'Content-Type': 'application/json'
+-                },
+-                body: JSON.stringify({ displayname })
+-              });
+-              await syncMatrixUserAvatar(ws.user, creds.token, creds.userId);
+-            } catch {}
++            await syncMatrixUserAvatar(profileSnapshot, creds.token, creds.userId);
+           }
+         }).catch(() => {});
+ 
+@@ -5189,27 +5162,10 @@
+   if (adminProfileEnsured && !force) return;
+   try {
+     const adminDisplayName = '冷汐OωO · 冷汐的杂货铺';
+-    await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/profile/${encodeURIComponent(MATRIX_ADMIN_USER_ID)}/displayname`, {
+-      method: 'PUT',
+-      headers: { Authorization: `Bearer ${MATRIX_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+-      body: JSON.stringify({ displayname: adminDisplayName })
+-    });
+     const currentMember = matrixProfileCache.get(MATRIX_ADMIN_USER_ID);
+     const avatarUrl = currentMember?.avatar_url || 'mxc://matrix.lengxiqwq.com/1mmeU8x1YCq7c33j5jDeiFkfP06nk9Ci';
+-    await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/rooms/${encodeURIComponent(MATRIX_ROOM_ID)}/state/m.room.member/${encodeURIComponent(MATRIX_ADMIN_USER_ID)}`, {
+-      method: 'PUT',
+-      headers: { Authorization: `Bearer ${MATRIX_ADMIN_TOKEN}`, 'Content-Type': 'application/json' },
+-      body: JSON.stringify({
+-        membership: 'join',
+-        displayname: adminDisplayName,
+-        avatar_url: avatarUrl
+-      })
+-    });
+-    matrixProfileCache.set(MATRIX_ADMIN_USER_ID, {
+-      displayname: adminDisplayName,
+-      avatar_url: avatarUrl,
+-      fetchedAt: Date.now()
+-    });
++    await syncMatrixProfile({ userId: MATRIX_ADMIN_USER_ID, token: MATRIX_ADMIN_TOKEN, displayname: adminDisplayName, avatarUrl });
++    matrixProfileCache.set(MATRIX_ADMIN_USER_ID, { displayname: adminDisplayName, avatar_url: avatarUrl, fetchedAt: Date.now() });
+     adminProfileEnsured = true;
+     console.log(`[MatrixProfile] Admin Matrix displayname verified & synced: ${adminDisplayName}`);
+   } catch (err) {

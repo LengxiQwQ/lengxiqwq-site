@@ -167,6 +167,17 @@
 
 ---
 
+## 7.5. 表情贴纸与评论邮件通知联动维护规则（Stickers & Mailer SOP）
+
+- **资产归属**：全站评论与聊天室表情存放于 `public/assets/stickers/`（含 `qq/`、`miku/`、`bmoji/`）。
+- **杜绝 404 问号裂图**：邮件客户端（尤其是 Gmail 的 Google Image Proxy）在加载不存在的图片时会直接显示蓝白色问号图标 `[?]`。因此，**凡新增、重命名或扩充表情，严禁仅往文件夹丢图片**，必须同步完成以下闭环：
+  1. **资产与元数据**：在 `public/assets/stickers/<pack>/` 放入图片，并在对应目录的 `info.json` 的 `items` 列表中登记；
+  2. **邮件白名单与别名库**：打开邮件服务核心 `D:\Projects\waline-comment-system\src\utils\mailer.ts`，将新增表情加入已知白名单集合（`KNOWN_*`），并在对应的别名映射字典（`*_NAME_ALIAS`）中配置常见口语别名（例如将口语 `:miku_给心:` 映射为真实的 `抱爱心`，将中文 `:qq_鼓掌:` 映射为 `clap`）；
+  3. **安全降级保障**：系统已对未命中表情开启安全文本徽章回退，绝不允许向邮件客户端输出 404 图片地址。
+- **参考指南**：详见 [`public/assets/stickers/README.md`](public/assets/stickers/README.md)。
+
+---
+
 ## 8. 项目地图（目录职责）
 
 ```text
@@ -391,6 +402,7 @@ lengxiqwq-site/
 | 改评论后端 | 内容仓 | `waline/`、`config/commentConfig.ts` |
 | 改聊天室前端 / 点歌台 | 主仓 | `src/pages/chat.astro`、相关组件与配置 |
 | 改说说/朋友圈 API、媒体直传 | 主仓 | `worker/`（Hono + D1/KV/R2） |
+| 加/改评论与聊天室表情包/贴纸 | 双仓+邮件端 | `public/assets/stickers/`、`info.json` 与 `waline-comment-system/src/utils/mailer.ts` |
 
 ---
 
@@ -415,6 +427,7 @@ lengxiqwq-site/
 - ❌ 为了“干净”执行 `pnpm content:reset` → ✅ 用户没要求就不要动，重置会删掉本地物化内容。
 - ❌ 双仓都改时先推主仓 → ✅ 先推内容仓（带 `[skip ci]`），再推主仓。
 - ❌ 把 `src/config/` 里的个人 Steam Key、友链、歌单提交到公开仓 → ✅ 这些只属于内容仓。
+- ❌ 添加新表情后只丢图片进文件夹 → ✅ 同步更新 `info.json` 与 `waline-comment-system/src/utils/mailer.ts` 白名单与别名映射，防止邮件 404 问号裂图。
 - ❌ 用 `pnpm lint` 做“只读检查” → ✅ 用 `pnpm exec biome check ./src ./scripts`。
 
 ---

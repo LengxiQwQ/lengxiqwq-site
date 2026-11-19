@@ -1207,6 +1207,8 @@ function handleBubbleClick(e: MouseEvent) {
               decoding="async"
               width={cachedDims?.w}
               height={cachedDims?.h}
+              style:--chat-image-width={cachedDims ? `${cachedDims.w}px` : undefined}
+              style:--chat-image-ratio={cachedDims ? cachedDims.w / cachedDims.h : undefined}
               onload={(e) => rememberChatImageDims(att.url, e.currentTarget)}
               class="chat-msg-image"
             />

@@ -32,6 +32,7 @@ import {
 	searchOnlineMusic,
 } from "./chatClient";
 import type {
+	ChatActiveThreadItem,
 	ChatCustomBadge,
 	ChatMentionCandidate,
 	ChatMessageRecord,
@@ -42,15 +43,14 @@ import type {
 	ChatSpectatorRecord,
 	ChatUserDetailSeed,
 	ConnectionState,
-	ChatActiveThreadItem,
 	ImageAttachment,
 	RoomMusicState,
 } from "./chatTypes";
 import MusicPanel from "./MusicPanel.svelte";
 import { MusicClock } from "./musicClock";
-import type { AudioStatus } from "./roomAudioPlayer";
 import type { ChatMusicTrack } from "./musicTypes";
 import RoomPanel from "./RoomPanel.svelte";
+import type { AudioStatus } from "./roomAudioPlayer";
 import {
 	buildStickerLookup,
 	loadStickerPacks,
@@ -117,7 +117,9 @@ let currentUser = $state<ChatSessionUser | null>(null);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
 let observers = $state<ChatOnlineMember[]>([]);
 function uniqueObservers(list: ChatOnlineMember[]): ChatOnlineMember[] {
-	return [...new Map(list.map(observer => [observer.userKey, observer])).values()];
+	return [
+		...new Map(list.map((observer) => [observer.userKey, observer])).values(),
+	];
 }
 
 let spectatorHistory = $state<ChatSpectatorRecord[]>([]);
@@ -224,10 +226,13 @@ let typingUsers = $state<string[]>([]);
 let readReceipts = $state<Record<string, ChatReadReceipt[]>>({});
 let musicState = $state<RoomMusicState | null>(null);
 let musicAudience = $state({ onlineCount: 0, listeningCount: 0 });
-const songRequests = new Map<string, {
-	room: string;
-	finish: (ok: boolean) => void;
-}>();
+const songRequests = new Map<
+	string,
+	{
+		room: string;
+		finish: (ok: boolean) => void;
+	}
+>();
 let isSkippingTrack = $state(false);
 let skipPendingTimer: number | null = null;
 let clockOffsetMs = $state(0);
@@ -236,7 +241,10 @@ const musicClock = new MusicClock();
 const serverNow = () => musicClock.now();
 let clockPingSeq = 0;
 let clockBurstRemaining = 0;
-const pendingClockPings = new WeakMap<WebSocket, { wall: number; monotonic: number; id: number }>();
+const pendingClockPings = new WeakMap<
+	WebSocket,
+	{ wall: number; monotonic: number; id: number }
+>();
 let chatAudio: HTMLAudioElement | null = $state(null);
 let noticeText = $state("");
 let noticeVisible = $state(false);
@@ -306,10 +314,20 @@ let previousMobileDrawer: "none" | "room" | "music" = "none";
 $effect.pre(() => {
 	const next = mobileDrawer;
 	if (isMobileLayout && previousMobileDrawer !== "none" && next === "none") {
-		const panel = document.querySelector(`.chat-panel-${previousMobileDrawer === "room" ? "left" : "right"}`);
-		if (panel?.contains(document.activeElement) && !document.querySelector(".chat-modal-backdrop")) {
-			const label = previousMobileDrawer === "room" ? "打开房间与成员抽屉" : "打开点歌与听歌抽屉";
-			document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)?.focus({ preventScroll: true });
+		const panel = document.querySelector(
+			`.chat-panel-${previousMobileDrawer === "room" ? "left" : "right"}`,
+		);
+		if (
+			panel?.contains(document.activeElement) &&
+			!document.querySelector(".chat-modal-backdrop")
+		) {
+			const label =
+				previousMobileDrawer === "room"
+					? "打开房间与成员抽屉"
+					: "打开点歌与听歌抽屉";
+			document
+				.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
+				?.focus({ preventScroll: true });
 		}
 	}
 	previousMobileDrawer = next;
@@ -318,7 +336,12 @@ $effect.pre(() => {
 $effect(() => {
 	if (!isMobileLayout || mobileDrawer === "none") return;
 	function closeOnEscape(event: KeyboardEvent) {
-		if (event.key === "Escape" && !event.defaultPrevented && !event.isComposing && !document.querySelector(".chat-modal-backdrop")) {
+		if (
+			event.key === "Escape" &&
+			!event.defaultPrevented &&
+			!event.isComposing &&
+			!document.querySelector(".chat-modal-backdrop")
+		) {
 			event.preventDefault();
 			mobileDrawer = "none";
 		}
@@ -337,7 +360,9 @@ function closeSplitRoom(restoreFocus = false) {
 	if (restoreFocus) splitRoomTrigger?.focus({ preventScroll: true });
 }
 
-async function toggleSplitRoom(event: MouseEvent & { currentTarget: HTMLButtonElement }) {
+async function toggleSplitRoom(
+	event: MouseEvent & { currentTarget: HTMLButtonElement },
+) {
 	if (splitRoomOpen) {
 		closeSplitRoom(true);
 		return;
@@ -347,7 +372,9 @@ async function toggleSplitRoom(event: MouseEvent & { currentTarget: HTMLButtonEl
 	if (event.detail === 0) {
 		await tick();
 		if (isSplitLayout && splitRoomOpen) {
-			roomPanelEl.querySelector<HTMLButtonElement>(".chat-split-room-close")?.focus();
+			roomPanelEl
+				.querySelector<HTMLButtonElement>(".chat-split-room-close")
+				?.focus();
 		}
 	}
 }
@@ -589,7 +616,9 @@ function syncRoomUrl(roomId: string) {
 }
 
 let showProfileModal = $state(false);
-let chatAppearance = $state<ChatAppearanceSettings>(loadChatAppearanceSettings());
+let chatAppearance = $state<ChatAppearanceSettings>(
+	loadChatAppearanceSettings(),
+);
 let catalogRevision = $state(0);
 let devPanelPreviews = $state<Partial<Record<ChatPanelSlot, string>>>({});
 let failedPanelBg = $state<Record<ChatPanelSlot, boolean>>({
@@ -617,7 +646,8 @@ const effectivePanelBgUrls = $derived.by(() => {
 const preloadedImageUrls = new Set<string>();
 
 function preloadImageUrl(url: string) {
-	if (!url || preloadedImageUrls.has(url) || typeof Image === "undefined") return;
+	if (!url || preloadedImageUrls.has(url) || typeof Image === "undefined")
+		return;
 	preloadedImageUrls.add(url);
 	const img = new Image();
 	img.decoding = "async";
@@ -705,11 +735,21 @@ let showUserDetailModal = $state(false);
 let showPollCreateModal = $state(false);
 
 // 非首屏必需的弹窗按需动态加载，减小聊天页首包 JS 体积
-let ChatAuthModalComp = $state<typeof import("./ChatAuthModal.svelte").default | null>(null);
-let ChatInterconnectPopoverComp = $state<typeof import("./ChatInterconnectPopover.svelte").default | null>(null);
-let ChatPollCreateModalComp = $state<typeof import("./ChatPollCreateModal.svelte").default | null>(null);
-let ChatProfileModalComp = $state<typeof import("./ChatProfileModal.svelte").default | null>(null);
-let ChatUserDetailModalComp = $state<typeof import("./ChatUserDetailModal.svelte").default | null>(null);
+let ChatAuthModalComp = $state<
+	typeof import("./ChatAuthModal.svelte").default | null
+>(null);
+let ChatInterconnectPopoverComp = $state<
+	typeof import("./ChatInterconnectPopover.svelte").default | null
+>(null);
+let ChatPollCreateModalComp = $state<
+	typeof import("./ChatPollCreateModal.svelte").default | null
+>(null);
+let ChatProfileModalComp = $state<
+	typeof import("./ChatProfileModal.svelte").default | null
+>(null);
+let ChatUserDetailModalComp = $state<
+	typeof import("./ChatUserDetailModal.svelte").default | null
+>(null);
 
 $effect(() => {
 	if (showAuthModal && !ChatAuthModalComp) {
@@ -816,7 +856,10 @@ let panelBgReady = $state(false);
 
 function enablePanelBackgroundsSoon() {
 	if (panelBgReady || isUnmounted) return;
-	if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+	if (
+		typeof window !== "undefined" &&
+		typeof window.requestAnimationFrame === "function"
+	) {
 		window.requestAnimationFrame(() => {
 			if (!isUnmounted) panelBgReady = true;
 		});
@@ -898,7 +941,13 @@ function handleVoteSkip() {
 	const willPass =
 		!hasVoted &&
 		(musicState?.voteCount ?? 0) + 1 >= (musicState?.voteThreshold ?? 2);
-	if (sendPacket({ type: "music:vote_skip", playUid: musicState?.current?.uid }) && willPass) {
+	if (
+		sendPacket({
+			type: "music:vote_skip",
+			playUid: musicState?.current?.uid,
+		}) &&
+		willPass
+	) {
 		startSkipPending();
 	}
 }
@@ -908,7 +957,11 @@ function handlePlayQueued(uid: string) {
 		showAuthModal = true;
 		return;
 	}
-	sendPacket({ type: "music:play_queued", uid, playUid: musicState?.current?.uid });
+	sendPacket({
+		type: "music:play_queued",
+		uid,
+		playUid: musicState?.current?.uid,
+	});
 }
 
 function placeGlobalToast(node: HTMLDivElement) {
@@ -943,7 +996,9 @@ async function handleToggleDesktopNotification() {
 	desktopNotificationPermission = Notification.permission;
 
 	if (Notification.permission === "denied") {
-		showNotice("系统通知权限已被浏览器拒绝，请在浏览器地址栏的网站设置中允许通知权限");
+		showNotice(
+			"系统通知权限已被浏览器拒绝，请在浏览器地址栏的网站设置中允许通知权限",
+		);
 		return;
 	}
 
@@ -982,7 +1037,10 @@ async function handleToggleDesktopNotification() {
 	}
 }
 
-function triggerDesktopNotification(roomId: string, message: ChatMessageRecord) {
+function triggerDesktopNotification(
+	roomId: string,
+	message: ChatMessageRecord,
+) {
 	if (!desktopNotificationEnabled) return;
 	if (typeof window === "undefined" || !("Notification" in window)) return;
 	if (Notification.permission !== "granted") return;
@@ -1044,7 +1102,9 @@ function triggerDesktopNotification(roomId: string, message: ChatMessageRecord) 
 function sendPacket(packet: Record<string, unknown>): boolean {
 	if (!ws || ws.readyState !== WebSocket.OPEN) {
 		showNotice(
-			navigator.onLine ? "正在重新连接聊天室，请稍候..." : "网络已断开，请检查网络连接",
+			navigator.onLine
+				? "正在重新连接聊天室，请稍候..."
+				: "网络已断开，请检查网络连接",
 		);
 		return false;
 	}
@@ -1063,12 +1123,26 @@ function sampleRoomClock(socket: WebSocket | null, refresh = false) {
 		pendingClockPings.delete(socket);
 		clockBurstRemaining = 3;
 	}
-	if (socket?.readyState !== WebSocket.OPEN || pendingClockPings.has(socket)) return;
-	const sample = { wall: Date.now(), monotonic: performance.now(), id: ++clockPingSeq };
+	if (socket?.readyState !== WebSocket.OPEN || pendingClockPings.has(socket))
+		return;
+	const sample = {
+		wall: Date.now(),
+		monotonic: performance.now(),
+		id: ++clockPingSeq,
+	};
 	pendingClockPings.set(socket, sample);
-	socket.send(JSON.stringify({ type: "ping", id: sample.id, musicSyncVersion: 2, musicListening: isListeningIntent && mobilePlaybackStatus.audioStatus !== "blocked" }));
+	socket.send(
+		JSON.stringify({
+			type: "ping",
+			id: sample.id,
+			musicSyncVersion: 2,
+			musicListening:
+				isListeningIntent && mobilePlaybackStatus.audioStatus !== "blocked",
+		}),
+	);
 	window.setTimeout(() => {
-		if (pendingClockPings.get(socket) === sample) pendingClockPings.delete(socket);
+		if (pendingClockPings.get(socket) === sample)
+			pendingClockPings.delete(socket);
 	}, 5000);
 }
 
@@ -1091,7 +1165,8 @@ function handleNetworkOffline() {
 }
 
 function handleNetworkOnline() {
-	if (isUnmounted || connectionState !== "offline" || !normalizedChatServer) return;
+	if (isUnmounted || connectionState !== "offline" || !normalizedChatServer)
+		return;
 	reconnectAttempt = 1;
 	connectRoom(currentRoom);
 }
@@ -1211,15 +1286,20 @@ function connectRoom(roomId: string) {
 					totalOnlineCount = packet.totalCount;
 				}
 				roomMentionMembers = packet.mentionMembers ?? [];
-				if (typeof packet.totalChatters === "number" && packet.totalChatters > 0) {
+				if (
+					typeof packet.totalChatters === "number" &&
+					packet.totalChatters > 0
+				) {
 					totalChatterCount = packet.totalChatters;
 				} else if (packet.mentionMembers && packet.mentionMembers.length > 0) {
-					totalChatterCount = Math.max(totalChatterCount, packet.mentionMembers.length);
+					totalChatterCount = Math.max(
+						totalChatterCount,
+						packet.mentionMembers.length,
+					);
 				}
 				musicState = packet.music;
 				if (packet.musicAudience) musicAudience = packet.musicAudience;
-				oldestHistoryId =
-					messages[0]?.id ?? packet.oldestHistoryId ?? 0;
+				oldestHistoryId = messages[0]?.id ?? packet.oldestHistoryId ?? 0;
 				activeThreads = packet.activeThreads ?? [];
 				pinnedUids = packet.pinnedUids ?? [];
 				roomTopic = packet.topic ?? "";
@@ -1238,7 +1318,8 @@ function connectRoom(roomId: string) {
 				roomInitSeq += 1;
 				isRoomReady = true;
 				musicClock.seed(packet.music.serverTime);
-				if (!hasClockSample) clockOffsetMs = packet.music.serverTime - Date.now();
+				if (!hasClockSample)
+					clockOffsetMs = packet.music.serverTime - Date.now();
 				sampleRoomClock(socket, true);
 				if (packet.mergedGuestHistory) {
 					showNotice("已自动合并同邮箱的历史访客记录至当前账号");
@@ -1497,10 +1578,7 @@ function connectRoom(roomId: string) {
 					if (packet.observers) {
 						observers = uniqueObservers(packet.observers);
 					}
-					if (
-						typeof packet.totalCount === "number" &&
-						packet.totalCount > 0
-					) {
+					if (typeof packet.totalCount === "number" && packet.totalCount > 0) {
 						totalOnlineCount = packet.totalCount;
 					}
 					if (packet.mentionMembers) {
@@ -1532,7 +1610,10 @@ function connectRoom(roomId: string) {
 					}
 				} else {
 					const cached = roomMessageCache.get(packet.roomId);
-					if (cached && !cached.some((m) => m.msgUid === packet.message.msgUid)) {
+					if (
+						cached &&
+						!cached.some((m) => m.msgUid === packet.message.msgUid)
+					) {
 						cacheRoomMessages(packet.roomId, [...cached, packet.message]);
 					}
 					if (packet.message.kind !== "system") {
@@ -1558,7 +1639,10 @@ function connectRoom(roomId: string) {
 						...message,
 						replyTo: {
 							...message.replyTo,
-							content: updated.content.replace(/\s+/g, " ").trim().slice(0, 120),
+							content: updated.content
+								.replace(/\s+/g, " ")
+								.trim()
+								.slice(0, 120),
 							hasImage: updated.attachments.length > 0,
 						},
 					};
@@ -1567,10 +1651,13 @@ function connectRoom(roomId: string) {
 			}
 			case "chat:deleted":
 			case "chat:recalled": {
-				const notice = packet.type === "chat:recalled" ? packet.notice : undefined;
+				const notice =
+					packet.type === "chat:recalled" ? packet.notice : undefined;
 				if (packet.roomId === currentRoom) {
 					messages = messages
-						.flatMap((m) => m.msgUid === packet.msgUid ? (notice ? [notice] : []) : [m])
+						.flatMap((m) =>
+							m.msgUid === packet.msgUid ? (notice ? [notice] : []) : [m],
+						)
 						.map((m) =>
 							m.replyTo?.msgUid === packet.msgUid
 								? {
@@ -1595,7 +1682,9 @@ function connectRoom(roomId: string) {
 					if (cached) {
 						roomMessageCache.set(
 							packet.roomId,
-							cached.flatMap((m) => m.msgUid === packet.msgUid ? (notice ? [notice] : []) : [m]),
+							cached.flatMap((m) =>
+								m.msgUid === packet.msgUid ? (notice ? [notice] : []) : [m],
+							),
 						);
 					}
 					const prevUids = roomUnreadUids[packet.roomId];
@@ -1620,7 +1709,10 @@ function connectRoom(roomId: string) {
 			}
 			case "chat:edited": {
 				if (packet.roomId === currentRoom) {
-					const editedPreview = packet.content.replace(/\s+/g, " ").trim().slice(0, 120);
+					const editedPreview = packet.content
+						.replace(/\s+/g, " ")
+						.trim()
+						.slice(0, 120);
 					messages = messages.map((m) => {
 						if (m.msgUid === packet.msgUid) {
 							return {
@@ -1668,7 +1760,9 @@ function connectRoom(roomId: string) {
 				if (packet.roomId === currentRoom) {
 					const myName = currentUser?.name?.trim();
 					if (Array.isArray(packet.users)) {
-						typingUsers = packet.users.filter((u: string) => !myName || u.trim() !== myName);
+						typingUsers = packet.users.filter(
+							(u: string) => !myName || u.trim() !== myName,
+						);
 					} else if (packet.userName) {
 						if (myName && packet.userName.trim() === myName) {
 							break;
@@ -1709,7 +1803,9 @@ function connectRoom(roomId: string) {
 				if (packet.roomId === currentRoom && packet.reader?.userKey) {
 					const nextMap: Record<string, ChatReadReceipt[]> = {};
 					for (const [uid, list] of Object.entries(readReceipts)) {
-						const filtered = list.filter((r) => r.userKey !== packet.reader.userKey);
+						const filtered = list.filter(
+							(r) => r.userKey !== packet.reader.userKey,
+						);
 						if (filtered.length > 0) nextMap[uid] = filtered;
 					}
 					if (packet.reader.msgUid) {
@@ -1728,8 +1824,10 @@ function connectRoom(roomId: string) {
 				pending.finish(packet.ok);
 				if (packet.roomId === currentRoom) {
 					if (packet.code === "AUTH_REQUIRED") openAuthModal();
-					else if (!packet.ok) showNotice(packet.error || "点歌失败，请重试", "error");
-					else if (!packet.playImmediately && packet.position) showNotice("已加入待播队列，第 " + packet.position + " 首");
+					else if (!packet.ok)
+						showNotice(packet.error || "点歌失败，请重试", "error");
+					else if (!packet.playImmediately && packet.position)
+						showNotice("已加入待播队列，第 " + packet.position + " 首");
 				}
 				break;
 			}
@@ -2277,22 +2375,25 @@ async function handleEnqueueTrack(track: ChatMusicTrack): Promise<boolean> {
 			resolve(ok);
 		};
 		songRequests.set(requestId, { room, finish });
-		if (!sendPacket({
-			type: "music:enqueue",
-			requestId,
-			track: {
-				id: track.id,
-				provider: track.provider,
-				sourceId: track.sourceId,
-				playlistId: track.playlistId,
-				position: track.position,
-				title: track.title,
-				artist: track.artist,
-				album: track.album,
-				cover: track.cover,
-				durationSec: track.durationSec ?? 0,
-			},
-		})) finish(false);
+		if (
+			!sendPacket({
+				type: "music:enqueue",
+				requestId,
+				track: {
+					id: track.id,
+					provider: track.provider,
+					sourceId: track.sourceId,
+					playlistId: track.playlistId,
+					position: track.position,
+					title: track.title,
+					artist: track.artist,
+					album: track.album,
+					cover: track.cover,
+					durationSec: track.durationSec ?? 0,
+				},
+			})
+		)
+			finish(false);
 	});
 }
 
@@ -2317,7 +2418,11 @@ async function refreshGlobalPresence() {
 			observers?: ChatObserverItem[];
 			totalCount: number;
 		};
-		if (!isUnmounted && currentRoom === reqRoom && Array.isArray(data.members)) {
+		if (
+			!isUnmounted &&
+			currentRoom === reqRoom &&
+			Array.isArray(data.members)
+		) {
 			lastPresenceRaw = cacheKey;
 			hasGlobalPresence = true;
 			const currentKey = currentUser?.userKey;
@@ -2341,7 +2446,10 @@ async function refreshMemberDirectory() {
 	if (!normalizedChatServer || isUnmounted) return;
 	try {
 		const separator = normalizedChatServer.includes("?") ? "&" : "?";
-		const response = await fetch(`${normalizedChatServer}/api/members${separator}_t=${Date.now()}`, { cache: "no-store" });
+		const response = await fetch(
+			`${normalizedChatServer}/api/members${separator}_t=${Date.now()}`,
+			{ cache: "no-store" },
+		);
 		if (!response.ok) return;
 		const rawText = await response.text();
 		if (rawText === lastMemberDirectoryRaw) return;
@@ -2424,16 +2532,22 @@ onMount(() => {
 			return;
 		}
 		const { width, height, orientation } = window.screen;
-		const isPortrait = orientation?.type.startsWith("portrait") ?? width < height;
+		const isPortrait =
+			orientation?.type.startsWith("portrait") ?? width < height;
 		const portraitWidth = Math.min(width, height);
 		// A full-width portrait iPad can be narrower than the tablet split breakpoint.
 		splitLayoutBreakpoint =
-			isPortrait && portraitWidth >= 768 ? Math.min(1024, portraitWidth - 2) : 1024;
+			isPortrait && portraitWidth >= 768
+				? Math.min(1024, portraitWidth - 2)
+				: 1024;
 	};
 	updateSplitLayoutBreakpoint();
 	touchLayoutQuery.addEventListener("change", updateSplitLayoutBreakpoint);
 	window.addEventListener("resize", updateSplitLayoutBreakpoint);
-	window.screen.orientation?.addEventListener("change", updateSplitLayoutBreakpoint);
+	window.screen.orientation?.addEventListener(
+		"change",
+		updateSplitLayoutBreakpoint,
+	);
 	// 切入聊天室时立即停止全站侧栏/顶栏音乐播放器，避免与点歌台同时发声
 	window.__fireflyMusic?.stop?.();
 	baseDocumentTitle = document.title;
@@ -2442,12 +2556,19 @@ onMount(() => {
 
 	void consumeUrlWalineToken(walineServerUrl).then((res) => {
 		if (res?.token) {
-			if (!isUnmounted && (currentAuth?.kind !== "waline" || currentAuth.token !== res.token)) {
+			if (
+				!isUnmounted &&
+				(currentAuth?.kind !== "waline" || currentAuth.token !== res.token)
+			) {
 				handleAuthenticated({ kind: "waline", token: res.token });
 			}
 			return;
 		}
-		if (!isUnmounted && currentAuth?.kind === "waline" && !readStoredWalineToken()) {
+		if (
+			!isUnmounted &&
+			currentAuth?.kind === "waline" &&
+			!readStoredWalineToken()
+		) {
 			clearWalineAuth();
 			currentAuth = resolveInitialAuth();
 			walineToken = currentAuth?.kind === "waline" ? currentAuth.token : "";
@@ -2531,7 +2652,9 @@ onMount(() => {
 		if (event instanceof MouseEvent && event.type === "mousemove") {
 			if (
 				lastMouseX >= 0 &&
-				Math.abs(event.clientX - lastMouseX) + Math.abs(event.clientY - lastMouseY) < 4
+				Math.abs(event.clientX - lastMouseX) +
+					Math.abs(event.clientY - lastMouseY) <
+					4
 			) {
 				return;
 			}
@@ -2684,7 +2807,12 @@ onMount(() => {
 					if (oldUrl?.startsWith("blob:")) URL.revokeObjectURL(oldUrl);
 				}
 				devPanelPreviews = {};
-				failedPanelBg = { left: false, center: false, right: false, input: false };
+				failedPanelBg = {
+					left: false,
+					center: false,
+					right: false,
+					input: false,
+				};
 			} else {
 				const oldUrl = devPanelPreviews[slot];
 				if (oldUrl?.startsWith("blob:")) URL.revokeObjectURL(oldUrl);
@@ -2724,20 +2852,31 @@ onMount(() => {
 	};
 
 	window.addEventListener("chatAppearanceChange", handleChatAppearanceSync);
-	window.addEventListener("chat-wallpapers-catalog-change", handleCatalogChange);
+	window.addEventListener(
+		"chat-wallpapers-catalog-change",
+		handleCatalogChange,
+	);
 
 	if (import.meta.env.DEV) {
 		void loadDevPanelWallpaperPreviews().then((loaded) => {
 			if (!isUnmounted && Object.keys(loaded).length > 0) {
 				devPanelPreviews = loaded;
-				failedPanelBg = { left: false, center: false, right: false, input: false };
+				failedPanelBg = {
+					left: false,
+					center: false,
+					right: false,
+					input: false,
+				};
 			}
 		});
 		window.addEventListener("chat-bg-preview-change", handleDevBgPreviewChange);
 	}
 
 	return () => {
-		window.removeEventListener("chatAppearanceChange", handleChatAppearanceSync);
+		window.removeEventListener(
+			"chatAppearanceChange",
+			handleChatAppearanceSync,
+		);
 		window.removeEventListener(
 			"chat-wallpapers-catalog-change",
 			handleCatalogChange,
@@ -2781,7 +2920,10 @@ onMount(() => {
 		mobileLayoutQuery.removeEventListener("change", handleMobileLayoutChange);
 		touchLayoutQuery.removeEventListener("change", updateSplitLayoutBreakpoint);
 		window.removeEventListener("resize", updateSplitLayoutBreakpoint);
-		window.screen.orientation?.removeEventListener("change", updateSplitLayoutBreakpoint);
+		window.screen.orientation?.removeEventListener(
+			"change",
+			updateSplitLayoutBreakpoint,
+		);
 		cancelWalinePopup?.();
 		clearReconnectTimer();
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
