@@ -33,27 +33,63 @@ const replaysBlockSelector = replays?.blockSelector?.trim();
 <script
 	is:inline
 	data-swup-ignore-script
-	defer
-	src={scriptUrl}
-	data-website-id={websiteId}
-	data-performance={collectWebVitals ? "true" : undefined}
-></script>
+	define:vars={{
+		websiteId,
+		scriptUrl,
+		replaysScriptUrl,
+		collectWebVitals,
+		replaysEnabled,
+		replaysSampleRate,
+		replaysMaskLevel,
+		replaysMaxDuration,
+		replaysBlockSelector,
+	}}
+>
+	;(() => {
+		if (!websiteId || !scriptUrl || window.__umamiScriptsScheduled) return;
+		window.__umamiScriptsScheduled = true;
 
-{
-	replaysEnabled && (
-		<script
-			is:inline
-			data-swup-ignore-script
-			defer
-			src={replaysScriptUrl}
-			data-website-id={websiteId}
-			data-sample-rate={String(replaysSampleRate)}
-			data-mask-level={replaysMaskLevel}
-			data-max-duration={String(replaysMaxDuration)}
-			data-block-selector={replaysBlockSelector || undefined}
-		/>
-	)
-}
+		let injected = false;
+		const injectUmamiScripts = () => {
+			if (injected) return;
+			injected = true;
+
+			// 异步非阻塞加载 Umami 主脚本，避免弱网/跨境超时时卡死 DOMContentLoaded、ES Module 队列与页面加载条
+			const mainScript = document.createElement("script");
+			mainScript.async = true;
+			mainScript.src = scriptUrl;
+			mainScript.setAttribute("data-website-id", websiteId);
+			mainScript.setAttribute("data-swup-ignore-script", "");
+			if (collectWebVitals) {
+				mainScript.setAttribute("data-performance", "true");
+			}
+			document.head.appendChild(mainScript);
+
+			if (replaysEnabled && replaysScriptUrl) {
+				const replayScript = document.createElement("script");
+				replayScript.async = true;
+				replayScript.src = replaysScriptUrl;
+				replayScript.setAttribute("data-website-id", websiteId);
+				replayScript.setAttribute("data-sample-rate", String(replaysSampleRate));
+				replayScript.setAttribute("data-mask-level", replaysMaskLevel);
+				replayScript.setAttribute("data-max-duration", String(replaysMaxDuration));
+				replayScript.setAttribute("data-swup-ignore-script", "");
+				if (replaysBlockSelector) {
+					replayScript.setAttribute("data-block-selector", replaysBlockSelector);
+				}
+				document.head.appendChild(replayScript);
+			}
+		};
+
+		// 在页面 load 完成后立即异步注入（不拉长浏览器加载条）；同时设 2.5s 兜底防止慢图耽误统计上报
+		if (document.readyState === "complete") {
+			injectUmamiScripts();
+		} else {
+			window.addEventListener("load", injectUmamiScripts, { once: true });
+			window.setTimeout(injectUmamiScripts, 2500);
+		}
+	})();
+</script>
 
 {
 	trackOutboundLinks && (

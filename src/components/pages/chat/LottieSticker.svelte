@@ -17,6 +17,7 @@ interface LottiePlayer {
 }
 
 const LOTTIE_CDNS = [
+	"/assets/vendor/lottie-5.12.2.min.js",
 	"https://cdnjs.cloudflare.com/ajax/libs/lottie-web/5.12.2/lottie.min.js",
 	"https://unpkg.com/lottie-web@5.12.2/build/player/lottie.min.js",
 ];

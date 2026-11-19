@@ -46,7 +46,6 @@ import type {
 	ImageAttachment,
 	RoomMusicState,
 } from "./chatTypes";
-import MusicPanel from "./MusicPanel.svelte";
 import { MusicClock } from "./musicClock";
 import type { ChatMusicTrack } from "./musicTypes";
 import RoomPanel from "./RoomPanel.svelte";
@@ -734,7 +733,45 @@ let showAuthModal = $state(false);
 let showUserDetailModal = $state(false);
 let showPollCreateModal = $state(false);
 
-// 非首屏必需的弹窗按需动态加载，减小聊天页首包 JS 体积
+// 非首屏必需的弹窗与点歌台面板按需动态加载，减小聊天页首包 JS 体积
+let MusicPanelComp = $state<
+	typeof import("./MusicPanel.svelte").default | null
+>(null);
+let musicPanelLoading = false;
+let pendingOpenPlayerTab = false;
+let pendingToggleListen = false;
+
+function ensureMusicPanelLoaded() {
+	if (MusicPanelComp || musicPanelLoading || isUnmounted) return;
+	musicPanelLoading = true;
+	void import("./MusicPanel.svelte")
+		.then((mod) => {
+			if (!isUnmounted) {
+				MusicPanelComp = mod.default;
+			}
+		})
+		.catch((err) => {
+			console.error("[chat] Failed to load MusicPanel:", err);
+			pendingOpenPlayerTab = false;
+			pendingToggleListen = false;
+		})
+		.finally(() => {
+			musicPanelLoading = false;
+		});
+}
+
+$effect(() => {
+	if (!musicPanelRef) return;
+	if (pendingOpenPlayerTab) {
+		pendingOpenPlayerTab = false;
+		musicPanelRef.openPlayerTab?.();
+	}
+	if (pendingToggleListen) {
+		pendingToggleListen = false;
+		musicPanelRef.toggleListenControl?.();
+	}
+});
+
 let ChatAuthModalComp = $state<
 	typeof import("./ChatAuthModal.svelte").default | null
 >(null);
@@ -876,6 +913,7 @@ function runSecondaryStartup() {
 		secondaryStartupTimer = null;
 	}
 	enablePanelBackgroundsSoon();
+	ensureMusicPanelLoaded();
 	void loadStickerPacks(stickerPackUrls).then((packs) => {
 		if (!isUnmounted) stickerPacks = packs;
 	});
@@ -887,8 +925,17 @@ $effect(() => {
 	if (mobileDrawer !== "none") {
 		panelBgReady = true;
 	}
+	if (mobileDrawer === "music") {
+		ensureMusicPanelLoaded();
+	}
 	if (mobileDrawer === "room" && !secondaryStartupDone) {
 		runSecondaryStartup();
+	}
+});
+
+$effect(() => {
+	if (externalPlaylistRequest) {
+		ensureMusicPanelLoaded();
 	}
 });
 
@@ -2607,8 +2654,12 @@ onMount(() => {
 	// 建连前先同步真实的窗口可见/聚焦状态，避免后台打开或恢复标签页时握手误报 focused=1
 	isWindowFocused = isDocumentActivelyVisibleAndFocused();
 
-	// 优先建连房间 WebSocket，表情包与全局名录等待首屏消息到达后（或 600ms 兜底）再后台拉取
+	// 优先建连房间 WebSocket；电脑端右侧点歌台首屏直接可见，紧随建连并行加载（0 延迟）；
+	// 手机端点歌台在抽屉中，与表情包/全局名录一同延后到首屏到达后或按需加载
 	connectRoom(currentRoom);
+	if (!isMobileLayout) {
+		ensureMusicPanelLoaded();
+	}
 	secondaryStartupTimer = window.setTimeout(runSecondaryStartup, 600);
 
 	let presenceTick = 0;
@@ -3124,12 +3175,27 @@ onMount(() => {
           splitRoomPanelId={roomPanelId}
           splitRoomOpen={isSplitLayout && splitRoomOpen}
           onToggleSplitRoom={toggleSplitRoom}
-          onOpenMusicDrawer={() => (mobileDrawer = "music")}
+          onOpenMusicDrawer={() => {
+            mobileDrawer = "music";
+            ensureMusicPanelLoaded();
+          }}
           onOpenLyricsDrawer={() => {
             mobileDrawer = "music";
-            musicPanelRef?.openPlayerTab?.();
+            if (musicPanelRef) {
+              musicPanelRef.openPlayerTab?.();
+            } else {
+              pendingOpenPlayerTab = true;
+              ensureMusicPanelLoaded();
+            }
           }}
-          onToggleListen={() => musicPanelRef?.toggleListenControl?.()}
+          onToggleListen={() => {
+            if (musicPanelRef) {
+              musicPanelRef.toggleListenControl?.();
+            } else {
+              pendingToggleListen = true;
+              ensureMusicPanelLoaded();
+            }
+          }}
         />
       </div>
 
@@ -3175,8 +3241,9 @@ onMount(() => {
         </div>
       {/if}
       <audio bind:this={chatAudio} preload="auto" playsinline muted></audio>
+      {#if MusicPanelComp}
       {#key currentRoom}
-      <MusicPanel
+      <MusicPanelComp
         bind:this={musicPanelRef}
         audioEl={chatAudio}
         serverNow={serverNow}
@@ -3242,6 +3309,11 @@ onMount(() => {
         walineLoginWaiting={walineLoginWaiting}
       />
       {/key}
+      {:else}
+        <div class="relative z-10 flex flex-1 flex-col items-center justify-center gap-2 p-6 text-xs text-[var(--chat-meta-color)] opacity-75">
+          <span>正在加载点歌台...</span>
+        </div>
+      {/if}
     </div>
   </div>
 

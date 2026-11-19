@@ -9,8 +9,6 @@ import ChatAvatar, {
 } from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessage from "./ChatMessage.svelte";
-import ChatMessageSourceModal from "./ChatMessageSourceModal.svelte";
-import ChatThreadModal from "./ChatThreadModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import {
 	getStoredMusicNoticesEnabled,
@@ -402,6 +400,41 @@ let threadListWrapEl: HTMLDivElement | null = $state(null);
 let sourceModalMessage = $state<ChatMessageRecord | null>(null);
 let activeThreadRootUid = $state("");
 let activeThreadInitialRoot = $state<ChatMessageRecord | null>(null);
+let ChatThreadModalComp = $state<
+	typeof import("./ChatThreadModal.svelte").default | null
+>(null);
+let ChatMessageSourceModalComp = $state<
+	typeof import("./ChatMessageSourceModal.svelte").default | null
+>(null);
+
+$effect(() => {
+	if (activeThreadRootUid && !ChatThreadModalComp) {
+		void import("./ChatThreadModal.svelte")
+			.then((mod) => {
+				ChatThreadModalComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatThreadModal:", err);
+				activeThreadRootUid = "";
+				activeThreadInitialRoot = null;
+				onNotify?.("话题串弹窗加载失败，请检查网络后重试", "error");
+			});
+	}
+});
+
+$effect(() => {
+	if (sourceModalMessage && !ChatMessageSourceModalComp) {
+		void import("./ChatMessageSourceModal.svelte")
+			.then((mod) => {
+				ChatMessageSourceModalComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatMessageSourceModal:", err);
+				sourceModalMessage = null;
+				onNotify?.("消息源弹窗加载失败，请检查网络后重试", "error");
+			});
+	}
+});
 let mobileActionTarget = $state<{
 	message: ChatMessageRecord;
 	isSelf: boolean;
@@ -5615,47 +5648,51 @@ function removePendingImage(index: number) {
     </dialog>
   {/if}
 
-  <ChatThreadModal
-    open={Boolean(activeThreadRootUid)}
-    roomId={roomId}
-    rootUid={activeThreadRootUid}
-    initialRootMessage={activeThreadInitialRoot}
-    roomMessages={messages}
-    currentUser={currentUser}
-    currentUserSite={currentUser?.site || localSiteName}
-    isInterconnectRoom={isInterconnectRoom}
-    chatServerUrl={chatServerUrl}
-    interconnectSites={interconnectSites}
-    stickerMap={stickerMap}
-    userNameMap={userNameMap}
-    userProfileMap={userProfileMap}
-    readReceipts={readReceipts}
-    clockOffsetMs={clockOffsetMs}
-    onClose={() => {
-      activeThreadRootUid = "";
-      activeThreadInitialRoot = null;
-    }}
-    onSendMessage={onSendMessage}
-    onEditMessage={onEditMessage}
-    onRecallMessage={onRecallMessage}
-    onDeleteMessage={onDeleteMessage}
-    onReaction={onReaction}
-    onVotePoll={onVotePoll}
-    onEndPoll={onEndPoll}
-    onOpenUserProfile={onOpenUserProfile}
-    onViewSource={handleViewSource}
-    onRequireAuth={onRequireAuth}
-  />
+  {#if ChatThreadModalComp}
+    <ChatThreadModalComp
+      open={Boolean(activeThreadRootUid)}
+      roomId={roomId}
+      rootUid={activeThreadRootUid}
+      initialRootMessage={activeThreadInitialRoot}
+      roomMessages={messages}
+      currentUser={currentUser}
+      currentUserSite={currentUser?.site || localSiteName}
+      isInterconnectRoom={isInterconnectRoom}
+      chatServerUrl={chatServerUrl}
+      interconnectSites={interconnectSites}
+      stickerMap={stickerMap}
+      userNameMap={userNameMap}
+      userProfileMap={userProfileMap}
+      readReceipts={readReceipts}
+      clockOffsetMs={clockOffsetMs}
+      onClose={() => {
+        activeThreadRootUid = "";
+        activeThreadInitialRoot = null;
+      }}
+      onSendMessage={onSendMessage}
+      onEditMessage={onEditMessage}
+      onRecallMessage={onRecallMessage}
+      onDeleteMessage={onDeleteMessage}
+      onReaction={onReaction}
+      onVotePoll={onVotePoll}
+      onEndPoll={onEndPoll}
+      onOpenUserProfile={onOpenUserProfile}
+      onViewSource={handleViewSource}
+      onRequireAuth={onRequireAuth}
+    />
+  {/if}
 
-  <ChatMessageSourceModal
-    open={Boolean(sourceModalMessage)}
-    message={sourceModalMessage}
-    roomId={roomId}
-    isInterconnectRoom={isInterconnectRoom}
-    chatServerUrl={chatServerUrl}
-    onClose={() => {
-      sourceModalMessage = null;
-    }}
-    onNotify={onNotify}
-  />
+  {#if ChatMessageSourceModalComp}
+    <ChatMessageSourceModalComp
+      open={Boolean(sourceModalMessage)}
+      message={sourceModalMessage}
+      roomId={roomId}
+      isInterconnectRoom={isInterconnectRoom}
+      chatServerUrl={chatServerUrl}
+      onClose={() => {
+        sourceModalMessage = null;
+      }}
+      onNotify={onNotify}
+    />
+  {/if}
 </div>
