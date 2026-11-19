@@ -301,6 +301,31 @@ const otherRoomsUnreadCount = $derived.by(() =>
 );
 
 let stageTouchStart: { x: number; y: number; time: number } | null = null;
+let previousMobileDrawer: "none" | "room" | "music" = "none";
+
+$effect.pre(() => {
+	const next = mobileDrawer;
+	if (isMobileLayout && previousMobileDrawer !== "none" && next === "none") {
+		const panel = document.querySelector(`.chat-panel-${previousMobileDrawer === "room" ? "left" : "right"}`);
+		if (panel?.contains(document.activeElement) && !document.querySelector(".chat-modal-backdrop")) {
+			const label = previousMobileDrawer === "room" ? "打开房间与成员抽屉" : "打开点歌与听歌抽屉";
+			document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)?.focus({ preventScroll: true });
+		}
+	}
+	previousMobileDrawer = next;
+});
+
+$effect(() => {
+	if (!isMobileLayout || mobileDrawer === "none") return;
+	function closeOnEscape(event: KeyboardEvent) {
+		if (event.key === "Escape" && !event.defaultPrevented && !event.isComposing && !document.querySelector(".chat-modal-backdrop")) {
+			event.preventDefault();
+			mobileDrawer = "none";
+		}
+	}
+	document.addEventListener("keydown", closeOnEscape);
+	return () => document.removeEventListener("keydown", closeOnEscape);
+});
 
 $effect(() => {
 	if (!isSplitLayout) splitRoomOpen = false;
@@ -2796,7 +2821,7 @@ onMount(() => {
       class:chat-split-room-open={isSplitLayout && splitRoomOpen}
       id={roomPanelId}
       bind:this={roomPanelEl}
-      inert={isSplitLayout && !splitRoomOpen}
+      inert={(isMobileLayout && mobileDrawer !== "room") || (isSplitLayout && !splitRoomOpen)}
       ondragenter={(e) => handleSidePanelDragEnter("left", e)}
       ondragover={(e) => handleSidePanelDragOver("left", e)}
       ondragleave={(e) => handleSidePanelDragLeave("left", e)}
@@ -2977,6 +3002,7 @@ onMount(() => {
 
     <div
       class="chat-panel chat-panel-right {mobileDrawer === 'music' ? 'mobile-drawer-open' : ''}"
+      inert={isMobileLayout && mobileDrawer !== "music"}
       ondragenter={(e) => handleSidePanelDragEnter("right", e)}
       ondragover={(e) => handleSidePanelDragOver("right", e)}
       ondragleave={(e) => handleSidePanelDragLeave("right", e)}

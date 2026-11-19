@@ -2215,6 +2215,29 @@ $effect(() => {
 </script>
 
 <aside class="flex flex-col h-full w-full min-h-0 overflow-hidden select-none" aria-label="点歌台">
+  <div class="chat-music-panel-topbar">
+  <!-- 其他页签用迷你播放条替代标题 -->
+  {#if activeTab !== "player" && currentPlay}
+    <MiniPlayerBar
+      currentPlay={currentPlay}
+      isListening={isListening}
+      audioStatus={audioStatus}
+      elapsedSec={roomElapsed}
+      durationSec={effectiveDuration}
+      canDirectSkip={canDirectSkip}
+      isSoloCoolingDown={isSoloCoolingDown}
+      soloCooldownRemainSec={soloCooldownRemainSec}
+      hasVotedSkip={hasVotedSkip}
+      voteCount={musicState?.voteCount ?? 0}
+      voteThreshold={musicState?.voteThreshold ?? 2}
+      isSkippingTrack={isSkippingTrack}
+      variant="panel"
+      onOpenLyrics={() => switchMusicTab("player")}
+      onToggleListen={() => toggleListen()}
+      onSkipTrack={onSkipTrack}
+      onVoteSkip={onVoteSkip}
+    />
+  {:else}
   <!-- 顶栏标题 -->
   <div class="chat-panel-header">
     <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 flex items-center gap-2">
@@ -2252,13 +2275,16 @@ $effect(() => {
     </button>
   </div>
 
+  {/if}
+  </div>
+
   <!-- 4-Tab 切换栏：歌词 / 搜索 / 歌单 / 历史 -->
-  <div class="grid grid-cols-4 gap-1.5 border-b border-[var(--chat-divider-color)] px-2.5 py-2 md:py-1.5 shrink-0" role="tablist" aria-label="点歌台视图切换">
+  <div class="chat-music-tabs grid grid-cols-4 gap-1.5 border-b border-[var(--chat-divider-color)] px-2.5 py-2 md:py-1.5 shrink-0" role="tablist" aria-label="点歌台视图切换">
     <button
       type="button"
       role="tab"
       aria-selected={activeTab === "player"}
-      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] md:text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] xl:text-[13px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'player'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary) font-semibold'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
@@ -2275,7 +2301,7 @@ $effect(() => {
       type="button"
       role="tab"
       aria-selected={activeTab === "search"}
-      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] md:text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] xl:text-[13px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'search'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary) font-semibold'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
@@ -2292,7 +2318,7 @@ $effect(() => {
       type="button"
       role="tab"
       aria-selected={activeTab === "playlist"}
-      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] md:text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] xl:text-[13px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'playlist'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary) font-semibold'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
@@ -2312,7 +2338,7 @@ $effect(() => {
       type="button"
       role="tab"
       aria-selected={activeTab === "history"}
-      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] md:text-xs font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
+      class="flex items-center justify-center gap-1.5 py-2.5 md:py-2 px-1.5 text-[13.5px] xl:text-[13px] font-medium whitespace-nowrap transition-colors rounded-lg cursor-pointer border-none
         {activeTab === 'history'
           ? 'bg-(--btn-plain-bg-hover) text-(--primary) font-semibold'
           : 'bg-transparent text-[var(--chat-meta-color)] hover:bg-(--btn-plain-bg-hover) hover:text-[var(--deep-text)]'}"
@@ -2366,10 +2392,10 @@ $effect(() => {
       </div>
 
       <div class="min-w-0 flex-1">
-        <div class="text-[13.5px] md:text-xs font-bold truncate {isCurrent ? 'text-[var(--chat-accent-text)]' : 'text-[var(--deep-text)]'}">
+        <div class="text-[13.5px] xl:text-[13px] font-bold truncate {isCurrent ? 'text-[var(--chat-accent-text)]' : 'text-[var(--deep-text)]'}">
           {song.title}
         </div>
-        <div class="text-[11.5px] md:text-[10px] text-[var(--chat-meta-color)] truncate mt-0.5">
+        <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
           {subtitle}
         </div>
       </div>
@@ -2385,7 +2411,7 @@ $effect(() => {
             <span class="chat-eq-bar"></span>
           </span>
           {#if countBadge}
-            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[11px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </span>
       {:else if isQueued && !canToggleCatalogTrack(song)}
@@ -2397,7 +2423,7 @@ $effect(() => {
             <polyline points="20 6 9 17 4 12" />
           </svg>
           {#if countBadge}
-            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[11px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </span>
       {:else if isQueued}
@@ -2411,7 +2437,7 @@ $effect(() => {
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
           {#if countBadge}
-            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[11px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </button>
       {:else if enqueuingTrackIds.has(song.id)}
@@ -2426,7 +2452,7 @@ $effect(() => {
             <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
           </svg>
           {#if countBadge}
-            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[11px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </button>
       {:else}
@@ -2441,7 +2467,7 @@ $effect(() => {
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
           {#if countBadge}
-            <span class="text-[10px] md:text-[9px] leading-none font-semibold tabular-nums">{countBadge}</span>
+            <span class="text-[11px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </button>
       {/if}
@@ -2469,29 +2495,6 @@ $effect(() => {
       </svg>
     </button>
   {/snippet}
-
-  <!-- 迷你播放条：紧跟 4 个 Tab 下方，切换其它页签时常驻 -->
-  {#if activeTab !== "player" && currentPlay}
-    <MiniPlayerBar
-      currentPlay={currentPlay}
-      isListening={isListening}
-      audioStatus={audioStatus}
-      elapsedSec={roomElapsed}
-      durationSec={effectiveDuration}
-      canDirectSkip={canDirectSkip}
-      isSoloCoolingDown={isSoloCoolingDown}
-      soloCooldownRemainSec={soloCooldownRemainSec}
-      hasVotedSkip={hasVotedSkip}
-      voteCount={musicState?.voteCount ?? 0}
-      voteThreshold={musicState?.voteThreshold ?? 2}
-      isSkippingTrack={isSkippingTrack}
-      variant="panel"
-      onOpenLyrics={() => switchMusicTab("player")}
-      onToggleListen={() => toggleListen()}
-      onSkipTrack={onSkipTrack}
-      onVoteSkip={onVoteSkip}
-    />
-  {/if}
 
   {#if activeTab === "player"}
     <div class="flex-1 min-h-0 flex flex-col">
@@ -2524,14 +2527,14 @@ $effect(() => {
             <!-- 第二排：歌曲作者与专辑 -->
             {#if currentPlay}
               <div
-                class="text-xs font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal select-text cursor-text"
+                class="text-[13px] xl:text-[12px] font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal select-text cursor-text"
                 title={getTrackArtistAndAlbum(currentPlay.track)}
               >
                 {getTrackArtistAndAlbum(currentPlay.track)}
               </div>
             {:else}
               <div
-                class="text-xs font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal select-text cursor-text"
+                class="text-[13px] xl:text-[12px] font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal select-text cursor-text"
               >
                 {!musicState ? "正在连接电台..." : "暂无点播歌曲"}
               </div>
@@ -2573,7 +2576,7 @@ $effect(() => {
                   </span>
                 {/if}
               {:else}
-                <span class="text-xs text-[var(--chat-meta-color)] opacity-40">--</span>
+                <span class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] opacity-40">--</span>
               {/if}
             </div>
           </div>
@@ -2780,7 +2783,7 @@ $effect(() => {
           >
             {#if !currentPlay}
               <div class="flex-1 flex flex-col items-center justify-center gap-3.5 py-4 text-center">
-                <p class="text-xs text-[var(--chat-meta-color)] m-0">
+                <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">
                   {!musicState ? "正在连接房间同步电台..." : "暂无播放歌曲，点一首歌和大家一起听吧~"}
                 </p>
                 {#if musicState}
@@ -2819,9 +2822,9 @@ $effect(() => {
                 }}
               >
                 {#if lyricsStatus === "loading"}
-                  <div class="text-[var(--chat-meta-color)] text-xs py-8">正在载入歌词...</div>
+                  <div class="text-[var(--chat-meta-color)] text-[13px] xl:text-[12px] py-8">正在载入歌词...</div>
                 {:else if lyrics.length === 0}
-                  <div class="text-[var(--chat-meta-color)] text-xs py-8">暂无同步歌词</div>
+                  <div class="text-[var(--chat-meta-color)] text-[13px] xl:text-[12px] py-8">暂无同步歌词</div>
                 {:else}
                   {#each lyrics as line, idx (`${idx}-${line.time}`)}
                     {@const isCurrentLine = idx === activeLyricIndex}
@@ -2851,7 +2854,7 @@ $effect(() => {
               : "flex: 1 1 0%;"}
           >
             <div class="flex items-center justify-between mb-1.5 shrink-0">
-              <span class="text-xs font-medium text-[var(--chat-meta-color)]">
+              <span class="text-[13px] xl:text-[12px] font-medium text-[var(--chat-meta-color)]">
                 即将播放 ({queue.length})
               </span>
             </div>
@@ -2859,14 +2862,14 @@ $effect(() => {
             {#if queue.length === 0}
               <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 pt-2 pb-7">
                 {#if currentPlay?.isFallback}
-                  <span class="text-xs font-medium text-[var(--deep-text)]">
+                  <span class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)]">
                     正在冷场轮播
                   </span>
-                  <span class="text-[11px] text-[var(--chat-meta-color)] leading-relaxed">
+                  <span class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] leading-relaxed">
                     背景音乐轮播中，点歌将立即切播 · 所有人可随时切歌
                   </span>
                 {:else}
-                  <span class="text-xs text-[var(--chat-meta-color)]">
+                  <span class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
                     暂无待播歌曲
                   </span>
                 {/if}
@@ -2886,15 +2889,15 @@ $effect(() => {
                       {/if}
                     </div>
                     <div class="flex-1 min-w-0">
-                      <div class="text-xs font-bold text-[var(--deep-text)] truncate">
+                      <div class="text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)] truncate">
                         {item.track.title}
                       </div>
-                      <div class="text-[10px] text-[var(--chat-meta-color)] truncate">
+                      <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate">
                         {item.track.artist} ·
                         {#if item.requesterKey && onOpenUserProfile}
                           <button
                             type="button"
-                            class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[10px] inline"
+                            class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[12px] xl:text-[11px] inline"
                             onclick={() => openRequesterProfile(item.requesterKey, item.requesterName)}
                             title={`点歌人：${item.requesterName}`}
                           >
@@ -2968,7 +2971,7 @@ $effect(() => {
         </div>
         <button
           type="button"
-          class="shrink-0 h-10 md:h-[32px] px-4 md:px-3 rounded-full text-sm md:text-xs font-medium border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer"
+          class="shrink-0 h-10 md:h-[32px] px-4 md:px-3 rounded-full text-[14px] xl:text-[12px] font-medium border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer"
           disabled={!searchQuery.trim() || isSearching}
           onclick={() => submitSearch()}
         >
@@ -2981,12 +2984,12 @@ $effect(() => {
       <div>
         {#if !submittedSearchQuery && !isSearching && fallbackTracks.length === 0}
           <div class="text-center py-6 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-1">
-            <p class="text-xs font-medium text-[var(--deep-text)] m-0">输入歌名或歌手后点击「搜索」</p>
-            <p class="text-[11px] text-[var(--chat-meta-color)] m-0">点歌后全房将同步播放与滚动歌词</p>
+            <p class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)] m-0">输入歌名或歌手后点击「搜索」</p>
+            <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">点歌后全房将同步播放与滚动歌词</p>
           </div>
         {:else}
           <div class="flex items-center justify-between mb-1 px-0.5">
-            <span class="text-xs font-medium text-[var(--chat-meta-color)]">
+            <span class="text-[13px] xl:text-[12px] font-medium text-[var(--chat-meta-color)]">
               {submittedSearchQuery || isSearching
                 ? isSearching
                   ? "正在搜索..."
@@ -2996,7 +2999,7 @@ $effect(() => {
             {#if submittedSearchQuery}
               <button
                 type="button"
-                class="text-[11px] text-[var(--chat-meta-color)] hover:text-(--primary) bg-transparent border-none p-0 cursor-pointer"
+                class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] hover:text-(--primary) bg-transparent border-none p-0 cursor-pointer"
                 onclick={clearSearch}
               >
                 {fallbackTracks.length > 0 ? "返回曲库" : "清空"}
@@ -3007,22 +3010,22 @@ $effect(() => {
           {#if isSearching}
             <div class="text-center py-8 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-1.5">
               <div class="inline-block w-4 h-4 rounded-full border-2 border-[var(--primary)]/30 border-t-[var(--primary)] animate-spin"></div>
-              <p class="text-xs text-[var(--chat-meta-color)] m-0">正在搜索「{submittedSearchQuery}」...</p>
+              <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">正在搜索「{submittedSearchQuery}」...</p>
             </div>
           {:else if searchError && displayedBrowseTracks.length === 0}
             <div class="text-center py-5 px-3 rounded-xl border border-dashed border-red-400/40 space-y-2">
-              <p class="text-xs text-red-500 m-0">{searchError}</p>
+              <p class="text-[13px] xl:text-[12px] text-red-500 m-0">{searchError}</p>
               <div class="flex items-center justify-center gap-2">
                 <button
                   type="button"
-                  class="px-3 py-1 rounded-full text-xs border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer"
+                  class="px-3 py-1 rounded-full text-[13px] xl:text-[12px] border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer"
                   onclick={() => submitSearch(true)}
                 >
                   重试
                 </button>
                 <button
                   type="button"
-                  class="px-3 py-1 rounded-full text-xs border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] cursor-pointer"
+                  class="px-3 py-1 rounded-full text-[13px] xl:text-[12px] border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] cursor-pointer"
                   onclick={clearSearch}
                 >
                   清空
@@ -3031,16 +3034,16 @@ $effect(() => {
             </div>
           {:else if displayedBrowseTracks.length === 0}
             <div class="text-center py-6 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-2">
-              <p class="text-xs font-medium text-[var(--deep-text)] m-0">
+              <p class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)] m-0">
                 {submittedSearchQuery
                   ? `未找到与「${submittedSearchQuery}」相关的歌曲`
                   : "暂无可用曲目"}
               </p>
-              <p class="text-[11px] text-[var(--chat-meta-color)] m-0">请检查关键词拼写，或换个歌名 / 歌手试试</p>
+              <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">请检查关键词拼写，或换个歌名 / 歌手试试</p>
               {#if submittedSearchQuery}
                 <button
                   type="button"
-                  class="px-3 py-1 rounded-full text-xs border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
+                  class="px-3 py-1 rounded-full text-[13px] xl:text-[12px] border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
                   onclick={clearSearch}
                 >
                   清空搜索
@@ -3057,14 +3060,14 @@ $effect(() => {
               {/each}
             </div>
             {#if searchError}
-              <div class="text-center pt-2 text-xs text-red-500">{searchError}</div>
+              <div class="text-center pt-2 text-[13px] xl:text-[12px] text-red-500">{searchError}</div>
             {/if}
           {/if}
           {#if !isSearching && submittedSearchQuery && hasMoreSearchResults}
             <div class="pt-2 flex justify-center">
               <button
                 type="button"
-                class="px-4 py-1.5 rounded-full text-xs border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) hover:border-[var(--primary)]/40 disabled:opacity-50 transition-colors cursor-pointer"
+                class="px-4 py-1.5 rounded-full text-[13px] xl:text-[12px] border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) hover:border-[var(--primary)]/40 disabled:opacity-50 transition-colors cursor-pointer"
                 disabled={isLoadingMore}
                 onclick={() => void loadMoreSearchResults()}
               >
@@ -3079,13 +3082,13 @@ $effect(() => {
 
       <div>
         <div class="flex items-center justify-between mb-1 px-0.5">
-          <span class="text-xs font-medium text-[var(--chat-meta-color)]">
+          <span class="text-[13px] xl:text-[12px] font-medium text-[var(--chat-meta-color)]">
             房间待播队列 ({queue.length})
           </span>
         </div>
 
         {#if queue.length === 0}
-          <div class="text-center py-4 text-xs text-[var(--chat-meta-color)]">
+          <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
             待播队列为空，去挑一首歌加入电台吧
           </div>
         {:else}
@@ -3100,15 +3103,15 @@ $effect(() => {
                   {/if}
                 </div>
                 <div class="min-w-0 flex-1">
-                  <div class="text-xs font-bold text-[var(--deep-text)] truncate">
+                  <div class="text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)] truncate">
                     {item.track.title}
                   </div>
-                  <div class="text-[10px] text-[var(--chat-meta-color)] truncate">
+                  <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate">
                     {item.track.artist} ·
                     {#if item.requesterKey && onOpenUserProfile}
                       <button
                         type="button"
-                        class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[10px] inline"
+                        class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[12px] xl:text-[11px] inline"
                         onclick={() => openRequesterProfile(item.requesterKey, item.requesterName)}
                       >
                         点歌：{item.requesterName}
@@ -3161,19 +3164,19 @@ $effect(() => {
           </div>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5 min-w-0">
-              <span class="text-xs font-bold text-[var(--deep-text)] truncate">{pl.title}</span>
+              <span class="text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)] truncate">{pl.title}</span>
               {#if pl.isFallback}
-                <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
+                <span class="shrink-0 text-[10px] xl:text-[10px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
                   冷场轮播
                 </span>
               {/if}
               {#if pl.isFeatured}
-                <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                <span class="shrink-0 text-[10px] xl:text-[10px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
                   精选
                 </span>
               {/if}
             </div>
-            <div class="text-[10px] text-[var(--chat-meta-color)] truncate mt-0.5 flex items-center gap-1">
+            <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5 flex items-center gap-1">
               <span>{formatPlatformLabel(pl.platform)} · {pl.trackCount} 首</span>
               {#if showOwner && pl.ownerName}
                 <span>·</span>
@@ -3212,12 +3215,12 @@ $effect(() => {
     {#snippet importPlaylistCard()}
       <div class="rounded-xl border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 p-3 space-y-2">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-xs font-bold text-[var(--deep-text)]">导入外部歌单</span>
+          <span class="text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)]">导入外部歌单</span>
           <a
             href="https://playlistout.lengxiqwq.com"
             target="_blank"
             rel="noopener noreferrer"
-            class="text-[10px] text-[var(--chat-meta-color)] hover:text-(--primary) no-underline transition-colors"
+            class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] hover:text-(--primary) no-underline transition-colors"
           >
             Powered by Playlist Out
           </a>
@@ -3241,22 +3244,22 @@ $effect(() => {
           <button
             type="submit"
             disabled={isImportingPlaylist || !importInput.trim()}
-            class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-(--primary) text-white border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            class="px-3 py-1.5 rounded-lg text-[13px] xl:text-[12px] font-semibold bg-(--primary) text-white border-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
           >
             {isImportingPlaylist ? "解析中" : "导入"}
           </button>
         </form>
 
         {#if importError}
-          <p class="text-[11px] text-red-500 m-0">{importError}</p>
+          <p class="text-[13px] xl:text-[12px] text-red-500 m-0">{importError}</p>
         {/if}
         {#if importStatusText}
-          <p class="text-[11px] text-[var(--chat-meta-color)] m-0">{importStatusText}</p>
+          <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">{importStatusText}</p>
         {/if}
 
         {#if pendingAmbiguousImport}
           <div class="pt-1 space-y-1.5 border-t border-[var(--chat-divider-color)]">
-            <div class="text-[11px] font-medium text-[var(--deep-text)]">
+            <div class="text-[13px] xl:text-[12px] font-medium text-[var(--deep-text)]">
               检测到多个可能匹配的平台，请选择：
             </div>
             <div class="space-y-1 max-h-40 overflow-y-auto custom-scrollbar">
@@ -3272,12 +3275,12 @@ $effect(() => {
                     })}
                 >
                   <div class="min-w-0 flex-1">
-                    <div class="text-xs font-semibold text-[var(--deep-text)] truncate">{cand.title}</div>
-                    <div class="text-[10px] text-[var(--chat-meta-color)] truncate">
+                    <div class="text-[13.5px] xl:text-[13px] font-semibold text-[var(--deep-text)] truncate">{cand.title}</div>
+                    <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate">
                       {formatPlatformLabel(cand.platform)}{cand.subtitle ? ` · ${cand.subtitle}` : ""}
                     </div>
                   </div>
-                  <span class="text-[10px] font-semibold text-[var(--chat-accent-text)] shrink-0">选择</span>
+                  <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-accent-text)] shrink-0">选择</span>
                 </button>
               {/each}
             </div>
@@ -3287,12 +3290,12 @@ $effect(() => {
         {#if pendingUserImport}
           <div class="pt-1 space-y-1.5 border-t border-[var(--chat-divider-color)]">
             <div class="flex items-center justify-between gap-2">
-              <span class="text-[11px] font-medium text-[var(--deep-text)] truncate">
+              <span class="text-[13px] xl:text-[12px] font-medium text-[var(--deep-text)] truncate">
                 {pendingUserImport.nickname} 的公开歌单（点选导入）
               </span>
               <button
                 type="button"
-                class="text-[10px] text-[var(--chat-meta-color)] bg-transparent border-none cursor-pointer p-0"
+                class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] bg-transparent border-none cursor-pointer p-0"
                 onclick={() => (pendingUserImport = null)}
               >
                 收起
@@ -3307,10 +3310,10 @@ $effect(() => {
                   onclick={() => handleImportUserCandidate(item)}
                 >
                   <div class="min-w-0 flex-1">
-                    <div class="text-xs font-medium text-[var(--deep-text)] truncate">{item.name}</div>
-                    <div class="text-[10px] text-[var(--chat-meta-color)]">{item.trackCount} 首</div>
+                    <div class="text-[13.5px] xl:text-[13px] font-medium text-[var(--deep-text)] truncate">{item.name}</div>
+                    <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)]">{item.trackCount} 首</div>
                   </div>
-                  <span class="text-[10px] font-semibold text-[var(--chat-accent-text)] shrink-0">+ 导入</span>
+                  <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-accent-text)] shrink-0">+ 导入</span>
                 </button>
               {/each}
             </div>
@@ -3335,28 +3338,28 @@ $effect(() => {
 
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5 min-w-0">
-                <span class="text-xs font-bold text-[var(--deep-text)] truncate">
+                <span class="text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)] truncate">
                   {selectedPlaylist.title}
                 </span>
                 {#if selectedPlaylist.isFallback}
-                  <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
+                  <span class="shrink-0 text-[10px] xl:text-[10px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
                     冷场轮播
                   </span>
                 {/if}
                 {#if selectedPlaylist.isFeatured}
-                  <span class="shrink-0 text-[9px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                  <span class="shrink-0 text-[10px] xl:text-[10px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
                     精选
                   </span>
                 {/if}
               </div>
-              <div class="text-[10px] text-[var(--chat-meta-color)] truncate mt-0.5 flex items-center gap-1">
+              <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5 flex items-center gap-1">
                 <span>{formatPlatformLabel(selectedPlaylist.platform)} · {selectedPlaylist.tracks.length} 首</span>
                 {#if selectedPlaylist.ownerName}
                   <span>·</span>
                   {#if onOpenUserProfile && selectedPlaylist.ownerKey}
                     <button
                       type="button"
-                      class="inline-flex items-center gap-1 min-w-0 bg-transparent border-none p-0 text-[10px] text-[var(--chat-accent-text)] hover:underline cursor-pointer"
+                      class="inline-flex items-center gap-1 min-w-0 bg-transparent border-none p-0 text-[12px] xl:text-[11px] text-[var(--chat-accent-text)] hover:underline cursor-pointer"
                       onclick={() =>
                         selectedPlaylist &&
                         openRequesterProfile(
@@ -3594,11 +3597,11 @@ $effect(() => {
             </div>
           {/if}
           {#if isLoadingPlaylistDetail}
-            <div class="text-center py-6 text-xs text-[var(--chat-meta-color)]">
+            <div class="text-center py-6 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
               正在加载歌单曲目...
             </div>
           {:else if filteredPlaylistTracks.length === 0}
-            <div class="text-center py-6 text-xs text-[var(--chat-meta-color)]">
+            <div class="text-center py-6 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
               {playlistTrackFilter.trim() ? "没有匹配的歌曲" : "歌单暂无曲目"}
             </div>
           {:else}
@@ -3622,14 +3625,14 @@ $effect(() => {
       <!-- 歌单目录视图：精选歌单 / 我的歌单 / 成员歌单 三段纵向排列 -->
       <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scrollbar-stable px-3 pb-4 pt-2 space-y-3">
         {#if playlistsError}
-          <div class="text-xs text-red-500 px-1">{playlistsError}</div>
+          <div class="text-[13px] xl:text-[12px] text-red-500 px-1">{playlistsError}</div>
         {/if}
 
         {#if rotation && isWalineLoggedIn && currentUser?.isAdmin}
           <button type="button" class="w-full flex items-center justify-between gap-2 rounded-lg border border-[var(--chat-divider-color)] bg-transparent px-3 py-2 text-left cursor-pointer hover:bg-(--btn-plain-bg-hover)"
             disabled={rotationSaving} onclick={toggleRotationSettings}>
-            <span class="text-xs font-semibold text-[var(--deep-text)]">冷场轮播</span>
-            <span class="min-w-0 truncate text-xs text-[var(--chat-meta-color)]">{rotationLabel} · 设置</span>
+            <span class="text-[13.5px] xl:text-[13px] font-semibold text-[var(--deep-text)]">冷场轮播</span>
+            <span class="min-w-0 truncate text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">{rotationLabel} · 设置</span>
           </button>
         {/if}
 
@@ -3642,9 +3645,9 @@ $effect(() => {
             onclick={() => (featuredCollapsed = !featuredCollapsed)}
           >
             <span class="flex items-center gap-1.5 min-w-0">
-              <span class="text-[11px] font-bold text-[var(--deep-text)]">精选歌单</span>
+              <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">精选歌单</span>
               {#if featuredPlaylists.length > 0}
-                <span class="text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{featuredPlaylists.length}</span>
+                <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{featuredPlaylists.length}</span>
               {/if}
             </span>
             <svg
@@ -3662,9 +3665,9 @@ $effect(() => {
           </button>
           {#if !featuredCollapsed}
             {#if isLoadingPlaylists && featuredPlaylists.length === 0}
-              <div class="text-center py-4 text-xs text-[var(--chat-meta-color)]">加载中...</div>
+              <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">加载中...</div>
             {:else if featuredPlaylists.length === 0}
-              <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-3 text-[11px] text-[var(--chat-meta-color)] text-center">
+              <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-3 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] text-center">
                 这个房间还没有精选歌单
               </div>
             {:else}
@@ -3686,9 +3689,9 @@ $effect(() => {
             onclick={() => (myCollapsed = !myCollapsed)}
           >
             <span class="flex items-center gap-1.5 min-w-0">
-              <span class="text-[11px] font-bold text-[var(--deep-text)]">我的歌单</span>
+              <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">我的歌单</span>
               {#if isWalineLoggedIn && myPlaylists.length > 0}
-                <span class="text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{myPlaylists.length}</span>
+                <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{myPlaylists.length}</span>
               {/if}
             </span>
             <svg class="w-3.5 h-3.5 shrink-0 text-[var(--chat-meta-color)] transition-transform {myCollapsed ? '-rotate-90' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -3699,7 +3702,7 @@ $effect(() => {
           {#if !isWalineLoggedIn}
             <div class="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3 space-y-2">
               {#if currentUser?.authType === "guest"}
-                <div class="flex items-center gap-1.5 text-[11px] font-bold text-amber-600 dark:text-amber-400">
+                <div class="flex items-center gap-1.5 text-[13px] xl:text-[12px] font-bold text-amber-600 dark:text-amber-400">
                   <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <circle cx="12" cy="12" r="10" />
                     <line x1="12" y1="8" x2="12" y2="12" />
@@ -3707,18 +3710,18 @@ $effect(() => {
                   </svg>
                   <span>当前为访客身份，无法使用个人歌单</span>
                 </div>
-                <p class="text-[11px] leading-relaxed text-[var(--deep-text)] m-0">
+                <p class="text-[13px] xl:text-[12px] leading-relaxed text-[var(--deep-text)] m-0">
                   你目前仅填写了访客昵称和邮箱，必须使用 <strong class="font-bold">Waline 账号</strong>登录后，才可导入并管理自己的歌单（访客仍可浏览精选与成员歌单）。
                 </p>
               {:else}
-                <div class="flex items-center gap-1.5 text-[11px] font-bold text-[var(--deep-text)]">
+                <div class="flex items-center gap-1.5 text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">
                   <svg class="w-3.5 h-3.5 text-(--primary) shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>
                   <span>需要 Waline 登录</span>
                 </div>
-                <p class="text-[11px] leading-relaxed text-[var(--chat-meta-color)] m-0">
+                <p class="text-[13px] xl:text-[12px] leading-relaxed text-[var(--chat-meta-color)] m-0">
                   必须使用 <strong class="font-bold text-[var(--deep-text)]">Waline 账号</strong>登录后，才可导入并保存自己的歌单（临时访客身份暂不支持）。
                 </p>
               {/if}
@@ -3727,7 +3730,7 @@ $effect(() => {
                   <button
                     type="button"
                     disabled={walineLoginWaiting}
-                    class="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-(--primary) text-white border-none cursor-pointer hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
+                    class="px-2.5 py-1 rounded-lg text-[13px] xl:text-[12px] font-semibold bg-(--primary) text-white border-none cursor-pointer hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
                     onclick={() => (onRequestWalineAuth ?? onRequestAuth)?.()}
                   >
                     {walineLoginWaiting ? "等待 Waline 完成登录..." : "使用 Waline 账号登录"}
@@ -3738,7 +3741,7 @@ $effect(() => {
           {:else}
             {@render importPlaylistCard()}
             {#if myPlaylists.length === 0}
-              <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-3 text-[11px] text-[var(--chat-meta-color)] text-center">
+              <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-3 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] text-center">
                 还没有导入个人歌单，在上方粘贴歌单链接试试吧
               </div>
             {:else}
@@ -3761,9 +3764,9 @@ $effect(() => {
             onclick={() => (membersCollapsed = !membersCollapsed)}
           >
             <span class="flex items-center gap-1.5 min-w-0">
-              <span class="text-[11px] font-bold text-[var(--deep-text)]">成员歌单</span>
+              <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">成员歌单</span>
               {#if membersPlaylists.length > 0}
-                <span class="text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{membersPlaylists.length}</span>
+                <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{membersPlaylists.length}</span>
               {/if}
             </span>
             <svg class="w-3.5 h-3.5 shrink-0 text-[var(--chat-meta-color)] transition-transform {membersCollapsed ? '-rotate-90' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -3772,9 +3775,9 @@ $effect(() => {
           </button>
           {#if !membersCollapsed}
           {#if isLoadingPlaylists && membersPlaylists.length === 0}
-            <div class="text-center py-4 text-xs text-[var(--chat-meta-color)]">加载中...</div>
+            <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">加载中...</div>
           {:else if memberPlaylistGroups.length === 0}
-            <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-3 text-[11px] text-[var(--chat-meta-color)] text-center">
+            <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-3 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] text-center">
               还没有其他成员上传歌单
             </div>
           {:else}
@@ -3789,9 +3792,9 @@ $effect(() => {
                       onclick={() => openRequesterProfile(group.ownerKey, group.ownerName)}
                     >
                       <ChatAvatar src={resolveOwnerAvatar(group.ownerKey, group.ownerAvatar)} name={group.ownerName} size="2xs" />
-                      <span class="text-[11px] font-semibold text-[var(--deep-text)] truncate">{group.ownerName}</span>
+                      <span class="text-[13px] xl:text-[12px] font-semibold text-[var(--deep-text)] truncate">{group.ownerName}</span>
                     </button>
-                    <span class="text-[10px] text-[var(--chat-meta-color)] tabular-nums shrink-0">{group.playlists.length} 张</span>
+                    <span class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] tabular-nums shrink-0">{group.playlists.length} 张</span>
                   </div>
                   <div class="space-y-1.5 mt-1">
                     {#each group.playlists as pl (pl.id)}
@@ -3812,7 +3815,7 @@ $effect(() => {
       <div class="inline-flex items-center gap-0.5 rounded-lg bg-[var(--card-bg)]/60 p-0.5 border border-[var(--chat-divider-color)]" role="group" aria-label="历史排序方式">
         <button
           type="button"
-          class="px-3 py-1.5 md:px-2 md:py-0.5 text-xs md:text-[11px] font-medium rounded-md border-none cursor-pointer transition-colors whitespace-nowrap
+          class="px-3 py-1.5 md:px-2 md:py-0.5 text-[13px] xl:text-[12px] font-medium rounded-md border-none cursor-pointer transition-colors whitespace-nowrap
             {historySort === 'recent'
               ? 'bg-(--primary) text-white'
               : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
@@ -3822,7 +3825,7 @@ $effect(() => {
         </button>
         <button
           type="button"
-          class="px-3 py-1.5 md:px-2 md:py-0.5 text-xs md:text-[11px] font-medium rounded-md border-none cursor-pointer transition-colors whitespace-nowrap
+          class="px-3 py-1.5 md:px-2 md:py-0.5 text-[13px] xl:text-[12px] font-medium rounded-md border-none cursor-pointer transition-colors whitespace-nowrap
             {historySort === 'count'
               ? 'bg-(--primary) text-white'
               : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
@@ -3836,7 +3839,7 @@ $effect(() => {
         <button
           type="button"
           aria-expanded={showRequesterFilter}
-          class="inline-flex items-center gap-1.5 max-w-36 px-3 py-1.5 md:px-2 md:py-1 text-xs md:text-[11px] font-medium rounded-lg border cursor-pointer transition-colors
+          class="inline-flex items-center gap-1.5 max-w-36 px-3 py-1.5 md:px-2 md:py-1 text-[13px] xl:text-[12px] font-medium rounded-lg border cursor-pointer transition-colors
             {selectedRequester
               ? 'bg-(--primary) text-white border-transparent'
               : 'bg-[var(--card-bg)]/60 text-[var(--chat-meta-color)] border-[var(--chat-divider-color)] hover:text-[var(--deep-text)]'}"
@@ -3860,7 +3863,7 @@ $effect(() => {
               }}
             >
               <span class="truncate">全部点歌记录</span>
-              <span class="text-[10px] opacity-70 tabular-nums shrink-0">{musicState?.history?.length ?? displayedHistoryEntries.length}首</span>
+              <span class="text-[12px] xl:text-[11px] opacity-70 tabular-nums shrink-0">{musicState?.history?.length ?? displayedHistoryEntries.length}首</span>
             </button>
 
             {#if historyRequesters.length > 0}
@@ -3883,13 +3886,13 @@ $effect(() => {
                     />
                     <span class="truncate">{person.name}</span>
                     {#if person.badge}
-                      <span class="shrink-0 text-[9px] px-1 py-px rounded bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)]">{person.badge}</span>
+                      <span class="shrink-0 text-[10px] xl:text-[10px] px-1 py-px rounded bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)]">{person.badge}</span>
                     {/if}
                     {#if person.isMe}
-                      <span class="shrink-0 text-[9px] px-1 py-px rounded bg-(--primary)/15 text-[var(--chat-accent-text)]">我</span>
+                      <span class="shrink-0 text-[10px] xl:text-[10px] px-1 py-px rounded bg-(--primary)/15 text-[var(--chat-accent-text)]">我</span>
                     {/if}
                   </span>
-                  <span class="text-[10px] opacity-70 tabular-nums shrink-0">{person.trackCount}首</span>
+                  <span class="text-[12px] xl:text-[11px] opacity-70 tabular-nums shrink-0">{person.trackCount}首</span>
                 </button>
               {/each}
             {/if}
@@ -3905,7 +3908,7 @@ $effect(() => {
     >
       {#if displayedHistoryEntries.length === 0}
         <div class="text-center py-8 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-2">
-          <p class="text-xs text-[var(--chat-meta-color)] m-0">
+          <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">
             {selectedRequester ? `${selectedRequester.name} 还没有点歌记录` : "房间里还没有历史点歌记录"}
           </p>
           {#if selectedRequester}
@@ -3957,22 +3960,22 @@ $effect(() => {
     onClose={() => { if (!rotationSaving) rotationExpanded = false; }}>
     <form class="flex flex-col min-h-0 p-4 gap-3" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>
       <fieldset class="border-0 p-0 m-0 flex flex-wrap gap-x-4 gap-y-2" disabled={rotationSaving}>
-        <legend class="text-xs font-semibold text-[var(--deep-text)] mb-2">轮播方式</legend>
-        <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="off" bind:group={rotationMode} />关闭</label>
-        <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="all" bind:group={rotationMode} />全部公开歌单</label>
-        <label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="radio" name="rotation-mode" value="playlist" bind:group={rotationMode} />指定歌单（可多选）</label>
+        <legend class="text-[13.5px] xl:text-[13px] font-semibold text-[var(--deep-text)] mb-2">轮播方式</legend>
+        <label class="flex items-center gap-1.5 text-[13px] xl:text-[12px] cursor-pointer"><input type="radio" name="rotation-mode" value="off" bind:group={rotationMode} />关闭</label>
+        <label class="flex items-center gap-1.5 text-[13px] xl:text-[12px] cursor-pointer"><input type="radio" name="rotation-mode" value="all" bind:group={rotationMode} />全部公开歌单</label>
+        <label class="flex items-center gap-1.5 text-[13px] xl:text-[12px] cursor-pointer"><input type="radio" name="rotation-mode" value="playlist" bind:group={rotationMode} />指定歌单（可多选）</label>
       </fieldset>
       {#if rotationMode === "playlist"}
         <fieldset class="border-0 p-0 m-0 min-h-0" disabled={rotationSaving}>
           <div class="flex items-center justify-between gap-2 mb-2">
-            <legend class="text-xs font-semibold text-[var(--deep-text)] p-0">
+            <legend class="text-[13.5px] xl:text-[13px] font-semibold text-[var(--deep-text)] p-0">
               选择公开歌单
               {#if rotationChoices.length > 0}
                 <span class="font-normal text-[var(--chat-meta-color)]">（已选 {validSelectedRotationIds.length}/{rotationChoices.length}）</span>
               {/if}
             </legend>
             {#if rotationChoices.length > 1}
-              <div class="flex items-center gap-1.5 text-[11px]">
+              <div class="flex items-center gap-1.5 text-[13px] xl:text-[12px]">
                 <button type="button" class="rounded px-1.5 py-0.5 border border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]" onclick={() => rotationPlaylistIds = rotationChoices.map((playlist) => playlist.id)}>全选</button>
                 <button type="button" class="rounded px-1.5 py-0.5 border border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]" onclick={() => rotationPlaylistIds = []}>清空</button>
               </div>
@@ -3987,20 +3990,20 @@ $effect(() => {
                   {#if playlist.coverUrl}<img src={playlist.coverUrl} alt="" loading="lazy" class="w-full h-full object-cover" />{:else}<span class="text-sm text-(--primary)">♪</span>{/if}
                 </span>
                 <span class="min-w-0 flex-1">
-                  <span class="block truncate text-xs font-bold text-[var(--deep-text)]">{playlist.title}</span>
-                  <span class="block truncate text-[10px] text-[var(--chat-meta-color)] mt-0.5">{formatPlatformLabel(playlist.platform)} · {playlist.trackCount} 首 · {playlist.ownerName || "房友"}</span>
+                  <span class="block truncate text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)]">{playlist.title}</span>
+                  <span class="block truncate text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] mt-0.5">{formatPlatformLabel(playlist.platform)} · {playlist.trackCount} 首 · {playlist.ownerName || "房友"}</span>
                 </span>
               </label>
             {:else}
-              <p class="text-xs text-[var(--chat-meta-color)]">暂无可选的公开歌单</p>
+              <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">暂无可选的公开歌单</p>
             {/each}
           </div>
         </fieldset>
       {/if}
-      {#if rotationError}<p role="alert" class="m-0 text-xs text-red-500">{rotationError}</p>{/if}
+      {#if rotationError}<p role="alert" class="m-0 text-[13px] xl:text-[12px] text-red-500">{rotationError}</p>{/if}
       <div class="flex justify-end gap-2">
-        <button type="button" class="rounded-lg px-3 py-2 text-xs border border-[var(--chat-divider-color)]" disabled={rotationSaving} onclick={() => rotationExpanded = false}>取消</button>
-        <button type="submit" disabled={rotationSaving || !canSaveRotation} class="rounded-lg border-none bg-(--primary) px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{rotationSaving ? "保存中" : "保存"}</button>
+        <button type="button" class="rounded-lg px-3 py-2 text-[13px] xl:text-[12px] border border-[var(--chat-divider-color)]" disabled={rotationSaving} onclick={() => rotationExpanded = false}>取消</button>
+        <button type="submit" disabled={rotationSaving || !canSaveRotation} class="rounded-lg border-none bg-(--primary) px-3 py-2 text-[13px] xl:text-[12px] font-semibold text-white disabled:opacity-50">{rotationSaving ? "保存中" : "保存"}</button>
       </div>
     </form>
   </ChatModal>

@@ -236,7 +236,7 @@ async function handleSplitGuestEnter() {
             <div class="text-xs font-bold text-(--deep-text) truncate">
               {guestNick.trim() || "已绑定账号"}
             </div>
-            <div class="text-[11px] text-(--chat-meta-color) truncate">
+            <div class="text-[13px] md:text-[11px] text-(--chat-meta-color) truncate">
               {guestEmail.trim()}
             </div>
           </div>
@@ -248,7 +248,7 @@ async function handleSplitGuestEnter() {
             guestError = "";
             showGuestForm = true;
           }}
-          class="btn-regular h-7 px-2.5 rounded-lg text-[11px] font-medium shrink-0 cursor-pointer border-none"
+          class="btn-regular h-7 px-2.5 rounded-lg text-[13px] md:text-[11px] font-medium shrink-0 cursor-pointer border-none"
         >
           修改信息
         </button>
@@ -262,7 +262,7 @@ async function handleSplitGuestEnter() {
           <span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
           <span>检测到已绑定的正式账号</span>
         </div>
-        <p class="text-[11px] text-(--deep-text) opacity-90 leading-relaxed m-0">
+        <p class="text-[13px] md:text-[11px] text-(--deep-text) opacity-90 leading-relaxed m-0">
           {#if guestBlockedCanSplit}
             该邮箱已绑定 Waline 正式账号。请通过 Waline 账号登录以同步认证头衔与历史记录；若暂不登录，也可以直接进入（将创建独立临时身份，不会与原账号合并）。
           {:else}
@@ -270,13 +270,13 @@ async function handleSplitGuestEnter() {
           {/if}
         </p>
         {#if guestBlockedCanSplit && guestError}
-          <p class="text-[11px] text-red-500 leading-relaxed m-0">
+          <p class="text-[13px] md:text-[11px] text-red-500 leading-relaxed m-0">
             {guestError}
           </p>
         {/if}
 
         {#if walineLoginError}
-          <p class="text-[11px] text-red-500 leading-relaxed m-0">
+          <p class="text-[13px] md:text-[11px] text-red-500 leading-relaxed m-0">
             {walineLoginError}
           </p>
         {/if}
@@ -300,7 +300,7 @@ async function handleSplitGuestEnter() {
               type="button"
               disabled={splitGuestLoading || walinePopupWaiting}
               onclick={handleSplitGuestEnter}
-              class="btn-regular h-9 px-3 rounded-xl text-[11px] font-semibold shrink-0 cursor-pointer border-none disabled:opacity-60"
+              class="btn-regular h-9 px-3 rounded-xl text-[13px] md:text-[11px] font-semibold shrink-0 cursor-pointer border-none disabled:opacity-60"
             >
               {splitGuestLoading ? "创建中..." : "直接进入"}
             </button>
@@ -316,7 +316,7 @@ async function handleSplitGuestEnter() {
               onclick={() => {
                 walineLoginError = "";
               }}
-              class="inline-flex items-center gap-1 text-[11px] font-medium text-(--chat-accent-text) hover:underline"
+              class="inline-flex items-center gap-1 text-[13px] md:text-[11px] font-medium text-(--chat-accent-text) hover:underline"
             >
               <span>在新标签页中打开 Waline 登录</span>
               <span aria-hidden="true">↗</span>
@@ -332,16 +332,16 @@ async function handleSplitGuestEnter() {
             <span class="text-sm font-bold text-(--deep-text) truncate">
               Waline 账号登录
             </span>
-            <span class="shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold bg-(--primary) text-white leading-none">
+            <span class="shrink-0 px-2 py-0.5 rounded-full text-[11px] md:text-[10px] font-bold bg-(--primary) text-white leading-none">
               推荐
             </span>
           </div>
-          <span class="shrink-0 text-[10px] font-medium text-(--chat-accent-text)">
+          <span class="shrink-0 text-[11px] md:text-[10px] font-medium text-(--chat-accent-text)">
             评论区互通
           </span>
         </div>
 
-        <p class="text-[11px] text-(--deep-text)/80 leading-relaxed m-0">
+        <p class="text-[13px] md:text-[11px] text-(--deep-text)/80 leading-relaxed m-0">
           点击下方按钮将打开独立 Waline 窗口完成登录或注册（支持账号密码、GitHub 等方式），即可拥有 <strong class="font-semibold text-(--chat-accent-text)">认证</strong> 标识并解锁个人歌单。
         </p>
 
@@ -364,7 +364,7 @@ async function handleSplitGuestEnter() {
         </button>
 
         {#if walineLoginUrl}
-          <div class="flex items-center justify-between gap-2 text-[11px] text-(--chat-meta-color) pt-0.5">
+          <div class="flex items-center justify-between gap-2 text-[13px] md:text-[11px] text-(--chat-meta-color) pt-0.5">
             <span>{walinePopupBlocked ? "弹窗被拦截？" : "未弹出窗口或偏好标签页？"}</span>
             <a
               href={walineLoginUrl}
@@ -391,10 +391,10 @@ async function handleSplitGuestEnter() {
           class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-(--chat-divider-color) bg-transparent hover:bg-(--btn-regular-bg) text-left cursor-pointer transition-colors"
         >
           <div class="min-w-0">
-            <div class="text-xs font-medium text-(--chat-meta-color)">
+            <div class="text-[13px] md:text-xs font-medium text-(--chat-meta-color)">
               临时访客进入（无需账号）
             </div>
-            <div class="text-[10px] text-(--chat-meta-color)/80 truncate mt-0.5">
+            <div class="text-[12px] md:text-[10px] text-(--chat-meta-color)/80 truncate mt-0.5">
               仅填昵称与邮箱快速发言，不支持导入与管理个人歌单
             </div>
           </div>
@@ -434,7 +434,7 @@ async function handleSplitGuestEnter() {
               <div class="text-xs font-bold text-[var(--deep-text)] truncate">
                 {guestNick.trim() || "访客名片"}
               </div>
-              <div class="text-[10px] text-[var(--chat-meta-color)] truncate">
+              <div class="text-[11px] md:text-[10px] text-[var(--chat-meta-color)] truncate">
                 根据邮箱匹配头像 · 与评论区名片同步
               </div>
             </div>

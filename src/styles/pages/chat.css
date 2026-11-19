@@ -1084,6 +1084,24 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 /* ==========================================================================
    6. 左侧房间列表与在线成员
    ========================================================================== */
+.chat-room-content {
+	display: contents;
+}
+
+@media (width < 768px), (width <= 1366px) and (pointer: coarse) {
+	.chat-room-content {
+		display: block;
+		flex: 1 1 0%;
+		min-height: 0;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+	}
+
+	.chat-room-content .chat-room-members {
+		overflow: visible;
+	}
+}
+
 .chat-room-item {
 	position: relative;
 	display: flex;
@@ -1676,6 +1694,31 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	gap: 0.5rem;
 }
 
+@media (width >= 1024px) and (hover: hover) and (pointer: fine) {
+	.chat-music-tabs > button {
+		margin-inline: 4px;
+		padding-block: 7px;
+		font-size: 12px;
+	}
+
+	.chat-music-tabs > button > svg {
+		width: 14px;
+		height: 14px;
+	}
+}
+
+/* 标题和迷你播放条共用同一高度，切换标签时保持下方位置稳定。 */
+.chat-music-panel-topbar {
+	height: 54px;
+	flex-shrink: 0;
+}
+
+.chat-music-panel-topbar > .chat-mini-player,
+.chat-music-panel-topbar > .chat-panel-header {
+	height: 100%;
+	box-sizing: border-box;
+}
+
 /* 顶置迷你播放条：进度线贴在条底，与下方内容形成分隔 */
 .chat-mini-player .chat-mini-progress-bar {
 	top: auto;
@@ -2106,6 +2149,30 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 		flex-direction: column;
 	}
 
+	.chat-panel-left .chat-section-title {
+		font-size: 12px;
+	}
+
+	.chat-panel-left .chat-room-item {
+		font-size: 13px;
+	}
+
+	.chat-input-toolbar .chat-tool-btn {
+		width: 40px;
+		height: 40px;
+	}
+
+	.chat-panel-center .chat-header-pill-btn,
+	.chat-mobile-header-room-btn,
+	.chat-mobile-music-btn,
+	.chat-mobile-icon-btn {
+		min-height: 40px;
+	}
+
+	.chat-mobile-icon-btn {
+		min-width: 40px;
+	}
+
 	.chat-mobile-stage {
 		position: relative;
 		padding: 0 !important;
@@ -2317,6 +2384,18 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 		width: 2.25rem;
 		height: 2.25rem;
 		border-radius: 0.65rem;
+	}
+}
+
+@media (width < 420px) {
+	.chat-header-thread-label {
+		display: none;
+	}
+}
+
+@media (width < 360px) {
+	.chat-mobile-room-count {
+		display: none;
 	}
 }
 
@@ -3316,6 +3395,12 @@ html[data-wallpaper-mode="none"] .chat-requester-menu {
 	transition: background-color 140ms ease, color 140ms ease;
 }
 
+@media (width >= 1280px) {
+	.chat-requester-option {
+		font-size: 12px;
+	}
+}
+
 .chat-requester-option:hover {
 	background: oklch(0.70 0.14 var(--hue) / 0.12);
 }
@@ -3362,6 +3447,18 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	border: 1px solid var(--chat-divider-color);
 	color: var(--deep-text);
 	flex-shrink: 0;
+}
+
+@media (768px <= width < 1024px) {
+	.chat-header-room-avatar,
+	.chat-header-site-count {
+		display: none !important;
+	}
+	.chat-header-room-dropdown,
+	.chat-header-room-badge {
+		min-width: 0;
+		flex-shrink: 1;
+	}
 }
 
 .chat-header-room-dropdown {

@@ -3765,7 +3765,7 @@ function removePendingImage(index: number) {
           <span class="font-bold text-[15px] text-[var(--deep-text)] dark:text-white/95 truncate">
             #{roomName}
           </span>
-          <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/8 text-[11.5px] font-medium text-[var(--chat-meta-color)] shrink-0 tabular-nums">
+          <span class="chat-mobile-room-count inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/8 text-[11.5px] font-medium text-[var(--chat-meta-color)] shrink-0 tabular-nums">
             <span class="chat-online-dot"></span>
             <span>{isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount}/${totalChatterCount}` : `${onlineCount}人`}</span>
           </span>
@@ -3803,11 +3803,11 @@ function removePendingImage(index: number) {
             aria-expanded={showInterconnect}
             onclick={() => onToggleInterconnect?.()}
           >
-            <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
+            <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 min-w-0 truncate">
               #{roomName}
             </span>
             {#if interconnectSites.length > 0}
-              <span class="text-[11px] font-medium px-1.5 py-0.5 rounded-md bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] tabular-nums shrink-0">
+              <span class="chat-header-site-count text-[11px] font-medium px-1.5 py-0.5 rounded-md bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] tabular-nums shrink-0">
                 {interconnectSites.length} 个站点
               </span>
             {/if}
@@ -3863,7 +3863,7 @@ function removePendingImage(index: number) {
               <path d="M8 9h8" />
               <path d="M8 13h5" />
             </svg>
-            <span class="font-bold text-[var(--primary)]">线程</span>
+            <span class="chat-header-thread-label font-bold text-[var(--primary)]">线程</span>
             <span class="text-[11px] md:text-[10px] opacity-75 tabular-nums">{mergedActiveThreads.length}</span>
           </button>
 
@@ -4924,6 +4924,7 @@ function removePendingImage(index: number) {
         bind:this={inputEl}
         contenteditable="true"
         role="textbox"
+        aria-label="聊天消息"
         aria-multiline="true"
         tabindex="0"
         data-empty={!inputText.trim() ? "true" : undefined}

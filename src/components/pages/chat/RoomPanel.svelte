@@ -182,6 +182,7 @@ const VIRTUAL_OFFLINE_OVERSCAN = 10;
 const VIRTUAL_OFFLINE_STEP = 6;
 
 let memberScrollEl: HTMLDivElement | null = $state(null);
+let combinedScrollEl: HTMLDivElement | null = $state(null);
 let offlineListEl: HTMLDivElement | null = $state(null);
 let memberScrollTop = $state(0);
 let memberViewportH = $state(520);
@@ -190,15 +191,18 @@ let memberRowHeight = $state(48);
 let memberScrollRaf: number | null = null;
 
 function syncMemberScrollMetrics() {
-	if (!memberScrollEl) return;
-	memberScrollTop = memberScrollEl.scrollTop;
-	if (memberScrollEl.clientHeight > 0) {
-		memberViewportH = memberScrollEl.clientHeight;
+	const scrollEl = combinedScrollEl && getComputedStyle(combinedScrollEl).display !== "contents"
+		? combinedScrollEl
+		: memberScrollEl;
+	if (!scrollEl) return;
+	memberScrollTop = scrollEl.scrollTop;
+	if (scrollEl.clientHeight > 0) {
+		memberViewportH = scrollEl.clientHeight;
 	}
 	if (offlineListEl) {
 		offlineSectionOffset = Math.max(
 			0,
-			offlineListEl.offsetTop - memberScrollEl.offsetTop,
+			offlineListEl.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top + scrollEl.scrollTop,
 		);
 	}
 	const nextRowH =
@@ -209,7 +213,7 @@ function syncMemberScrollMetrics() {
 }
 
 function handleMemberScroll() {
-	if (!memberScrollEl || memberScrollRaf !== null) return;
+	if (memberScrollRaf !== null) return;
 	memberScrollRaf = requestAnimationFrame(() => {
 		memberScrollRaf = null;
 		syncMemberScrollMetrics();
@@ -393,7 +397,7 @@ function formatOfflineTime(ts?: number): string {
         </ChatTooltip>
       {/if}
       <span
-        class="chat-connection-status text-[0.6875rem] px-2 py-0.5 rounded-full font-medium"
+        class="chat-connection-status text-[12px] md:text-[0.6875rem] px-2 py-0.5 rounded-full font-medium"
         data-state={connectionState}
         role="status"
       >
@@ -402,6 +406,7 @@ function formatOfflineTime(ts?: number): string {
     </div>
   </div>
 
+  <div class="chat-room-content custom-scrollbar" bind:this={combinedScrollEl} onscroll={handleMemberScroll}>
   <!-- 房间列表：按来源分组（互联房间 / 本站房间） -->
   <div class="p-2.5 shrink-0">
     {#if interconnectRooms.length > 0}
@@ -452,7 +457,7 @@ function formatOfflineTime(ts?: number): string {
       <div class="flex-1 min-w-0 flex flex-col">
         <span class="truncate leading-tight">#{room.name}</span>
         {#if room.subtitle}
-          <span class="text-[0.6875rem] md:text-[0.65rem] text-[var(--chat-meta-color)] font-normal truncate leading-tight mt-0.5">
+          <span class="text-[12px] md:text-[0.65rem] text-[var(--chat-meta-color)] font-normal truncate leading-tight mt-0.5">
             {room.subtitle}
           </span>
         {/if}
@@ -462,7 +467,7 @@ function formatOfflineTime(ts?: number): string {
           {unread > 99 ? "99+" : unread}
         </span>
       {:else if currentRoom === room.id}
-        <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">
+        <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)]">
           {INTERCONNECT_ROOM_IDS.has(room.id) && totalChatterCount && totalChatterCount > 0
             ? `${totalOnlineCount}/${totalChatterCount}`
             : totalOnlineCount}
@@ -477,7 +482,7 @@ function formatOfflineTime(ts?: number): string {
   <div
     bind:this={memberScrollEl}
     onscroll={handleMemberScroll}
-    class="flex-1 overflow-y-auto custom-scrollbar px-2.5 py-1.5 space-y-3 min-h-0"
+    class="chat-room-members flex-1 overflow-y-auto custom-scrollbar px-2.5 py-1.5 space-y-3 min-h-0"
   >
     {#if isCurrentInterconnect}
       <!-- 互联茶室模式：直接平铺“本站在线”、“其他站点”、“离线成员” -->
@@ -486,7 +491,7 @@ function formatOfflineTime(ts?: number): string {
       <section>
         <div class="chat-section-title flex items-center justify-between pr-1">
           <span>本站在线</span>
-          <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+          <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
             {siteOnlineMembers.length + observerCount} 人
           </span>
         </div>
@@ -518,7 +523,7 @@ function formatOfflineTime(ts?: number): string {
         <section class="pt-1 border-t border-[var(--chat-divider-color)]">
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>其他站点</span>
-            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
               {externalOnlineMembers.length} 人
             </span>
           </div>
@@ -536,7 +541,7 @@ function formatOfflineTime(ts?: number): string {
         <section class="pt-1 border-t border-[var(--chat-divider-color)]">
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>离线成员</span>
-            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
               {offlineMembers.length} 人
             </span>
           </div>
@@ -560,7 +565,7 @@ function formatOfflineTime(ts?: number): string {
       <section>
         <div class="chat-section-title flex items-center justify-between pr-1">
           <span>在线成员</span>
-          <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+          <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
             {normalOnlineMembers.length + observerCount} 人
           </span>
         </div>
@@ -591,7 +596,7 @@ function formatOfflineTime(ts?: number): string {
         <section class="pt-1 border-t border-[var(--chat-divider-color)]">
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>离线成员</span>
-            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
               {offlineMembers.length} 人
             </span>
           </div>
@@ -610,6 +615,7 @@ function formatOfflineTime(ts?: number): string {
         </section>
       {/if}
     {/if}
+  </div>
   </div>
 
   {#snippet memberItem(member: ChatOnlineMember | ChatMentionCandidate, isOnline: boolean, isExternal = false, lazyAvatar = false)}
@@ -702,7 +708,7 @@ function formatOfflineTime(ts?: number): string {
               {/each}
             {/if}
           </div>
-          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate md:-mt-0.5">
+          <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate md:-mt-0.5">
             {subtitle}
           </span>
         </div>
@@ -742,7 +748,7 @@ function formatOfflineTime(ts?: number): string {
             {displayName}
           </span>
         </div>
-        <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
+        <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
           {subtitle}
         </span>
       </div>
@@ -878,7 +884,7 @@ function formatOfflineTime(ts?: number): string {
               {item.os || ""}
             </span>
           </div>
-          <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
+          <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
             {subtitle}
           </span>
         </div>
@@ -944,7 +950,7 @@ function formatOfflineTime(ts?: number): string {
               {/each}
             {/if}
           </div>
-          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
+          <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
             {currentUser.status && currentUser.status !== "在线" ? currentUser.status : "点击设置状态..."}
           </span>
         </div>
@@ -965,8 +971,8 @@ function formatOfflineTime(ts?: number): string {
         ?
       </div>
       <div class="flex flex-col min-w-0 flex-1">
-        <span class="text-xs font-semibold text-[var(--deep-text)] truncate">未登录（旁观）</span>
-        <span class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate">登录后即可发言与点歌</span>
+        <span class="text-[13px] md:text-xs font-semibold text-[var(--deep-text)] truncate">未登录（旁观）</span>
+        <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate">登录后即可发言与点歌</span>
       </div>
       <ChatTooltip text={notificationTooltip} position="top" align="right">
         <button
@@ -1001,7 +1007,7 @@ function formatOfflineTime(ts?: number): string {
         <section>
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>当前在线旁观</span>
-            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
               {observerCount} 人
             </span>
           </div>
@@ -1021,7 +1027,7 @@ function formatOfflineTime(ts?: number): string {
         <section class="pt-2 border-t border-[var(--chat-divider-color)]">
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>旁观历史</span>
-            <span class="text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
               {spectatorHistory.length} 条
             </span>
           </div>
