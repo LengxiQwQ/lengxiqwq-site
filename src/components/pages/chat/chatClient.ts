@@ -1337,6 +1337,17 @@ function matchSiteByUrl(
 	return targetHost ? matchSiteByHostname(targetHost, sites) : undefined;
 }
 
+export function normalizeDotSpacing(name: string): string {
+	const raw = (name || "").trim();
+	if (!raw) return "";
+	const match = raw.match(/^(.+?)\s*[·•・]\s*(.+)$/);
+	if (!match) return raw;
+	const cleanName = match[1].trim();
+	const siteSuffix = match[2].trim();
+	if (!cleanName || !siteSuffix) return raw;
+	return `${cleanName} · ${siteSuffix}`;
+}
+
 export function resolveExternalOrigin(
 	member: {
 		name: string;
@@ -1355,8 +1366,8 @@ export function resolveExternalOrigin(
 	const relayMatch = rawUserKey.match(/#relay:([^:#]+)(?::([^#]*))?/i);
 	const relaySiteKey = relayMatch ? relayMatch[1].trim() : "";
 
-	// 1. 优先从昵称中的分隔符（· 或 •）拆分：例如 "朝朝听雨 · 听雨茶室" -> name: "朝朝听雨", site: "听雨茶室"
-	const separatorMatch = rawName.match(/^(.+?)\s*[·•]\s*(.+)$/);
+	// 1. 优先从昵称中的分隔符（· 或 • 或 ・）拆分：例如 "朝朝听雨 · 听雨茶室" -> name: "朝朝听雨", site: "听雨茶室"
+	const separatorMatch = rawName.match(/^(.+?)\s*[·•・]\s*(.+)$/);
 	let cleanName = rawName;
 	let siteFromSuffix = "";
 
@@ -1456,10 +1467,11 @@ export function resolveExternalOrigin(
 		(!member.url?.includes("matrix.to/") ? extractHostname(member.url) : "") ||
 		host;
 
+	// 优先使用对方原本自带的站点后缀；没有时才使用匹配/探测到的站点名称或域名兜底
 	const siteName =
+		siteFromSuffix ||
 		matchedSite?.name ||
 		unknownServerHost ||
-		siteFromSuffix ||
 		explicitSite ||
 		explicitBadge ||
 		"外部站点";

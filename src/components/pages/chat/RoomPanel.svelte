@@ -293,7 +293,11 @@ const roomNameById = $derived(
 );
 
 /** 在线成员的副标题：状态 · 当前所在房间 */
-function formatOnlineLine(member: ChatOnlineMember, isFocused = true): string {
+function formatOnlineLine(
+	member: ChatOnlineMember,
+	isFocused = true,
+	includeCustomStatus = true,
+): string {
 	const targetRoomId = member.roomId || "chat";
 	const roomName =
 		roomNameById.get(targetRoomId) ||
@@ -302,7 +306,8 @@ function formatOnlineLine(member: ChatOnlineMember, isFocused = true): string {
 			: targetRoomId === "chat"
 				? "闲聊"
 				: targetRoomId);
-	const rawStatus = member.status ? member.status.trim() : "";
+	const rawStatus =
+		includeCustomStatus && member.status ? member.status.trim() : "";
 	const status =
 		rawStatus && rawStatus !== "在线" && rawStatus !== "离开"
 			? rawStatus
@@ -631,9 +636,7 @@ function formatOfflineTime(ts?: number): string {
                   : `来自：${siteName}`)
               : (offlineTime === "离线" ? `来自：${siteName}` : `来自：${siteName} · ${offlineTime}`))
           : (isOnline
-              ? (SHOW_STATUS_IN_INTERCONNECT
-                  ? formatOnlineLine(member as ChatOnlineMember, isFocused)
-                  : `来自：${localSiteName}`)
+              ? formatOnlineLine(member as ChatOnlineMember, isFocused, false)
               : (offlineTime === "离线" ? `来自：${localSiteName}` : `来自：${localSiteName} · ${offlineTime}`)))
       : (isOnline
           ? formatOnlineLine(member as ChatOnlineMember, isFocused)

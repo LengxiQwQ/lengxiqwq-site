@@ -19,8 +19,10 @@ import {
 	trackBgImgAspectRatio,
 } from "./chatAppearance";
 import {
+	getLocalSiteName,
 	isExternalMatrixIdentity,
 	isMentionedForUser,
+	normalizeDotSpacing,
 	resolveExternalOrigin,
 	sanitizeChatUrl,
 	uploadChatImage,
@@ -165,7 +167,7 @@ const {
 	observers = [],
 	mentionMembers = [],
 	isChatTabActive = true,
-	isWindowFocused = true,
+	isWindowFocused = false,
 	targetMessageUid = "",
 	clockOffsetMs = 0,
 	musicState = null,
@@ -230,6 +232,7 @@ let isUploadingMedia = $state(false);
 let isPreviewingMarkdown = $state(false);
 
 const effectiveSubtitle = $derived(roomTopic ? roomTopic : roomSubtitle);
+const localSiteName = $derived(getLocalSiteName(interconnectSites) || "冷汐的杂货铺");
 let failedRoomAvatars = $state<Record<string, boolean>>({});
 const effectiveRoomAvatar = $derived((roomAvatar || "").trim());
 const hasRoomAvatar = $derived(
@@ -595,9 +598,12 @@ function writeLastSeenAt(rId: string, uKey: string, ts: number): void {
 
 function isChatPaneFocused(): boolean {
 	if (typeof document === "undefined" || typeof window === "undefined") {
-		return true;
+		return false;
 	}
-	if (document.hidden) return false;
+	if (document.hidden || document.visibilityState !== "visible") return false;
+	if (typeof document.hasFocus === "function" && !document.hasFocus()) {
+		return false;
+	}
 	if (!isWindowFocused) return false;
 	const usesPanelTabs = window.matchMedia("(width < 768px)").matches;
 	return !usesPanelTabs || isChatTabActive;
@@ -609,14 +615,15 @@ const visibleMessages = $derived(
 		: messages.filter((msg) => !isMusicNoticeMessage(msg)),
 );
 
-const VIRTUAL_ENABLE_THRESHOLD = 140;
-const VIRTUAL_DISABLE_THRESHOLD = 110;
-const WINDOW_TARGET_COUNT = 90;
-const WINDOW_HALF_COUNT = 45;
-const WINDOW_MAX_COUNT = 140;
-const EDGE_IMMEDIATE_BUFFER_PX = 450;
-const EDGE_IDLE_BUFFER_PX = 1100;
-const IDLE_RECENTER_DELAY_MS = 140;
+const VIRTUAL_ENABLE_THRESHOLD = 75;
+const VIRTUAL_DISABLE_THRESHOLD = 60;
+const WINDOW_TARGET_COUNT = 52;
+const WINDOW_HALF_COUNT = 26;
+const WINDOW_MAX_COUNT = 76;
+const EDGE_IMMEDIATE_BUFFER_PX = 380;
+const EDGE_IDLE_BUFFER_PX = 820;
+const SCROLL_SETTLE_DELAY_MS = 130;
+const EDGE_CHECK_STEP_PX = 96;
 const MAX_MEASURED_HEIGHTS = 4000;
 
 const measuredMsgHeights = new Map<string, number>();
@@ -625,7 +632,10 @@ let windowStart = $state(0);
 let windowEnd = $state(0);
 let lastMeasuredWidth = 0;
 let isShiftingWindow = false;
-let idleRecenterTimer: number | null = null;
+let scrollEndTimer: number | null = null;
+let isActivelyScrolling = false;
+let scrollDeviation = 0;
+let lastEdgeCheckScrollTop = -1;
 let prevVisibleCount = 0;
 let windowTopMarkerEl: HTMLDivElement | null = $state(null);
 let windowBottomMarkerEl: HTMLDivElement | null = $state(null);
@@ -705,11 +715,70 @@ const renderedMessages = $derived(
 	visibleMessages.slice(renderedWindow.start, renderedWindow.end),
 );
 
-function clearIdleRecenterTimer() {
-	if (idleRecenterTimer !== null) {
-		window.clearTimeout(idleRecenterTimer);
-		idleRecenterTimer = null;
+function clearScrollEndTimer() {
+	if (scrollEndTimer !== null) {
+		window.clearTimeout(scrollEndTimer);
+		scrollEndTimer = null;
 	}
+}
+
+function applyStageTransform(px: number) {
+	scrollDeviation = Math.abs(px) < 0.25 ? 0 : px;
+	if (messageContentEl) {
+		messageContentEl.style.transform =
+			scrollDeviation !== 0 ? `translate3d(0, ${scrollDeviation}px, 0)` : "";
+	}
+}
+
+function commitScrollDeviation() {
+	if (scrollDeviation === 0 || !messageContainer) return;
+	const offset = scrollDeviation;
+	// 同步在同一帧清除 GPU 位移并结算进 scrollTop，屏幕画面 0 像素闪烁
+	applyStageTransform(0);
+	setScrollTopProgrammatically(messageContainer.scrollTop - offset);
+}
+
+function maybeTriggerAutoLoadOlderHistory(allowCommitDeviation = false) {
+	if (
+		!messageContainer ||
+		!hasMoreHistory ||
+		isLoadingHistory ||
+		!hasInitialBottomScrolledForRoom ||
+		followsLayoutAtBottom ||
+		isShiftingWindow ||
+		renderedWindow.start !== 0
+	) {
+		return;
+	}
+	const visualScrollTop = Math.max(
+		0,
+		messageContainer.scrollTop - scrollDeviation,
+	);
+	if (visualScrollTop > 180) return;
+	if (scrollDeviation !== 0 && !allowCommitDeviation && visualScrollTop > 40) {
+		return;
+	}
+	triggerAutoLoadOlderHistory();
+}
+
+function handleScrollSettled() {
+	clearScrollEndTimer();
+	if (isUserTouching || isSmoothScrolling || isShiftingWindow) {
+		if (!isUserTouching) {
+			scheduleScrollSettled();
+		}
+		return;
+	}
+	isActivelyScrolling = false;
+	commitScrollDeviation();
+	lastEdgeCheckScrollTop = -1;
+	checkVirtualWindowEdges(false);
+	maybeTriggerAutoLoadOlderHistory(true);
+}
+
+function scheduleScrollSettled() {
+	clearScrollEndTimer();
+	scrollEndTimer = window.setTimeout(handleScrollSettled, SCROLL_SETTLE_DELAY_MS);
 }
 
 function findVisibleViewportAnchor(
@@ -775,12 +844,25 @@ async function shiftWindowWithAnchor(
 				const nextOffset = el.getBoundingClientRect().top - cRect.top;
 				const drift = nextOffset - anchor.offsetTop;
 				if (Math.abs(drift) > 0.5) {
-					setScrollTopProgrammatically(messageContainer.scrollTop + drift);
+					if (isActivelyScrolling || isUserTouching) {
+						// 滚动/触摸进行中绝不写 scrollTop（不打断 180Hz/iOS 惯性合成器），改用 GPU transform 暂存漂移
+						applyStageTransform(scrollDeviation - drift);
+						scheduleScrollSettled();
+					} else {
+						const pendingOffset = scrollDeviation;
+						if (pendingOffset !== 0) applyStageTransform(0);
+						setScrollTopProgrammatically(
+							messageContainer.scrollTop - pendingOffset + drift,
+						);
+					}
 				}
 			}
 		}
 	} finally {
 		isShiftingWindow = false;
+	}
+	if (clampedStart === 0) {
+		maybeTriggerAutoLoadOlderHistory(!isActivelyScrolling);
 	}
 }
 
@@ -817,7 +899,8 @@ function computeTargetWindowAroundViewport(): {
 	// 用户大幅拖动滚动条跳入 spacer 区域时，按累计高度估算目标索引
 	if (centerIdx < 0) {
 		const targetY =
-			Math.max(0, messageContainer.scrollTop) + messageContainer.clientHeight / 2;
+			Math.max(0, messageContainer.scrollTop - scrollDeviation) +
+			messageContainer.clientHeight / 2;
 		let acc = 0;
 		centerIdx = len - 1;
 		for (let i = 0; i < len; i++) {
@@ -837,7 +920,7 @@ function computeTargetWindowAroundViewport(): {
 	return { start: nextStart, end: nextEnd };
 }
 
-function checkVirtualWindowEdges(allowIdleSchedule = true) {
+function checkVirtualWindowEdges(duringActiveScroll = true) {
 	if (
 		!virtualEnabled ||
 		!messageContainer ||
@@ -852,7 +935,6 @@ function checkVirtualWindowEdges(allowIdleSchedule = true) {
 	const canExtendTop = curStart > 0;
 	const canExtendBottom = curEnd < len;
 	if (!canExtendTop && !canExtendBottom) {
-		clearIdleRecenterTimer();
 		return;
 	}
 
@@ -863,35 +945,16 @@ function checkVirtualWindowEdges(allowIdleSchedule = true) {
 	const bottomBufferPx =
 		windowBottomMarkerEl.getBoundingClientRect().bottom - cRect.bottom;
 
-	const needImmediateTop =
-		canExtendTop && topBufferPx < EDGE_IMMEDIATE_BUFFER_PX;
-	const needImmediateBottom =
-		canExtendBottom && bottomBufferPx < EDGE_IMMEDIATE_BUFFER_PX;
-	if (needImmediateTop || needImmediateBottom) {
-		clearIdleRecenterTimer();
+	const threshold = duringActiveScroll
+		? EDGE_IMMEDIATE_BUFFER_PX
+		: EDGE_IDLE_BUFFER_PX;
+	const needTop = canExtendTop && topBufferPx < threshold;
+	const needBottom = canExtendBottom && bottomBufferPx < threshold;
+	if (needTop || needBottom) {
 		const target = computeTargetWindowAroundViewport();
 		if (target) {
 			void shiftWindowWithAnchor(target.start, target.end, true);
 		}
-		return;
-	}
-
-	const needIdleTop = canExtendTop && topBufferPx < EDGE_IDLE_BUFFER_PX;
-	const needIdleBottom =
-		canExtendBottom && bottomBufferPx < EDGE_IDLE_BUFFER_PX;
-	if (needIdleTop || needIdleBottom) {
-		if (!allowIdleSchedule) return;
-		clearIdleRecenterTimer();
-		idleRecenterTimer = window.setTimeout(() => {
-			idleRecenterTimer = null;
-			if (isUserTouching || isSmoothScrolling || isShiftingWindow) return;
-			const target = computeTargetWindowAroundViewport();
-			if (target) {
-				void shiftWindowWithAnchor(target.start, target.end, true);
-			}
-		}, IDLE_RECENTER_DELAY_MS);
-	} else {
-		clearIdleRecenterTimer();
 	}
 }
 
@@ -1391,7 +1454,17 @@ function snapScrollToBottom() {
 	newMessagesWhileScrolled = 0;
 }
 
+const READ_FOCUS_SETTLE_MS = 800;
 let lastWrittenSeenMsgKey = "";
+let paneFocusedSince = 0;
+let readSettleTimer: number | null = null;
+
+function clearReadSettleTimer(): void {
+	if (readSettleTimer !== null) {
+		window.clearTimeout(readSettleTimer);
+		readSettleTimer = null;
+	}
+}
 
 function getLatestReadTargets(): {
 	tailTs: number;
@@ -1432,13 +1505,36 @@ function hasUnreadBlockingAutoRead(): boolean {
 
 function markCurrentRoomReadIfReady(forceIgnoreSticky = false): void {
 	if (!roomReady || !currentUser) return;
+	// 无论是否强制忽略粘底状态，只要界面未真正处于前台聚焦，绝不标记已读
+	if (!isChatPaneFocused()) {
+		paneFocusedSince = 0;
+		clearReadSettleTimer();
+		return;
+	}
 	if (!forceIgnoreSticky) {
-		if (targetMessageUid || !isChatPaneFocused() || !isStickyAtBottom) {
+		if (targetMessageUid || !isStickyAtBottom) {
 			return;
 		}
 		if (hasUnreadBlockingAutoRead()) {
 			return;
 		}
+		// 切回界面时要求持续聚焦满 READ_FOCUS_SETTLE_MS，防止切标签页路过误标已读
+		const now = Date.now();
+		if (paneFocusedSince <= 0) {
+			paneFocusedSince = now;
+		}
+		const elapsed = now - paneFocusedSince;
+		if (elapsed < READ_FOCUS_SETTLE_MS) {
+			if (readSettleTimer === null && typeof window !== "undefined") {
+				readSettleTimer = window.setTimeout(() => {
+					readSettleTimer = null;
+					markCurrentRoomReadIfReady();
+				}, READ_FOCUS_SETTLE_MS - elapsed + 20);
+			}
+			return;
+		}
+	} else {
+		clearReadSettleTimer();
 	}
 	const { tailTs, receiptMsg } = getLatestReadTargets();
 	const readTs = Math.max(tailTs, receiptMsg?.createdAt || 0);
@@ -1482,6 +1578,18 @@ function handleMessageScroll() {
 		return;
 	}
 
+	// 标记活跃滚动并延期结算 GPU 位移；若撞到顶部/底部边界则立刻结算，防止假天花板/假地板
+	isActivelyScrolling = true;
+	scheduleScrollSettled();
+	if (
+		(renderedWindow.start === 0 && st <= 2 && scrollDeviation < 0) ||
+		(renderedWindow.end >= visibleMessages.length &&
+			gap <= 2 &&
+			scrollDeviation > 0)
+	) {
+		commitScrollDeviation();
+	}
+
 	if (gap >= 120) {
 		suppressStickyScrollUntil = 0;
 	}
@@ -1494,6 +1602,7 @@ function handleMessageScroll() {
 		gap <= BOTTOM_REENGAGE_GAP_PX &&
 		!isSmoothScrolling &&
 		!touchDraggedUp &&
+		scrollDeviation === 0 &&
 		renderedWindow.end >= visibleMessages.length
 	) {
 		isStickyAtBottom = true;
@@ -1507,19 +1616,19 @@ function handleMessageScroll() {
 		showScrollBottomBtn = gap > 180 || newMessagesWhileScrolled > 0;
 	}
 
-	checkVirtualWindowEdges(true);
+	// 每移动 ~96px 才做一次 O(1) 边界检测，接近顶部时及时补窗避免漏触发自动翻页
+	if (
+		virtualEnabled &&
+		(st <= 220 ||
+			lastEdgeCheckScrollTop < 0 ||
+			Math.abs(st - lastEdgeCheckScrollTop) >= EDGE_CHECK_STEP_PX)
+	) {
+		lastEdgeCheckScrollTop = st;
+		checkVirtualWindowEdges(true);
+	}
 
 	// 向上滚动到最旧已加载消息附近时，自动触发加载更早历史消息
-	if (
-		renderedWindow.start === 0 &&
-		st <= 150 &&
-		hasMoreHistory &&
-		!isLoadingHistory &&
-		hasInitialBottomScrolledForRoom &&
-		!followsLayoutAtBottom
-	) {
-		triggerAutoLoadOlderHistory();
-	}
+	maybeTriggerAutoLoadOlderHistory(false);
 }
 
 function ensureTailWindowForBottom() {
@@ -1532,8 +1641,11 @@ function ensureTailWindowForBottom() {
 
 async function scrollToBottom(smooth = false) {
 	suppressStickyScrollUntil = 0;
-	clearIdleRecenterTimer();
+	clearScrollEndTimer();
+	isActivelyScrolling = false;
+	lastEdgeCheckScrollTop = -1;
 	if (!smooth) {
+		applyStageTransform(0);
 		ensureTailWindowForBottom();
 		await tick();
 		if (!messageContainer) return;
@@ -1542,6 +1654,7 @@ async function scrollToBottom(smooth = false) {
 		return;
 	}
 
+	commitScrollDeviation();
 	const seq = ++jumpSeq;
 	showScrollBottomBtn = false;
 	newMessagesWhileScrolled = 0;
@@ -1637,7 +1750,9 @@ function ensureTargetIndexInWindow(targetIdx: number) {
 
 async function jumpToMessage(msgUid: string) {
 	const seq = ++jumpSeq;
-	clearIdleRecenterTimer();
+	clearScrollEndTimer();
+	isActivelyScrolling = false;
+	commitScrollDeviation();
 	showMentionHistory = false;
 	suppressStickyScrollUntil = Date.now() + 900;
 	isStickyAtBottom = false;
@@ -1699,7 +1814,9 @@ async function jumpToMessage(msgUid: string) {
 
 async function scrollToUnreadDivider() {
 	const seq = ++jumpSeq;
-	clearIdleRecenterTimer();
+	clearScrollEndTimer();
+	isActivelyScrolling = false;
+	commitScrollDeviation();
 	suppressStickyScrollUntil = Date.now() + 900;
 	isStickyAtBottom = false;
 	hasVisitedUnreadDivider = true;
@@ -1763,7 +1880,8 @@ function dismissUnreadBar() {
 
 function triggerAutoLoadOlderHistory(manualClick = false) {
 	if (!hasMoreHistory || isLoadingHistory || !messageContainer) return;
-	clearIdleRecenterTimer();
+	clearScrollEndTimer();
+	commitScrollDeviation();
 	isStickyAtBottom = false;
 	measureMountedRows();
 	let anchorUid = visibleMessages[0]?.msgUid || messages[0]?.msgUid || "";
@@ -1916,7 +2034,13 @@ onMount(() => {
 	const handleContainerTouchEnd = () => {
 		isUserTouching = false;
 		touchDraggedUp = false;
-		checkVirtualWindowEdges(true);
+		scheduleScrollSettled();
+	};
+
+	const handleContainerScrollEnd = () => {
+		if (!isUserTouching && !isSmoothScrolling && !isShiftingWindow) {
+			handleScrollSettled();
+		}
 	};
 
 	messageContainer?.addEventListener("pointerdown", handleContainerPointerDown, {
@@ -1935,6 +2059,9 @@ onMount(() => {
 		passive: true,
 	});
 	messageContainer?.addEventListener("touchcancel", handleContainerTouchEnd, {
+		passive: true,
+	});
+	messageContainer?.addEventListener("scrollend", handleContainerScrollEnd, {
 		passive: true,
 	});
 
@@ -1992,9 +2119,14 @@ onMount(() => {
 			"touchcancel",
 			handleContainerTouchEnd,
 		);
+		messageContainer?.removeEventListener(
+			"scrollend",
+			handleContainerScrollEnd,
+		);
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleDocKeydown);
-		clearIdleRecenterTimer();
+		clearScrollEndTimer();
+		clearReadSettleTimer();
 		if (alertAutoHideTimer !== null) window.clearTimeout(alertAutoHideTimer);
 		if (highlightClearTimer !== null) window.clearTimeout(highlightClearTimer);
 		if (unreadHighlightTimer !== null)
@@ -2019,7 +2151,11 @@ $effect(() => {
 		lastWrittenSeenMsgKey = "";
 		seenMessageUids = new Set();
 		measuredMsgHeights.clear();
-		clearIdleRecenterTimer();
+		clearScrollEndTimer();
+		clearReadSettleTimer();
+		isActivelyScrolling = false;
+		lastEdgeCheckScrollTop = -1;
+		applyStageTransform(0);
 		virtualEnabled = false;
 		windowStart = 0;
 		windowEnd = visLen;
@@ -2135,10 +2271,13 @@ $effect(() => {
 				if (visLen > VIRTUAL_ENABLE_THRESHOLD || virtualEnabled) {
 					virtualEnabled = true;
 					if (anchorIdx >= 0) {
-						const nextStart = Math.max(0, anchorIdx - 40);
+						const nextStart = Math.max(0, anchorIdx - WINDOW_HALF_COUNT);
 						const nextEnd = Math.min(
 							visLen,
-							Math.max(anchorIdx + 45, nextStart + WINDOW_TARGET_COUNT),
+							Math.max(
+								anchorIdx + WINDOW_HALF_COUNT,
+								nextStart + WINDOW_TARGET_COUNT,
+							),
 						);
 						windowStart = nextStart;
 						windowEnd = nextEnd;
@@ -2257,8 +2396,32 @@ $effect(() => {
 				? liveIncoming.length
 				: liveIncoming.filter((m) => !isMusicNoticeMessage(m)).length;
 			if (visibleIncomingCount > 0) {
-				if (isStickyAtBottom && !isUserTouching && !targetMessageUid) {
+				const paneFocused = isChatPaneFocused();
+				if (
+					paneFocused &&
+					isStickyAtBottom &&
+					!isUserTouching &&
+					!targetMessageUid
+				) {
 					void scrollToBottom();
+				} else if (!paneFocused && isStickyAtBottom && !targetMessageUid) {
+					// 后台/失焦期间不自动滚底，待 DOM 更新后若新消息溢出可视区则断开粘底并保留新消息提示
+					const incomingDelta = visibleIncomingCount;
+					const roomAtArrival = currentRoomId;
+					void tick().then(() => {
+						if (roomId !== roomAtArrival || !messageContainer) return;
+						if (isChatPaneFocused()) return;
+						const maxScroll = Math.max(
+							0,
+							messageContainer.scrollHeight - messageContainer.clientHeight,
+						);
+						const gap = Math.max(0, maxScroll - messageContainer.scrollTop);
+						if (gap > BOTTOM_REENGAGE_GAP_PX) {
+							isStickyAtBottom = false;
+							newMessagesWhileScrolled += incomingDelta;
+							showScrollBottomBtn = true;
+						}
+					});
 				} else {
 					newMessagesWhileScrolled += visibleIncomingCount;
 					showScrollBottomBtn = true;
@@ -2310,6 +2473,15 @@ $effect(() => {
 });
 
 $effect(() => {
+	const focused = isChatPaneFocused();
+	if (!focused) {
+		paneFocusedSince = 0;
+		clearReadSettleTimer();
+		return;
+	}
+	if (paneFocusedSince <= 0) {
+		paneFocusedSince = Date.now();
+	}
 	void visibleMessages;
 	void messages;
 	void isUnreadDividerInView;
@@ -2333,16 +2505,8 @@ $effect(() => {
 	const observer = new IntersectionObserver(
 		(entries) => {
 			for (const entry of entries) {
-				if (
-					entry.isIntersecting &&
-					renderedWindow.start === 0 &&
-					hasMoreHistory &&
-					!isLoadingHistory &&
-					hasInitialBottomScrolledForRoom &&
-					!followsLayoutAtBottom &&
-					container.scrollTop <= 260
-				) {
-					triggerAutoLoadOlderHistory();
+				if (entry.isIntersecting) {
+					maybeTriggerAutoLoadOlderHistory(false);
 				}
 			}
 		},
@@ -2514,11 +2678,11 @@ function formatCandidateMentionName(candidate: { name: string; userKey?: string;
 			if (extOrigin && extOrigin.cleanName && extOrigin.siteName) {
 				return `${extOrigin.cleanName} · ${extOrigin.siteName}`;
 			}
-		} else if (!rawName.includes("·") && !rawName.includes("•")) {
+		} else if (!rawName.includes("·") && !rawName.includes("•") && !rawName.includes("・")) {
 			return `${rawName} · 冷汐的杂货铺`;
 		}
 	}
-	return rawName;
+	return normalizeDotSpacing(rawName);
 }
 
 $effect(() => {
@@ -2561,9 +2725,7 @@ function syncMentionTrigger() {
 	}
 	const caret = inputEl.selectionStart ?? inputText.length;
 	const beforeCaret = inputText.slice(0, caret);
-	const match = beforeCaret.match(
-		/(?:^|[\s,，.。!！?？:：;；()（）[\]【】<>《》"'"“”‘’])@([^\s@]{0,16})$/,
-	);
+	const match = beforeCaret.match(/@([^\s@]{0,16})$/);
 	if (match && mergedMentionCandidates.length > 0) {
 		mentionQuery = match[1] ?? "";
 		mentionTriggerStart = caret - mentionQuery.length - 1;
@@ -3815,27 +3977,24 @@ function removePendingImage(index: number) {
             {@const isRoomMention = person.userKey === "room"}
             {@const isExt = !isRoomMention && isExternalMatrixIdentity(person)}
             {@const extOrigin = isExt ? resolveExternalOrigin({ name: person.name, userKey: person.userKey, badge: person.badge, site: person.site, siteUrl: person.siteUrl, url: person.url }, interconnectSites) : null}
-            {@const displayPersonName = formatCandidateMentionName(person)}
+            {@const displayPersonName = isRoomMention
+              ? "所有人"
+              : isExt
+                ? (extOrigin?.cleanName || person.name)
+                : person.name}
             {@const personBadgeLabel = isRoomMention
               ? "全员"
-              : person.isAdmin
-                ? "站长"
-                : isExt
-                  ? (extOrigin?.siteName || person.badge || "互联茶友")
-                  : person.authType === "waline"
-                    ? "认证"
-                    : "访客"}
-            {@const personBadgeType = isRoomMention || person.isAdmin
-              ? "host"
               : isExt
-                ? "tag"
-                : person.authType === "waline"
-                  ? "accent"
-                  : "tag"}
+                ? (extOrigin?.siteName || person.badge || "互联茶友")
+                : localSiteName}
+            {@const personBadgeType = isRoomMention
+              ? "host"
+              : "tag"}
             <button
               type="button"
               role="option"
               aria-selected={idx === mentionActiveIndex}
+              title={`@${displayPersonName} · ${personBadgeLabel}`}
               class="chat-mention-ac-item {idx === mentionActiveIndex ? 'active' : ''}"
               onmouseenter={() => (mentionActiveIndex = idx)}
               onmousedown={(e) => {
@@ -3843,7 +4002,8 @@ function removePendingImage(index: number) {
                 selectMentionCandidate(person);
               }}
             >
-              <div class="flex items-center gap-2 min-w-0 flex-1">
+              <!-- 第一栏（最左）：头像与昵称左对齐，超长截断并支持悬停 Tooltip 完整补全 -->
+              <div class="chat-mention-col-user">
                 <div class="relative shrink-0">
                   {#if isRoomMention}
                     <div class="w-5 h-5 rounded-full bg-[var(--primary)]/15 text-[var(--primary)] flex items-center justify-center text-[10px] font-bold">
@@ -3867,41 +4027,52 @@ function removePendingImage(index: number) {
                     ></span>
                   {/if}
                 </div>
-                <span class="text-xs font-medium truncate text-[var(--deep-text)] dark:text-white/90">
+                <span
+                  class="text-xs font-medium truncate text-[var(--deep-text)] dark:text-white/90"
+                  title={displayPersonName}
+                >
                   {displayPersonName}
-                </span>
-                <span class="chat-role-badge chat-role-badge--{personBadgeType} scale-90 origin-left">
-                  {personBadgeLabel}
                 </span>
                 {#if person.customBadges && person.customBadges.length > 0}
                   {#each person.customBadges as b (b.text)}
-                    <span class="chat-role-badge chat-role-badge--{b.color} scale-90 origin-left">
+                    <span class="chat-role-badge chat-role-badge--{b.color} scale-90 origin-left shrink-0">
                       {b.text}
                     </span>
                   {/each}
                 {/if}
               </div>
-              {#if isRoomMention}
-                <span class="text-[10px] shrink-0 text-emerald-600 dark:text-emerald-400 font-medium">
-                  全房提醒
+
+              <!-- 第二栏（中间）：来自哪个聊天室/站点标签统一左对齐 -->
+              <div class="chat-mention-col-site">
+                <span class="chat-role-badge chat-role-badge--{personBadgeType} scale-90 origin-left truncate max-w-full text-left">
+                  {personBadgeLabel}
                 </span>
-              {:else if person.online}
-                {@const mentionFallbackLabel = person.presenceMode === "fallback"}
-                {@const mentionAwayLabel = !mentionFallbackLabel && person.isFocused === false}
-                <span
-                  class="text-[10px] shrink-0 font-medium {mentionFallbackLabel
-                    ? 'text-[var(--chat-meta-color)]'
-                    : mentionAwayLabel
-                      ? 'text-amber-600 dark:text-amber-400'
-                      : 'text-emerald-600 dark:text-emerald-400'}"
-                >
-                  {mentionAwayLabel ? "离开" : "在线"}
-                </span>
-              {:else}
-                <span class="text-[10px] shrink-0 text-[var(--chat-meta-color)] opacity-75">
-                  {formatOfflineTime(person.lastSeenAt)}
-                </span>
-              {/if}
+              </div>
+
+              <!-- 第三栏（最右）：离线时间 / 在线状态统一左对齐，单行不换行 -->
+              <div class="chat-mention-col-status">
+                {#if isRoomMention}
+                  <span class="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium whitespace-nowrap text-left">
+                    全房提醒
+                  </span>
+                {:else if person.online}
+                  {@const mentionFallbackLabel = person.presenceMode === "fallback"}
+                  {@const mentionAwayLabel = !mentionFallbackLabel && person.isFocused === false}
+                  <span
+                    class="text-[11px] font-medium whitespace-nowrap text-left {mentionFallbackLabel
+                      ? 'text-[var(--chat-meta-color)]'
+                      : mentionAwayLabel
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-emerald-600 dark:text-emerald-400'}"
+                  >
+                    {mentionAwayLabel ? "离开" : "在线"}
+                  </span>
+                {:else}
+                  <span class="text-[11px] text-[var(--chat-meta-color)] opacity-80 whitespace-nowrap text-left">
+                    {formatOfflineTime(person.lastSeenAt)}
+                  </span>
+                {/if}
+              </div>
             </button>
           {/each}
         {/if}

@@ -9,6 +9,7 @@ import ChatTooltip from "./ChatTooltip.svelte";
 import {
 	hasExplicitRoomMentionText,
 	isExternalMatrixIdentity,
+	normalizeDotSpacing,
 	resolveExternalOrigin,
 	sanitizeChatUrl,
 } from "./chatClient";
@@ -338,12 +339,12 @@ const senderDisplayName = $derived.by(() => {
 	}
 	if (isInterconnectRoom) {
 		const rawName = message.name || "";
-		if (!rawName.includes("·") && !rawName.includes("•")) {
+		if (!rawName.includes("·") && !rawName.includes("•") && !rawName.includes("・")) {
 			return `${rawName} · 冷汐的杂货铺`;
 		}
-		return rawName;
+		return normalizeDotSpacing(rawName);
 	}
-	return message.name;
+	return normalizeDotSpacing(message.name);
 });
 
 const effectiveSenderUrl = $derived.by(() => {
@@ -1154,7 +1155,7 @@ function handleBubbleClick(e: MouseEvent) {
     {@const shown = resolvedReaders.slice(0, 4)}
     {@const restCount = resolvedReaders.length - shown.length}
     <span
-      class="chat-read-receipts-wrap ml-1 select-none"
+      class="chat-read-receipts-wrap select-none"
       aria-label={`已读：${resolvedReaders.map((item) => item.resolved.displayName).join("、")}`}
     >
       <span class="inline-flex items-center -space-x-1">
@@ -1392,13 +1393,13 @@ function handleBubbleClick(e: MouseEvent) {
 
       {#if formattedTime}
         <div class="flex items-center gap-1 mt-1 px-1 select-none">
-          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)]">
-            {formattedTime}
-          </span>
+          {@render renderReadReceipts()}
           {#if message.isEdited}
             <span class="text-[11px] md:text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
           {/if}
-          {@render renderReadReceipts()}
+          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)]">
+            {formattedTime}
+          </span>
         </div>
       {/if}
     </div>

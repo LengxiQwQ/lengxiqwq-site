@@ -100,7 +100,16 @@ let roomPanelEl: HTMLDivElement;
 let splitRoomTrigger: HTMLButtonElement | undefined;
 let currentRoom = $state(rooms[0]?.id || "chat");
 let connectionState = $state<ConnectionState>("idle");
-let isWindowFocused = $state(true);
+function isDocumentActivelyVisibleAndFocused(): boolean {
+	if (typeof document === "undefined") return false;
+	if (document.hidden || document.visibilityState !== "visible") return false;
+	if (typeof document.hasFocus === "function" && !document.hasFocus()) {
+		return false;
+	}
+	return true;
+}
+
+let isWindowFocused = $state(false);
 let isIdleAway = $state(false);
 const isEffectiveFocused = $derived(isWindowFocused && !isIdleAway);
 let currentUser = $state<ChatSessionUser | null>(null);
@@ -2110,6 +2119,8 @@ function handleLoadHistory(sinceCreatedAt = 0, jumpTarget = false) {
 
 function handleMarkRead(timestamp: number, msgUid?: string) {
 	if (!isRoomReady || !Number.isFinite(timestamp) || timestamp <= 0) return;
+	// 严格门控：仅当前台可见且窗口真正聚焦、未处于离开态时才允许标记已读
+	if (!isEffectiveFocused || !isDocumentActivelyVisibleAndFocused()) return;
 	if (!currentUser) {
 		persistUserLastSeen(currentRoom, "guest", timestamp);
 		return;
@@ -2121,6 +2132,8 @@ function handleMarkRead(timestamp: number, msgUid?: string) {
 			msgUid !== lastMarkedServerReadUid &&
 			timestamp >= lastMarkedServerReadAt);
 	if (!shouldSend) return;
+	// 确保服务端先收到当前连接的聚焦状态，再收到 chat:mark_read
+	reportFocusState();
 	lastMarkedServerReadAt = Math.max(lastMarkedServerReadAt, timestamp);
 	if (msgUid) {
 		lastMarkedServerReadUid = msgUid;
@@ -2435,6 +2448,9 @@ onMount(() => {
 		targetMessageUid = paramMsg;
 	}
 
+	// 建连前先同步真实的窗口可见/聚焦状态，避免后台打开或恢复标签页时握手误报 focused=1
+	isWindowFocused = isDocumentActivelyVisibleAndFocused();
+
 	// 优先建连房间 WebSocket，表情包与全局名录等待首屏消息到达后（或 600ms 兜底）再后台拉取
 	connectRoom(currentRoom);
 	secondaryStartupTimer = window.setTimeout(runSecondaryStartup, 600);
@@ -2475,6 +2491,8 @@ onMount(() => {
 	let lastMouseY = -1;
 
 	const resetIdleTimer = (event?: Event) => {
+		// 仅在页面真正前台可见且聚焦时才认可用户活跃，避免鼠标划过失焦/副屏窗口误解除离开态
+		if (!isDocumentActivelyVisibleAndFocused()) return;
 		if (event instanceof MouseEvent && event.type === "mousemove") {
 			if (
 				lastMouseX >= 0 &&
@@ -2502,11 +2520,9 @@ onMount(() => {
 	};
 
 	const isDocumentHidden = () =>
-		document.hidden || document.visibilityState === "hidden";
+		document.hidden || document.visibilityState !== "visible";
 
-	const computeFocusedState = () =>
-		!isDocumentHidden() &&
-		(typeof document.hasFocus !== "function" || document.hasFocus());
+	const computeFocusedState = () => isDocumentActivelyVisibleAndFocused();
 
 	const syncFocusState = () => {
 		const focused = computeFocusedState();
@@ -2518,12 +2534,7 @@ onMount(() => {
 	};
 
 	const handleWindowFocus = () => {
-		const focused = !isDocumentHidden();
-		isWindowFocused = focused;
-		reportFocusState();
-		if (focused) {
-			resetIdleTimer();
-		}
+		syncFocusState();
 	};
 
 	const handleWindowBlur = () => {
