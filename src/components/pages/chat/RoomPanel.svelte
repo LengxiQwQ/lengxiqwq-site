@@ -433,6 +433,7 @@ function formatOfflineTime(ts?: number): string {
           alt={room.name}
           class="w-9 h-9 md:w-8 md:h-8 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
           loading="eager"
+          fetchpriority="low"
           decoding="async"
           crossorigin={!thumbUrl && canCorsDownscaleAvatar(rawRoomAvatar) ? "anonymous" : undefined}
           onload={(e) => downscaleImgElementInPlace(e.currentTarget, rawRoomAvatar)}

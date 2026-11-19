@@ -1,6 +1,10 @@
 <script lang="ts">
 import type { Token, Tokens } from "marked";
-import { openChatImageLightbox } from "./chatLightbox";
+import {
+	getCachedChatImageDims,
+	openChatImageLightbox,
+	rememberChatImageDims,
+} from "./chatLightbox";
 import {
 	type ChatMarkdownAst,
 	isSafeImageUrl,
@@ -42,7 +46,11 @@ function isSelfMentionTarget(target: string): boolean {
 		return true;
 	}
 	if (!currentUserName) return false;
-	return cleaned === currentUserName.trim().toLowerCase();
+	const myClean = currentUserName.trim().toLowerCase();
+	if (cleaned === myClean) return true;
+	const targetBase = cleaned.split(/\s*[·•・]\s*/)[0] || cleaned;
+	const myBase = myClean.split(/\s*[·•・]\s*/)[0] || myClean;
+	return targetBase === myBase || cleaned.startsWith(myBase);
 }
 
 function getInlineChildren(token: Token): Token[] | undefined {
@@ -90,6 +98,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
       {@const imgTok = tok as Tokens.Image}
       {@const safeSrc = isSafeImageUrl(imgTok.href)}
       {#if safeSrc}
+        {@const cachedDims = getCachedChatImageDims(safeSrc)}
         <a
           href={safeSrc}
           data-chat-image={safeSrc}
@@ -103,6 +112,10 @@ function getInlineChildren(token: Token): Token[] | undefined {
             src={safeSrc}
             alt={imgTok.text || "图片"}
             loading="lazy"
+            decoding="async"
+            width={cachedDims?.w}
+            height={cachedDims?.h}
+            onload={(e) => rememberChatImageDims(safeSrc, e.currentTarget)}
             class="chat-msg-image"
           />
         </a>

@@ -585,20 +585,18 @@ function preloadImageUrl(url: string) {
 	preloadedImageUrls.add(url);
 	const img = new Image();
 	img.decoding = "async";
+	img.fetchPriority = "low";
 	img.src = url;
 }
 
 $effect(() => {
+	if (!panelBgReady) return;
 	const urls: string[] = [
 		effectivePanelBgUrls.left,
 		effectivePanelBgUrls.center,
 		effectivePanelBgUrls.right,
 		effectivePanelBgUrls.input,
 	];
-	for (const site of interconnectSites) {
-		const resolved = resolveChatAvatarUrl(site.avatar);
-		if (resolved) urls.push(resolved);
-	}
 	const pending = urls.filter((u) => u && !preloadedImageUrls.has(u));
 	if (pending.length === 0) return;
 
@@ -778,6 +776,18 @@ let isUnmounted = false;
 let currentAuth: { kind: "waline" | "guest"; token: string } | null = null;
 let secondaryStartupDone = false;
 let secondaryStartupTimer: number | null = null;
+let panelBgReady = $state(false);
+
+function enablePanelBackgroundsSoon() {
+	if (panelBgReady || isUnmounted) return;
+	if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+		window.requestAnimationFrame(() => {
+			if (!isUnmounted) panelBgReady = true;
+		});
+	} else {
+		panelBgReady = true;
+	}
+}
 
 function runSecondaryStartup() {
 	if (secondaryStartupDone || isUnmounted) return;
@@ -786,6 +796,7 @@ function runSecondaryStartup() {
 		window.clearTimeout(secondaryStartupTimer);
 		secondaryStartupTimer = null;
 	}
+	enablePanelBackgroundsSoon();
 	void loadStickerPacks(stickerPackUrls).then((packs) => {
 		if (!isUnmounted) stickerPacks = packs;
 	});
@@ -794,6 +805,9 @@ function runSecondaryStartup() {
 }
 
 $effect(() => {
+	if (mobileDrawer !== "none") {
+		panelBgReady = true;
+	}
 	if (mobileDrawer === "room" && !secondaryStartupDone) {
 		runSecondaryStartup();
 	}
@@ -2768,7 +2782,7 @@ onMount(() => {
       ondrop={(e) => void handleSidePanelDrop("left", e)}
     >
       <div class="chat-panel-bg-layer" aria-hidden="true">
-        {#if effectivePanelBgUrls.left}
+        {#if panelBgReady && effectivePanelBgUrls.left}
           <img
             src={effectivePanelBgUrls.left}
             alt=""
@@ -2822,7 +2836,7 @@ onMount(() => {
     <div class="chat-panel-center relative flex flex-col min-w-0 min-h-0 mobile-active">
       <div class="chat-panel chat-panel-center-inner flex-1 min-h-0 w-full">
         <div class="chat-panel-bg-layer" aria-hidden="true">
-          {#if effectivePanelBgUrls.center}
+          {#if panelBgReady && effectivePanelBgUrls.center}
             <img
               src={effectivePanelBgUrls.center}
               alt=""
@@ -2842,7 +2856,7 @@ onMount(() => {
           roomName={activeMeta.name}
           roomSubtitle={activeMeta.subtitle}
           roomAvatar={roomAvatars[currentRoom] || activeMeta.avatar || (currentRoom !== "interconnect" ? siteAvatar : "")}
-          inputBgUrl={effectivePanelBgUrls.input}
+          inputBgUrl={panelBgReady ? effectivePanelBgUrls.input : ""}
           failedInputBg={failedPanelBg.input}
           onInputBgError={() => { failedPanelBg = { ...failedPanelBg, input: true }; }}
           onlineCount={totalOnlineCount}
@@ -2885,6 +2899,7 @@ onMount(() => {
           stickerMap={stickerMap}
           enableImageUpload={enableImageUpload}
           walineServerUrl={walineServerUrl}
+          walineToken={walineToken}
           chatServerUrl={normalizedChatServer}
           mentionEvent={mentionEvent}
           showInterconnect={showInterconnect}
@@ -2946,7 +2961,7 @@ onMount(() => {
       ondrop={(e) => void handleSidePanelDrop("right", e)}
     >
       <div class="chat-panel-bg-layer" aria-hidden="true">
-        {#if effectivePanelBgUrls.right}
+        {#if panelBgReady && effectivePanelBgUrls.right}
           <img
             src={effectivePanelBgUrls.right}
             alt=""

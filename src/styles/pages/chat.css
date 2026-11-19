@@ -466,17 +466,24 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 [data-chat-message-scroll] {
 	overflow-x: hidden;
 	overflow-y: auto;
-	overscroll-behavior-y: none;
+	overscroll-behavior-y: contain;
 	scrollbar-gutter: stable both-edges;
 	padding: 16px max(0px, calc(min(36px, 3.5vw) - 10px)) 26px;
 }
 
-[data-chat-pinned-bottom] {
+[data-chat-pinned-bottom],
+[data-chat-virtualized] {
 	overflow-anchor: none;
 }
 
 .chat-message-content {
 	justify-content: safe flex-end;
+}
+
+/* 独立 BFC 消息行容器：阻断内部 [data-msg-uid] 的 margin 塌陷，使每行实测高度精确等于占位高度 */
+.chat-message-row {
+	display: flow-root;
+	padding-block: 6px;
 }
 
 [data-msg-uid] {
@@ -837,6 +844,73 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 .chat-input-box::placeholder {
 	color: var(--skin-text-dim);
 	opacity: 0.75;
+}
+
+/* Markdown 实时预览卡片 */
+.chat-input-preview-box {
+	width: 100%;
+	min-height: 5.25rem;
+	max-height: min(16rem, 34dvh);
+	overflow-y: auto;
+	box-sizing: border-box;
+	padding: 0.75rem min(1.75rem, 2.5vw) 0.5rem;
+	font-size: 0.875rem;
+	line-height: 1.55;
+	color: var(--skin-text);
+	background: rgba(125, 125, 125, 0.04);
+	outline: none;
+}
+
+@media (max-width: 767px) {
+	.chat-input-preview-box {
+		min-height: 2.65rem;
+		max-height: min(8.5rem, 26dvh);
+		padding: 0.5rem 0.95rem 0.35rem;
+		font-size: 15px;
+		line-height: 1.48;
+	}
+}
+
+.chat-input-preview-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 0.45rem;
+	padding-bottom: 0.35rem;
+	border-bottom: 1px dashed rgba(125, 125, 125, 0.18);
+}
+
+.chat-input-preview-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	font-size: 0.6875rem;
+	font-weight: 600;
+	color: var(--primary);
+	background: color-mix(in srgb, var(--primary) 12%, transparent);
+	padding: 0.15rem 0.5rem;
+	border-radius: 9999px;
+}
+
+.chat-input-preview-close {
+	font-size: 0.6875rem;
+	color: var(--chat-meta-color);
+	transition: all 0.15s ease;
+	cursor: pointer;
+	background: none;
+	border: none;
+	padding: 0.15rem 0.45rem;
+	border-radius: 4px;
+}
+
+.chat-input-preview-close:hover {
+	color: var(--primary);
+	background: rgba(125, 125, 125, 0.1);
+}
+
+.chat-input-preview-body {
+	width: 100%;
+	word-break: break-word;
 }
 
 /* 底部工具栏与附件预览栏 */
@@ -4636,7 +4710,7 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	}
 }
 
-/* 虚拟滚动已将长列表裁剪为可视区附近节点，此处仅保留无图层切换副作用的样式隔离 */
+/* 锚定窗口虚拟滚动已将超长消息裁剪为可视区缓冲窗口，此处仅保留无图层切换副作用的样式隔离 */
 [data-msg-uid] {
 	contain: style;
 }

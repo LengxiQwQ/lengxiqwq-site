@@ -13,7 +13,11 @@ import {
 	sanitizeChatUrl,
 } from "./chatClient";
 import type { InterconnectSite } from "./chatConfig";
-import { openChatImageLightbox } from "./chatLightbox";
+import {
+	getCachedChatImageDims,
+	openChatImageLightbox,
+	rememberChatImageDims,
+} from "./chatLightbox";
 import { positionChatFloating } from "./chatFloating";
 import type {
 	ChatMessageRecord,
@@ -37,6 +41,7 @@ interface Props {
 	currentUserKey?: string;
 	isAdmin?: boolean;
 	isPinned?: boolean;
+	isInterconnectRoom?: boolean;
 	canRecall?: boolean;
 	canEdit?: boolean;
 	canDelete?: boolean;
@@ -79,6 +84,7 @@ const {
 	currentUserKey = "",
 	isAdmin = false,
 	isPinned = false,
+	isInterconnectRoom = false,
 	canRecall = false,
 	canEdit = false,
 	canDelete = false,
@@ -330,6 +336,13 @@ const senderDisplayName = $derived.by(() => {
 	if (isExternal && externalOrigin) {
 		return `${externalOrigin.cleanName} · ${externalOrigin.siteName}`;
 	}
+	if (isInterconnectRoom) {
+		const rawName = message.name || "";
+		if (!rawName.includes("·") && !rawName.includes("•")) {
+			return `${rawName} · 冷汐的杂货铺`;
+		}
+		return rawName;
+	}
 	return message.name;
 });
 
@@ -459,7 +472,7 @@ function handleAvatarClick() {
 		return;
 	}
 	if (!isSelf && !isExternal) {
-		onMention?.(externalOrigin?.cleanName || message.name, message.userKey);
+		onMention?.(senderDisplayName || message.name, message.userKey);
 	}
 }
 
@@ -993,6 +1006,7 @@ function handleBubbleClick(e: MouseEvent) {
             />
           </a>
         {:else if att.type === "image"}
+          {@const cachedDims = getCachedChatImageDims(att.url)}
           <a
             href={att.url}
             data-chat-image={att.url}
@@ -1007,6 +1021,9 @@ function handleBubbleClick(e: MouseEvent) {
               loading="lazy"
               alt="聊天图片"
               decoding="async"
+              width={cachedDims?.w}
+              height={cachedDims?.h}
+              onload={(e) => rememberChatImageDims(att.url, e.currentTarget)}
               class="chat-msg-image"
             />
           </a>

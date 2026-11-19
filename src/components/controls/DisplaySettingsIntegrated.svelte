@@ -148,6 +148,7 @@ let chatMusicNotices = $state(false);
 let devPreviewPanels = $state<Partial<Record<ChatPanelSlot, string>>>({});
 let isSavingChatWallpapers = $state(false);
 let chatWallpaperSaveStatus = $state("");
+let panelEverOpened = $state(false);
 
 const CHAT_BG_SLOT_ITEMS: { slot: ChatPanelSlot; label: string }[] = [
 	{ slot: "left", label: "左栏" },
@@ -1373,7 +1374,30 @@ onMount(() => {
 	// 监听窗口大小变化
 	window.addEventListener("resize", checkScreenSize);
 
+	// 仅在面板至少被打开过一次后再挂载聊天壁纸缩略图 <img>，避免 .float-panel-closed 处于视口内导致首屏偷跑请求
+	let panelOpenObserver: MutationObserver | null = null;
+	const displaySettingEl = document.getElementById("display-setting");
+	if (displaySettingEl) {
+		if (!displaySettingEl.classList.contains("float-panel-closed")) {
+			panelEverOpened = true;
+		} else {
+			panelOpenObserver = new MutationObserver(() => {
+				if (!displaySettingEl.classList.contains("float-panel-closed")) {
+					panelEverOpened = true;
+					panelOpenObserver?.disconnect();
+					panelOpenObserver = null;
+				}
+			});
+			panelOpenObserver.observe(displaySettingEl, {
+				attributes: true,
+				attributeFilter: ["class"],
+			});
+		}
+	}
+
 	return () => {
+		panelOpenObserver?.disconnect();
+		panelOpenObserver = null;
 		if (isDev) {
 			window.removeEventListener(
 				"chat-bg-preview-change",
@@ -1773,19 +1797,21 @@ $effect(() => {
 									title={`${wp.name}（${wp.mode === 'sticker' ? '小贴纸' : '大壁纸'}）`}
 								>
 									<div class="relative w-full aspect-[4/3] bg-black/5 dark:bg-white/5 overflow-hidden">
-										<img
-											src={resolveChatWallpaperThumbSrc(wp)}
-											alt={wp.name}
-											loading="lazy"
-											decoding="async"
-											class="w-full h-full object-cover"
-											onerror={(e) => {
-												const img = e.currentTarget as HTMLImageElement;
-												if (img.dataset.fallbackApplied) return;
-												img.dataset.fallbackApplied = "1";
-												img.src = wp.src;
-											}}
-										/>
+										{#if panelEverOpened}
+											<img
+												src={resolveChatWallpaperThumbSrc(wp)}
+												alt={wp.name}
+												loading="lazy"
+												decoding="async"
+												class="w-full h-full object-cover"
+												onerror={(e) => {
+													const img = e.currentTarget as HTMLImageElement;
+													if (img.dataset.fallbackApplied) return;
+													img.dataset.fallbackApplied = "1";
+													img.src = wp.src;
+												}}
+											/>
+										{/if}
 										<span class="absolute bottom-0.5 right-0.5 px-1 py-px rounded text-[9px] leading-tight bg-black/60 text-white">
 											{wp.mode === "sticker" ? "贴纸" : "壁纸"}
 										</span>

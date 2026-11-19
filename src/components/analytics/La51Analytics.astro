@@ -19,8 +19,6 @@ const {
 ---
 
 <script is:inline data-swup-ignore-script define:vars={{ analyticsId, sdkUrl, ck, autoTrack, hashMode, screenRecord }}>
-	if (!window.__la51DeferredLoaded) {
-		window.__la51DeferredLoaded = true;
 	!(function (p) {
 		"use strict";
 		!(function () {
@@ -44,24 +42,8 @@ const {
 			};
 			s.LA
 				? s.LA.ids && o()
-				: ((s.LA = p), (s.LA.ids = []), o());
-			var injected = !1;
-			var inject = function () {
-				if (injected) return;
-				injected = !0;
-				if (r && r.parentNode) r.parentNode.insertBefore(n, r);
-				else e.head.appendChild(n);
-			};
-			var afterLoad = function () {
-				if (typeof s.requestIdleCallback === "function") {
-					s.requestIdleCallback(inject, { timeout: 1500 });
-				} else {
-					s.setTimeout(inject, 800);
-				}
-			};
-			if (e.readyState === "complete") afterLoad();
-			else s.addEventListener("load", afterLoad, { once: !0 });
+				: ((s.LA = p), (s.LA.ids = []), o()),
+				r.parentNode.insertBefore(n, r);
 		})();
 	})({ id: analyticsId, ck: ck || analyticsId, autoTrack: autoTrack, hashMode: hashMode, screenRecord: screenRecord });
-	}
 </script>

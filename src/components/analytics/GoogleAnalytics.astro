@@ -7,34 +7,13 @@ const { analyticsId } = Astro.props;
 ---
 
 <!-- Google tag (gtag.js) -->
-<script is:inline data-swup-ignore-script define:vars={{analyticsId}}>
-window.dataLayer = window.dataLayer || [];
+<script is:inline data-swup-ignore-script async src={`https://www.googletagmanager.com/gtag/js?id=${analyticsId}`}></script>
+<script is:inline data-swup-ignore-script define:vars={{analyticsId}}>window.dataLayer = window.dataLayer || [];
+
 function gtag() {
     dataLayer.push(arguments);
 }
+
 gtag('js', new Date());
 gtag('config', analyticsId);
-
-(function scheduleGtagLoad() {
-    if (!analyticsId || window.__gtagDeferredLoaded) return;
-    window.__gtagDeferredLoaded = true;
-    var injected = false;
-    function injectGtag() {
-        if (injected) return;
-        injected = true;
-        var s = document.createElement('script');
-        s.async = true;
-        s.src = 'https://www.googletagmanager.com/gtag/js?id=' + encodeURIComponent(analyticsId);
-        document.head.appendChild(s);
-    }
-    function afterLoad() {
-        if (typeof window.requestIdleCallback === 'function') {
-            window.requestIdleCallback(injectGtag, { timeout: 1500 });
-        } else {
-            setTimeout(injectGtag, 800);
-        }
-    }
-    if (document.readyState === 'complete') afterLoad();
-    else window.addEventListener('load', afterLoad, { once: true });
-})();
 </script>

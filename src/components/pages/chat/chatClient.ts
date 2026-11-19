@@ -915,6 +915,7 @@ export async function uploadChatImage(
 export async function uploadChatMedia(
 	file: File,
 	chatServerUrl: string,
+	customToken?: string,
 ): Promise<{
 	url: string;
 	name: string;
@@ -930,13 +931,20 @@ export async function uploadChatMedia(
 		throw new Error("文件大小超过 100MB 限制");
 	}
 
+	const token = customToken?.trim() || readStoredWalineToken();
+	const headers: Record<string, string> = {
+		"Content-Type": file.type || "application/octet-stream",
+	};
+	if (token) {
+		headers.Authorization = `Bearer ${token}`;
+	}
+
+	const queryParam = token ? `&token=${encodeURIComponent(token)}` : "";
 	const resp = await fetch(
-		`${base}/api/upload?name=${encodeURIComponent(file.name)}`,
+		`${base}/api/upload?name=${encodeURIComponent(file.name)}${queryParam}`,
 		{
 			method: "POST",
-			headers: {
-				"Content-Type": file.type || "application/octet-stream",
-			},
+			headers,
 			body: file,
 		},
 	);

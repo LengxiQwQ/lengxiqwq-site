@@ -217,6 +217,20 @@ export function buildVerifiedMentionNames(
 	return Array.from(names).sort((a, b) => b.length - a.length);
 }
 
+function buildMentionRegexPattern(name: string): string {
+	const escaped = escapeRegexLiteral(name);
+	const withDotFlexible = escaped
+		.replace(/\\\s\*\\[·•・]\\\s\*/g, "\\s*[·•・]\\s*")
+		.replace(/\\[·•・]/g, "\\s*[·•・]\\s*");
+	if (isRoomBroadcastName(name)) {
+		return withDotFlexible;
+	}
+	if (!/[·•・]/.test(name)) {
+		return `${withDotFlexible}(?:\\s*[·•・]\\s*[^\\s,，。、！!？?：:；;()\\[\\]{}<>"'~\`'”）】》」』]+)?`;
+	}
+	return withDotFlexible;
+}
+
 export function buildChatTokenRegex(
 	mentions: string[] = [],
 	canRoomHighlight = false,
@@ -224,7 +238,7 @@ export function buildChatTokenRegex(
 	const cleanMentions = buildVerifiedMentionNames(mentions, canRoomHighlight);
 
 	if (cleanMentions.length > 0) {
-		const mentionPattern = `@(?:${cleanMentions.map(escapeRegexLiteral).join("|")})${MENTION_BOUNDARY_AFTER}`;
+		const mentionPattern = `@(?:${cleanMentions.map(buildMentionRegexPattern).join("|")})${MENTION_BOUNDARY_AFTER}`;
 		return new RegExp(`(${STICKER_TOKEN_PATTERN}|${mentionPattern})`, "gi");
 	}
 	return new RegExp(`(${STICKER_TOKEN_PATTERN})`, "g");

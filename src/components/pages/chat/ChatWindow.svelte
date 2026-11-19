@@ -7,6 +7,7 @@ import ChatAvatar, {
 	downscaleImgElementInPlace,
 	getDownscaledAvatarUrl,
 } from "./ChatAvatar.svelte";
+import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import { positionChatFloating } from "./chatFloating";
@@ -81,6 +82,7 @@ interface Props {
 	stickerMap: Map<string, StickerItem>;
 	enableImageUpload: boolean;
 	walineServerUrl: string;
+	walineToken?: string;
 	chatServerUrl?: string;
 	mentionEvent?: { name: string; userKey?: string; seq: number };
 	showInterconnect?: boolean;
@@ -178,6 +180,7 @@ const {
 	stickerMap,
 	enableImageUpload = true,
 	walineServerUrl = "",
+	walineToken = "",
 	chatServerUrl = "",
 	mentionEvent,
 	showInterconnect = false,
@@ -224,6 +227,7 @@ let activePinIndex = $state(0);
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
 let isUploadingImage = $state(false);
 let isUploadingMedia = $state(false);
+let isPreviewingMarkdown = $state(false);
 
 const effectiveSubtitle = $derived(roomTopic ? roomTopic : roomSubtitle);
 let failedRoomAvatars = $state<Record<string, boolean>>({});
@@ -413,7 +417,8 @@ let showScrollBottomBtn = $state(false);
 let newMessagesWhileScrolled = $state(0);
 let maxKnownCreatedAt = 0;
 let historyScrollAnchor: {
-	firstMsgUid: string;
+	anchorUid: string;
+	anchorOffsetInViewport: number | null;
 	prevScrollHeight: number;
 	prevScrollTop: number;
 	manualClick: boolean;
@@ -519,20 +524,47 @@ let lastMentionSeq = 0;
 let lastUnreadJumpSeq = 0;
 let initializedRoom = "";
 let hydratedRoomKey = "";
+let hasInitialBottomScrolledForRoom = false;
 let seenMessageUids = new Set<string>();
 let alertAutoHideTimer: number | null = null;
 let highlightClearTimer: number | null = null;
 let unreadHighlightTimer: number | null = null;
-let lastRenderedVisibleLen = 0;
+const BOTTOM_SCROLL_TOLERANCE = 2;
+const BOTTOM_REENGAGE_GAP_PX = 24;
+const BOTTOM_RELEASE_GAP_PX = 48;
+const EMPTY_READ_RECEIPTS: ChatReadReceipt[] = [];
 let isStickyAtBottom = $state(true);
-const bottomScrollTolerance = 2;
-let isPinnedToBottom = $state(true);
 let suppressStickyScrollUntil = 0;
 const followsLayoutAtBottom = $derived(
-	isPinnedToBottom && !targetMessageUid && !highlightedMsgUid && !highlightUnreadDivider,
+	isStickyAtBottom &&
+		!targetMessageUid &&
+		!highlightedMsgUid &&
+		!highlightUnreadDivider,
 );
 let lastScrollHeight = 0;
 let lastClientHeight = 0;
+let prevObservedScrollTop = 0;
+let programmaticScrollUntil = 0;
+let isUserTouching = false;
+let touchMinY = 0;
+let touchDraggedUp = false;
+let isSmoothScrolling = false;
+
+const pinnedUidSet = $derived(new Set(pinnedUids));
+
+function handleOpenMobileActions(
+	message: ChatMessageRecord,
+	meta: {
+		isSelf: boolean;
+		senderDisplayName: string;
+		canRecall: boolean;
+		canEdit: boolean;
+		canDelete: boolean;
+		isPinned: boolean;
+	},
+) {
+	mobileActionTarget = { message, ...meta };
+}
 
 function getLastSeenStorageKey(rId: string, uKey: string): string {
 	return `${LAST_SEEN_PREFIX}${rId}:${uKey}`;
@@ -571,182 +603,297 @@ function isChatPaneFocused(): boolean {
 	return !usesPanelTabs || isChatTabActive;
 }
 
-const VIRTUAL_THRESHOLD = 60;
-const VIRTUAL_OVERSCAN_PX = 900;
-const VIRTUAL_GAP_PX = 12;
-
-const measuredMsgHeights = new Map<string, number>();
-let heightMapVersion = $state(0);
-let heightFlushRafId: number | null = null;
-let virtualScrollTop = $state(0);
-let virtualViewportH = $state(760);
-let forcedRenderUid = $state("");
-
-function estimateMessageHeight(msg: ChatMessageRecord): number {
-	if (msg.kind === "system") return 34;
-	let h = 58;
-	if (msg.replyTo) h += 44;
-	const hasMedia =
-		(msg.attachments && msg.attachments.length > 0) ||
-		msg.content.includes("![");
-	if (hasMedia) h += 160;
-	else if (msg.content.length > 160) h += 72;
-	else if (msg.content.length > 70) h += 36;
-	if (msg.poll) h += 140;
-	if (msg.reactions && Object.keys(msg.reactions).length > 0) h += 30;
-	return h;
-}
-
-function getMsgSlotHeight(msg: ChatMessageRecord): number {
-	return measuredMsgHeights.get(msg.msgUid) ?? estimateMessageHeight(msg);
-}
-
-function scheduleHeightMapFlush() {
-	if (heightFlushRafId !== null) return;
-	heightFlushRafId = requestAnimationFrame(() => {
-		heightFlushRafId = null;
-		heightMapVersion += 1;
-	});
-}
-
-let sharedRowObserver: ResizeObserver | null = null;
-const rowUidMap = new WeakMap<Element, string>();
-
-function getSharedRowObserver(): ResizeObserver | null {
-	if (typeof ResizeObserver === "undefined") return null;
-	if (!sharedRowObserver) {
-		sharedRowObserver = new ResizeObserver((entries) => {
-			let changed = false;
-			let topCompensation = 0;
-			const container = messageContainer;
-			const curTop = container ? container.scrollTop : virtualScrollTop;
-			const shouldCompensate = Boolean(container && !followsLayoutAtBottom);
-
-			for (const entry of entries) {
-				const uid = rowUidMap.get(entry.target);
-				if (!uid) continue;
-				const box = entry.borderBoxSize?.[0];
-				const h = Math.round((box ? box.blockSize : entry.contentRect.height) * 10) / 10;
-				if (h <= 0) continue;
-				const prev = measuredMsgHeights.get(uid);
-				if (prev === undefined || Math.abs(prev - h) > 0.5) {
-					if (shouldCompensate && prev !== undefined) {
-						const el = entry.target as HTMLElement;
-						if (el.offsetTop + el.offsetHeight < curTop + 40) {
-							topCompensation += h - prev;
-						}
-					}
-					if (measuredMsgHeights.size >= 1500 && !measuredMsgHeights.has(uid)) {
-						const oldestUid = measuredMsgHeights.keys().next().value;
-						if (oldestUid !== undefined) measuredMsgHeights.delete(oldestUid);
-					}
-					measuredMsgHeights.set(uid, h);
-					changed = true;
-				}
-			}
-
-			if (topCompensation !== 0 && container) {
-				container.scrollTop = Math.max(0, container.scrollTop + topCompensation);
-				virtualScrollTop = container.scrollTop;
-			}
-			if (changed) {
-				scheduleHeightMapFlush();
-			}
-		});
-	}
-	return sharedRowObserver;
-}
-
-function measureVirtualRow(node: HTMLElement, uid: string) {
-	const ro = getSharedRowObserver();
-	if (!ro) return {};
-	rowUidMap.set(node, uid);
-	ro.observe(node);
-	return {
-		update(nextUid: string) {
-			rowUidMap.set(node, nextUid);
-		},
-		destroy() {
-			ro.unobserve(node);
-			rowUidMap.delete(node);
-		},
-	};
-}
-
-function findOffsetIndex(offsets: number[], targetY: number): number {
-	let lo = 0;
-	let hi = offsets.length - 2;
-	while (lo < hi) {
-		const mid = (lo + hi) >> 1;
-		if (offsets[mid + 1] <= targetY) {
-			lo = mid + 1;
-		} else {
-			hi = mid;
-		}
-	}
-	return Math.max(0, lo);
-}
-
 const visibleMessages = $derived(
 	showMusicNotices
 		? messages
 		: messages.filter((msg) => !isMusicNoticeMessage(msg)),
 );
 
-const virtualLayout = $derived.by(() => {
+const VIRTUAL_ENABLE_THRESHOLD = 140;
+const VIRTUAL_DISABLE_THRESHOLD = 110;
+const WINDOW_TARGET_COUNT = 90;
+const WINDOW_HALF_COUNT = 45;
+const WINDOW_MAX_COUNT = 140;
+const EDGE_IMMEDIATE_BUFFER_PX = 450;
+const EDGE_IDLE_BUFFER_PX = 1100;
+const IDLE_RECENTER_DELAY_MS = 140;
+const MAX_MEASURED_HEIGHTS = 4000;
+
+const measuredMsgHeights = new Map<string, number>();
+let virtualEnabled = $state(false);
+let windowStart = $state(0);
+let windowEnd = $state(0);
+let lastMeasuredWidth = 0;
+let isShiftingWindow = false;
+let idleRecenterTimer: number | null = null;
+let prevVisibleCount = 0;
+let windowTopMarkerEl: HTMLDivElement | null = $state(null);
+let windowBottomMarkerEl: HTMLDivElement | null = $state(null);
+
+function estimateRowHeight(msg: ChatMessageRecord): number {
+	if (msg.kind === "system") return 46;
+	let h = 76;
+	if (msg.replyTo) h += 44;
+	const hasMedia =
+		(msg.attachments && msg.attachments.length > 0) ||
+		msg.content.includes("![");
+	if (hasMedia) h += 180;
+	else if (msg.content.length > 160) h += 84;
+	else if (msg.content.length > 70) h += 40;
+	if (msg.poll) h += 140;
+	if (msg.reactions && Object.keys(msg.reactions).length > 0) h += 32;
+	return h;
+}
+
+function getRowSlotHeight(msg: ChatMessageRecord): number {
+	return measuredMsgHeights.get(msg.msgUid) ?? estimateRowHeight(msg);
+}
+
+function recordRowHeight(uid: string, h: number) {
+	if (h <= 0) return;
+	if (
+		measuredMsgHeights.size >= MAX_MEASURED_HEIGHTS &&
+		!measuredMsgHeights.has(uid)
+	) {
+		const oldestUid = measuredMsgHeights.keys().next().value;
+		if (oldestUid !== undefined) measuredMsgHeights.delete(oldestUid);
+	}
+	measuredMsgHeights.set(uid, h);
+}
+
+function measureMountedRows() {
+	if (!messageContainer) return;
+	const rows = messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
+	for (const row of rows) {
+		const uid = row.dataset.vrowUid;
+		if (!uid) continue;
+		const h = row.getBoundingClientRect().height;
+		if (h > 0) recordRowHeight(uid, h);
+	}
+}
+
+const renderedWindow = $derived.by(() => {
 	const list = visibleMessages;
 	const len = list.length;
-	void heightMapVersion;
-
-	if (len <= VIRTUAL_THRESHOLD) {
+	if (!virtualEnabled || len === 0) {
 		return {
 			start: 0,
 			end: len,
 			topSpacerPx: 0,
 			bottomSpacerPx: 0,
-			offsets: [] as number[],
 		};
 	}
-
-	const offsets = new Array<number>(len + 1);
-	offsets[0] = 0;
-	for (let i = 0; i < len; i++) {
-		offsets[i + 1] =
-			offsets[i] + getMsgSlotHeight(list[i]) + (i < len - 1 ? VIRTUAL_GAP_PX : 0);
+	const start = Math.max(0, Math.min(windowStart, len));
+	const end = Math.max(start, Math.min(windowEnd, len));
+	let topSpacerPx = 0;
+	for (let i = 0; i < start; i++) {
+		topSpacerPx += getRowSlotHeight(list[i]);
 	}
-	const totalHeight = offsets[len];
-
-	const viewTop = followsLayoutAtBottom
-		? Math.max(0, totalHeight - virtualViewportH)
-		: virtualScrollTop;
-	const minTop = Math.max(0, viewTop - VIRTUAL_OVERSCAN_PX);
-	const maxBottom = viewTop + virtualViewportH + VIRTUAL_OVERSCAN_PX;
-
-	let start = findOffsetIndex(offsets, minTop);
-	let end = findOffsetIndex(offsets, maxBottom) + 1;
-	start = Math.max(0, start - 2);
-	end = Math.min(len, end + 2);
-
-	const pinnedUid = forcedRenderUid || highlightedMsgUid;
-	if (pinnedUid) {
-		const idx = list.findIndex((m) => m.msgUid === pinnedUid);
-		if (idx >= 0) {
-			if (idx < start) start = Math.max(0, idx - 3);
-			if (idx >= end) end = Math.min(len, idx + 4);
-		}
+	let bottomSpacerPx = 0;
+	for (let i = end; i < len; i++) {
+		bottomSpacerPx += getRowSlotHeight(list[i]);
 	}
-
-	const topSpacerPx =
-		start > 0 ? Math.max(0, offsets[start] - VIRTUAL_GAP_PX) : 0;
-	const bottomSpacerPx =
-		end < len ? Math.max(0, totalHeight - offsets[end] - VIRTUAL_GAP_PX) : 0;
-
-	return { start, end, topSpacerPx, bottomSpacerPx, offsets };
+	return {
+		start,
+		end,
+		topSpacerPx: Math.round(topSpacerPx),
+		bottomSpacerPx: Math.round(bottomSpacerPx),
+	};
 });
 
 const renderedMessages = $derived(
-	visibleMessages.slice(virtualLayout.start, virtualLayout.end),
+	visibleMessages.slice(renderedWindow.start, renderedWindow.end),
 );
+
+function clearIdleRecenterTimer() {
+	if (idleRecenterTimer !== null) {
+		window.clearTimeout(idleRecenterTimer);
+		idleRecenterTimer = null;
+	}
+}
+
+function findVisibleViewportAnchor(
+	nextStart: number,
+	nextEnd: number,
+): { uid: string; offsetTop: number } | null {
+	if (!messageContainer) return null;
+	const cRect = messageContainer.getBoundingClientRect();
+	const viewCenterY = cRect.top + cRect.height / 2;
+	const rows = messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
+	const allowedUids = new Set<string>();
+	for (let i = nextStart; i < nextEnd; i++) {
+		const msg = visibleMessages[i];
+		if (msg) allowedUids.add(msg.msgUid);
+	}
+	let best: { uid: string; offsetTop: number; dist: number } | null = null;
+	for (const row of rows) {
+		const uid = row.dataset.vrowUid;
+		if (!uid || !allowedUids.has(uid)) continue;
+		const rect = row.getBoundingClientRect();
+		if (rect.bottom < cRect.top || rect.top > cRect.bottom) continue;
+		const dist = Math.abs(rect.top + rect.height / 2 - viewCenterY);
+		if (!best || dist < best.dist) {
+			best = { uid, offsetTop: rect.top - cRect.top, dist };
+		}
+	}
+	return best ? { uid: best.uid, offsetTop: best.offsetTop } : null;
+}
+
+async function shiftWindowWithAnchor(
+	nextStart: number,
+	nextEnd: number,
+	enableVirtual = virtualEnabled,
+) {
+	if (!messageContainer || isShiftingWindow) return;
+	const len = visibleMessages.length;
+	const clampedStart = Math.max(0, Math.min(nextStart, len));
+	const clampedEnd = Math.max(clampedStart, Math.min(nextEnd, len));
+	if (
+		enableVirtual === virtualEnabled &&
+		clampedStart === windowStart &&
+		clampedEnd === windowEnd
+	) {
+		return;
+	}
+
+	isShiftingWindow = true;
+	try {
+		measureMountedRows();
+		const anchor = findVisibleViewportAnchor(clampedStart, clampedEnd);
+		virtualEnabled = enableVirtual;
+		windowStart = clampedStart;
+		windowEnd = clampedEnd;
+		await tick();
+		if (!messageContainer) return;
+		measureMountedRows();
+		if (anchor) {
+			const el = messageContainer.querySelector<HTMLElement>(
+				`[data-vrow-uid="${CSS.escape(anchor.uid)}"]`,
+			);
+			if (el) {
+				const cRect = messageContainer.getBoundingClientRect();
+				const nextOffset = el.getBoundingClientRect().top - cRect.top;
+				const drift = nextOffset - anchor.offsetTop;
+				if (Math.abs(drift) > 0.5) {
+					setScrollTopProgrammatically(messageContainer.scrollTop + drift);
+				}
+			}
+		}
+	} finally {
+		isShiftingWindow = false;
+	}
+}
+
+function computeTargetWindowAroundViewport(): {
+	start: number;
+	end: number;
+} | null {
+	if (!messageContainer) return null;
+	const list = visibleMessages;
+	const len = list.length;
+	if (len === 0) return null;
+
+	const cRect = messageContainer.getBoundingClientRect();
+	const viewCenterY = cRect.top + cRect.height / 2;
+	const rows = messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
+	let centerUid = "";
+	let minDist = Number.POSITIVE_INFINITY;
+	for (const row of rows) {
+		const rect = row.getBoundingClientRect();
+		if (rect.bottom < cRect.top - 120 || rect.top > cRect.bottom + 120) {
+			continue;
+		}
+		const dist = Math.abs(rect.top + rect.height / 2 - viewCenterY);
+		if (dist < minDist) {
+			minDist = dist;
+			centerUid = row.dataset.vrowUid || "";
+		}
+	}
+
+	let centerIdx = centerUid
+		? list.findIndex((m) => m.msgUid === centerUid)
+		: -1;
+
+	// 用户大幅拖动滚动条跳入 spacer 区域时，按累计高度估算目标索引
+	if (centerIdx < 0) {
+		const targetY =
+			Math.max(0, messageContainer.scrollTop) + messageContainer.clientHeight / 2;
+		let acc = 0;
+		centerIdx = len - 1;
+		for (let i = 0; i < len; i++) {
+			acc += getRowSlotHeight(list[i]);
+			if (acc >= targetY) {
+				centerIdx = i;
+				break;
+			}
+		}
+	}
+
+	let nextStart = Math.max(0, centerIdx - WINDOW_HALF_COUNT);
+	let nextEnd = Math.min(len, nextStart + WINDOW_TARGET_COUNT);
+	if (nextEnd === len) {
+		nextStart = Math.max(0, len - WINDOW_TARGET_COUNT);
+	}
+	return { start: nextStart, end: nextEnd };
+}
+
+function checkVirtualWindowEdges(allowIdleSchedule = true) {
+	if (
+		!virtualEnabled ||
+		!messageContainer ||
+		isShiftingWindow ||
+		isSmoothScrolling
+	) {
+		return;
+	}
+	const len = visibleMessages.length;
+	const curStart = renderedWindow.start;
+	const curEnd = renderedWindow.end;
+	const canExtendTop = curStart > 0;
+	const canExtendBottom = curEnd < len;
+	if (!canExtendTop && !canExtendBottom) {
+		clearIdleRecenterTimer();
+		return;
+	}
+
+	if (!windowTopMarkerEl || !windowBottomMarkerEl) return;
+
+	const cRect = messageContainer.getBoundingClientRect();
+	const topBufferPx = cRect.top - windowTopMarkerEl.getBoundingClientRect().top;
+	const bottomBufferPx =
+		windowBottomMarkerEl.getBoundingClientRect().bottom - cRect.bottom;
+
+	const needImmediateTop =
+		canExtendTop && topBufferPx < EDGE_IMMEDIATE_BUFFER_PX;
+	const needImmediateBottom =
+		canExtendBottom && bottomBufferPx < EDGE_IMMEDIATE_BUFFER_PX;
+	if (needImmediateTop || needImmediateBottom) {
+		clearIdleRecenterTimer();
+		const target = computeTargetWindowAroundViewport();
+		if (target) {
+			void shiftWindowWithAnchor(target.start, target.end, true);
+		}
+		return;
+	}
+
+	const needIdleTop = canExtendTop && topBufferPx < EDGE_IDLE_BUFFER_PX;
+	const needIdleBottom =
+		canExtendBottom && bottomBufferPx < EDGE_IDLE_BUFFER_PX;
+	if (needIdleTop || needIdleBottom) {
+		if (!allowIdleSchedule) return;
+		clearIdleRecenterTimer();
+		idleRecenterTimer = window.setTimeout(() => {
+			idleRecenterTimer = null;
+			if (isUserTouching || isSmoothScrolling || isShiftingWindow) return;
+			const target = computeTargetWindowAroundViewport();
+			if (target) {
+				void shiftWindowWithAnchor(target.start, target.end, true);
+			}
+		}, IDLE_RECENTER_DELAY_MS);
+	} else {
+		clearIdleRecenterTimer();
+	}
+}
 
 function collectChatImageSources(): Array<{ src: string }> {
 	const items: Array<{ src: string }> = [];
@@ -1012,11 +1159,30 @@ const filteredMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 
 const unreadMentionSet = $derived(new Set(unreadMentionUids));
 
-const userProfileMap = $derived.by<Map<string, ChatUserDetailSeed>>(() => {
-	const map = new Map<string, ChatUserDetailSeed>();
+let userProfileMap = $state.raw<Map<string, ChatUserDetailSeed>>(new Map());
+let userNameMap = $state.raw<Map<string, string>>(new Map());
+let profileCacheRoomTag = "";
+const seenProfileMsgUids = new Set<string>();
+const cachedProfileMap = new Map<string, ChatUserDetailSeed>();
+const cachedNameMap = new Map<string, string>();
+
+$effect(() => {
+	const tag = `${roomId}:${roomInitSeq}`;
+	let profileChanged = false;
+	let nameChanged = false;
+
+	if (profileCacheRoomTag !== tag) {
+		profileCacheRoomTag = tag;
+		seenProfileMsgUids.clear();
+		cachedProfileMap.clear();
+		cachedNameMap.clear();
+		profileChanged = true;
+		nameChanged = true;
+	}
+
 	const mergeSeed = (seed: ChatUserDetailSeed) => {
 		if (!seed.userKey) return;
-		const prev = map.get(seed.userKey);
+		const prev = cachedProfileMap.get(seed.userKey);
 		const merged: ChatUserDetailSeed = {
 			userKey: seed.userKey,
 			name: seed.name || prev?.name || "",
@@ -1029,16 +1195,44 @@ const userProfileMap = $derived.by<Map<string, ChatUserDetailSeed>>(() => {
 			isAdmin: seed.isAdmin ?? prev?.isAdmin,
 			authType: seed.authType || prev?.authType,
 		};
-		map.set(seed.userKey, merged);
-		if (seed.userKey.startsWith("matrix:")) {
-			map.set(seed.userKey.slice(7), merged);
-		} else if (seed.userKey.startsWith("@") && seed.userKey.includes(":")) {
-			map.set(`matrix:${seed.userKey}`, merged);
+		if (
+			prev &&
+			prev.name === merged.name &&
+			prev.avatar === merged.avatar &&
+			prev.url === merged.url &&
+			prev.site === merged.site &&
+			prev.siteUrl === merged.siteUrl &&
+			prev.badge === merged.badge &&
+			prev.badgeType === merged.badgeType &&
+			prev.isAdmin === merged.isAdmin &&
+			prev.authType === merged.authType
+		) {
+			return;
 		}
+		cachedProfileMap.set(seed.userKey, merged);
+		if (seed.userKey.startsWith("matrix:")) {
+			cachedProfileMap.set(seed.userKey.slice(7), merged);
+		} else if (seed.userKey.startsWith("@") && seed.userKey.includes(":")) {
+			cachedProfileMap.set(`matrix:${seed.userKey}`, merged);
+		}
+		profileChanged = true;
 	};
 
+	const mergeName = (key?: string, name?: string) => {
+		if (!key || !name) return;
+		if (cachedNameMap.get(key) === name) return;
+		cachedNameMap.set(key, name);
+		nameChanged = true;
+	};
+
+	if (currentUser?.userKey && currentUser?.name) {
+		mergeName(currentUser.userKey, currentUser.name);
+	}
 	for (const m of messages) {
+		if (seenProfileMsgUids.has(m.msgUid)) continue;
+		seenProfileMsgUids.add(m.msgUid);
 		if (m.userKey && m.name) {
+			mergeName(m.userKey, m.name);
 			mergeSeed({
 				userKey: m.userKey,
 				name: m.name,
@@ -1050,7 +1244,9 @@ const userProfileMap = $derived.by<Map<string, ChatUserDetailSeed>>(() => {
 				badgeType: m.badgeType,
 				isAdmin: m.isAdmin,
 				authType:
-					m.source === "matrix" || m.userKey.startsWith("matrix:") || m.userKey.startsWith("@")
+					m.source === "matrix" ||
+					m.userKey.startsWith("matrix:") ||
+					m.userKey.startsWith("@")
 						? undefined
 						: m.userKey.startsWith("waline:")
 							? "waline"
@@ -1060,6 +1256,7 @@ const userProfileMap = $derived.by<Map<string, ChatUserDetailSeed>>(() => {
 	}
 	for (const m of mentionMembers) {
 		if (m.userKey && m.name) {
+			mergeName(m.userKey, m.name);
 			mergeSeed({
 				userKey: m.userKey,
 				name: m.name,
@@ -1073,6 +1270,7 @@ const userProfileMap = $derived.by<Map<string, ChatUserDetailSeed>>(() => {
 	}
 	for (const m of onlineMembers) {
 		if (m.userKey && m.name) {
+			mergeName(m.userKey, m.name);
 			mergeSeed({
 				userKey: m.userKey,
 				name: m.name,
@@ -1089,6 +1287,7 @@ const userProfileMap = $derived.by<Map<string, ChatUserDetailSeed>>(() => {
 	}
 	for (const m of roomOnlineMembers) {
 		if (m.userKey && m.name) {
+			mergeName(m.userKey, m.name);
 			mergeSeed({
 				userKey: m.userKey,
 				name: m.name,
@@ -1113,35 +1312,13 @@ const userProfileMap = $derived.by<Map<string, ChatUserDetailSeed>>(() => {
 			authType: currentUser.authType,
 		});
 	}
-	return map;
-});
 
-const userNameMap = $derived.by<Map<string, string>>(() => {
-	const map = new Map<string, string>();
-	if (currentUser?.userKey && currentUser?.name) {
-		map.set(currentUser.userKey, currentUser.name);
+	if (profileChanged) {
+		userProfileMap = new Map(cachedProfileMap);
 	}
-	for (const m of messages) {
-		if (m.userKey && m.name) {
-			map.set(m.userKey, m.name);
-		}
+	if (nameChanged) {
+		userNameMap = new Map(cachedNameMap);
 	}
-	for (const m of mentionMembers) {
-		if (m.userKey && m.name) {
-			map.set(m.userKey, m.name);
-		}
-	}
-	for (const m of onlineMembers) {
-		if (m.userKey && m.name) {
-			map.set(m.userKey, m.name);
-		}
-	}
-	for (const m of roomOnlineMembers) {
-		if (m.userKey && m.name) {
-			map.set(m.userKey, m.name);
-		}
-	}
-	return map;
 });
 
 const displayTypingUsers = $derived.by<string[]>(() => {
@@ -1169,24 +1346,51 @@ function getScrollGap(): number {
 	);
 }
 
+function setScrollTopProgrammatically(nextTop: number) {
+	if (!messageContainer) return;
+	const maxScroll = Math.max(
+		0,
+		messageContainer.scrollHeight - messageContainer.clientHeight,
+	);
+	const clamped = Math.max(0, Math.min(nextTop, maxScroll));
+	programmaticScrollUntil = performance.now() + 140;
+	messageContainer.scrollTop = clamped;
+	prevObservedScrollTop = Math.min(
+		maxScroll,
+		Math.max(0, messageContainer.scrollTop),
+	);
+	lastScrollHeight = messageContainer.scrollHeight;
+	lastClientHeight = messageContainer.clientHeight;
+}
+
+function cancelProgrammaticScroll() {
+	jumpSeq += 1;
+	isSmoothScrolling = false;
+	programmaticScrollUntil = 0;
+}
+
+function detachFromBottom() {
+	isStickyAtBottom = false;
+	showScrollBottomBtn = getScrollGap() > 180 || newMessagesWhileScrolled > 0;
+}
+
 function snapScrollToBottom() {
 	if (!messageContainer) return;
 	const { scrollHeight, clientHeight, scrollTop } = messageContainer;
 	// The CSS-pixel heights are rounded, while scrollTop can be fractional.
-	if (scrollHeight - clientHeight - scrollTop > bottomScrollTolerance) {
-		messageContainer.scrollTop = scrollHeight;
+	if (scrollHeight - clientHeight - scrollTop > BOTTOM_SCROLL_TOLERANCE) {
+		setScrollTopProgrammatically(scrollHeight);
+	} else {
+		const maxScroll = Math.max(0, scrollHeight - clientHeight);
+		prevObservedScrollTop = Math.min(maxScroll, Math.max(0, scrollTop));
+		lastScrollHeight = scrollHeight;
+		lastClientHeight = clientHeight;
 	}
-	virtualScrollTop = Math.max(0, messageContainer.scrollTop);
-	if (clientHeight > 0) virtualViewportH = clientHeight;
-	lastScrollHeight = scrollHeight;
-	lastClientHeight = clientHeight;
-	isPinnedToBottom = true;
 	isStickyAtBottom = true;
 	showScrollBottomBtn = false;
 	newMessagesWhileScrolled = 0;
 }
 
-let scrollRafId: number | null = null;
 let lastWrittenSeenMsgKey = "";
 
 function getLatestReadTargets(): {
@@ -1246,95 +1450,129 @@ function markCurrentRoomReadIfReady(forceIgnoreSticky = false): void {
 	onMarkRead?.(readTs, receiptMsg?.msgUid);
 }
 
-function flushMessageScroll() {
-	scrollRafId = null;
+function handleMessageScroll() {
 	if (!messageContainer) return;
 	const sh = messageContainer.scrollHeight;
 	const ch = messageContainer.clientHeight;
-	if (ch > 0 && Math.abs(ch - virtualViewportH) > 1) {
-		virtualViewportH = ch;
-	}
+	const maxScroll = Math.max(0, sh - ch);
+	const st = Math.min(maxScroll, Math.max(0, messageContainer.scrollTop));
+	const gap = Math.max(0, maxScroll - st);
+
 	const layoutChanged =
 		(lastScrollHeight > 0 && sh !== lastScrollHeight) ||
 		(lastClientHeight > 0 && ch !== lastClientHeight);
+	const movedUpward = st < prevObservedScrollTop - 2;
+	const isProgrammaticEcho =
+		!isUserTouching &&
+		!isSmoothScrolling &&
+		performance.now() < programmaticScrollUntil &&
+		Math.abs(st - prevObservedScrollTop) <= 4;
+
 	lastScrollHeight = sh;
 	lastClientHeight = ch;
+	prevObservedScrollTop = st;
 
-	// Layout-induced scroll events must not cancel a pinned position before ResizeObserver runs.
-	if (layoutChanged && followsLayoutAtBottom) return;
+	if (isProgrammaticEcho || isShiftingWindow) {
+		return;
+	}
 
-	virtualScrollTop = messageContainer.scrollTop;
+	// 仅当纯布局变动（如新消息撑高、媒体加载）且用户未向上滚动时保留贴底态；
+	// 只要检测到用户向上滚动（movedUpward）或手指仍在拖动，立即解除贴底，绝不吞掉用户滚动意图。
+	if (layoutChanged && followsLayoutAtBottom && !movedUpward && !isUserTouching) {
+		return;
+	}
 
-	const gap = getScrollGap();
 	if (gap >= 120) {
 		suppressStickyScrollUntil = 0;
 	}
+
 	if (Date.now() < suppressStickyScrollUntil) {
-		isPinnedToBottom = false;
 		isStickyAtBottom = false;
-	} else {
-		isPinnedToBottom = gap <= bottomScrollTolerance;
-		isStickyAtBottom = gap < 120;
-	}
-	showScrollBottomBtn = gap > 180;
-	if (isStickyAtBottom) {
-		newMessagesWhileScrolled = 0;
-		markCurrentRoomReadIfReady();
+	} else if (movedUpward || gap > BOTTOM_RELEASE_GAP_PX) {
+		isStickyAtBottom = false;
+	} else if (
+		gap <= BOTTOM_REENGAGE_GAP_PX &&
+		!isSmoothScrolling &&
+		!touchDraggedUp &&
+		renderedWindow.end >= visibleMessages.length
+	) {
+		isStickyAtBottom = true;
 	}
 
-	// 向上滚动到接近顶部时自动触发加载更早历史消息
-	if (messageContainer.scrollTop <= 150 && hasMoreHistory && !isLoadingHistory) {
+	if (isStickyAtBottom) {
+		newMessagesWhileScrolled = 0;
+		showScrollBottomBtn = false;
+		markCurrentRoomReadIfReady();
+	} else {
+		showScrollBottomBtn = gap > 180 || newMessagesWhileScrolled > 0;
+	}
+
+	checkVirtualWindowEdges(true);
+
+	// 向上滚动到最旧已加载消息附近时，自动触发加载更早历史消息
+	if (
+		renderedWindow.start === 0 &&
+		st <= 150 &&
+		hasMoreHistory &&
+		!isLoadingHistory &&
+		hasInitialBottomScrolledForRoom &&
+		!followsLayoutAtBottom
+	) {
 		triggerAutoLoadOlderHistory();
 	}
 }
 
-function handleMessageScroll() {
-	if (!messageContainer) return;
-	if (scrollRafId !== null) return;
-	scrollRafId = requestAnimationFrame(flushMessageScroll);
+function ensureTailWindowForBottom() {
+	const len = visibleMessages.length;
+	if (!virtualEnabled || renderedWindow.end >= len) return;
+	measureMountedRows();
+	windowEnd = len;
+	windowStart = Math.max(0, len - WINDOW_TARGET_COUNT);
 }
 
 async function scrollToBottom(smooth = false) {
 	suppressStickyScrollUntil = 0;
-	await tick();
-	if (!messageContainer) return;
-	if (smooth) {
-		const seq = ++jumpSeq;
-		const lastUid = visibleMessages[visibleMessages.length - 1]?.msgUid || "";
-		if (lastUid) forcedRenderUid = lastUid;
-		isStickyAtBottom = true;
-		showScrollBottomBtn = false;
-		newMessagesWhileScrolled = 0;
-
-		const container = messageContainer;
-		const maxStartGap = Math.max(800, container.clientHeight * 1.6);
-		const preTarget = Math.max(
-			0,
-			container.scrollHeight - container.clientHeight - maxStartGap,
-		);
-		if (container.scrollTop < preTarget) {
-			container.scrollTop = preTarget;
-			virtualScrollTop = preTarget;
-		}
+	clearIdleRecenterTimer();
+	if (!smooth) {
+		ensureTailWindowForBottom();
 		await tick();
-		if (seq !== jumpSeq || !messageContainer) return;
-		const targetTop = Math.max(
-			0,
-			messageContainer.scrollHeight - messageContainer.clientHeight,
-		);
-		const completed = await smoothScrollContainerTo(
-			messageContainer,
-			targetTop,
-			seq,
-		);
-		if (seq !== jumpSeq) return;
-		forcedRenderUid = "";
-		if (completed) {
-			snapScrollToBottom();
-		}
+		if (!messageContainer) return;
+		snapScrollToBottom();
+		measureMountedRows();
 		return;
 	}
-	snapScrollToBottom();
+
+	const seq = ++jumpSeq;
+	showScrollBottomBtn = false;
+	newMessagesWhileScrolled = 0;
+	ensureTailWindowForBottom();
+	await tick();
+	if (seq !== jumpSeq || !messageContainer) return;
+	measureMountedRows();
+
+	const container = messageContainer;
+	const maxStartGap = Math.max(800, container.clientHeight * 1.6);
+	const preTarget = Math.max(
+		0,
+		container.scrollHeight - container.clientHeight - maxStartGap,
+	);
+	if (container.scrollTop < preTarget) {
+		setScrollTopProgrammatically(preTarget);
+	}
+	const targetTop = Math.max(
+		0,
+		container.scrollHeight - container.clientHeight,
+	);
+	const completed = await smoothScrollContainerTo(
+		container,
+		targetTop,
+		seq,
+		true,
+	);
+	if (seq !== jumpSeq) return;
+	if (completed) {
+		snapScrollToBottom();
+	}
 }
 
 let jumpSeq = 0;
@@ -1343,27 +1581,37 @@ function smoothScrollContainerTo(
 	container: HTMLElement,
 	targetTop: number,
 	seq: number,
+	trackBottom = false,
 ): Promise<boolean> {
 	const startTop = container.scrollTop;
-	const delta = targetTop - startTop;
+	const initialTarget = trackBottom
+		? Math.max(0, container.scrollHeight - container.clientHeight)
+		: targetTop;
+	const delta = initialTarget - startTop;
 	if (Math.abs(delta) <= 8) return Promise.resolve(true);
 
-	const duration = Math.min(520, Math.max(260, Math.round(Math.abs(delta) * 0.22)));
+	const duration = Math.min(480, Math.max(240, Math.round(Math.abs(delta) * 0.22)));
+	isSmoothScrolling = true;
 	return new Promise((resolve) => {
 		const startTime = performance.now();
 		const step = (now: number) => {
 			if (seq !== jumpSeq) {
+				isSmoothScrolling = false;
 				resolve(false);
 				return;
 			}
 			const elapsed = now - startTime;
 			const progress = Math.min(1, elapsed / duration);
 			const eased = 1 - (1 - progress) ** 3;
-			container.scrollTop = startTop + delta * eased;
+			const endTop = trackBottom
+				? Math.max(0, container.scrollHeight - container.clientHeight)
+				: targetTop;
+			setScrollTopProgrammatically(startTop + (endTop - startTop) * eased);
 			if (progress < 1) {
 				requestAnimationFrame(step);
 			} else {
-				container.scrollTop = targetTop;
+				setScrollTopProgrammatically(endTop);
+				isSmoothScrolling = false;
 				resolve(true);
 			}
 		};
@@ -1371,12 +1619,28 @@ function smoothScrollContainerTo(
 	});
 }
 
+function ensureTargetIndexInWindow(targetIdx: number) {
+	if (!virtualEnabled || targetIdx < 0) return;
+	const len = visibleMessages.length;
+	if (targetIdx >= renderedWindow.start && targetIdx < renderedWindow.end) {
+		return;
+	}
+	measureMountedRows();
+	let nextStart = Math.max(0, targetIdx - WINDOW_HALF_COUNT);
+	const nextEnd = Math.min(len, nextStart + WINDOW_TARGET_COUNT);
+	if (nextEnd === len) {
+		nextStart = Math.max(0, len - WINDOW_TARGET_COUNT);
+	}
+	windowStart = nextStart;
+	windowEnd = nextEnd;
+}
+
 async function jumpToMessage(msgUid: string) {
 	const seq = ++jumpSeq;
+	clearIdleRecenterTimer();
 	showMentionHistory = false;
-	suppressStickyScrollUntil = Date.now() + 700;
+	suppressStickyScrollUntil = Date.now() + 900;
 	isStickyAtBottom = false;
-	isPinnedToBottom = false;
 	const targetMsg = messages.find((m) => m.msgUid === msgUid);
 	if (currentUser && targetMsg) {
 		writeLastSeenAt(roomId, currentUser.userKey, targetMsg.createdAt);
@@ -1390,31 +1654,20 @@ async function jumpToMessage(msgUid: string) {
 		alertAutoHideTimer = null;
 	}
 	highlightedMsgUid = "";
-	forcedRenderUid = msgUid;
 	if (highlightClearTimer !== null) {
 		window.clearTimeout(highlightClearTimer);
 		highlightClearTimer = null;
 	}
 	const targetIdx = visibleMessages.findIndex((m) => m.msgUid === msgUid);
-	if (
-		targetIdx >= 0 &&
-		messageContainer &&
-		virtualLayout.offsets.length > targetIdx
-	) {
-		const estTop = Math.max(
-			0,
-			virtualLayout.offsets[targetIdx] - virtualViewportH / 2,
-		);
-		virtualScrollTop = estTop;
-	}
+	ensureTargetIndexInWindow(targetIdx);
 	await tick();
 	if (seq !== jumpSeq) return;
+	measureMountedRows();
 	const container = messageContainer;
 	const el = container?.querySelector<HTMLElement>(
 		`[data-msg-uid="${CSS.escape(msgUid)}"]`,
 	);
 	if (!el || !container) {
-		forcedRenderUid = "";
 		return;
 	}
 
@@ -1427,10 +1680,14 @@ async function jumpToMessage(msgUid: string) {
 	const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
 	const targetTop = Math.max(0, Math.min(maxScroll, rawTargetTop));
 
+	const maxGlide = Math.max(800, container.clientHeight * 1.6);
+	if (Math.abs(targetTop - container.scrollTop) > maxGlide) {
+		const dir = targetTop > container.scrollTop ? -1 : 1;
+		setScrollTopProgrammatically(targetTop + dir * maxGlide);
+	}
+
 	const completed = await smoothScrollContainerTo(container, targetTop, seq);
 	if (!completed || seq !== jumpSeq) return;
-	virtualScrollTop = container.scrollTop;
-	forcedRenderUid = "";
 
 	highlightedMsgUid = msgUid;
 	highlightClearTimer = window.setTimeout(() => {
@@ -1442,20 +1699,20 @@ async function jumpToMessage(msgUid: string) {
 
 async function scrollToUnreadDivider() {
 	const seq = ++jumpSeq;
+	clearIdleRecenterTimer();
 	suppressStickyScrollUntil = Date.now() + 900;
 	isStickyAtBottom = false;
-	isPinnedToBottom = false;
 	hasVisitedUnreadDivider = true;
 	unreadBarDismissed = true;
 	if (firstUnreadMsgUid) {
-		forcedRenderUid = firstUnreadMsgUid;
-		const idx = visibleMessages.findIndex((m) => m.msgUid === firstUnreadMsgUid);
-		if (idx >= 0 && virtualLayout.offsets.length > idx) {
-			virtualScrollTop = Math.max(0, virtualLayout.offsets[idx] - 120);
-		}
+		const idx = visibleMessages.findIndex(
+			(m) => m.msgUid === firstUnreadMsgUid,
+		);
+		ensureTargetIndexInWindow(idx);
 	}
 	await tick();
 	if (seq !== jumpSeq) return;
+	measureMountedRows();
 	const container = messageContainer;
 	const dividerEl = container?.querySelector<HTMLElement>(
 		"[data-unread-divider]",
@@ -1469,15 +1726,17 @@ async function scrollToUnreadDivider() {
 			(cRect.top + cRect.height / 2);
 		const maxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
 		const targetTop = Math.max(0, Math.min(maxScroll, rawTargetTop));
+		const maxGlide = Math.max(800, container.clientHeight * 1.6);
+		if (Math.abs(targetTop - container.scrollTop) > maxGlide) {
+			const dir = targetTop > container.scrollTop ? -1 : 1;
+			setScrollTopProgrammatically(targetTop + dir * maxGlide);
+		}
 		await smoothScrollContainerTo(container, targetTop, seq);
 		if (seq !== jumpSeq) return;
-		virtualScrollTop = container.scrollTop;
 	} else if (container) {
 		await smoothScrollContainerTo(container, 0, seq);
 		if (seq !== jumpSeq) return;
-		virtualScrollTop = container.scrollTop;
 	}
-	forcedRenderUid = "";
 	highlightUnreadDivider = true;
 	if (unreadHighlightTimer !== null) {
 		window.clearTimeout(unreadHighlightTimer);
@@ -1490,7 +1749,6 @@ async function scrollToUnreadDivider() {
 function handleJumpToUnread() {
 	suppressStickyScrollUntil = Date.now() + 900;
 	isStickyAtBottom = false;
-	isPinnedToBottom = false;
 	if (hasUnloadedUnread) {
 		onLoadHistory?.(sessionUnreadSince, true);
 		return;
@@ -1505,11 +1763,24 @@ function dismissUnreadBar() {
 
 function triggerAutoLoadOlderHistory(manualClick = false) {
 	if (!hasMoreHistory || isLoadingHistory || !messageContainer) return;
+	clearIdleRecenterTimer();
 	isStickyAtBottom = false;
-	isPinnedToBottom = false;
-	const firstUid = messages[0]?.msgUid || "";
+	measureMountedRows();
+	let anchorUid = visibleMessages[0]?.msgUid || messages[0]?.msgUid || "";
+	let anchorOffsetInViewport: number | null = null;
+	const cRect = messageContainer.getBoundingClientRect();
+	const rowEls = messageContainer.querySelectorAll<HTMLElement>("[data-vrow-uid]");
+	for (const el of rowEls) {
+		const rect = el.getBoundingClientRect();
+		if (rect.bottom > cRect.top) {
+			anchorUid = el.dataset.vrowUid || anchorUid;
+			anchorOffsetInViewport = rect.top - cRect.top;
+			break;
+		}
+	}
 	historyScrollAnchor = {
-		firstMsgUid: firstUid,
+		anchorUid,
+		anchorOffsetInViewport,
 		prevScrollHeight: messageContainer.scrollHeight,
 		prevScrollTop: messageContainer.scrollTop,
 		manualClick,
@@ -1555,14 +1826,35 @@ onMount(() => {
 	};
 	window.addEventListener("chat-music-notices-change", handleMusicNoticesSync);
 	setChatLightboxSourceProvider(collectChatImageSources);
-	if (messageContainer && messageContainer.clientHeight > 0) {
-		virtualViewportH = messageContainer.clientHeight;
+	if (messageContainer && messageContainer.clientWidth > 0) {
+		lastMeasuredWidth = Math.round(messageContainer.clientWidth);
 	}
 
 	void scrollToBottom();
 
 	const followBottomAfterLayout = () => {
-		if (followsLayoutAtBottom) snapScrollToBottom();
+		const curWidth = messageContainer
+			? Math.round(messageContainer.clientWidth)
+			: 0;
+		if (
+			curWidth > 0 &&
+			lastMeasuredWidth > 0 &&
+			Math.abs(curWidth - lastMeasuredWidth) > 8
+		) {
+			measuredMsgHeights.clear();
+			measureMountedRows();
+		}
+		if (curWidth > 0) {
+			lastMeasuredWidth = curWidth;
+		}
+		if (
+			followsLayoutAtBottom &&
+			!isUserTouching &&
+			!isSmoothScrolling &&
+			!isShiftingWindow
+		) {
+			snapScrollToBottom();
+		}
 	};
 
 	const resizeObserver =
@@ -1579,10 +1871,72 @@ onMount(() => {
 	const handleMediaLoad = (e: Event) => {
 		const target = e.target as HTMLElement | null;
 		if (target && (target.tagName === "IMG" || target.tagName === "VIDEO")) {
+			const row = target.closest<HTMLElement>("[data-vrow-uid]");
+			if (row?.dataset.vrowUid) {
+				const h = row.getBoundingClientRect().height;
+				if (h > 0) recordRowHeight(row.dataset.vrowUid, h);
+			}
 			followBottomAfterLayout();
 		}
 	};
 	messageContainer?.addEventListener("load", handleMediaLoad, true);
+
+	const handleContainerPointerDown = () => {
+		cancelProgrammaticScroll();
+	};
+
+	const handleContainerWheel = (e: WheelEvent) => {
+		cancelProgrammaticScroll();
+		if (e.deltaY < 0) {
+			detachFromBottom();
+		}
+	};
+
+	const handleContainerTouchStart = (e: TouchEvent) => {
+		cancelProgrammaticScroll();
+		if (e.touches.length === 1) {
+			isUserTouching = true;
+			touchDraggedUp = false;
+			touchMinY = e.touches[0].clientY;
+		}
+	};
+
+	const handleContainerTouchMove = (e: TouchEvent) => {
+		if (!isUserTouching || e.touches.length !== 1) return;
+		const curY = e.touches[0].clientY;
+		if (curY < touchMinY) {
+			touchMinY = curY;
+		}
+		if (curY - touchMinY > 6) {
+			touchDraggedUp = true;
+			detachFromBottom();
+		}
+	};
+
+	const handleContainerTouchEnd = () => {
+		isUserTouching = false;
+		touchDraggedUp = false;
+		checkVirtualWindowEdges(true);
+	};
+
+	messageContainer?.addEventListener("pointerdown", handleContainerPointerDown, {
+		passive: true,
+	});
+	messageContainer?.addEventListener("wheel", handleContainerWheel, {
+		passive: true,
+	});
+	messageContainer?.addEventListener("touchstart", handleContainerTouchStart, {
+		passive: true,
+	});
+	messageContainer?.addEventListener("touchmove", handleContainerTouchMove, {
+		passive: true,
+	});
+	messageContainer?.addEventListener("touchend", handleContainerTouchEnd, {
+		passive: true,
+	});
+	messageContainer?.addEventListener("touchcancel", handleContainerTouchEnd, {
+		passive: true,
+	});
 
 	const handlePointerDown = (e: PointerEvent) => {
 		const target = e.target as HTMLElement | null;
@@ -1623,20 +1977,28 @@ onMount(() => {
 		window.removeEventListener("drop", preventWindowDrag);
 		resizeObserver?.disconnect();
 		messageContainer?.removeEventListener("load", handleMediaLoad, true);
+		messageContainer?.removeEventListener(
+			"pointerdown",
+			handleContainerPointerDown,
+		);
+		messageContainer?.removeEventListener("wheel", handleContainerWheel);
+		messageContainer?.removeEventListener(
+			"touchstart",
+			handleContainerTouchStart,
+		);
+		messageContainer?.removeEventListener("touchmove", handleContainerTouchMove);
+		messageContainer?.removeEventListener("touchend", handleContainerTouchEnd);
+		messageContainer?.removeEventListener(
+			"touchcancel",
+			handleContainerTouchEnd,
+		);
 		document.removeEventListener("pointerdown", handlePointerDown);
 		document.removeEventListener("keydown", handleDocKeydown);
+		clearIdleRecenterTimer();
 		if (alertAutoHideTimer !== null) window.clearTimeout(alertAutoHideTimer);
 		if (highlightClearTimer !== null) window.clearTimeout(highlightClearTimer);
 		if (unreadHighlightTimer !== null)
 			window.clearTimeout(unreadHighlightTimer);
-		if (scrollRafId !== null) {
-			window.cancelAnimationFrame(scrollRafId);
-			scrollRafId = null;
-		}
-		if (heightFlushRafId !== null) {
-			window.cancelAnimationFrame(heightFlushRafId);
-			heightFlushRafId = null;
-		}
 		setChatLightboxSourceProvider(null);
 	};
 });
@@ -1644,7 +2006,8 @@ onMount(() => {
 $effect(() => {
 	const currentRoomId = roomId;
 	const msgs = messages;
-	const visLen = visibleMessages.length;
+	const visMsgs = visibleMessages;
+	const visLen = visMsgs.length;
 	const userKey = currentUser?.userKey || "";
 	const initSeq = roomInitSeq;
 	const ready = roomReady;
@@ -1652,10 +2015,20 @@ $effect(() => {
 	if (initializedRoom !== currentRoomId) {
 		initializedRoom = currentRoomId;
 		hydratedRoomKey = "";
+		hasInitialBottomScrolledForRoom = false;
 		lastWrittenSeenMsgKey = "";
 		seenMessageUids = new Set();
 		measuredMsgHeights.clear();
-		virtualScrollTop = 0;
+		clearIdleRecenterTimer();
+		virtualEnabled = false;
+		windowStart = 0;
+		windowEnd = visLen;
+		prevVisibleCount = visLen;
+		historyScrollAnchor = null;
+		prevObservedScrollTop = 0;
+		lastScrollHeight = 0;
+		lastClientHeight = 0;
+		isStickyAtBottom = true;
 		unreadMentionUids = [];
 		alertBannerUid = null;
 		replyingTo = null;
@@ -1666,7 +2039,6 @@ $effect(() => {
 		showScrollBottomBtn = false;
 		newMessagesWhileScrolled = 0;
 		maxKnownCreatedAt = 0;
-		lastRenderedVisibleLen = visLen;
 		if (!targetMessageUid) {
 			void scrollToBottom();
 		}
@@ -1679,6 +2051,8 @@ $effect(() => {
 	const roomHydrationTag = `${currentRoomId}:${userKey}:${initSeq}`;
 	if (msgs.length > 0 && hydratedRoomKey !== roomHydrationTag) {
 		hydratedRoomKey = roomHydrationTag;
+		const isFirstHydration = !hasInitialBottomScrolledForRoom;
+		hasInitialBottomScrolledForRoom = true;
 		lastWrittenSeenMsgKey = "";
 		unreadBarDismissed = false;
 		isUnreadDividerInView = false;
@@ -1686,6 +2060,22 @@ $effect(() => {
 		seenMessageUids = new Set(msgs.map((m) => m.msgUid));
 		maxKnownCreatedAt = msgs.reduce((max, m) => Math.max(max, m.createdAt), 0);
 		const latestCreatedAt = maxKnownCreatedAt;
+
+		if (visLen > VIRTUAL_ENABLE_THRESHOLD) {
+			virtualEnabled = true;
+			if (isFirstHydration || isStickyAtBottom) {
+				windowEnd = visLen;
+				windowStart = Math.max(0, visLen - WINDOW_TARGET_COUNT);
+			} else {
+				windowEnd = Math.min(windowEnd, visLen);
+				windowStart = Math.min(windowStart, windowEnd);
+			}
+		} else {
+			virtualEnabled = false;
+			windowStart = 0;
+			windowEnd = visLen;
+		}
+		prevVisibleCount = visLen;
 
 		if (userKey) {
 			const savedLastSeen = readLastSeenAt(currentRoomId, userKey);
@@ -1711,8 +2101,9 @@ $effect(() => {
 			}
 		}
 
-		lastRenderedVisibleLen = visLen;
-		if (!targetMessageUid) {
+		// 仅首次进入房间，或同房间静默重连时用户原本就在底部，才滚动到底部；
+		// 避免手机切后台重连时把正在翻看历史消息的用户突然拉回底部。
+		if (!targetMessageUid && (isFirstHydration || isStickyAtBottom)) {
 			void scrollToBottom();
 		}
 	} else if (hydratedRoomKey === roomHydrationTag) {
@@ -1732,25 +2123,82 @@ $effect(() => {
 		}
 
 		// 1. 向上翻看历史加载出的消息批次：
-		// 彻底杜绝历史消息误弹横幅、误增未读计数！
+		// 使用可见消息锚点精确还原视口位置，同时在消息量超过阈值时无缝维持有界窗口
 		if (olderBatch.length > 0) {
 			if (historyScrollAnchor && messageContainer) {
 				const anchor = historyScrollAnchor;
 				historyScrollAnchor = null;
+				measureMountedRows();
+				const anchorIdx = anchor.anchorUid
+					? visMsgs.findIndex((m) => m.msgUid === anchor.anchorUid)
+					: -1;
+				if (visLen > VIRTUAL_ENABLE_THRESHOLD || virtualEnabled) {
+					virtualEnabled = true;
+					if (anchorIdx >= 0) {
+						const nextStart = Math.max(0, anchorIdx - 40);
+						const nextEnd = Math.min(
+							visLen,
+							Math.max(anchorIdx + 45, nextStart + WINDOW_TARGET_COUNT),
+						);
+						windowStart = nextStart;
+						windowEnd = nextEnd;
+					} else {
+						windowStart = 0;
+						windowEnd = Math.min(visLen, WINDOW_TARGET_COUNT);
+					}
+				} else {
+					windowStart = 0;
+					windowEnd = visLen;
+				}
 				void tick().then(() => {
 					if (!messageContainer) return;
-					const newScrollHeight = messageContainer.scrollHeight;
-					const delta = newScrollHeight - anchor.prevScrollHeight;
-					const targetTop =
-						anchor.manualClick && anchor.prevScrollTop <= 40 && delta > 120
-							? Math.max(0, anchor.prevScrollTop + delta - 120)
-							: anchor.prevScrollTop + delta;
-					messageContainer.scrollTop = targetTop;
-					virtualScrollTop = targetTop;
-					lastScrollHeight = messageContainer.scrollHeight;
-					lastClientHeight = messageContainer.clientHeight;
+					measureMountedRows();
+					const anchorEl = anchor.anchorUid
+						? messageContainer.querySelector<HTMLElement>(
+								`[data-vrow-uid="${CSS.escape(anchor.anchorUid)}"]`,
+							)
+						: null;
+					if (anchorEl && anchor.anchorOffsetInViewport !== null) {
+						const cRect = messageContainer.getBoundingClientRect();
+						const nextOffset = anchorEl.getBoundingClientRect().top - cRect.top;
+						let drift = nextOffset - anchor.anchorOffsetInViewport;
+						if (anchor.manualClick && anchor.prevScrollTop <= 40 && drift > 120) {
+							drift -= 120;
+						}
+						if (Math.abs(drift) > 0.5) {
+							setScrollTopProgrammatically(messageContainer.scrollTop + drift);
+						} else {
+							const maxScroll = Math.max(
+								0,
+								messageContainer.scrollHeight - messageContainer.clientHeight,
+							);
+							prevObservedScrollTop = Math.min(
+								maxScroll,
+								Math.max(0, messageContainer.scrollTop),
+							);
+							lastScrollHeight = messageContainer.scrollHeight;
+							lastClientHeight = messageContainer.clientHeight;
+						}
+					} else {
+						const newScrollHeight = messageContainer.scrollHeight;
+						const delta = newScrollHeight - anchor.prevScrollHeight;
+						const targetTop =
+							anchor.manualClick && anchor.prevScrollTop <= 40 && delta > 120
+								? Math.max(0, anchor.prevScrollTop + delta - 120)
+								: anchor.prevScrollTop + delta;
+						setScrollTopProgrammatically(targetTop);
+					}
 				});
+			} else if (visLen > VIRTUAL_ENABLE_THRESHOLD || virtualEnabled) {
+				virtualEnabled = true;
+				const delta = Math.max(0, visLen - prevVisibleCount);
+				windowStart = Math.min(visLen, windowStart + delta);
+				windowEnd = Math.min(visLen, windowEnd + delta);
+			} else {
+				windowStart = 0;
+				windowEnd = visLen;
 			}
+			prevVisibleCount = visLen;
 		} else if (!isLoadingHistory && historyScrollAnchor) {
 			historyScrollAnchor = null;
 		}
@@ -1777,15 +2225,77 @@ $effect(() => {
 				markCurrentRoomReadIfReady();
 			}
 
-			if (isStickyAtBottom && !targetMessageUid) {
-				void scrollToBottom();
-			} else if (!isStickyAtBottom) {
-				newMessagesWhileScrolled += liveIncoming.length;
-				showScrollBottomBtn = getScrollGap() > 180;
+			if (!virtualEnabled && visLen > VIRTUAL_ENABLE_THRESHOLD) {
+				if (isStickyAtBottom) {
+					measureMountedRows();
+					virtualEnabled = true;
+					windowEnd = visLen;
+					windowStart = Math.max(0, visLen - WINDOW_TARGET_COUNT);
+				} else {
+					const target = computeTargetWindowAroundViewport();
+					if (target) {
+						void shiftWindowWithAnchor(target.start, target.end, true);
+					}
+				}
+			} else if (virtualEnabled) {
+				if (isStickyAtBottom) {
+					windowEnd = visLen;
+					if (windowEnd - windowStart > WINDOW_MAX_COUNT) {
+						measureMountedRows();
+						windowStart = Math.max(0, windowEnd - WINDOW_TARGET_COUNT);
+					}
+				} else if (windowEnd >= prevVisibleCount - 2) {
+					windowEnd = visLen;
+				}
+			} else {
+				windowStart = 0;
+				windowEnd = visLen;
 			}
-		}
+			prevVisibleCount = visLen;
 
-		lastRenderedVisibleLen = visLen;
+			const visibleIncomingCount = showMusicNotices
+				? liveIncoming.length
+				: liveIncoming.filter((m) => !isMusicNoticeMessage(m)).length;
+			if (visibleIncomingCount > 0) {
+				if (isStickyAtBottom && !isUserTouching && !targetMessageUid) {
+					void scrollToBottom();
+				} else {
+					newMessagesWhileScrolled += visibleIncomingCount;
+					showScrollBottomBtn = true;
+				}
+			}
+		} else if (olderBatch.length === 0 && visLen !== prevVisibleCount) {
+			// 处理显示/隐藏点歌通知或删除消息导致的可见条数变化
+			if (virtualEnabled && visLen <= VIRTUAL_DISABLE_THRESHOLD) {
+				virtualEnabled = false;
+				windowStart = 0;
+				windowEnd = visLen;
+			} else if (!virtualEnabled && visLen > VIRTUAL_ENABLE_THRESHOLD) {
+				if (isStickyAtBottom) {
+					measureMountedRows();
+					virtualEnabled = true;
+					windowEnd = visLen;
+					windowStart = Math.max(0, visLen - WINDOW_TARGET_COUNT);
+				} else {
+					const target = computeTargetWindowAroundViewport();
+					if (target) {
+						void shiftWindowWithAnchor(target.start, target.end, true);
+					}
+				}
+			} else if (virtualEnabled) {
+				if (isStickyAtBottom) {
+					windowEnd = visLen;
+					windowStart = Math.max(0, visLen - WINDOW_TARGET_COUNT);
+				} else {
+					windowEnd = Math.min(windowEnd, visLen);
+					windowStart = Math.min(windowStart, windowEnd);
+				}
+			} else {
+				windowStart = 0;
+				windowEnd = visLen;
+			}
+			prevVisibleCount = visLen;
+		}
 	}
 
 	if (replyingTo && !msgs.some((m) => m.msgUid === replyingTo?.msgUid)) {
@@ -1823,7 +2333,15 @@ $effect(() => {
 	const observer = new IntersectionObserver(
 		(entries) => {
 			for (const entry of entries) {
-				if (entry.isIntersecting && hasMoreHistory && !isLoadingHistory) {
+				if (
+					entry.isIntersecting &&
+					renderedWindow.start === 0 &&
+					hasMoreHistory &&
+					!isLoadingHistory &&
+					hasInitialBottomScrolledForRoom &&
+					!followsLayoutAtBottom &&
+					container.scrollTop <= 260
+				) {
 					triggerAutoLoadOlderHistory();
 				}
 			}
@@ -1986,19 +2504,35 @@ $effect(() => {
 	});
 });
 
+function formatCandidateMentionName(candidate: { name: string; userKey?: string; badge?: string; site?: string; siteUrl?: string; url?: string }): string {
+	if (candidate.userKey === "room") return "所有人";
+	const rawName = candidate.name || "";
+	if (isInterconnectRoom) {
+		const isExt = isExternalMatrixIdentity(candidate);
+		if (isExt) {
+			const extOrigin = resolveExternalOrigin(candidate, interconnectSites);
+			if (extOrigin && extOrigin.cleanName && extOrigin.siteName) {
+				return `${extOrigin.cleanName} · ${extOrigin.siteName}`;
+			}
+		} else if (!rawName.includes("·") && !rawName.includes("•")) {
+			return `${rawName} · 冷汐的杂货铺`;
+		}
+	}
+	return rawName;
+}
+
 $effect(() => {
 	if (mentionEvent && mentionEvent.seq !== lastMentionSeq) {
 		lastMentionSeq = mentionEvent.seq;
-		const cleanMentionName =
-			resolveExternalOrigin(
-				{ name: mentionEvent.name, userKey: mentionEvent.userKey },
-				interconnectSites,
-			).cleanName || mentionEvent.name;
+		const targetMentionName = formatCandidateMentionName({
+			name: mentionEvent.name,
+			userKey: mentionEvent.userKey,
+		});
 		if (mentionEvent.userKey) {
-			addSelectedMentionKey(cleanMentionName, mentionEvent.userKey);
+			addSelectedMentionKey(targetMentionName, mentionEvent.userKey);
 		}
 		insertAtCursor(
-			`${inputText && !inputText.endsWith(" ") ? " " : ""}@${cleanMentionName} `,
+			`${inputText && !inputText.endsWith(" ") ? " " : ""}@${targetMentionName} `,
 		);
 	}
 });
@@ -2050,23 +2584,10 @@ function selectMentionCandidate(candidate: ChatMentionCandidate) {
 			? inputText.slice(0, triggerIdx)
 			: inputText.slice(0, caret);
 	const suffix = inputText.slice(caret);
-	const cleanName =
-		candidate.userKey === "room"
-			? "所有人"
-			: resolveExternalOrigin(
-					{
-						name: candidate.name,
-						userKey: candidate.userKey,
-						badge: candidate.badge,
-						site: candidate.site,
-						siteUrl: candidate.siteUrl,
-						url: candidate.url,
-					},
-					interconnectSites,
-				).cleanName || candidate.name;
-	const inserted = `@${cleanName} `;
+	const targetMentionName = formatCandidateMentionName(candidate);
+	const inserted = `@${targetMentionName} `;
 	inputText = `${prefix}${inserted}${suffix}`;
-	addSelectedMentionKey(cleanName, candidate.userKey);
+	addSelectedMentionKey(targetMentionName, candidate.userKey);
 	mentionMenuOpen = false;
 	mentionTriggerStart = -1;
 	mentionQuery = "";
@@ -2169,16 +2690,33 @@ function handleSend() {
 	onSendMessage(trimmed, pendingImages, mentionKeys, replyToUid || undefined);
 	inputText = "";
 	pendingImages = [];
+	isPreviewingMarkdown = false;
 	replyingTo = null;
 	selectedMentionMap = {};
 	uploadError = "";
 	mentionMenuOpen = false;
 	activePopover = "none";
 	unreadBarDismissed = true;
+	isStickyAtBottom = true;
 	void scrollToBottom();
 }
 
+function toggleMarkdownPreview() {
+	isPreviewingMarkdown = !isPreviewingMarkdown;
+	if (!isPreviewingMarkdown) {
+		void tick().then(() => {
+			inputEl?.focus();
+		});
+	}
+}
+
 function handleKeydown(e: KeyboardEvent) {
+	if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+		e.preventDefault();
+		toggleMarkdownPreview();
+		return;
+	}
+
 	if (mentionMenuOpen && filteredMentionCandidates.length > 0) {
 		const count = filteredMentionCandidates.length;
 		// 弹窗用 column-reverse 渲染：数组第 0 项在最下面（贴输入框），所以“向上”= 索引 +1
@@ -2210,6 +2748,11 @@ function handleKeydown(e: KeyboardEvent) {
 	}
 
 	if (e.key === "Escape") {
+		if (isPreviewingMarkdown) {
+			e.preventDefault();
+			isPreviewingMarkdown = false;
+			return;
+		}
 		if (editingMessage) {
 			e.preventDefault();
 			editingMessage = null;
@@ -2299,6 +2842,7 @@ async function processMediaFiles(files: FileList | File[]) {
 			const res = await uploadChatMedia(
 				file,
 				chatServerUrl || "https://chat-server.lengxiqwq.com",
+				walineToken,
 			);
 			pendingImages = [
 				...pendingImages,
@@ -2981,10 +3525,11 @@ function removePendingImage(index: number) {
       bind:this={messageContainer}
       data-chat-message-scroll
       data-chat-pinned-bottom={followsLayoutAtBottom ? "" : undefined}
+      data-chat-virtualized={virtualEnabled ? "" : undefined}
       onscroll={handleMessageScroll}
       class="flex-1 custom-scrollbar min-h-0"
     >
-      <div bind:this={messageContentEl} class="chat-message-content min-h-full flex flex-col gap-3">
+      <div bind:this={messageContentEl} class="chat-message-content min-h-full flex flex-col">
         {#if hasMoreHistory}
           <div class="flex justify-center py-1.5" bind:this={topSentinelEl}>
             {#if isLoadingHistory}
@@ -3022,9 +3567,10 @@ function removePendingImage(index: number) {
             {/if}
           </div>
         {:else}
-          {#if virtualLayout.topSpacerPx > 0}
-            <div style="height: {virtualLayout.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
+          {#if renderedWindow.topSpacerPx > 0}
+            <div style="height: {renderedWindow.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
           {/if}
+          <div bind:this={windowTopMarkerEl} aria-hidden="true"></div>
           {#each renderedMessages as msg (msg.msgUid)}
             {@const isSelf = Boolean(
               currentUser && (
@@ -3054,7 +3600,7 @@ function removePendingImage(index: number) {
             {@const canDelete = Boolean(
               currentUser && msg.kind === "user" && isAdmin && roomId !== "interconnect",
             )}
-            <div use:measureVirtualRow={msg.msgUid}>
+            <div class="chat-message-row" data-vrow-uid={msg.msgUid}>
               {#if firstUnreadMsgUid === msg.msgUid}
                 <div
                   data-unread-divider
@@ -3076,7 +3622,8 @@ function removePendingImage(index: number) {
                 currentUserName={currentUser?.name || ""}
                 currentUserKey={currentUser?.userKey}
                 isAdmin={isAdmin}
-                isPinned={pinnedUids.includes(msg.msgUid)}
+                isPinned={pinnedUidSet.has(msg.msgUid)}
+                isInterconnectRoom={isInterconnectRoom}
                 canRecall={canRecall}
                 canEdit={canEdit}
                 canDelete={canDelete}
@@ -3085,7 +3632,7 @@ function removePendingImage(index: number) {
                 interconnectSites={interconnectSites}
                 userNameMap={userNameMap}
                 userProfileMap={userProfileMap}
-                readReceipts={readReceipts[msg.msgUid] || []}
+                readReceipts={readReceipts[msg.msgUid] ?? EMPTY_READ_RECEIPTS}
                 onRecall={onRecallMessage}
                 onDelete={onDeleteMessage}
                 onReply={msg.kind === "user" ? handleStartReply : undefined}
@@ -3097,14 +3644,13 @@ function removePendingImage(index: number) {
                 onJumpToMessage={handleJumpToReply}
                 onOpenUserProfile={onOpenUserProfile}
                 onMention={onMentionUser}
-                onOpenMobileActions={(m, meta) => {
-                  mobileActionTarget = { message: m, ...meta };
-                }}
+                onOpenMobileActions={handleOpenMobileActions}
               />
             </div>
           {/each}
-          {#if virtualLayout.bottomSpacerPx > 0}
-            <div style="height: {virtualLayout.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
+          <div bind:this={windowBottomMarkerEl} aria-hidden="true"></div>
+          {#if renderedWindow.bottomSpacerPx > 0}
+            <div style="height: {renderedWindow.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
           {/if}
         {/if}
       </div>
@@ -3269,7 +3815,7 @@ function removePendingImage(index: number) {
             {@const isRoomMention = person.userKey === "room"}
             {@const isExt = !isRoomMention && isExternalMatrixIdentity(person)}
             {@const extOrigin = isExt ? resolveExternalOrigin({ name: person.name, userKey: person.userKey, badge: person.badge, site: person.site, siteUrl: person.siteUrl, url: person.url }, interconnectSites) : null}
-            {@const displayPersonName = extOrigin?.cleanName || person.name}
+            {@const displayPersonName = formatCandidateMentionName(person)}
             {@const personBadgeLabel = isRoomMention
               ? "全员"
               : person.isAdmin
@@ -3474,9 +4020,75 @@ function removePendingImage(index: number) {
       {/if}
 
       <!-- 全宽输入区域 -->
+      {#if isPreviewingMarkdown}
+        <div
+          class="chat-input-preview-box custom-scrollbar"
+          tabindex="0"
+          role="region"
+          aria-label="Markdown 实时预览区域"
+          onkeydown={(e) => {
+            if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+              e.preventDefault();
+              toggleMarkdownPreview();
+              return;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              toggleMarkdownPreview();
+              return;
+            }
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              handleSend();
+            }
+          }}
+        >
+          <div class="chat-input-preview-header">
+            <span class="chat-input-preview-badge">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              Markdown 实时预览
+            </span>
+            <div class="flex items-center gap-2">
+              <span class="hidden md:inline text-[0.6875rem] text-[var(--chat-meta-color)]">
+                按 Enter 直接发送 · 按 Esc / Ctrl+P 返回编辑
+              </span>
+              <button
+                type="button"
+                class="chat-input-preview-close"
+                onclick={toggleMarkdownPreview}
+                title="返回编辑"
+              >
+                返回编辑
+              </button>
+            </div>
+          </div>
+          <div class="chat-input-preview-body">
+            {#if inputText.trim().length > 0}
+              <ChatMarkdownContent
+                content={inputText}
+                stickerMap={stickerMap}
+                mentions={mentionMembers.flatMap((m) => [
+                  m.name,
+                  formatCandidateMentionName(m),
+                ])}
+                currentUserName={currentUser?.name}
+                canRoomHighlight={Boolean(currentUser?.isAdmin)}
+                chatServerUrl={chatServerUrl}
+              />
+            {:else}
+              <div class="text-xs text-[var(--chat-meta-color)] italic py-3 select-none">
+                当前暂无文字内容。在输入框编写 Markdown 语法后可在此实时预览效果。
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
       <textarea
         bind:this={inputEl}
-        class="chat-input-box custom-scrollbar"
+        class="chat-input-box custom-scrollbar {isPreviewingMarkdown ? 'hidden' : ''}"
         rows="1"
         placeholder={currentUser
           ? `以 ${currentUser.name} 的身份在 #${roomName} 说点什么...`
@@ -3580,6 +4192,30 @@ function removePendingImage(index: number) {
                 <rect x="13" y="5" width="3" height="13" rx="1" />
                 <rect x="19" y="13" width="3" height="5" rx="1" />
               </svg>
+            </button>
+          </ChatTooltip>
+
+          <!-- Markdown 预览切换按钮 -->
+          <ChatTooltip text={isPreviewingMarkdown ? "切回编辑 (Ctrl+P)" : "预览 Markdown (Ctrl+P)"}>
+            <button
+              type="button"
+              class="chat-tool-btn {isPreviewingMarkdown ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : ''}"
+              aria-label={isPreviewingMarkdown ? "切回文本编辑" : "预览 Markdown"}
+              onclick={toggleMarkdownPreview}
+            >
+              {#if isPreviewingMarkdown}
+                <!-- 铅笔切回编辑图标 -->
+                <svg class="w-5 h-5 md:w-[1.15rem] md:h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                </svg>
+              {:else}
+                <!-- 眼睛预览图标 -->
+                <svg class="w-5 h-5 md:w-[1.15rem] md:h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              {/if}
             </button>
           </ChatTooltip>
         </div>
