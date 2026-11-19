@@ -1491,6 +1491,8 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "chat:message": {
+				// 撤回提示随 chat:recalled 原位替换；兼容旧客户端的广播不应追加到末尾。
+				if (packet.message.recalledMsgUid) break;
 				const isCurrent = packet.roomId === currentRoom;
 				if (isCurrent) {
 					if (!messages.some((m) => m.msgUid === packet.message.msgUid)) {
@@ -1540,9 +1542,10 @@ function connectRoom(roomId: string) {
 			}
 			case "chat:deleted":
 			case "chat:recalled": {
+				const notice = packet.type === "chat:recalled" ? packet.notice : undefined;
 				if (packet.roomId === currentRoom) {
 					messages = messages
-						.filter((m) => m.msgUid !== packet.msgUid)
+						.flatMap((m) => m.msgUid === packet.msgUid ? (notice ? [notice] : []) : [m])
 						.map((m) =>
 							m.replyTo?.msgUid === packet.msgUid
 								? {
@@ -1567,7 +1570,7 @@ function connectRoom(roomId: string) {
 					if (cached) {
 						roomMessageCache.set(
 							packet.roomId,
-							cached.filter((m) => m.msgUid !== packet.msgUid),
+							cached.flatMap((m) => m.msgUid === packet.msgUid ? (notice ? [notice] : []) : [m]),
 						);
 					}
 					const prevUids = roomUnreadUids[packet.roomId];

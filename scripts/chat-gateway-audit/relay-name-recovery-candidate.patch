@@ -1,0 +1,45 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -16,6 +16,7 @@
+ import { MusicManager } from './src/music/music-manager.mjs';
+ import { normalizeMusicTrack, readPlaylistJson } from './src/music/music-input.mjs';
+ import { escapeHtml, inferMimeType, normalizeSiteBadge, stripSiteSuffix, normalizeDotSpacing, createMatrixPersistence, buildMentionedHtml, KNOWN_MATRIX_RELAY_SENDERS, resolveMatrixRelayMeta } from './src/matrix/matrix-utils.mjs';
++import { restoreRelayNames } from './src/matrix/restore-relay-names.mjs';
+ import { createMentionMailer, loadEnvFile } from './src/notify/mention-mailer.mjs';
+ 
+ loadEnvFile('/opt/chat-server/.env');
+@@ -1729,7 +1730,7 @@
+ 
+       extMap.set(stdKey, {
+         userKey: stdKey,
+-        name: stripSiteSuffix(m.name) || m.name,
++        name: m.name,
+         avatar: effectiveAvatar,
+         url: siteUrl || (m.url && !m.url.includes('matrix.to/') ? m.url : '') || `https://matrix.to/#/${encodeURIComponent(baseMatrixId)}`,
+         ...(site ? { site } : {}),
+@@ -1768,7 +1769,7 @@
+ 
+       extMap.set(stdKey, {
+         userKey: stdKey,
+-        name: profile.displayname ? stripSiteSuffix(profile.displayname) : rawKey.split(':')[0].replace('@', ''),
++        name: profile.displayname || rawKey.split(':')[0].replace('@', ''),
+         avatar: profile.avatar_url ? mxcToHttp(profile.avatar_url) : '',
+         url: siteUrl || `https://matrix.to/#/${encodeURIComponent(normalizedUserId)}`,
+         ...(site ? { site } : {}),
+@@ -6884,4 +6885,16 @@
+     }
+   }, 30000);
+   syncMatrix();
++  // Old versions stripped relay suffixes; recover only identities verified against their original event.
++  restoreRelayNames({
++    messages: messagesStore.interconnect,
++    fetchEvent: fetchMatrixRawEvent,
++    save: saveStoreDebounced,
++    broadcast: (message) => broadcastToRoom('interconnect', { type: 'chat:updated', roomId: 'interconnect', message })
++  }).then((count) => {
++    if (count) {
++      console.log(`[Matrix] Restored ${count} relay display names`);
++      schedulePresenceBroadcast('interconnect', 350);
++    }
++  }).catch((err) => console.warn('[Matrix] Relay name recovery failed:', err.message));
+ });

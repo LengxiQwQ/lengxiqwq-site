@@ -4840,8 +4840,8 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	max-width: 100%;
 	padding: 0.3rem 0.62rem;
 	border-radius: 0.7rem;
-	border: 1px solid color-mix(in oklch, var(--primary) 26%, var(--chat-divider-color));
-	background: color-mix(in oklch, var(--primary) 8%, var(--card-bg));
+	border: 1px solid color-mix(in oklab, var(--skin-accent) 26%, var(--chat-divider-color));
+	background: color-mix(in oklab, var(--skin-accent) 8%, var(--skin-surface));
 	color: var(--deep-text);
 	font-size: 0.72rem;
 	line-height: 1.25;
@@ -4853,8 +4853,8 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 }
 
 .chat-thread-summary-pill:hover {
-	background: color-mix(in oklch, var(--primary) 15%, var(--card-bg));
-	border-color: color-mix(in oklch, var(--primary) 45%, var(--chat-divider-color));
+	background: color-mix(in oklab, var(--skin-accent) 15%, var(--skin-surface));
+	border-color: color-mix(in oklab, var(--skin-accent) 45%, var(--chat-divider-color));
 }
 
 .chat-thread-summary-preview {
@@ -4883,14 +4883,14 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 }
 
 html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-thread-summary-pill {
-	background: color-mix(in oklch, var(--primary) 12%, rgba(255, 255, 255, 0.04));
-	border-color: color-mix(in oklch, var(--primary) 30%, rgba(255, 255, 255, 0.1));
+	background: color-mix(in oklab, var(--skin-accent) 12%, rgba(255, 255, 255, 0.04));
+	border-color: color-mix(in oklab, var(--skin-accent) 30%, rgba(255, 255, 255, 0.1));
 	color: rgba(255, 255, 255, 0.9);
 }
 
 html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-thread-summary-pill:hover {
-	background: color-mix(in oklch, var(--primary) 20%, rgba(255, 255, 255, 0.06));
-	border-color: color-mix(in oklch, var(--primary) 50%, rgba(255, 255, 255, 0.16));
+	background: color-mix(in oklab, var(--skin-accent) 20%, rgba(255, 255, 255, 0.06));
+	border-color: color-mix(in oklab, var(--skin-accent) 50%, rgba(255, 255, 255, 0.16));
 }
 
 /* ─── 查看消息源代码（原始 JSON 弹窗）──────────────────────── */

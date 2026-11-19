@@ -1,0 +1,85 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -4467,7 +4467,8 @@
+           : `${ws.user.name} 撤回了 ${targetMsg.name || '成员'} 的一条消息`;
+ 
+         const noticeMsg = {
+-          id: Date.now(),
++          id: targetMsg.id,
++          recalledMsgUid: targetMsg.msgUid,
+           msgUid: `sys_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+           kind: 'system',
+           userKey: ws.user.userKey,
+@@ -4481,17 +4482,19 @@
+           attachments: [],
+           mentions: isSelf ? [] : [targetMsg.name || '成员'],
+           mentionKeys: isSelf ? [] : [targetMsg.userKey || ''],
+-          createdAt: Date.now()
++          createdAt: targetMsg.createdAt,
++          threadRootUid: targetMsg.threadRootUid || undefined
+         };
+ 
+-        roomMsgs.push(noticeMsg);
++        roomMsgs.splice(targetIdx, 0, noticeMsg);
+         saveStoreDebounced();
+ 
+         // 3. Broadcast recall (removes message bubble on clients)
+         broadcastToRoom(ws.currentRoom, {
+           type: 'chat:recalled',
+           roomId: ws.currentRoom,
+-          msgUid: packet.msgUid
++          msgUid: packet.msgUid,
++          notice: noticeMsg
+         });
+         remapStaleWatermarksForMessage(ws.currentRoom, packet.msgUid, targetMsg.createdAt || Infinity);
+ 
+@@ -6683,7 +6686,8 @@
+                 ? `${targetMsg.name || senderName} 撤回了一条消息`
+                 : `${senderName} 撤回了 ${targetMsg.name || '成员'} 的一条消息`;
+               const noticeMsg = {
+-                id: ev.origin_server_ts || Date.now(),
++                id: targetMsg.id,
++                recalledMsgUid: targetMsg.msgUid,
+                 msgUid: `sys_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                 kind: 'system',
+                 userKey: `matrix:${ev.sender}`,
+@@ -6697,14 +6701,16 @@
+                 attachments: [],
+                 mentions: isSelf ? [] : [targetMsg.name || '成员'],
+                 mentionKeys: isSelf ? [] : [targetMsg.userKey || ''],
+-                createdAt: ev.origin_server_ts || Date.now()
++                createdAt: targetMsg.createdAt,
++                threadRootUid: targetMsg.threadRootUid || undefined
+               };
+-              interconnectMsgs.push(noticeMsg);
++              interconnectMsgs.splice(targetIdx, 0, noticeMsg);
+               saveStoreDebounced();
+               broadcastToRoom('interconnect', {
+                 type: 'chat:recalled',
+                 roomId: 'interconnect',
+-                msgUid: targetMsg.msgUid
++                msgUid: targetMsg.msgUid,
++                notice: noticeMsg
+               });
+               broadcastToRoom('interconnect', {
+                 type: 'chat:message',
+--- a/src/matrix/matrix-utils.mjs
++++ b/src/matrix/matrix-utils.mjs
+@@ -43,7 +43,7 @@
+     siteKey: 'aiovtue',
+     siteName: 'Aiovtue',
+     badge: 'Aiovtue',
+-    siteUrl: 'https://chat.yybb.us/'
++    siteUrl: 'https://daily.yybb.us/chat/'
+   }
+ };
+ 
+@@ -102,7 +102,7 @@
+       siteKey: base.siteKey,
+       siteName: payloadSiteName || base.siteName,
+       badge: payloadBadge || base.badge,
+-      siteUrl: payloadSiteUrl || base.siteUrl,
++      siteUrl: !payloadSiteUrl || /^https?:\/\/chat\.yybb\.us(?:[\/:?#]|$)/i.test(payloadSiteUrl) ? base.siteUrl : payloadSiteUrl,
+       relayUserId
+     };
+   }

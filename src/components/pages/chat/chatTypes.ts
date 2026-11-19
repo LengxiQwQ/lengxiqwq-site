@@ -300,6 +300,7 @@ export interface ChatMessageRecord {
 	source?: "matrix";
 	id: number;
 	msgUid: string;
+	recalledMsgUid?: string;
 	matrixEventId?: string;
 	kind: "user" | "system" | "poll";
 	msgType?: "text" | "emote" | "notice";

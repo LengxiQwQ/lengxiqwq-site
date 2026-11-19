@@ -870,7 +870,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             {/if}
             <div class="min-w-0">
               <div class="font-bold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
-                {matchedSite?.name || origin.siteName}
+                {origin.siteName}
               </div>
               <div class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
                 {matchedSite?.desc || `来自 ${origin.siteName} 互联聊天节点`}

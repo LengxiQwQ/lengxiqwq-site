@@ -1,0 +1,25 @@
+import assert from 'node:assert/strict';
+import { recoverRelayName, restoreRelayNames } from './restore-relay-names.mjs';
+
+const makeMessage = (overrides = {}) => ({ kind: 'user', userKey: 'matrix:@aiprate:matrix.rainzt.cn#relay:aiovtue:1', msgUid: '$one', name: '小雪', ...overrides });
+const event = (id = '小雪·雪的聊天室') => ({ sender: '@aiprate:matrix.rainzt.cn', content: { body: `[ID:${id}];[URL:]\n你好` } });
+assert.equal(recoverRelayName(makeMessage(), event()), '小雪 · 雪的聊天室');
+assert.equal(recoverRelayName(makeMessage(), event('别人·雪的聊天室')), '');
+assert.equal(recoverRelayName(makeMessage(), event('小雪')), '');
+assert.equal(recoverRelayName(makeMessage({ name: '小雪 · 原有站点' }), event()), '');
+assert.equal(recoverRelayName(makeMessage(), { ...event(), sender: '@other:example.org' }), '');
+const message = makeMessage();
+const reply = makeMessage({ msgUid: '$reply', name: '别的名字', replyTo: { msgUid: '$one', name: '小雪' } });
+const messages = [message, reply];
+const updates = [];
+let saves = 0;
+assert.equal(await restoreRelayNames({ messages, fetchEvent: async () => ({ ok: true, event: event() }), save: () => saves++, broadcast: (m) => updates.push(m.msgUid) }), 1);
+assert.equal(message.name, '小雪 · 雪的聊天室');
+assert.equal(reply.replyTo.name, message.name);
+assert.deepEqual(updates, ['$one', '$reply']);
+assert.equal(saves, 1);
+const deleted = makeMessage();
+const live = [deleted];
+await restoreRelayNames({ messages: live, fetchEvent: async () => { live.pop(); return { ok: true, event: event() }; }, save: () => assert.fail(), broadcast: () => assert.fail() });
+assert.equal(deleted.name, '小雪');
+console.log('relay name recovery tests passed');

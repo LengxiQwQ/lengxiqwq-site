@@ -103,7 +103,7 @@ export type ServerPacket =
 			jumpTarget?: boolean;
 	  }
 	| { type: "chat:deleted"; roomId: string; msgUid: string; recalled?: boolean }
-	| { type: "chat:recalled"; roomId: string; msgUid: string }
+	| { type: "chat:recalled"; roomId: string; msgUid: string; notice?: ChatMessageRecord }
 	| {
 			type: "chat:reaction_updated";
 			roomId: string;

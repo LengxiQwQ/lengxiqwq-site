@@ -177,7 +177,9 @@ const threadReplies = $derived.by<ChatMessageRecord[]>(() => {
 	};
 
 	const merged = new Map<string, ChatMessageRecord>();
+	const recalledIds = new Set(roomMessages.map((m) => m.recalledMsgUid).filter(Boolean));
 	for (const m of fetchedReplies) {
+		if (recalledIds.has(m.msgUid)) continue;
 		const liveVersion = roomById.get(m.msgUid);
 		if (liveVersion) {
 			merged.set(m.msgUid, liveVersion);
