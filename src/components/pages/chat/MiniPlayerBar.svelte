@@ -100,11 +100,11 @@ const skipTooltipText = $derived.by(() => {
       {/if}
     </div>
 
-    <div class="min-w-0 flex-1">
-      <div class="{variant === 'mobile' ? 'text-[13.5px]' : 'text-xs'} font-bold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors truncate leading-snug">
+    <div class="min-w-0 flex-1 select-text">
+      <div class="{variant === 'mobile' ? 'text-[13.5px]' : 'text-xs'} font-bold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors truncate leading-snug select-text cursor-text">
         {currentPlay.track.title}
       </div>
-      <div class="{variant === 'mobile' ? 'text-[11.5px]' : 'text-[10px]'} text-[var(--chat-meta-color)] truncate tabular-nums leading-tight mt-0.5">
+      <div class="{variant === 'mobile' ? 'text-[11.5px]' : 'text-[10px]'} text-[var(--chat-meta-color)] truncate tabular-nums leading-tight mt-0.5 select-text cursor-text">
         {audioStatus !== "playing" && audioStatus !== "idle" ? audioStatusLabel[audioStatus] : currentPlay.track.artist} · {formatClockSeconds(elapsedSec)}{durationSec > 0 ? ` / ${formatClockSeconds(durationSec)}` : ""}
       </div>
     </div>

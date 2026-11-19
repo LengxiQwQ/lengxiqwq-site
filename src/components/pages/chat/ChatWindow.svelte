@@ -4437,6 +4437,7 @@ function removePendingImage(index: number) {
                 isMentionedMe={isMentionedToMe(msg)}
                 isHighlighted={highlightedMsgUid === msg.msgUid}
                 currentUserName={currentUser?.name || ""}
+                currentUserSite={currentUser?.site || localSiteName}
                 currentUserKey={currentUser?.userKey}
                 isAdmin={isAdmin}
                 isPinned={pinnedUidSet.has(msg.msgUid)}
@@ -4907,6 +4908,7 @@ function removePendingImage(index: number) {
                   formatCandidateMentionName(m),
                 ])}
                 currentUserName={currentUser?.name}
+                currentUserSite={currentUser?.site || localSiteName}
                 canRoomHighlight={Boolean(currentUser?.isAdmin)}
                 chatServerUrl={chatServerUrl}
               />
@@ -5378,6 +5380,7 @@ function removePendingImage(index: number) {
     initialRootMessage={activeThreadInitialRoot}
     roomMessages={messages}
     currentUser={currentUser}
+    currentUserSite={currentUser?.site || localSiteName}
     isInterconnectRoom={isInterconnectRoom}
     chatServerUrl={chatServerUrl}
     interconnectSites={interconnectSites}

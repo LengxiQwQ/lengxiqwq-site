@@ -1749,6 +1749,16 @@ function updateMediaSessionMetadata() {
 			: [],
 	});
 	navigator.mediaSession.playbackState = audioStatus === "playing" ? "playing" : "paused";
+	registerMediaSessionHandlers();
+}
+
+function handleMediaSessionNextTrack() {
+	if (!currentPlay || isSkippingTrack) return;
+	if (canDirectSkip) {
+		onSkipTrack();
+	} else {
+		onVoteSkip();
+	}
 }
 
 function registerMediaSessionHandlers() {
@@ -1765,7 +1775,7 @@ function registerMediaSessionHandlers() {
 		["seekforward", null],
 		["seekto", null],
 		["previoustrack", null],
-		["nexttrack", null],
+		["nexttrack", handleMediaSessionNextTrack],
 	];
 	for (const [action, handler] of actions) {
 		try {
@@ -2072,6 +2082,7 @@ function handleToggleQueueTrack(song: ChatMusicTrack) {
 }
 
 onMount(() => {
+	registerMediaSessionHandlers();
 	const compactQuery = window.matchMedia(
 		"(max-width: 1023px), (pointer: coarse) and (max-width: 1279px)",
 	);
@@ -2501,10 +2512,10 @@ $effect(() => {
             {/if}
           </div>
 
-          <div class="flex-1 min-w-0 h-20 flex flex-col justify-between py-0.5">
+          <div class="flex-1 min-w-0 h-20 flex flex-col justify-between py-0.5 select-text">
             <!-- 第一排：歌曲名称 -->
             <h3
-              class="font-bold text-sm sm:text-base text-[var(--deep-text)] leading-snug truncate m-0"
+              class="font-bold text-sm sm:text-base text-[var(--deep-text)] leading-snug truncate m-0 select-text cursor-text"
               title={currentPlay ? currentPlay.track.title : undefined}
             >
               {currentPlay ? currentPlay.track.title : "未在播放"}
@@ -2513,14 +2524,14 @@ $effect(() => {
             <!-- 第二排：歌曲作者与专辑 -->
             {#if currentPlay}
               <div
-                class="text-xs font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal"
+                class="text-xs font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal select-text cursor-text"
                 title={getTrackArtistAndAlbum(currentPlay.track)}
               >
                 {getTrackArtistAndAlbum(currentPlay.track)}
               </div>
             {:else}
               <div
-                class="text-xs font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal"
+                class="text-xs font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal select-text cursor-text"
               >
                 {!musicState ? "正在连接电台..." : "暂无点播歌曲"}
               </div>
@@ -2788,7 +2799,7 @@ $effect(() => {
             {:else}
               <div
                 bind:this={lyricsContainer}
-                class="chat-lyrics-scroll relative flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scroll-autohide {lyricsScrolling ? 'is-scrolling' : ''} flex flex-col items-center gap-1 py-12 px-1 text-center"
+                class="chat-lyrics-scroll relative flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scroll-autohide {lyricsScrolling ? 'is-scrolling' : ''} flex flex-col items-center gap-1 py-12 px-1 text-center select-text"
                 role="listbox"
                 aria-label="歌词"
                 onwheel={() => {
@@ -2818,7 +2829,7 @@ $effect(() => {
                       data-lyric-idx={idx}
                       role="option"
                       aria-selected={isCurrentLine}
-                      class="w-full py-1 transition-all duration-300 leading-snug
+                      class="w-full py-1 transition-all duration-300 leading-snug select-text cursor-text
                         {isCurrentLine ? 'text-[var(--chat-accent-text)] font-bold text-base' : 'text-sm text-[var(--chat-meta-color)]'}"
                     >
                       {line.text}

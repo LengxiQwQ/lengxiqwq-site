@@ -33,6 +33,7 @@ if (!cursorConfig?.enable) {
 		textarea,
 		[contenteditable="true"],
 		.cursor-text,
+		.select-text,
 		[data-cursor="text"],
 		[style*="cursor: text"],
 		[style*="cursor:text"] {
@@ -83,7 +84,17 @@ if (!cursorConfig?.enable) {
 		#twikoo .tk-content li,
 		#twikoo .tk-content blockquote,
 		#twikoo .tk-content code,
-		#twikoo .tk-content pre {
+		#twikoo .tk-content pre,
+		.chat-bubble,
+		.chat-md-body,
+		.chat-bubble p,
+		.chat-md-body p,
+		.chat-md-body li,
+		.chat-md-body blockquote,
+		.chat-md-body code,
+		.chat-md-body pre,
+		.chat-lyrics-scroll,
+		.chat-lyrics-scroll [data-lyric-idx] {
 			cursor: url('/assets/cursors/text.png') 3 7, text;
 		}
 
@@ -260,6 +271,7 @@ if (!cursorConfig?.enable) {
 				textarea,
 				[contenteditable="true"],
 				.cursor-text,
+				.select-text,
 				[data-cursor="text"],
 				[style*="cursor: text"],
 				[style*="cursor:text"] {
@@ -310,7 +322,17 @@ if (!cursorConfig?.enable) {
 				#twikoo .tk-content li,
 				#twikoo .tk-content blockquote,
 				#twikoo .tk-content code,
-				#twikoo .tk-content pre {
+				#twikoo .tk-content pre,
+				.chat-bubble,
+				.chat-md-body,
+				.chat-bubble p,
+				.chat-md-body p,
+				.chat-md-body li,
+				.chat-md-body blockquote,
+				.chat-md-body code,
+				.chat-md-body pre,
+				.chat-lyrics-scroll,
+				.chat-lyrics-scroll [data-lyric-idx] {
 					${cur("text", "text", false)}
 				}
 

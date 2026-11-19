@@ -516,6 +516,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	max-width: 100% !important;
 	line-height: 1.58 !important;
 	word-break: break-word;
+	cursor: text;
 }
 
 .chat-bubble .chat-md-body,

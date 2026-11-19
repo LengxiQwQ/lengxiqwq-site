@@ -20,6 +20,7 @@ interface Props {
 	stickerMap: Map<string, StickerItem>;
 	mentions?: string[];
 	currentUserName?: string;
+	currentUserSite?: string;
 	canRoomHighlight?: boolean;
 	chatServerUrl?: string;
 	onMentionClick?: (target: string) => void;
@@ -30,6 +31,7 @@ const {
 	stickerMap,
 	mentions = [],
 	currentUserName = "",
+	currentUserSite = "",
 	canRoomHighlight = false,
 	chatServerUrl,
 	onMentionClick,
@@ -48,11 +50,32 @@ function isSelfMentionTarget(target: string): boolean {
 		return true;
 	}
 	if (!currentUserName) return false;
-	const myClean = currentUserName.trim().toLowerCase();
-	if (cleaned === myClean) return true;
-	const targetBase = cleaned.split(/\s*[·•・]\s*/)[0] || cleaned;
-	const myBase = myClean.split(/\s*[·•・]\s*/)[0] || myClean;
-	return targetBase === myBase || cleaned.startsWith(myBase);
+
+	const myNameClean = currentUserName.trim().toLowerCase();
+	const myParts = myNameClean.split(/\s*[·•・]\s*/);
+	const myBase = myParts[0]?.trim() || myNameClean;
+	const mySiteClean = (currentUserSite || myParts.slice(1).join(" · ") || "").trim().toLowerCase();
+
+	const targetParts = cleaned.split(/\s*[·•・]\s*/);
+	const targetBase = targetParts[0]?.trim() || "";
+	const targetSite = targetParts.slice(1).join(" · ").trim();
+
+	// 1. 基础名字必须严格相等
+	if (targetBase !== myBase) {
+		return false;
+	}
+
+	// 2. 如果提及的目标明确指定了站点后缀（例如 "AIOVTUE-雪"）
+	if (targetSite) {
+		if (mySiteClean) {
+			return targetSite === mySiteClean;
+		}
+		// 若自身没有站点信息，但目标明确带了外部站点名，不判定为自己
+		return false;
+	}
+
+	// 3. 如果提及目标没有指定站点名，纯纯的 @昵称，则匹配自己
+	return true;
 }
 
 function getInlineChildren(token: Token): Token[] | undefined {

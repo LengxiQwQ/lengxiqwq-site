@@ -20,6 +20,7 @@ interface Props {
 	initialRootMessage?: ChatMessageRecord | null;
 	roomMessages: ChatMessageRecord[];
 	currentUser: ChatSessionUser | null;
+	currentUserSite?: string;
 	isInterconnectRoom?: boolean;
 	chatServerUrl?: string;
 	interconnectSites?: InterconnectSite[];
@@ -54,6 +55,7 @@ const {
 	initialRootMessage = null,
 	roomMessages,
 	currentUser,
+	currentUserSite = "",
 	isInterconnectRoom = false,
 	chatServerUrl = "",
 	interconnectSites = [],
@@ -295,6 +297,7 @@ const threadSubtitle = $derived.by(() => {
             isSelf={rootIsSelf}
             isMentionedMe={isMentionedForUser(liveRootMessage, currentUser)}
             currentUserName={currentUser?.name || ""}
+            currentUserSite={currentUserSite}
             currentUserKey={currentUser?.userKey || ""}
             isAdmin={isAdmin}
             isInterconnectRoom={isInterconnectRoom}
@@ -377,6 +380,7 @@ const threadSubtitle = $derived.by(() => {
             isSelf={replyIsSelf}
             isMentionedMe={isMentionedForUser(reply, currentUser)}
             currentUserName={currentUser?.name || ""}
+            currentUserSite={currentUserSite}
             currentUserKey={currentUser?.userKey || ""}
             isAdmin={isAdmin}
             isInterconnectRoom={isInterconnectRoom}

@@ -40,6 +40,7 @@ interface Props {
 	isMentionedMe?: boolean;
 	isHighlighted?: boolean;
 	currentUserName?: string;
+	currentUserSite?: string;
 	currentUserKey?: string;
 	isAdmin?: boolean;
 	isPinned?: boolean;
@@ -89,6 +90,7 @@ const {
 	isMentionedMe = false,
 	isHighlighted = false,
 	currentUserName = "",
+	currentUserSite = "",
 	currentUserKey = "",
 	isAdmin = false,
 	isPinned = false,
@@ -1560,6 +1562,7 @@ function handleBubbleClick(e: MouseEvent) {
                   stickerMap={stickerMap}
                   mentions={message.mentions}
                   currentUserName={currentUserName}
+                  currentUserSite={currentUserSite}
                   canRoomHighlight={canRoomHighlight}
                   chatServerUrl={chatServerUrl}
                   onMentionClick={handleMentionPillClick}
@@ -1692,6 +1695,7 @@ function handleBubbleClick(e: MouseEvent) {
                   stickerMap={stickerMap}
                   mentions={message.mentions}
                   currentUserName={currentUserName}
+                  currentUserSite={currentUserSite}
                   canRoomHighlight={canRoomHighlight}
                   chatServerUrl={chatServerUrl}
                   onMentionClick={handleMentionPillClick}
