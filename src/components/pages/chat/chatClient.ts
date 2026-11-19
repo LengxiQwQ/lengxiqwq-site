@@ -1,8 +1,10 @@
 import type { InterconnectSite } from "@/types/chatConfig";
 import type {
+	ChatActiveThreadItem,
 	ChatCustomBadge,
 	ChatMentionCandidate,
 	ChatMessageRecord,
+	ChatMessageSourceResponse,
 	ChatOnlineMember,
 	ChatReadReceipt,
 	ChatSessionUser,
@@ -29,6 +31,7 @@ export interface RoomInitPacket {
 	self: ChatSessionUser | null;
 	mergedGuestHistory?: boolean;
 	messages: ChatMessageRecord[];
+	activeThreads?: ChatActiveThreadItem[];
 	oldestHistoryId?: number;
 	hasMoreHistory?: boolean;
 	lastReadAt?: number;
@@ -1482,5 +1485,83 @@ export function resolveExternalOrigin(
 		site: matchedSite,
 		host,
 	};
+}
+
+export async function fetchMessageSource(
+	serverUrl: string,
+	roomId: string,
+	msgUid: string,
+): Promise<ChatMessageSourceResponse> {
+	const base = normalizeServerUrl(serverUrl);
+	if (!base) {
+		throw new Error("未配置聊天室服务端地址");
+	}
+	const params = new URLSearchParams({
+		room: roomId || "interconnect",
+		msgUid,
+	});
+	const res = await fetch(`${base}/api/message/source?${params.toString()}`, {
+		method: "GET",
+		cache: "no-store",
+	});
+	const data = (await res.json().catch(() => null)) as ChatMessageSourceResponse | null;
+	if (!res.ok || !data?.ok) {
+		throw new Error(data?.error || `获取消息源码失败 (${res.status})`);
+	}
+	return data;
+}
+
+export interface ChatThreadDetailResponse {
+	ok: boolean;
+	room: string;
+	rootUid: string;
+	rootMessage: ChatMessageRecord | null;
+	replies: ChatMessageRecord[];
+	error?: string;
+}
+
+export async function fetchThreadMessages(
+	serverUrl: string,
+	roomId: string,
+	rootUid: string,
+): Promise<ChatThreadDetailResponse> {
+	const base = normalizeServerUrl(serverUrl);
+	if (!base) {
+		throw new Error("未配置聊天室服务端地址");
+	}
+	const params = new URLSearchParams({
+		room: roomId || "interconnect",
+		rootUid,
+	});
+	const res = await fetch(`${base}/api/chat/thread?${params.toString()}`, {
+		method: "GET",
+		cache: "no-store",
+	});
+	const data = (await res.json().catch(() => null)) as ChatThreadDetailResponse | null;
+	if (!res.ok || !data?.ok) {
+		throw new Error(data?.error || `获取线程回复失败 (${res.status})`);
+	}
+	return data;
+}
+
+export async function fetchActiveThreads(
+	serverUrl: string,
+	roomId: string,
+): Promise<ChatActiveThreadItem[]> {
+	const base = normalizeServerUrl(serverUrl);
+	if (!base) return [];
+	const params = new URLSearchParams({
+		room: roomId || "interconnect",
+	});
+	const res = await fetch(`${base}/api/chat/threads?${params.toString()}`, {
+		method: "GET",
+		cache: "no-store",
+	});
+	const data = (await res.json().catch(() => null)) as {
+		ok?: boolean;
+		threads?: ChatActiveThreadItem[];
+	} | null;
+	if (!res.ok || !data?.ok || !Array.isArray(data.threads)) return [];
+	return data.threads;
 }
 

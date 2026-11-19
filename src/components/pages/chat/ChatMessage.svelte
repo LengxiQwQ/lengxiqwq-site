@@ -23,6 +23,7 @@ import { positionChatFloating } from "./chatFloating";
 import type {
 	ChatMessageRecord,
 	ChatReadReceipt,
+	ChatThreadSummary,
 	ChatUserDetailSeed,
 } from "./chatTypes";
 import LottieSticker from "./LottieSticker.svelte";
@@ -43,6 +44,9 @@ interface Props {
 	isAdmin?: boolean;
 	isPinned?: boolean;
 	isInterconnectRoom?: boolean;
+	inThreadView?: boolean;
+	threadSummary?: ChatThreadSummary | null;
+	orphanThreadRootUid?: string;
 	canRecall?: boolean;
 	canEdit?: boolean;
 	canDelete?: boolean;
@@ -55,6 +59,9 @@ interface Props {
 	onRecall?: (msgUid: string) => void;
 	onDelete?: (msgUid: string) => void;
 	onReply?: (message: ChatMessageRecord) => void;
+	onOpenThread?: (message: ChatMessageRecord) => void;
+	onOpenThreadByUid?: (rootUid: string) => void;
+	onViewSource?: (message: ChatMessageRecord) => void;
 	onEdit?: (message: ChatMessageRecord) => void;
 	onPin?: (msgUid: string, unpin?: boolean) => void;
 	onReaction?: (msgUid: string, key: string) => void;
@@ -86,6 +93,9 @@ const {
 	isAdmin = false,
 	isPinned = false,
 	isInterconnectRoom = false,
+	inThreadView = false,
+	threadSummary = null,
+	orphanThreadRootUid = "",
 	canRecall = false,
 	canEdit = false,
 	canDelete = false,
@@ -98,6 +108,9 @@ const {
 	onRecall,
 	onDelete,
 	onReply,
+	onOpenThread,
+	onOpenThreadByUid,
+	onViewSource,
 	onEdit,
 	onPin,
 	onReaction,
@@ -477,6 +490,60 @@ function handleAvatarClick() {
 	}
 }
 
+function handleMentionPillClick(rawTarget: string) {
+	if (!onOpenUserProfile) return;
+	const cleanTarget = (rawTarget || "").trim().replace(/^@/, "");
+	if (
+		!cleanTarget ||
+		cleanTarget === "所有人" ||
+		cleanTarget.toLowerCase() === "room" ||
+		cleanTarget.toLowerCase() === "all"
+	) {
+		return;
+	}
+
+	const targetNormalized = normalizeDotSpacing(cleanTarget);
+	const targetBaseName = cleanTarget.split(/[·•・]/)[0].trim().toLowerCase();
+
+	// 1. 优先从用户名册 userProfileMap 匹配完整昵称或 userKey
+	let matchedSeed: ChatUserDetailSeed | null = null;
+	if (userProfileMap) {
+		for (const seed of userProfileMap.values()) {
+			if (!seed) continue;
+			const seedName = seed.name ? seed.name.trim() : "";
+			const seedNormalized = normalizeDotSpacing(seedName);
+			if (seedName === cleanTarget || seedNormalized === targetNormalized) {
+				matchedSeed = seed;
+				break;
+			}
+			if (seed.userKey === cleanTarget || seed.userKey === `matrix:${cleanTarget}`) {
+				matchedSeed = seed;
+				break;
+			}
+			const seedBase = seedName.split(/[·•・]/)[0].trim().toLowerCase();
+			if (seedBase && seedBase === targetBaseName) {
+				if (!matchedSeed) matchedSeed = seed;
+			}
+		}
+	}
+
+	if (matchedSeed) {
+		onOpenUserProfile(matchedSeed);
+		return;
+	}
+
+	// 2. 兜底方案：解析外部或本站昵称生成资料种子并打开资料卡
+	const isExt = isExternalMatrixIdentity({ name: cleanTarget });
+	const extOrigin = isExt ? resolveExternalOrigin({ name: cleanTarget }, interconnectSites) : null;
+	onOpenUserProfile({
+		userKey: "",
+		name: extOrigin?.cleanName || cleanTarget.split(/[·•・]/)[0].trim(),
+		site: extOrigin?.siteName,
+		badge: extOrigin?.siteName || "互联茶友",
+		badgeType: "tag",
+	});
+}
+
 interface ReactionUserItem {
 	userKey: string;
 	displayName: string;
@@ -700,11 +767,13 @@ function handleBubbleClick(e: MouseEvent) {
 
 {#snippet renderFloatingActions(isSelfMsg: boolean)}
   {@const canCopy = Boolean(message.content && message.content.trim())}
+  {@const canThreadMsg = Boolean(!inThreadView && onOpenThread && message.kind === "user")}
+  {@const canViewSource = Boolean(onViewSource)}
   {@const canEditMsg = Boolean(onEdit && canEdit && !message.replyTo?.isRecalled)}
   {@const canPinMsg = Boolean(isAdmin && onPin)}
   {@const canRecallMsg = Boolean(canRecall && onRecall)}
   {@const canDeleteMsg = Boolean(canDelete && onDelete)}
-  {@const hasMoreActions = canCopy || canEditMsg || canPinMsg || canRecallMsg || canDeleteMsg}
+  {@const hasMoreActions = canCopy || canThreadMsg || canEditMsg || canPinMsg || canViewSource || canRecallMsg || canDeleteMsg}
   {#if onReaction || onReply || hasMoreActions}
     <div
       class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction || showMoreActions ? 'is-active' : ''}"
@@ -818,6 +887,25 @@ function handleBubbleClick(e: MouseEvent) {
               role="menu"
               aria-label="更多消息操作"
             >
+              {#if canPinMsg}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="chat-more-action-item {isPinned ? 'text-[var(--skin-accent)]' : ''}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    showMoreActions = false;
+                    onPin?.(message.msgUid, isPinned);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <line x1="12" y1="17" x2="12" y2="22" />
+                    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+                  </svg>
+                  <span>{isPinned ? "取消置顶" : "置顶消息"}</span>
+                </button>
+              {/if}
+
               {#if canCopy}
                 <button
                   type="button"
@@ -833,6 +921,26 @@ function handleBubbleClick(e: MouseEvent) {
                     <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
                   </svg>
                   <span>{copySuccess ? "已复制" : "复制内容"}</span>
+                </button>
+              {/if}
+
+              {#if canThreadMsg}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="chat-more-action-item"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    showMoreActions = false;
+                    onOpenThread?.(message);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    <path d="M8 9h8" />
+                    <path d="M8 13h5" />
+                  </svg>
+                  <span>线程回复</span>
                 </button>
               {/if}
 
@@ -854,25 +962,6 @@ function handleBubbleClick(e: MouseEvent) {
                 </button>
               {/if}
 
-              {#if canPinMsg}
-                <button
-                  type="button"
-                  role="menuitem"
-                  class="chat-more-action-item {isPinned ? 'text-[var(--skin-accent)]' : ''}"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    showMoreActions = false;
-                    onPin?.(message.msgUid, isPinned);
-                  }}
-                >
-                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <line x1="12" y1="17" x2="12" y2="22" />
-                    <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
-                  </svg>
-                  <span>{isPinned ? "取消置顶" : "置顶消息"}</span>
-                </button>
-              {/if}
-
               {#if canRecallMsg}
                 <button
                   type="button"
@@ -889,6 +978,25 @@ function handleBubbleClick(e: MouseEvent) {
                     <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
                   </svg>
                   <span>撤回消息</span>
+                </button>
+              {/if}
+
+              {#if canViewSource}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="chat-more-action-item"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    showMoreActions = false;
+                    onViewSource?.(message);
+                  }}
+                >
+                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="16 18 22 12 16 6" />
+                    <polyline points="8 6 2 12 8 18" />
+                  </svg>
+                  <span>查看源码</span>
                 </button>
               {/if}
 
@@ -915,6 +1023,79 @@ function handleBubbleClick(e: MouseEvent) {
           {/if}
         </div>
       {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet renderThreadSummary(alignEnd: boolean)}
+  {@const effectiveSummary = !inThreadView ? (threadSummary ?? message.threadSummary ?? null) : null}
+  {#if effectiveSummary && effectiveSummary.count > 0 && onOpenThread}
+    {@const latest = effectiveSummary.latestReply}
+    {@const latestPreview = latest
+      ? formatChatReplyPreview(latest.content, stickerMap, latest.hasImage, false)
+      : ""}
+    <div class="w-full flex {alignEnd ? 'justify-end' : 'justify-start'} mt-1">
+      <button
+        type="button"
+        class="chat-thread-summary-pill"
+        onclick={(e) => {
+          e.stopPropagation();
+          onOpenThread?.(message);
+        }}
+      >
+        <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          <path d="M8 9h8" />
+          <path d="M8 13h5" />
+        </svg>
+        {#if effectiveSummary.participants && effectiveSummary.participants.length > 0}
+          <span class="inline-flex items-center -space-x-1 shrink-0">
+            {#each effectiveSummary.participants.slice(0, 3) as p (p.userKey || p.name)}
+              <span class="inline-flex rounded-full ring-1 ring-[var(--card-bg)] overflow-hidden">
+                <ChatAvatar
+                  src={p.avatar}
+                  name={p.name}
+                  size="xs"
+                  class="w-4! h-4! text-[8px]!"
+                />
+              </span>
+            {/each}
+          </span>
+        {/if}
+        <span class="font-semibold text-[var(--primary)] shrink-0">
+          {effectiveSummary.count} 条线程回复
+        </span>
+        {#if latestPreview}
+          <span class="chat-thread-summary-preview truncate">
+            {latest?.name ? `${latest.name}：` : ""}{latestPreview}
+          </span>
+        {/if}
+        <svg class="w-3 h-3 shrink-0 opacity-55" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+      </button>
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet renderOrphanThreadChip(alignEnd: boolean)}
+  {#if !inThreadView && orphanThreadRootUid && onOpenThreadByUid}
+    <div class="w-full flex {alignEnd ? 'justify-end' : 'justify-start'} mb-1">
+      <button
+        type="button"
+        class="chat-thread-context-chip"
+        onclick={(e) => {
+          e.stopPropagation();
+          onOpenThreadByUid?.(orphanThreadRootUid);
+        }}
+      >
+        <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          <path d="M8 9h8" />
+          <path d="M8 13h5" />
+        </svg>
+        <span>线程回复 · 查看完整线程</span>
+      </button>
     </div>
   {/if}
 {/snippet}
@@ -1343,6 +1524,8 @@ function handleBubbleClick(e: MouseEvent) {
         </div>
       {/if}
 
+      {@render renderOrphanThreadChip(true)}
+
       <!-- svelte-ignore a11y_click_events_have_key_events (This click completes a pointer gesture. Nested message controls keep their own keyboard handling.) -->
       <div
         class="relative max-w-full chat-msg-bubble-wrap"
@@ -1379,6 +1562,7 @@ function handleBubbleClick(e: MouseEvent) {
                   currentUserName={currentUserName}
                   canRoomHighlight={canRoomHighlight}
                   chatServerUrl={chatServerUrl}
+                  onMentionClick={handleMentionPillClick}
                 />
               </div>
             {/if}
@@ -1390,6 +1574,7 @@ function handleBubbleClick(e: MouseEvent) {
       </div>
 
       {@render renderReactions(true)}
+      {@render renderThreadSummary(true)}
 
       {#if formattedTime}
         <div class="flex items-center gap-1 mt-1 px-1 select-none">
@@ -1455,6 +1640,8 @@ function handleBubbleClick(e: MouseEvent) {
         </div>
       {/if}
 
+      {@render renderOrphanThreadChip(false)}
+
       <!-- svelte-ignore a11y_click_events_have_key_events (This click completes a pointer gesture. Nested message controls keep their own keyboard handling.) -->
       <div
         class="relative max-w-full chat-msg-bubble-wrap"
@@ -1507,6 +1694,7 @@ function handleBubbleClick(e: MouseEvent) {
                   currentUserName={currentUserName}
                   canRoomHighlight={canRoomHighlight}
                   chatServerUrl={chatServerUrl}
+                  onMentionClick={handleMentionPillClick}
                 />
               </div>
             {/if}
@@ -1518,6 +1706,7 @@ function handleBubbleClick(e: MouseEvent) {
       </div>
 
       {@render renderReactions(false)}
+      {@render renderThreadSummary(false)}
 
       {#if formattedTime}
         <div class="flex items-center gap-1 mt-1 px-1 select-none">

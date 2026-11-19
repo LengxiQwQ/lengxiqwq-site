@@ -22,6 +22,7 @@ interface Props {
 	currentUserName?: string;
 	canRoomHighlight?: boolean;
 	chatServerUrl?: string;
+	onMentionClick?: (target: string) => void;
 }
 
 const {
@@ -31,6 +32,7 @@ const {
 	currentUserName = "",
 	canRoomHighlight = false,
 	chatServerUrl,
+	onMentionClick,
 }: Props = $props();
 
 const ast: ChatMarkdownAst = $derived(
@@ -144,7 +146,24 @@ function getInlineChildren(token: Token): Token[] | undefined {
               <img src={seg.url} alt={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
             {/if}
           {:else if seg.kind === "mention"}
-            <span class="chat-mention-pill {isSelfMentionTarget(seg.target) ? 'self' : ''}">{seg.text}</span>
+            {@const isClickable = Boolean(onMentionClick && seg.target && seg.target !== "所有人" && seg.target.toLowerCase() !== "room" && seg.target.toLowerCase() !== "all")}
+            <span
+              class="chat-mention-pill {isSelfMentionTarget(seg.target) ? 'self' : ''} {isClickable ? 'clickable select-none' : ''}"
+              role={isClickable ? "button" : undefined}
+              tabindex={isClickable ? 0 : undefined}
+              title={isClickable ? `查看 @${seg.target} 的资料` : undefined}
+              onclick={isClickable ? (e) => {
+                e.stopPropagation();
+                onMentionClick?.(seg.target);
+              } : undefined}
+              onkeydown={isClickable ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  onMentionClick?.(seg.target);
+                }
+              } : undefined}
+            >{seg.text}</span>
           {:else}
             {seg.text}
           {/if}

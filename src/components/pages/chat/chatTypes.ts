@@ -251,6 +251,43 @@ export interface ChatReplyRef {
 	isRecalled?: boolean;
 }
 
+export interface ChatThreadParticipant {
+	userKey: string;
+	name: string;
+	avatar: string;
+}
+
+export interface ChatThreadSummary {
+	count: number;
+	latestReply: {
+		msgUid: string;
+		userKey: string;
+		name: string;
+		avatar: string;
+		content: string;
+		hasImage?: boolean;
+		createdAt: number;
+	} | null;
+	participants: ChatThreadParticipant[];
+}
+
+export interface ChatActiveThreadItem {
+	rootUid: string;
+	rootMessage: ChatMessageRecord | null;
+	summary: ChatThreadSummary;
+}
+
+export interface ChatMessageSourceResponse {
+	ok: boolean;
+	room: string;
+	msgUid: string;
+	matrixEventId?: string | null;
+	localRecord?: Record<string, unknown> | null;
+	matrixEvent?: Record<string, unknown> | null;
+	matrixError?: string | null;
+	error?: string;
+}
+
 export interface ChatReadReceipt {
 	userKey: string;
 	name: string;
@@ -263,6 +300,7 @@ export interface ChatMessageRecord {
 	source?: "matrix";
 	id: number;
 	msgUid: string;
+	matrixEventId?: string;
 	kind: "user" | "system" | "poll";
 	msgType?: "text" | "emote" | "notice";
 	isEncryptedPlaceholder?: boolean;
@@ -281,6 +319,8 @@ export interface ChatMessageRecord {
 	mentions: string[];
 	mentionKeys?: string[];
 	replyTo?: ChatReplyRef | null;
+	threadRootUid?: string;
+	threadSummary?: ChatThreadSummary | null;
 	createdAt: number;
 	reactions?: Record<string, string[]>;
 	isEdited?: boolean;

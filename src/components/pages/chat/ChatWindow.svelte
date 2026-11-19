@@ -9,6 +9,8 @@ import ChatAvatar, {
 } from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessage from "./ChatMessage.svelte";
+import ChatMessageSourceModal from "./ChatMessageSourceModal.svelte";
+import ChatThreadModal from "./ChatThreadModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import { positionChatFloating } from "./chatFloating";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
@@ -30,11 +32,13 @@ import {
 } from "./chatClient";
 import { setChatLightboxSourceProvider } from "./chatLightbox";
 import type {
+	ChatActiveThreadItem,
 	ChatMentionCandidate,
 	ChatMessageRecord,
 	ChatOnlineMember,
 	ChatReadReceipt,
 	ChatSessionUser,
+	ChatThreadSummary,
 	ChatUserDetailSeed,
 	ImageAttachment,
 	RoomMusicState,
@@ -92,6 +96,7 @@ interface Props {
 	interconnectSites?: InterconnectSite[];
 	totalChatterCount?: number;
 	pinnedUids?: string[];
+	activeThreads?: ChatActiveThreadItem[];
 	roomTopic?: string;
 	typingUsers?: string[];
 	readReceipts?: Record<string, ChatReadReceipt[]>;
@@ -114,6 +119,7 @@ interface Props {
 		attachments: ImageAttachment[],
 		mentionKeys: string[],
 		replyToUid?: string,
+		threadRootUid?: string,
 	) => void;
 	onRecallMessage?: (msgUid: string) => void;
 	onDeleteMessage: (msgUid: string) => void;
@@ -190,6 +196,7 @@ const {
 	interconnectSites = [],
 	totalChatterCount = 0,
 	pinnedUids = [],
+	activeThreads = [],
 	roomTopic = "",
 	typingUsers = [],
 	readReceipts = {},
@@ -377,8 +384,13 @@ function addSelectedMentionKey(name: string, userKey?: string) {
 }
 
 let showMentionHistory = $state(false);
+let showThreadListMenu = $state(false);
 let showMobileMoreMenu = $state(false);
 let mobileMoreMenuWrapEl: HTMLDivElement | null = $state(null);
+let threadListWrapEl: HTMLDivElement | null = $state(null);
+let sourceModalMessage = $state<ChatMessageRecord | null>(null);
+let activeThreadRootUid = $state("");
+let activeThreadInitialRoot = $state<ChatMessageRecord | null>(null);
 let mobileActionTarget = $state<{
 	message: ChatMessageRecord;
 	isSelf: boolean;
@@ -519,7 +531,7 @@ let nowMs = $state(Date.now());
 
 let messageContainer: HTMLDivElement | null = $state(null);
 let messageContentEl: HTMLDivElement | null = $state(null);
-let inputEl: HTMLTextAreaElement | null = $state(null);
+let inputEl: HTMLDivElement | null = $state(null);
 let mediaFileInputEl: HTMLInputElement | null = $state(null);
 let dockEl: HTMLDivElement | null = $state(null);
 let mentionHistoryWrapEl: HTMLDivElement | null = $state(null);
@@ -569,6 +581,37 @@ function handleOpenMobileActions(
 	mobileActionTarget = { message, ...meta };
 }
 
+function handleViewSource(message: ChatMessageRecord) {
+	sourceModalMessage = message;
+}
+
+function handleOpenThread(message: ChatMessageRecord) {
+	const rootUid = message.threadRootUid || message.msgUid;
+	const rootMsg = message.threadRootUid
+		? (messages.find(
+				(m) =>
+					m.msgUid === message.threadRootUid ||
+					m.matrixEventId === message.threadRootUid,
+			) ?? null)
+		: message;
+	activeThreadRootUid = rootUid;
+	activeThreadInitialRoot = rootMsg;
+	showThreadListMenu = false;
+}
+
+function handleOpenThreadByUid(
+	rootUid: string,
+	knownRoot?: ChatMessageRecord | null,
+) {
+	if (!rootUid) return;
+	activeThreadRootUid = rootUid;
+	activeThreadInitialRoot =
+		knownRoot ??
+		messages.find((m) => m.msgUid === rootUid || m.matrixEventId === rootUid) ??
+		null;
+	showThreadListMenu = false;
+}
+
 function getLastSeenStorageKey(rId: string, uKey: string): string {
 	return `${LAST_SEEN_PREFIX}${rId}:${uKey}`;
 }
@@ -609,10 +652,185 @@ function isChatPaneFocused(): boolean {
 	return !usesPanelTabs || isChatTabActive;
 }
 
-const visibleMessages = $derived(
+const baseFilteredMessages = $derived(
 	showMusicNotices
 		? messages
 		: messages.filter((msg) => !isMusicNoticeMessage(msg)),
+);
+
+const loadedMainRootIds = $derived.by(() => {
+	const set = new Set<string>();
+	for (const msg of baseFilteredMessages) {
+		if (msg.threadRootUid) continue;
+		if (msg.msgUid) set.add(msg.msgUid);
+		if (msg.matrixEventId) set.add(msg.matrixEventId);
+	}
+	return set;
+});
+
+const liveThreadSummaryMap = $derived.by(() => {
+	const idToCanonicalRoot = new Map<string, string>();
+	const rootMsgByUid = new Map<string, ChatMessageRecord>();
+	for (const m of messages) {
+		if (m.threadRootUid) continue;
+		if (m.msgUid) {
+			idToCanonicalRoot.set(m.msgUid, m.msgUid);
+			rootMsgByUid.set(m.msgUid, m);
+		}
+		if (m.matrixEventId) {
+			idToCanonicalRoot.set(m.matrixEventId, m.msgUid);
+		}
+	}
+
+	const repliesByRoot = new Map<string, ChatMessageRecord[]>();
+	for (const m of messages) {
+		if (!m.threadRootUid) continue;
+		const canonical = idToCanonicalRoot.get(m.threadRootUid) || m.threadRootUid;
+		let arr = repliesByRoot.get(canonical);
+		if (!arr) {
+			arr = [];
+			repliesByRoot.set(canonical, arr);
+		}
+		arr.push(m);
+	}
+
+	const result = new Map<string, ChatThreadSummary>();
+	const allRootKeys = new Set<string>();
+	for (const m of messages) {
+		if (!m.threadRootUid && m.threadSummary && m.threadSummary.count > 0) {
+			allRootKeys.add(m.msgUid);
+		}
+	}
+	for (const key of repliesByRoot.keys()) {
+		allRootKeys.add(key);
+	}
+
+	for (const rootKey of allRootKeys) {
+		const rootMsg = rootMsgByUid.get(rootKey);
+		const serverSummary = rootMsg?.threadSummary ?? null;
+		const liveReplies = (repliesByRoot.get(rootKey) ?? [])
+			.slice()
+			.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+
+		if (liveReplies.length === 0) {
+			if (serverSummary && serverSummary.count > 0) {
+				result.set(rootKey, serverSummary);
+			}
+			continue;
+		}
+
+		const latestLive = liveReplies[liveReplies.length - 1];
+		const serverLatestTs = serverSummary?.latestReply?.createdAt || 0;
+		const newerThanServerCount = serverSummary
+			? liveReplies.filter(
+					(r) =>
+						(r.createdAt || 0) > serverLatestTs &&
+						r.msgUid !== serverSummary.latestReply?.msgUid,
+				).length
+			: 0;
+		const count = serverSummary
+			? Math.max(liveReplies.length, serverSummary.count + newerThanServerCount)
+			: liveReplies.length;
+
+		const latestReply =
+			!serverSummary?.latestReply ||
+			(latestLive.createdAt || 0) >= serverLatestTs
+				? {
+						msgUid: latestLive.msgUid,
+						userKey: latestLive.userKey || "",
+						name: latestLive.name || "房友",
+						avatar: latestLive.avatar || "",
+						content: (latestLive.content || "")
+							.replace(/\s+/g, " ")
+							.trim()
+							.slice(0, 120),
+						hasImage:
+							Array.isArray(latestLive.attachments) &&
+							latestLive.attachments.length > 0,
+						createdAt: latestLive.createdAt || 0,
+					}
+				: serverSummary.latestReply;
+
+		const participantsMap = new Map<
+			string,
+			{ userKey: string; name: string; avatar: string }
+		>();
+		for (const p of serverSummary?.participants ?? []) {
+			const pKey = p.userKey || p.name;
+			if (pKey && !participantsMap.has(pKey) && participantsMap.size < 4) {
+				participantsMap.set(pKey, p);
+			}
+		}
+		for (const r of liveReplies) {
+			const pKey = r.userKey || r.name || r.msgUid;
+			if (pKey && !participantsMap.has(pKey) && participantsMap.size < 4) {
+				participantsMap.set(pKey, {
+					userKey: r.userKey || "",
+					name: r.name || "房友",
+					avatar: r.avatar || "",
+				});
+			}
+		}
+
+		result.set(rootKey, {
+			count,
+			latestReply,
+			participants: Array.from(participantsMap.values()),
+		});
+	}
+
+	return result;
+});
+
+function getThreadSummaryForMessage(
+	msg: ChatMessageRecord,
+): ChatThreadSummary | null {
+	if (msg.threadRootUid) return null;
+	return (
+		liveThreadSummaryMap.get(msg.msgUid) ??
+		(msg.matrixEventId ? liveThreadSummaryMap.get(msg.matrixEventId) : null) ??
+		msg.threadSummary ??
+		null
+	);
+}
+
+const mergedActiveThreads = $derived.by<ChatActiveThreadItem[]>(() => {
+	const byRoot = new Map<string, ChatActiveThreadItem>();
+	for (const item of activeThreads) {
+		if (!item?.rootUid || !item.summary || item.summary.count <= 0) continue;
+		byRoot.set(item.rootUid, item);
+	}
+	const rootMsgMap = new Map<string, ChatMessageRecord>();
+	for (const m of messages) {
+		if (!m.threadRootUid) {
+			rootMsgMap.set(m.msgUid, m);
+			if (m.matrixEventId) rootMsgMap.set(m.matrixEventId, m);
+		}
+	}
+	for (const [rootUid, summary] of liveThreadSummaryMap.entries()) {
+		if (!summary || summary.count <= 0) continue;
+		const existing = byRoot.get(rootUid);
+		const rootMessage = rootMsgMap.get(rootUid) ?? existing?.rootMessage ?? null;
+		const canonicalUid = rootMessage?.msgUid || rootUid;
+		byRoot.set(canonicalUid, {
+			rootUid: canonicalUid,
+			rootMessage,
+			summary,
+		});
+	}
+	return Array.from(byRoot.values()).sort(
+		(a, b) =>
+			(b.summary.latestReply?.createdAt || 0) -
+			(a.summary.latestReply?.createdAt || 0),
+	);
+});
+
+const visibleMessages = $derived.by(() =>
+	baseFilteredMessages.filter((msg) => {
+		if (!msg.threadRootUid) return true;
+		// 若原主题消息就在当前时间线中，则线程回复收纳到线程弹窗中显示，避免主时间线重复刷屏
+		return !loadedMainRootIds.has(msg.threadRootUid);
+	}),
 );
 
 const VIRTUAL_ENABLE_THRESHOLD = 75;
@@ -652,6 +870,7 @@ function estimateRowHeight(msg: ChatMessageRecord): number {
 	else if (msg.content.length > 70) h += 40;
 	if (msg.poll) h += 140;
 	if (msg.reactions && Object.keys(msg.reactions).length > 0) h += 32;
+	if (msg.threadSummary && msg.threadSummary.count > 0) h += 38;
 	return h;
 }
 
@@ -2075,6 +2294,9 @@ onMount(() => {
 		if (!mentionHistoryWrapEl?.contains(target)) {
 			showMentionHistory = false;
 		}
+		if (!threadListWrapEl?.contains(target)) {
+			showThreadListMenu = false;
+		}
 		if (!mobileMoreMenuWrapEl?.contains(target)) {
 			showMobileMoreMenu = false;
 		}
@@ -2083,6 +2305,7 @@ onMount(() => {
 	const handleDocKeydown = (e: KeyboardEvent) => {
 		if (e.key === "Escape") {
 			showMentionHistory = false;
+			showThreadListMenu = false;
 			showMobileMoreMenu = false;
 			closeMobileActions();
 		}
@@ -2168,6 +2391,10 @@ $effect(() => {
 		unreadMentionUids = [];
 		alertBannerUid = null;
 		replyingTo = null;
+		sourceModalMessage = null;
+		activeThreadRootUid = "";
+		activeThreadInitialRoot = null;
+		showThreadListMenu = false;
 		unreadBarDismissed = false;
 		isUnreadDividerInView = false;
 		hasVisitedUnreadDivider = false;
@@ -2643,30 +2870,267 @@ $effect(() => {
 	return () => observer.disconnect();
 });
 
-function syncInputHeight() {
+let mentionSavedRange: { textNode: Text; atIndex: number; caretOffset: number } | null = null;
+
+function focusInput(toEnd = true): void {
 	if (!inputEl) return;
-	if (
-		typeof CSS !== "undefined" &&
-		typeof CSS.supports === "function" &&
-		CSS.supports("field-sizing", "content")
-	) {
-		if (inputEl.style.height) {
-			inputEl.style.height = "";
+	inputEl.focus();
+	if (toEnd) {
+		const sel = window.getSelection();
+		if (sel) {
+			const range = document.createRange();
+			range.selectNodeContents(inputEl);
+			range.collapse(false);
+			sel.removeAllRanges();
+			sel.addRange(range);
 		}
-		return;
 	}
-	inputEl.style.height = "auto";
-	inputEl.style.height = `${inputEl.scrollHeight}px`;
 }
 
-$effect(() => {
-	const _text = inputText;
-	const _el = inputEl;
-	if (!_el) return;
-	void tick().then(() => {
-		syncInputHeight();
-	});
-});
+function placeCaretAfter(node: Node): void {
+	const sel = window.getSelection();
+	if (!sel) return;
+	const range = document.createRange();
+	range.setStartAfter(node);
+	range.collapse(true);
+	sel.removeAllRanges();
+	sel.addRange(range);
+}
+
+function serializeInputToText(container: HTMLElement | null): string {
+	if (!container) return "";
+	let text = "";
+	function walk(node: Node) {
+		if (node.nodeType === Node.TEXT_NODE) {
+			text += (node.nodeValue || "").replace(/\u00A0/g, " ");
+			return;
+		}
+		if (node.nodeType === Node.ELEMENT_NODE) {
+			const el = node as HTMLElement;
+			if (el.classList.contains("chat-mention-pill")) {
+				const name =
+					el.dataset.mentionName ||
+					el.textContent?.replace(/^@/, "").trim() ||
+					"";
+				text += `@${name}`;
+				const next = el.nextSibling;
+				const nextStartsWithSpace =
+					next &&
+					next.nodeType === Node.TEXT_NODE &&
+					/^\s/.test(next.nodeValue || "");
+				if (!nextStartsWithSpace) {
+					text += " ";
+				}
+				return;
+			}
+			if (el.tagName === "BR") {
+				text += "\n";
+				return;
+			}
+			const isBlock = el.tagName === "DIV" || el.tagName === "P";
+			for (let i = 0; i < el.childNodes.length; i++) {
+				walk(el.childNodes[i]);
+			}
+			if (isBlock && el !== container && el.nextSibling) {
+				text += "\n";
+			}
+		}
+	}
+	walk(container);
+	return text;
+}
+
+function getDraftStorageKey(rId: string): string {
+	return `chat_input_draft:${rId || "chat"}`;
+}
+
+function saveRoomDraft(rId: string, text: string): void {
+	if (typeof window === "undefined" || !rId || editingMessage) return;
+	const key = getDraftStorageKey(rId);
+	const trimmed = text.trim();
+	if (!trimmed) {
+		try {
+			localStorage.removeItem(key);
+		} catch {}
+	} else {
+		try {
+			localStorage.setItem(key, text);
+		} catch {}
+	}
+}
+
+function loadRoomDraft(rId: string): void {
+	if (typeof window === "undefined" || !rId) return;
+	try {
+		const saved = localStorage.getItem(getDraftStorageKey(rId));
+		if (saved?.trim()) {
+			setInputFromText(saved, false);
+		} else if (inputEl && !editingMessage) {
+			clearInput();
+		}
+	} catch {}
+}
+
+function clearRoomDraft(rId: string): void {
+	if (typeof window === "undefined" || !rId) return;
+	try {
+		localStorage.removeItem(getDraftStorageKey(rId));
+	} catch {}
+}
+
+function syncInputState(): void {
+	if (!inputEl) return;
+	inputText = serializeInputToText(inputEl);
+	const hasPills = inputEl.querySelector(".chat-mention-pill") !== null;
+	const isEffectivelyEmpty = !inputText.trim() && !hasPills;
+	if (isEffectivelyEmpty) {
+		inputEl.dataset.empty = "true";
+		if (
+			inputEl.innerHTML === "<br>" ||
+			inputEl.innerHTML === "<div><br></div>" ||
+			inputEl.innerHTML === "<p><br></p>"
+		) {
+			inputEl.innerHTML = "";
+		}
+	} else {
+		delete inputEl.dataset.empty;
+	}
+	saveRoomDraft(roomId, inputText);
+	syncMentionTrigger();
+	triggerTyping();
+}
+
+function createMentionPillElement(name: string, userKey?: string): HTMLElement {
+	const pill = document.createElement("span");
+	pill.contentEditable = "false";
+	pill.className = "chat-mention-pill";
+	pill.dataset.mentionName = name;
+	if (userKey) {
+		pill.dataset.userKey = userKey;
+	}
+	pill.textContent = `@${name}`;
+	return pill;
+}
+
+function insertMentionPill(targetMentionName: string, userKey?: string): void {
+	if (!inputEl) return;
+	const pill = createMentionPillElement(targetMentionName, userKey);
+	const space = document.createTextNode("\u00A0");
+
+	focusInput(false);
+	const sel = window.getSelection();
+	if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
+		const range = sel.getRangeAt(0);
+		range.deleteContents();
+		range.insertNode(pill);
+		if (pill.parentNode) {
+			pill.parentNode.insertBefore(space, pill.nextSibling);
+		}
+		placeCaretAfter(space);
+	} else {
+		inputEl.appendChild(pill);
+		inputEl.appendChild(space);
+		placeCaretAfter(space);
+	}
+	syncInputState();
+}
+
+function insertAtCursor(snippet: string): void {
+	if (!inputEl) {
+		inputText += snippet;
+		return;
+	}
+	focusInput(false);
+	const sel = window.getSelection();
+	if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
+		const range = sel.getRangeAt(0);
+		range.deleteContents();
+		const node = document.createTextNode(snippet);
+		range.insertNode(node);
+		placeCaretAfter(node);
+	} else {
+		const node = document.createTextNode(snippet);
+		inputEl.appendChild(node);
+		placeCaretAfter(node);
+	}
+	syncInputState();
+}
+
+function insertNewlineAtCursor(): void {
+	if (!inputEl) return;
+	focusInput(false);
+	const sel = window.getSelection();
+	if (!sel || sel.rangeCount === 0 || !inputEl.contains(sel.anchorNode)) return;
+	const range = sel.getRangeAt(0);
+	range.deleteContents();
+	const br = document.createElement("br");
+	range.insertNode(br);
+	const rangeAfter = document.createRange();
+	rangeAfter.setStartAfter(br);
+	rangeAfter.collapse(true);
+	sel.removeAllRanges();
+	sel.addRange(rangeAfter);
+	syncInputState();
+}
+
+function handleBackspaceMentionPill(): boolean {
+	const sel = window.getSelection();
+	if (!sel || !sel.isCollapsed || sel.rangeCount === 0 || !inputEl) return false;
+	const range = sel.getRangeAt(0);
+	const container = range.startContainer;
+	const offset = range.startOffset;
+
+	if (!inputEl.contains(container)) return false;
+
+	if (container.nodeType === Node.TEXT_NODE) {
+		const textNode = container as Text;
+		const val = textNode.nodeValue || "";
+
+		if (offset === 0) {
+			const prev = textNode.previousSibling;
+			if (prev instanceof HTMLElement && prev.classList.contains("chat-mention-pill")) {
+				prev.remove();
+				syncInputState();
+				return true;
+			}
+		}
+
+		if (offset === 1 && (val.charAt(0) === " " || val.charAt(0) === "\u00A0")) {
+			const prev = textNode.previousSibling;
+			if (prev instanceof HTMLElement && prev.classList.contains("chat-mention-pill")) {
+				if (val.length === 1) {
+					textNode.remove();
+				} else {
+					textNode.nodeValue = val.slice(1);
+				}
+				prev.remove();
+				syncInputState();
+				return true;
+			}
+		}
+	} else if (container.nodeType === Node.ELEMENT_NODE) {
+		const childBefore = container.childNodes[offset - 1];
+		if (childBefore instanceof HTMLElement && childBefore.classList.contains("chat-mention-pill")) {
+			childBefore.remove();
+			syncInputState();
+			return true;
+		}
+
+		if (childBefore && childBefore.nodeType === Node.TEXT_NODE) {
+			const val = childBefore.nodeValue || "";
+			if (val === " " || val === "\u00A0" || val === "") {
+				const prev = childBefore.previousSibling;
+				if (prev instanceof HTMLElement && prev.classList.contains("chat-mention-pill")) {
+					childBefore.remove();
+					prev.remove();
+					syncInputState();
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
 
 function formatCandidateMentionName(candidate: { name: string; userKey?: string; badge?: string; site?: string; siteUrl?: string; url?: string }): string {
 	if (candidate.userKey === "room") return "所有人";
@@ -2695,72 +3159,155 @@ $effect(() => {
 		if (mentionEvent.userKey) {
 			addSelectedMentionKey(targetMentionName, mentionEvent.userKey);
 		}
-		insertAtCursor(
-			`${inputText && !inputText.endsWith(" ") ? " " : ""}@${targetMentionName} `,
-		);
+		insertMentionPill(targetMentionName, mentionEvent.userKey);
 	}
 });
 
-function insertAtCursor(snippet: string) {
-	if (!inputEl) {
-		inputText += snippet;
-		return;
+let lastDraftRoomId = "";
+$effect(() => {
+	const currentRId = roomId;
+	const el = inputEl;
+	if (el && currentRId !== lastDraftRoomId) {
+		lastDraftRoomId = currentRId;
+		if (!editingMessage) {
+			loadRoomDraft(currentRId);
+		}
 	}
-	const start = inputEl.selectionStart ?? inputText.length;
-	const end = inputEl.selectionEnd ?? inputText.length;
-	inputText = inputText.slice(0, start) + snippet + inputText.slice(end);
-	void tick().then(() => {
-		if (!inputEl) return;
-		inputEl.focus();
-		const pos = start + snippet.length;
-		inputEl.selectionStart = pos;
-		inputEl.selectionEnd = pos;
-	});
-}
+});
 
-function syncMentionTrigger() {
+function syncMentionTrigger(): void {
 	if (!inputEl) {
-		mentionMenuOpen = false;
-		return;
-	}
-	const caret = inputEl.selectionStart ?? inputText.length;
-	const beforeCaret = inputText.slice(0, caret);
-	const match = beforeCaret.match(/@([^\s@]{0,16})$/);
-	if (match && mergedMentionCandidates.length > 0) {
-		mentionQuery = match[1] ?? "";
-		mentionTriggerStart = caret - mentionQuery.length - 1;
-		mentionActiveIndex = 0;
-		mentionMenuOpen = true;
-		activePopover = "none";
-	} else {
 		mentionMenuOpen = false;
 		mentionTriggerStart = -1;
+		mentionSavedRange = null;
+		return;
 	}
+	const sel = window.getSelection();
+	if (!sel || !sel.isCollapsed || sel.rangeCount === 0 || !inputEl.contains(sel.anchorNode)) {
+		mentionMenuOpen = false;
+		mentionTriggerStart = -1;
+		mentionSavedRange = null;
+		return;
+	}
+
+	const range = sel.getRangeAt(0);
+	const container = range.startContainer;
+	const caretOffset = range.startOffset;
+
+	if (container.nodeType === Node.TEXT_NODE) {
+		const textNode = container as Text;
+		const beforeCaret = textNode.nodeValue?.slice(0, caretOffset) || "";
+		const match = beforeCaret.match(/@([^\s@]{0,16})$/);
+		if (match && mergedMentionCandidates.length > 0) {
+			mentionQuery = match[1] ?? "";
+			mentionTriggerStart = caretOffset - mentionQuery.length - 1;
+			mentionSavedRange = {
+				textNode,
+				atIndex: mentionTriggerStart,
+				caretOffset,
+			};
+			mentionActiveIndex = 0;
+			mentionMenuOpen = true;
+			activePopover = "none";
+			return;
+		}
+	}
+
+	mentionMenuOpen = false;
+	mentionTriggerStart = -1;
+	mentionSavedRange = null;
 }
 
-function selectMentionCandidate(candidate: ChatMentionCandidate) {
-	const caret = inputEl?.selectionStart ?? inputText.length;
-	const triggerIdx = mentionTriggerStart;
-	const prefix =
-		triggerIdx >= 0
-			? inputText.slice(0, triggerIdx)
-			: inputText.slice(0, caret);
-	const suffix = inputText.slice(caret);
+function selectMentionCandidate(candidate: ChatMentionCandidate): void {
+	if (!inputEl) return;
 	const targetMentionName = formatCandidateMentionName(candidate);
-	const inserted = `@${targetMentionName} `;
-	inputText = `${prefix}${inserted}${suffix}`;
 	addSelectedMentionKey(targetMentionName, candidate.userKey);
+
+	const pill = createMentionPillElement(targetMentionName, candidate.userKey);
+	const space = document.createTextNode("\u00A0");
+
+	if (mentionSavedRange && inputEl.contains(mentionSavedRange.textNode)) {
+		const { textNode, atIndex, caretOffset } = mentionSavedRange;
+		const fullText = textNode.nodeValue || "";
+		const beforeText = fullText.slice(0, atIndex);
+		const afterText = fullText.slice(caretOffset);
+
+		textNode.nodeValue = beforeText;
+		const parent = textNode.parentNode;
+		if (parent) {
+			const nextSibling = textNode.nextSibling;
+			parent.insertBefore(pill, nextSibling);
+			parent.insertBefore(space, pill.nextSibling);
+			if (afterText) {
+				const afterNode = document.createTextNode(afterText);
+				parent.insertBefore(afterNode, space.nextSibling);
+			}
+		}
+		placeCaretAfter(space);
+	} else {
+		insertMentionPill(targetMentionName, candidate.userKey);
+	}
+
 	mentionMenuOpen = false;
 	mentionTriggerStart = -1;
 	mentionQuery = "";
+	mentionSavedRange = null;
 
-	void tick().then(() => {
-		if (!inputEl) return;
-		inputEl.focus();
-		const pos = prefix.length + inserted.length;
-		inputEl.selectionStart = pos;
-		inputEl.selectionEnd = pos;
-	});
+	syncInputState();
+	inputEl.focus();
+}
+
+function setInputFromText(rawText: string, shouldFocus = true): void {
+	if (!inputEl) {
+		inputText = rawText;
+		return;
+	}
+	inputEl.innerHTML = "";
+	if (!rawText) {
+		inputText = "";
+		inputEl.dataset.empty = "true";
+		return;
+	}
+
+	const mentionPattern = /@([^\s@]+(?:\s[·•・]\s[^\s@]+)?)(?=\s|$)/g;
+	let lastIndex = 0;
+	let match: RegExpExecArray | null;
+
+	while ((match = mentionPattern.exec(rawText)) !== null) {
+		const matchStart = match.index;
+		const matchEnd = match.index + match[0].length;
+		if (matchStart > lastIndex) {
+			inputEl.appendChild(
+				document.createTextNode(rawText.slice(lastIndex, matchStart)),
+			);
+		}
+		const name = match[1];
+		const pill = createMentionPillElement(name);
+		inputEl.appendChild(pill);
+		inputEl.appendChild(document.createTextNode("\u00A0"));
+		lastIndex = matchEnd + (rawText.charAt(matchEnd) === " " ? 1 : 0);
+	}
+
+	if (lastIndex < rawText.length) {
+		inputEl.appendChild(document.createTextNode(rawText.slice(lastIndex)));
+	}
+
+	syncInputState();
+	if (shouldFocus) {
+		focusInput(true);
+	}
+}
+
+function clearInput(): void {
+	inputText = "";
+	if (inputEl) {
+		inputEl.innerHTML = "";
+		inputEl.dataset.empty = "true";
+	}
+	mentionSavedRange = null;
+	mentionMenuOpen = false;
+	mentionTriggerStart = -1;
+	mentionQuery = "";
 }
 
 function collectMentionKeys(content: string): string[] {
@@ -2773,6 +3320,12 @@ function collectMentionKeys(content: string): string[] {
 			}
 		}
 	}
+	if (inputEl) {
+		for (const pill of inputEl.querySelectorAll<HTMLElement>(".chat-mention-pill[data-user-key]")) {
+			const k = pill.dataset.userKey;
+			if (k) keys.add(k);
+		}
+	}
 	if (
 		currentUser?.isAdmin &&
 		/(?:^|[^A-Za-z0-9._+-])@(?:room|all|所有人)(?=$|[\s,，。、！!？?：:；;()[\]{}<>"'~`’”）】》」』])/i.test(
@@ -2783,7 +3336,6 @@ function collectMentionKeys(content: string): string[] {
 	}
 	return Array.from(keys);
 }
-
 function handleStartReply(msg: ChatMessageRecord) {
 	if (!currentUser) {
 		onRequireAuth();
@@ -2791,15 +3343,14 @@ function handleStartReply(msg: ChatMessageRecord) {
 	}
 	replyingTo = msg;
 	void tick().then(() => {
-		inputEl?.focus();
+		focusInput(false);
 	});
 }
 
 function handleStartEdit(msg: ChatMessageRecord) {
 	editingMessage = msg;
-	inputText = msg.content;
-	// iPad Safari opens the keyboard when focus is part of the original tap.
-	inputEl?.focus();
+	setInputFromText(msg.content);
+	focusInput(true);
 }
 
 function handleJumpToReply(msgUid: string) {
@@ -2841,7 +3392,8 @@ function handleSend() {
 	if (editingMessage) {
 		onEditMessage?.(editingMessage.msgUid, trimmed);
 		editingMessage = null;
-		inputText = "";
+		clearInput();
+		loadRoomDraft(roomId);
 		pendingImages = [];
 		replyingTo = null;
 		return;
@@ -2850,13 +3402,13 @@ function handleSend() {
 	const mentionKeys = collectMentionKeys(trimmed);
 	const replyToUid = replyingTo?.msgUid || "";
 	onSendMessage(trimmed, pendingImages, mentionKeys, replyToUid || undefined);
-	inputText = "";
+	clearInput();
+	clearRoomDraft(roomId);
 	pendingImages = [];
 	isPreviewingMarkdown = false;
 	replyingTo = null;
 	selectedMentionMap = {};
 	uploadError = "";
-	mentionMenuOpen = false;
 	activePopover = "none";
 	unreadBarDismissed = true;
 	isStickyAtBottom = true;
@@ -2867,12 +3419,14 @@ function toggleMarkdownPreview() {
 	isPreviewingMarkdown = !isPreviewingMarkdown;
 	if (!isPreviewingMarkdown) {
 		void tick().then(() => {
-			inputEl?.focus();
+			focusInput(false);
 		});
 	}
 }
 
 function handleKeydown(e: KeyboardEvent) {
+	if (e.isComposing) return;
+
 	if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
 		e.preventDefault();
 		toggleMarkdownPreview();
@@ -2909,6 +3463,13 @@ function handleKeydown(e: KeyboardEvent) {
 		}
 	}
 
+	if (e.key === "Backspace") {
+		if (handleBackspaceMentionPill()) {
+			e.preventDefault();
+			return;
+		}
+	}
+
 	if (e.key === "Escape") {
 		if (isPreviewingMarkdown) {
 			e.preventDefault();
@@ -2918,7 +3479,8 @@ function handleKeydown(e: KeyboardEvent) {
 		if (editingMessage) {
 			e.preventDefault();
 			editingMessage = null;
-			inputText = "";
+			clearInput();
+			loadRoomDraft(roomId);
 			return;
 		}
 		if (replyingTo) {
@@ -2931,6 +3493,12 @@ function handleKeydown(e: KeyboardEvent) {
 	if (e.key === "Enter" && !e.shiftKey) {
 		e.preventDefault();
 		handleSend();
+		return;
+	}
+
+	if (e.key === "Enter" && e.shiftKey) {
+		e.preventDefault();
+		insertNewlineAtCursor();
 	}
 }
 
@@ -3028,17 +3596,29 @@ async function processMediaFiles(files: FileList | File[]) {
 
 function handlePaste(e: ClipboardEvent) {
 	const items = e.clipboardData?.files;
-	if (!items || items.length === 0) return;
-	const files = Array.from(items);
-	const imageFiles = files.filter((f) => f.type.startsWith("image/"));
-	const otherFiles = files.filter((f) => !f.type.startsWith("image/"));
-	if (imageFiles.length > 0) {
-		e.preventDefault();
-		void processImageFiles(imageFiles);
+	if (items && items.length > 0) {
+		const files = Array.from(items);
+		const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+		const otherFiles = files.filter((f) => !f.type.startsWith("image/"));
+		if (imageFiles.length > 0) {
+			e.preventDefault();
+			void processImageFiles(imageFiles);
+			return;
+		}
+		if (otherFiles.length > 0) {
+			e.preventDefault();
+			void processMediaFiles(otherFiles);
+			return;
+		}
 	}
-	if (otherFiles.length > 0) {
+
+	// 纯文本粘贴防护：强制剥离所有网页样式，只粘贴纯文本
+	if (e.clipboardData) {
 		e.preventDefault();
-		void processMediaFiles(otherFiles);
+		const text = e.clipboardData.getData("text/plain");
+		if (text) {
+			insertAtCursor(text);
+		}
 	}
 }
 
@@ -3266,6 +3846,78 @@ function removePendingImage(index: number) {
       {/if}
     </div>
     <div class="flex items-center gap-1.5 shrink-0">
+      {#if mergedActiveThreads.length > 0}
+        <div class="relative shrink-0" bind:this={threadListWrapEl}>
+          <button
+            type="button"
+            class="chat-header-pill-btn"
+            aria-expanded={showThreadListMenu}
+            aria-label="查看活跃线程"
+            onclick={() => {
+              showMentionHistory = false;
+              showThreadListMenu = !showThreadListMenu;
+            }}
+          >
+            <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              <path d="M8 9h8" />
+              <path d="M8 13h5" />
+            </svg>
+            <span class="font-bold text-[var(--primary)]">线程</span>
+            <span class="text-[11px] md:text-[10px] opacity-75 tabular-nums">{mergedActiveThreads.length}</span>
+          </button>
+
+          {#if showThreadListMenu}
+            <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end" }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="活跃线程列表">
+              <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
+                <span>活跃线程</span>
+                <span>{mergedActiveThreads.length} 个</span>
+              </div>
+              <div class="my-0.5 border-t border-black/5 dark:border-white/10"></div>
+              {#each mergedActiveThreads as item (item.rootUid)}
+                {@const rootMsg = item.rootMessage}
+                {@const latest = item.summary.latestReply}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="chat-requester-option items-start! py-2! md:py-1.5!"
+                  onclick={() => handleOpenThreadByUid(item.rootUid, rootMsg)}
+                >
+                  <div class="flex items-start gap-2 min-w-0 flex-1">
+                    <ChatAvatar
+                      src={rootMsg?.avatar || latest?.avatar || ""}
+                      name={rootMsg?.name || latest?.name || "线程"}
+                      size="xs"
+                      class="mt-0.5"
+                    />
+                    <div class="min-w-0 flex-1">
+                      <div class="flex items-center justify-between gap-1">
+                        <span class="font-semibold truncate text-xs md:text-[11px]">
+                          {rootMsg?.name || "主题消息"}
+                        </span>
+                        <span class="text-[11px] md:text-[10px] text-[var(--primary)] font-semibold tabular-nums shrink-0">
+                          {item.summary.count} 条回复
+                        </span>
+                      </div>
+                      <div class="text-xs md:text-[11px] opacity-80 truncate mt-0.5">
+                        {rootMsg
+                          ? formatChatReplyPreview(rootMsg.content, stickerMap, rootMsg.attachments.length > 0)
+                          : (latest?.content || "点击查看线程")}
+                      </div>
+                      {#if latest}
+                        <div class="text-[11px] md:text-[10px] opacity-65 truncate mt-0.5">
+                          最新 {latest.name}：{formatChatReplyPreview(latest.content, stickerMap, latest.hasImage)}
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       {#if currentUser && mentionsToMe.length > 0}
         <div class="relative shrink-0" bind:this={mentionHistoryWrapEl}>
           <button
@@ -3273,7 +3925,10 @@ function removePendingImage(index: number) {
             class="chat-header-pill-btn {unreadMentionUids.length > 0 ? 'has-unread' : ''}"
             aria-expanded={showMentionHistory}
             aria-label="查看被提及的消息"
-            onclick={() => (showMentionHistory = !showMentionHistory)}
+            onclick={() => {
+              showThreadListMenu = false;
+              showMentionHistory = !showMentionHistory;
+            }}
           >
             <span class="font-bold text-[var(--primary)]">被提及</span>
             {#if unreadMentionUids.length > 0}
@@ -3786,6 +4441,8 @@ function removePendingImage(index: number) {
                 isAdmin={isAdmin}
                 isPinned={pinnedUidSet.has(msg.msgUid)}
                 isInterconnectRoom={isInterconnectRoom}
+                threadSummary={getThreadSummaryForMessage(msg)}
+                orphanThreadRootUid={msg.threadRootUid && !loadedMainRootIds.has(msg.threadRootUid) ? msg.threadRootUid : ""}
                 canRecall={canRecall}
                 canEdit={canEdit}
                 canDelete={canDelete}
@@ -3798,6 +4455,9 @@ function removePendingImage(index: number) {
                 onRecall={onRecallMessage}
                 onDelete={onDeleteMessage}
                 onReply={msg.kind === "user" ? handleStartReply : undefined}
+                onOpenThread={msg.kind === "user" ? handleOpenThread : undefined}
+                onOpenThreadByUid={(uid) => handleOpenThreadByUid(uid)}
+                onViewSource={handleViewSource}
                 onEdit={handleStartEdit}
                 onPin={onPinMessage}
                 onReaction={onReaction}
@@ -4108,7 +4768,8 @@ function removePendingImage(index: number) {
             aria-label="取消编辑"
             onclick={() => {
               editingMessage = null;
-              inputText = "";
+              clearInput();
+              loadRoomDraft(roomId);
             }}
           >
             ×
@@ -4257,19 +4918,27 @@ function removePendingImage(index: number) {
           </div>
         </div>
       {/if}
-      <textarea
+      <div
         bind:this={inputEl}
-        class="chat-input-box custom-scrollbar {isPreviewingMarkdown ? 'hidden' : ''}"
-        rows="1"
-        placeholder={currentUser
+        contenteditable="true"
+        role="textbox"
+        aria-multiline="true"
+        tabindex="0"
+        data-empty={!inputText.trim() ? "true" : undefined}
+        data-placeholder={currentUser
           ? `以 ${currentUser.name} 的身份在 #${roomName} 说点什么...`
           : `在 #${roomName} 中说点什么（发送前需先登录）...`}
-        bind:value={inputText}
-        oninput={() => {
-          syncMentionTrigger();
-          triggerTyping();
+        class="chat-input-box custom-scrollbar {isPreviewingMarkdown ? 'hidden' : ''}"
+        oninput={syncInputState}
+        onclick={syncInputState}
+        onblur={() => {
+          if (!inputText.trim() && !inputEl?.querySelector(".chat-mention-pill")) {
+            if (inputEl) {
+              inputEl.innerHTML = "";
+              inputEl.dataset.empty = "true";
+            }
+          }
         }}
-        onclick={syncMentionTrigger}
         onkeyup={(e) => {
           if (
             e.key !== "ArrowUp" &&
@@ -4278,12 +4947,12 @@ function removePendingImage(index: number) {
             e.key !== "Tab" &&
             e.key !== "Escape"
           ) {
-            syncMentionTrigger();
+            syncInputState();
           }
         }}
         onkeydown={handleKeydown}
         onpaste={handlePaste}
-      ></textarea>
+      ></div>
 
       <!-- 单行底栏：左 表情/传图 + 右 快捷提示/发送按钮 -->
       <div class="chat-input-toolbar flex items-center justify-between gap-2">
@@ -4522,6 +5191,25 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
+          {#if currentUser?.isAdmin && onPinMessage}
+            <button
+              type="button"
+              class="chat-mobile-sheet-action-btn"
+              onclick={() => {
+                const uid = activeMsg.msgUid;
+                const wasPinned = activeIsPinned;
+                closeMobileActions();
+                onPinMessage?.(uid, wasPinned);
+              }}
+            >
+              <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="17" x2="12" y2="22" />
+                <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+              </svg>
+              <span>{activeIsPinned ? "取消置顶" : "置顶消息"}</span>
+            </button>
+          {/if}
+
           {#if activeMsg.content && activeMsg.content.trim()}
             <button
               type="button"
@@ -4542,6 +5230,25 @@ function removePendingImage(index: number) {
                 <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
               </svg>
               <span>复制文本</span>
+            </button>
+          {/if}
+
+          {#if activeMsg.kind === "user"}
+            <button
+              type="button"
+              class="chat-mobile-sheet-action-btn"
+              onclick={() => {
+                const target = activeMsg;
+                closeMobileActions();
+                handleOpenThread(target);
+              }}
+            >
+              <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                <path d="M8 9h8" />
+                <path d="M8 13h5" />
+              </svg>
+              <span>线程回复</span>
             </button>
           {/if}
 
@@ -4625,24 +5332,21 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if currentUser?.isAdmin && onPinMessage}
-            <button
-              type="button"
-              class="chat-mobile-sheet-action-btn"
-              onclick={() => {
-                const uid = activeMsg.msgUid;
-                const wasPinned = activeIsPinned;
-                closeMobileActions();
-                onPinMessage?.(uid, wasPinned);
-              }}
-            >
-              <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <line x1="12" y1="17" x2="12" y2="22" />
-                <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
-              </svg>
-              <span>{activeIsPinned ? "取消置顶" : "置顶消息"}</span>
-            </button>
-          {/if}
+          <button
+            type="button"
+            class="chat-mobile-sheet-action-btn"
+            onclick={() => {
+              const target = activeMsg;
+              closeMobileActions();
+              handleViewSource(target);
+            }}
+          >
+            <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
+            </svg>
+            <span>查看源码</span>
+          </button>
 
           {#if mobileActionTarget.canDelete}
             <button
@@ -4666,4 +5370,47 @@ function removePendingImage(index: number) {
       </div>
     </dialog>
   {/if}
+
+  <ChatThreadModal
+    open={Boolean(activeThreadRootUid)}
+    roomId={roomId}
+    rootUid={activeThreadRootUid}
+    initialRootMessage={activeThreadInitialRoot}
+    roomMessages={messages}
+    currentUser={currentUser}
+    isInterconnectRoom={isInterconnectRoom}
+    chatServerUrl={chatServerUrl}
+    interconnectSites={interconnectSites}
+    stickerMap={stickerMap}
+    userNameMap={userNameMap}
+    userProfileMap={userProfileMap}
+    readReceipts={readReceipts}
+    clockOffsetMs={clockOffsetMs}
+    onClose={() => {
+      activeThreadRootUid = "";
+      activeThreadInitialRoot = null;
+    }}
+    onSendMessage={onSendMessage}
+    onEditMessage={onEditMessage}
+    onRecallMessage={onRecallMessage}
+    onDeleteMessage={onDeleteMessage}
+    onReaction={onReaction}
+    onVotePoll={onVotePoll}
+    onEndPoll={onEndPoll}
+    onOpenUserProfile={onOpenUserProfile}
+    onViewSource={handleViewSource}
+    onRequireAuth={onRequireAuth}
+  />
+
+  <ChatMessageSourceModal
+    open={Boolean(sourceModalMessage)}
+    message={sourceModalMessage}
+    roomId={roomId}
+    isInterconnectRoom={isInterconnectRoom}
+    chatServerUrl={chatServerUrl}
+    onClose={() => {
+      sourceModalMessage = null;
+    }}
+    onNotify={onNotify}
+  />
 </div>

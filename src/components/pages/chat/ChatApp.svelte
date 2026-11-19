@@ -42,6 +42,7 @@ import type {
 	ChatSpectatorRecord,
 	ChatUserDetailSeed,
 	ConnectionState,
+	ChatActiveThreadItem,
 	ImageAttachment,
 	RoomMusicState,
 } from "./chatTypes";
@@ -242,6 +243,7 @@ let noticeVisible = $state(false);
 let noticeTone = $state<"default" | "error">("default");
 let targetMessageUid = $state("");
 let showInterconnect = $state(false);
+let activeThreads = $state<ChatActiveThreadItem[]>([]);
 let totalChatterCount = $state(0);
 let walineToken = $state("");
 let playlistRefreshSeq = $state(0);
@@ -1193,6 +1195,7 @@ function connectRoom(roomId: string) {
 				if (packet.musicAudience) musicAudience = packet.musicAudience;
 				oldestHistoryId =
 					messages[0]?.id ?? packet.oldestHistoryId ?? 0;
+				activeThreads = packet.activeThreads ?? [];
 				pinnedUids = packet.pinnedUids ?? [];
 				roomTopic = packet.topic ?? "";
 				if (packet.roomAvatars || typeof packet.roomAvatar === "string") {
@@ -2073,6 +2076,7 @@ function handleSendMessage(
 	attachments: ImageAttachment[],
 	mentionKeys: string[] = [],
 	replyToUid = "",
+	threadRootUid = "",
 ) {
 	if (!currentUser) {
 		showAuthModal = true;
@@ -2086,6 +2090,9 @@ function handleSendMessage(
 	};
 	if (replyToUid) {
 		packet.replyToUid = replyToUid;
+	}
+	if (threadRootUid) {
+		packet.threadRootUid = threadRootUid;
 	}
 	sendPacket(packet);
 }
@@ -2918,6 +2925,7 @@ onMount(() => {
           interconnectSites={interconnectSites}
           totalChatterCount={totalChatterCount}
           pinnedUids={pinnedUids}
+          activeThreads={activeThreads}
           roomTopic={roomTopic}
           typingUsers={typingUsers}
           readReceipts={readReceipts}
