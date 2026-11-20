@@ -5,11 +5,13 @@ import ChatModal from "./ChatModal.svelte";
 import {
 	buildWalineLoginUrl,
 	checkGuestRegistrationEmail,
+	isTrustedFastPassDomain,
 	normalizeServerUrl,
 	openWalineLoginPopup,
 	previewAvatarFromEmail,
 	readStoredGuestMeta,
 	registerGuestSession,
+	verifyEmailRemote,
 } from "./chatClient";
 import type { ChatSessionUser } from "./chatTypes";
 
@@ -51,6 +53,12 @@ let guestBlockedByWaline = $state(false);
 let guestBlockedCanSplit = $state(false);
 let splitGuestLoading = $state(false);
 
+// 访客邮箱实时输入校验与 DNS/临时邮箱检测状态
+let emailInlineError = $state("");
+let emailChecking = $state(false);
+let checkDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let currentVerificationId = 0;
+
 let cancelPopup: (() => void) | null = null;
 let lastOpenState = false;
 let authAttemptSeq = 0;
@@ -68,6 +76,12 @@ function resetInterceptionState() {
 	guestBlockedByWaline = false;
 	guestBlockedCanSplit = false;
 	splitGuestLoading = false;
+	if (checkDebounceTimer) {
+		clearTimeout(checkDebounceTimer);
+		checkDebounceTimer = null;
+	}
+	emailInlineError = "";
+	emailChecking = false;
 }
 
 $effect(() => {
@@ -91,7 +105,76 @@ $effect(() => {
 		walinePopupBlocked = false;
 		guestLoading = false;
 		splitGuestLoading = false;
+		if (checkDebounceTimer) {
+			clearTimeout(checkDebounceTimer);
+			checkDebounceTimer = null;
+		}
+		emailInlineError = "";
+		emailChecking = false;
 	}
+});
+
+// 监听访客邮箱输入，边输边检，结合主流白名单与 VPS 权威临时邮箱库/MX 探测
+$effect(() => {
+	const val = (guestEmail || "").trim();
+	if (checkDebounceTimer) {
+		clearTimeout(checkDebounceTimer);
+		checkDebounceTimer = null;
+	}
+
+	if (!val) {
+		emailInlineError = "";
+		emailChecking = false;
+		return;
+	}
+
+	// 尚未输入 @ 或者未形成基本邮箱形态时，不打扰用户正常输入
+	if (!val.includes("@")) {
+		emailInlineError = "";
+		emailChecking = false;
+		return;
+	}
+
+	const parts = val.toLowerCase().split("@");
+	const domain = parts[1] || "";
+
+	// 域名部分还在输入中（没有点），暂不报错
+	if (!domain?.includes(".")) {
+		emailInlineError = "";
+		emailChecking = false;
+		return;
+	}
+
+	// 1. 本地快速校验（格式、保留测试域、example、noreply、临时邮箱关键词）
+	const localRes = checkGuestRegistrationEmail(val);
+	if (!localRes.deliverable) {
+		emailInlineError = localRes.reason || "邮箱不可用或格式不正确";
+		emailChecking = false;
+		return;
+	}
+
+	// 2. 主流白名单（QQ、网易、Gmail、Outlook、iCloud、高校 .edu 等）0ms 秒过
+	if (isTrustedFastPassDomain(domain)) {
+		emailInlineError = "";
+		emailChecking = false;
+		return;
+	}
+
+	// 3. 独立域名/小众邮箱：防抖调用 VPS 远端验证（10,400+ 临时域名库 + DNS MX 真实收信机探测）
+	const verificationId = ++currentVerificationId;
+	emailChecking = true;
+	emailInlineError = "";
+
+	checkDebounceTimer = setTimeout(async () => {
+		const res = await verifyEmailRemote(val, chatServerUrl);
+		if (verificationId !== currentVerificationId) return;
+		emailChecking = false;
+		if (!res.ok) {
+			emailInlineError = res.error || "该邮箱无法接收邮件或为一次性临时邮箱";
+		} else {
+			emailInlineError = "";
+		}
+	}, 350);
 });
 
 onMount(() => {
@@ -138,7 +221,10 @@ function handleOpenWalinePopup() {
 async function handleGuestSubmit(e: SubmitEvent) {
 	e.preventDefault();
 	guestError = "";
-	resetInterceptionState();
+	guestBlockedByWaline = false;
+	guestBlockedCanSplit = false;
+	splitGuestLoading = false;
+
 	if (!guestNick.trim()) {
 		guestError = "请填写昵称";
 		return;
@@ -149,8 +235,31 @@ async function handleGuestSubmit(e: SubmitEvent) {
 	}
 	const deliverability = checkGuestRegistrationEmail(guestEmail.trim());
 	if (!deliverability.deliverable) {
-		guestError = deliverability.reason || "请填写有效真实邮箱";
+		emailInlineError = deliverability.reason || "请填写有效真实邮箱";
+		guestError = emailInlineError;
 		return;
+	}
+
+	if (emailInlineError) {
+		guestError = emailInlineError;
+		return;
+	}
+
+	const parts = guestEmail.trim().toLowerCase().split("@");
+	const domain = parts[1] || "";
+	if (!isTrustedFastPassDomain(domain)) {
+		guestLoading = true;
+		const remoteCheck = await verifyEmailRemote(
+			guestEmail.trim(),
+			chatServerUrl,
+		);
+		if (!remoteCheck.ok) {
+			guestLoading = false;
+			emailInlineError =
+				remoteCheck.error || "该邮箱无法接收邮件或为一次性临时邮箱";
+			guestError = emailInlineError;
+			return;
+		}
 	}
 
 	const attemptSeq = ++authAttemptSeq;
@@ -474,18 +583,39 @@ async function handleSplitGuestEnter() {
                 <label for="chat-guest-email" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                   邮箱 <span class="text-red-500">*</span>
                 </label>
-                <input
-                  id="chat-guest-email"
-                  name="email"
-                  type="email"
-                  autocomplete="email"
-                  maxlength={128}
-                  required
-                  bind:value={guestEmail}
-                  placeholder="name@example.com"
-                  class="chat-auth-input"
-                />
+                <div class="relative">
+                  <input
+                    id="chat-guest-email"
+                    name="email"
+                    type="email"
+                    autocomplete="email"
+                    maxlength={128}
+                    required
+                    bind:value={guestEmail}
+                    placeholder="yourname@qq.com"
+                    class="chat-auth-input {emailInlineError ? 'border-rose-500! text-rose-600! dark:text-rose-400! focus:border-rose-500! focus:ring-rose-500/20!' : ''}"
+                  />
+                  {#if emailChecking}
+                    <div class="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center text-xs text-(--chat-meta-color)" title="正在检测邮箱可用性...">
+                      <svg class="animate-spin w-3.5 h-3.5 text-(--chat-meta-color)" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                      </svg>
+                    </div>
+                  {/if}
+                </div>
               </div>
+
+              {#if emailInlineError}
+                <div class="col-span-1 sm:col-span-2 -mt-0.5">
+                  <p class="text-[11px] text-rose-500 flex items-center gap-1.5 leading-snug">
+                    <svg class="w-3.5 h-3.5 shrink-0 text-rose-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="truncate">{emailInlineError}</span>
+                  </p>
+                </div>
+              {/if}
             </div>
 
             <div>
@@ -506,16 +636,16 @@ async function handleSplitGuestEnter() {
             </div>
           </div>
 
-          {#if guestError}
+          {#if guestError && guestError !== emailInlineError}
             <p class="text-xs text-red-500 m-0">{guestError}</p>
           {/if}
 
           <button
             type="submit"
-            disabled={guestLoading}
+            disabled={guestLoading || emailChecking || Boolean(emailInlineError)}
             class="btn-regular w-full h-9 rounded-xl text-xs font-medium active:scale-95 transition-all cursor-pointer border-none disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {guestLoading ? "正在进入..." : "以访客身份进入"}
+            {guestLoading ? "正在进入..." : emailChecking ? "正在检测邮箱..." : "以访客身份进入"}
           </button>
         </form>
       {/if}

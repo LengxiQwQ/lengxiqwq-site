@@ -27,6 +27,60 @@ const RESERVED_TLD_SUFFIXES = [
 	".local",
 ];
 
+// 主流大厂与高校特许免检白名单（0ms 秒过，绝不误伤）
+export const TRUSTED_FAST_PASS_DOMAINS: ReadonlySet<string> = new Set([
+	// 国内主流
+	"qq.com",
+	"vip.qq.com",
+	"foxmail.com",
+	"163.com",
+	"vip.163.com",
+	"126.com",
+	"vip.126.com",
+	"yeah.net",
+	"sina.com",
+	"sina.cn",
+	"vip.sina.com",
+	"sohu.com",
+	"139.com",
+	"189.cn",
+	"wo.cn",
+	"aliyun.com",
+	// 国际主流
+	"gmail.com",
+	"googlemail.com",
+	"outlook.com",
+	"hotmail.com",
+	"live.com",
+	"msn.com",
+	"icloud.com",
+	"me.com",
+	"mac.com",
+	"yahoo.com",
+	"yahoo.com.cn",
+	"yahoo.co.jp",
+	// 极客与隐私安全正常个人邮箱
+	"proton.me",
+	"protonmail.com",
+	"pm.me",
+	"tuta.com",
+	"tutanota.com",
+	"fastmail.com",
+	"zoho.com",
+	"mail.ru",
+	"yandex.com",
+	"yandex.ru",
+]);
+
+export function isTrustedFastPassDomain(domain: string): boolean {
+	const lower = (domain || "").toLowerCase().trim();
+	return (
+		TRUSTED_FAST_PASS_DOMAINS.has(lower) ||
+		lower.endsWith(".edu") ||
+		lower.endsWith(".edu.cn")
+	);
+}
+
 export interface EmailDeliverabilityResult {
 	deliverable: boolean;
 	reason?: string;
@@ -68,6 +122,11 @@ export function checkEmailDeliverability(
 	}
 
 	const domain = parts[1];
+
+	// 0. 主流大厂与高校白名单秒过（0ms，绝不误伤）
+	if (isTrustedFastPassDomain(domain)) {
+		return { deliverable: true };
+	}
 
 	// 检查已知无 MX 记录或单向替身域名
 	if (UNDELIVERABLE_EXACT_DOMAINS.has(domain)) {
@@ -135,6 +194,11 @@ export function checkGuestRegistrationEmail(
 	const trimmed = (email || "").trim().toLowerCase();
 	const [localPart = "", domain = ""] = trimmed.split("@");
 
+	// 0. 主流大厂与高校白名单秒过
+	if (isTrustedFastPassDomain(domain)) {
+		return { deliverable: true };
+	}
+
 	// 1. 严格检查是否包含 "example"（无论是用户名还是域名）
 	if (localPart.includes("example") || domain.includes("example")) {
 		return {
@@ -167,4 +231,47 @@ export function checkGuestRegistrationEmail(
 	}
 
 	return { deliverable: true };
+}
+
+/**
+ * 客户端异步探测邮箱（结合本地白名单 + VPS 远端 10,400+ 临时库及 DNS MX 探测）
+ */
+export async function verifyEmailRemote(
+	email: string,
+	chatServerUrl: string,
+): Promise<{ ok: boolean; error?: string }> {
+	const localRes = checkGuestRegistrationEmail(email);
+	if (!localRes.deliverable) {
+		return { ok: false, error: localRes.reason };
+	}
+
+	const parts = email.trim().toLowerCase().split("@");
+	if (parts.length === 2 && isTrustedFastPassDomain(parts[1])) {
+		return { ok: true };
+	}
+
+	const base = chatServerUrl ? chatServerUrl.replace(/\/+$/, "") : "";
+	if (!base) {
+		return { ok: true }; // 若未配置服务端地址，以本地校验为准
+	}
+
+	try {
+		const resp = await fetch(
+			`${base}/api/auth/verify-email?email=${encodeURIComponent(email.trim())}`,
+			{
+				signal: AbortSignal.timeout(4000),
+			},
+		);
+		if (!resp.ok) {
+			const data = (await resp.json().catch(() => ({}))) as {
+				error?: string;
+			};
+			return { ok: false, error: data.error || "邮箱未通过验证" };
+		}
+		const data = (await resp.json()) as { ok?: boolean; error?: string };
+		return { ok: Boolean(data.ok), error: data.error };
+	} catch {
+		// 网络抖动降级放行，保证高可用
+		return { ok: true };
+	}
 }

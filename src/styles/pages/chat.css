@@ -469,10 +469,15 @@ html[data-chat-page][data-chat-density="compact"] #chat-page [data-chat-message-
 	top: 0;
 	left: 0;
 	right: 0;
-	z-index: 20;
+	z-index: 30;
 	display: flex;
 	flex-direction: column;
 	pointer-events: none;
+}
+
+.chat-header-stack:has([data-chat-floating-state="ready"]),
+.chat-header-stack:has([aria-expanded="true"]) {
+	z-index: 45;
 }
 
 .chat-header-stack > * {
@@ -480,12 +485,24 @@ html[data-chat-page][data-chat-density="compact"] #chat-page [data-chat-message-
 }
 
 .chat-panel-center .chat-window-header {
+	position: relative;
+	z-index: 30;
 	height: 54px !important;
 	box-sizing: border-box !important;
-	background: color-mix(in oklab, var(--skin-surface) 88%, transparent) !important;
-	-webkit-backdrop-filter: blur(8px) !important;
-	backdrop-filter: blur(8px) !important;
+	background: color-mix(in oklab, var(--skin-surface) 92%, transparent) !important;
+	-webkit-backdrop-filter: blur(10px) !important;
+	backdrop-filter: blur(10px) !important;
 	border-bottom: 1px solid var(--skin-line) !important;
+}
+
+.chat-panel-center .chat-window-header:has([data-chat-floating-state="ready"]),
+.chat-panel-center .chat-window-header:has([aria-expanded="true"]) {
+	z-index: 45;
+}
+
+.chat-window-header :is(.relative):has([data-chat-floating-state="ready"]),
+.chat-window-header :is(.relative):has([aria-expanded="true"]) {
+	z-index: 2;
 }
 
 .chat-connection-status {
@@ -507,6 +524,13 @@ html[data-chat-page][data-chat-density="compact"] #chat-page [data-chat-message-
 
 html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) .chat-connection-status {
 	color-scheme: dark;
+}
+
+/* 消息展示流区域：建立严格的独立层叠上下文，杜绝消息气泡、浮动小药丸操作条及 reactions 向上穿透吸顶小标题栏 */
+.chat-messages-stream-layer {
+	position: relative;
+	z-index: 1;
+	isolation: isolate;
 }
 
 /* ==========================================================================
@@ -760,6 +784,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
    ========================================================================== */
 .chat-input-dock {
 	position: relative;
+	z-index: 20;
 	border-top: 1px solid var(--skin-line);
 	background: var(--skin-surface);
 	padding: 0;
@@ -3947,7 +3972,8 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 }
 
 .chat-mention-history-menu {
-	width: 17.5rem;
+	z-index: 48;
+	width: min(17.5rem, calc(100vw - 1.5rem));
 	--chat-floating-max-height: 18rem;
 }
 

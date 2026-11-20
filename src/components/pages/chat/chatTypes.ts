@@ -61,6 +61,9 @@ export interface ChatSessionUser {
 	location?: string;
 	notifyEmail?: boolean;
 	email?: string;
+	matrixUser?: string | null;
+	matrixId?: string | null;
+	matrixServer?: string | null;
 }
 
 export interface ChatProfileDraft {
@@ -125,6 +128,9 @@ export interface ChatUserDetailSeed {
 	firstSeenAt?: number;
 	totalDurationSec?: number;
 	totalDurationFormatted?: string;
+	matrixUser?: string | null;
+	matrixId?: string | null;
+	matrixServer?: string | null;
 }
 
 export interface ChatUserRequestedTrackItem {
@@ -195,6 +201,9 @@ export interface ChatUserDetailProfile {
 		coverUrl: string;
 		trackCount: number;
 	}>;
+	matrixUser?: string | null;
+	matrixId?: string | null;
+	matrixServer?: string | null;
 }
 
 export interface ChatMentionCandidate {
@@ -217,6 +226,9 @@ export interface ChatMentionCandidate {
 	bio?: string;
 	location?: string;
 	lastSeenAt: number;
+	matrixUser?: string | null;
+	matrixId?: string | null;
+	matrixServer?: string | null;
 }
 
 export interface ImageAttachment {
@@ -401,7 +413,7 @@ export interface CurrentPlayback {
 	durationSec: number;
 	skipVotes: string[];
 	sourceRevision?: number;
-	phase?: "preparing" | "scheduled" | "playing";
+	phase?: "transitioning" | "preparing" | "scheduled" | "playing";
 }
 
 export interface RoomMusicState {

@@ -2110,7 +2110,7 @@ async function jumpToMessage(msgUid: string) {
 	clearScrollEndTimer();
 	isActivelyScrolling = false;
 	commitScrollDeviation();
-	showMentionHistory = false;
+	closeAllHeaderMenus();
 	suppressStickyScrollUntil = Date.now() + 2500;
 	isStickyAtBottom = false;
 	const targetMsg = messages.find((m) => m.msgUid === msgUid);
@@ -2459,22 +2459,20 @@ onMount(() => {
 	const handlePointerDown = (e: PointerEvent) => {
 		const target = e.target as HTMLElement | null;
 		if (!target) return;
-		const insideMore = mobileMoreMenuWrapEl?.contains(target);
 		if (!dockEl?.contains(target)) {
 			activePopover = "none";
 			mentionMenuOpen = false;
 		}
-		if (
-			!mentionHistoryWrapEl?.contains(target) &&
-			!(mentionsInMore && insideMore)
-		) {
-			showMentionHistory = false;
-		}
-		if (!threadListWrapEl?.contains(target) && !(threadInMore && insideMore)) {
-			showThreadListMenu = false;
-		}
-		if (!insideMore) {
-			showMobileMoreMenu = false;
+
+		const insideMore = mobileMoreMenuWrapEl?.contains(target);
+		const insideMention = mentionHistoryWrapEl?.contains(target);
+		const insideThread = threadListWrapEl?.contains(target);
+
+		// 仅当点击真正发生在所有顶栏菜单及触发器外部时，才在 pointerdown 阶段关闭。
+		// 如果点击命中任何一个顶栏菜单包装容器（包含其触发按钮），交给按钮自身的点击事件原子切换，
+		// 避免移动端触屏在 pointerdown 阶段提前销毁 DOM 打断后续 click 事件导致必须按两次或切换冲突。
+		if (!insideMore && !insideMention && !insideThread) {
+			closeAllHeaderMenus();
 		}
 	};
 
@@ -2486,9 +2484,7 @@ onMount(() => {
 			) {
 				mobileMoreTrigger?.focus({ preventScroll: true });
 			}
-			showMentionHistory = false;
-			showThreadListMenu = false;
-			showMobileMoreMenu = false;
+			closeAllHeaderMenus();
 			closeMobileActions();
 		}
 	};
@@ -3658,11 +3654,38 @@ function openSitePanel(
 	document.getElementById(triggerId)?.click();
 }
 
-function toggleHeaderList(list: "threads" | "mentions", fromMore = false) {
-	showThreadListMenu = list === "threads" && !showThreadListMenu;
-	showMentionHistory = list === "mentions" && !showMentionHistory;
+function closeAllHeaderMenus() {
 	showMobileMoreMenu = false;
-	if (fromMore) mobileMoreTrigger?.focus({ preventScroll: true });
+	showMentionHistory = false;
+	showThreadListMenu = false;
+}
+
+function toggleMobileMoreMenu() {
+	const isCurrentTriggerOpen =
+		showMobileMoreMenu ||
+		(threadInMore && showThreadListMenu) ||
+		(mentionsInMore && showMentionHistory);
+	if (isCurrentTriggerOpen) {
+		closeAllHeaderMenus();
+	} else {
+		closeAllHeaderMenus();
+		showMobileMoreMenu = true;
+	}
+}
+
+function toggleHeaderList(list: "threads" | "mentions", fromMore = false) {
+	if (list === "threads") {
+		const willOpen = !showThreadListMenu;
+		closeAllHeaderMenus();
+		showThreadListMenu = willOpen;
+	} else if (list === "mentions") {
+		const willOpen = !showMentionHistory;
+		closeAllHeaderMenus();
+		showMentionHistory = willOpen;
+	}
+	if (fromMore) {
+		mobileMoreTrigger?.focus({ preventScroll: true });
+	}
 }
 
 onMount(() => {
@@ -3749,7 +3772,7 @@ function removePendingImage(index: number) {
     </div>
   {/if}
   {#snippet headerThreadList(reference?: HTMLElement | null)}
-    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="活跃线程回复列表">
+    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="活跃线程回复列表">
       <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
         <span>活跃线程回复</span>
         <span>{mergedActiveThreads.length} 个</span>
@@ -3798,7 +3821,7 @@ function removePendingImage(index: number) {
   {/snippet}
 
   {#snippet headerMentionList(reference?: HTMLElement | null)}
-    <div data-chat-floating use:positionChatFloating={{ placement: reference ? "bottom-end" : "bottom-start", reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="被提及的消息列表">
+    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="被提及的消息列表">
       <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
         <span>近期提及你的消息</span>
         <span>{mentionsToMe.length}条</span>
@@ -4033,11 +4056,7 @@ function removePendingImage(index: number) {
           aria-expanded={showMobileMoreMenu || (threadInMore && showThreadListMenu) || (mentionsInMore && showMentionHistory)}
           data-floating-panel-no-expanded
           bind:this={mobileMoreTrigger}
-          onclick={() => {
-            showThreadListMenu = false;
-            showMentionHistory = false;
-            showMobileMoreMenu = !showMobileMoreMenu;
-          }}
+          onclick={toggleMobileMoreMenu}
         >
           <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="1.25" fill="currentColor" />
@@ -4082,7 +4101,7 @@ function removePendingImage(index: number) {
               role="menuitem"
               class="chat-mobile-more-item"
               onclick={() => {
-                showMobileMoreMenu = false;
+                closeAllHeaderMenus();
                 setTimeout(() => openSitePanel("display-settings-switch", "display-setting", "chat-site-controls-trigger"), 0);
               }}
             >
@@ -4104,7 +4123,7 @@ function removePendingImage(index: number) {
               role="menuitem"
               class="chat-mobile-more-item"
               onclick={() => {
-                showMobileMoreMenu = false;
+                closeAllHeaderMenus();
                 setTimeout(() => openSitePanel("scheme-switch", "theme-mode-panel", "chat-site-controls-trigger"), 0);
               }}
             >
@@ -4124,7 +4143,7 @@ function removePendingImage(index: number) {
                 data-chat-interconnect-trigger
                 class="chat-mobile-more-item"
                 onclick={() => {
-                  showMobileMoreMenu = false;
+                  closeAllHeaderMenus();
                   onToggleInterconnect?.();
                 }}
               >
@@ -4150,7 +4169,7 @@ function removePendingImage(index: number) {
                 role="menuitem"
                 class="chat-mobile-more-item"
                 onclick={() => {
-                  showMobileMoreMenu = false;
+                  closeAllHeaderMenus();
                   topicDraft = effectiveSubtitle;
                   editingTopic = true;
                 }}
@@ -4325,7 +4344,7 @@ function removePendingImage(index: number) {
   </div>
 
   <!-- 消息展示流区域（含悬浮 切歌投票 / @你 / 未读定位 横幅） -->
-  <div class="relative flex-1 min-h-0 flex flex-col">
+  <div class="chat-messages-stream-layer relative flex-1 min-h-0 flex flex-col">
     {#if skipVoteBanner || queueVoteBanners.length > 0 || activeAlertMessage || showUnreadJumpBar}
       <div class="chat-floating-alerts-stack">
         {#if skipVoteBanner}

@@ -21,7 +21,9 @@ export {
 	checkEmailDeliverability,
 	checkGuestRegistrationEmail,
 	type EmailDeliverabilityResult,
+	isTrustedFastPassDomain,
 	isUndeliverableEmail,
+	verifyEmailRemote,
 } from "../../../utils/email-validation";
 
 export const GUEST_TOKEN_STORAGE_KEY = "fireflyChatGuestToken";

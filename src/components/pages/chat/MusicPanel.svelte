@@ -1762,7 +1762,7 @@ $effect(() => {
 function computeExpectedElapsed(): number {
 	if (!currentPlay) return 0;
 	const raw = ((serverNow?.() ?? Date.now() + clockOffsetMs) - currentPlay.startedAt) / 1000;
-	if (currentPlay.phase === "preparing") return 0;
+	if (currentPlay.phase === "preparing" || currentPlay.phase === "transitioning" || raw < 0) return 0;
 	const clamped = Math.max(0, raw);
 	if (effectiveDuration > 0) {
 		return Math.min(clamped, effectiveDuration);
@@ -2099,7 +2099,10 @@ $effect(() => {
 	const controller = player;
 	const next = musicState?.next ?? null;
 	const loudness = volume;
-	untrack(() => { controller.setVolume(loudness); controller.setTrack(active); controller.preloadNext(next); });
+	untrack(() => {
+		controller.setVolume(loudness);
+		controller.setTrack(active);
+	});
 	if (!active) {
 		roomElapsed = 0;
 		localDuration = 0;
@@ -2325,7 +2328,7 @@ onMount(() => {
 
 		const expected = computeExpectedElapsed();
 		roomElapsed =
-			audioStatus === "preparing"
+			audioStatus === "preparing" || currentPlay.phase === "transitioning" || currentPlay.phase === "preparing"
 				? 0
 				: listenIntent && audioEl && audioStatus === "playing"
 					? (player?.position ?? audioEl.currentTime)
@@ -2424,6 +2427,8 @@ const elapsedWholeSec = $derived(Math.floor(roomElapsed));
 
 const currentLyricText = $derived.by(() => {
 	if (!currentPlay) return "";
+	if (currentPlay.phase === "transitioning") return "♪ 正在切换下一曲... ♪";
+	if (audioStatus === "preparing" || currentPlay.phase === "preparing") return "♪ 准备同步播放中... ♪";
 	if (lyricsStatus === "loading") return "歌词加载中...";
 	if (lyricsStatus === "empty" || lyrics.length === 0) return "纯音乐或暂无歌词";
 	if (activeLyricIndex >= 0 && activeLyricIndex < lyrics.length) {

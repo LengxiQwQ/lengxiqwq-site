@@ -345,6 +345,21 @@ const fallbackData = $derived.by<{
 				onlineMatch?.location || selfUser?.location || seed.location || "",
 			firstSeenAt: userMessages[0]?.createdAt || 0,
 			lastSeenAt: onlineMatch ? Date.now() : latestMsg?.createdAt || 0,
+			matrixUser:
+				onlineMatch?.matrixUser ||
+				selfUser?.matrixUser ||
+				seed.matrixUser ||
+				(isAdmin ? "lengxiqwq" : null),
+			matrixId:
+				onlineMatch?.matrixId ||
+				selfUser?.matrixId ||
+				seed.matrixId ||
+				(isAdmin ? "@lengxiqwq:matrix.lengxiqwq.com" : null),
+			matrixServer:
+				onlineMatch?.matrixServer ||
+				selfUser?.matrixServer ||
+				seed.matrixServer ||
+				"matrix.lengxiqwq.com",
 			stats: {
 				messageCount: userMessages.length,
 				songRequestCount: userLogs.length,
@@ -365,6 +380,90 @@ const fallbackData = $derived.by<{
 });
 
 const profile = $derived(remoteProfile ?? fallbackData?.profile ?? null);
+
+const localMatrixInfo = $derived.by<{
+	username: string;
+	matrixId: string;
+	server: string;
+} | null>(() => {
+	if (roomId !== "interconnect") return null;
+	if (isExternalUser || matrixUserId || isSpectator) return null;
+
+	const targetKey = profile?.userKey || seed?.userKey || "";
+	if (!targetKey) return null;
+
+	const pMatrixId = remoteProfile?.matrixId || profile?.matrixId;
+	const pMatrixUser = remoteProfile?.matrixUser || profile?.matrixUser;
+	const pMatrixServer = remoteProfile?.matrixServer || profile?.matrixServer;
+
+	const onlineMatch = onlineMembers.find((m) => m.userKey === targetKey);
+	const omMatrixId = onlineMatch?.matrixId;
+	const omMatrixUser = onlineMatch?.matrixUser;
+	const omMatrixServer = onlineMatch?.matrixServer;
+
+	const sMatrixId = seed?.matrixId;
+	const sMatrixUser = seed?.matrixUser;
+	const sMatrixServer = seed?.matrixServer;
+
+	const isAdmin = Boolean(
+		profile?.isAdmin ||
+			seed?.isAdmin ||
+			onlineMatch?.isAdmin ||
+			(currentUser?.isAdmin && currentUser?.userKey === targetKey) ||
+			targetKey === "waline:1",
+	);
+
+	let matrixId = pMatrixId || omMatrixId || sMatrixId || "";
+	let username = pMatrixUser || omMatrixUser || sMatrixUser || "";
+	let server = pMatrixServer || omMatrixServer || sMatrixServer || "";
+
+	if (isAdmin) {
+		if (!username) username = "lengxiqwq";
+		if (!server) server = "matrix.lengxiqwq.com";
+		if (!matrixId) matrixId = `@${username}:${server}`;
+	} else {
+		const qwqMatch = targetKey.match(/qwq(\d+)/i);
+		if (!username && qwqMatch) {
+			username = qwqMatch[0].toLowerCase();
+		}
+		if (!server) {
+			if (matrixId?.includes(":")) {
+				server = matrixId.split(":")[1] || "matrix.lengxiqwq.com";
+			} else {
+				server = "matrix.lengxiqwq.com";
+			}
+		}
+		if (!matrixId && username) {
+			matrixId = `@${username}:${server}`;
+		}
+	}
+
+	if (!username && matrixId) {
+		username = matrixId.split(":")[0].replace(/^@/, "");
+	}
+	if (!server && matrixId?.includes(":")) {
+		server = matrixId.split(":")[1] || "matrix.lengxiqwq.com";
+	}
+
+	if (!username && !matrixId) {
+		if (isLoading) {
+			return {
+				username: "同步中...",
+				matrixId: "",
+				server: "matrix.lengxiqwq.com",
+			};
+		}
+		return null;
+	}
+
+	return {
+		username: username || "待分配",
+		matrixId:
+			matrixId ||
+			(username ? `@${username}:${server || "matrix.lengxiqwq.com"}` : ""),
+		server: server || "matrix.lengxiqwq.com",
+	};
+});
 let managedBadges = $state<ChatCustomBadge[]>([]);
 let isSavingBadges = $state(false);
 let badgeSaveNotice = $state("");
@@ -828,6 +927,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
     {@const lastSeenAt = onlineMatch ? Date.now() : (latestMsg?.createdAt || 0)}
     {@const recentMsgs = userMessages.slice(-5).reverse()}
     {@const canMentionExternal = Boolean(currentUser) && roomId === "interconnect"}
+    {@const extFullId = matrixUserId || seed.userKey}
+    {@const extUsername = extFullId.includes(":") ? extFullId.split(":")[0].replace(/^@/, "") : ""}
 
     <div class="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-4 space-y-3 min-h-0">
       <!-- 1. 顶部身份卡片 -->
@@ -980,15 +1081,23 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         </div>
 
         <div class="mt-2.5 pt-2 border-t border-[var(--chat-divider-color)]/60 text-[0.6875rem] text-[var(--chat-meta-color)] space-y-1">
+          {#if extUsername && !relayOriginInfo}
+            <div class="flex items-center justify-between gap-2">
+              <span class="shrink-0">Matrix 用户名:</span>
+              <span class="font-mono font-medium text-[var(--deep-text)] dark:text-white/90 truncate">
+                {extUsername}
+              </span>
+            </div>
+          {/if}
           <div class="flex items-center justify-between gap-2">
             <span class="shrink-0">{relayOriginInfo ? "代发节点:" : "Matrix 账号:"}</span>
             <a
-              href={`https://matrix.to/#/${encodeURIComponent(matrixUserId || seed.userKey)}`}
+              href={`https://matrix.to/#/${encodeURIComponent(extFullId)}`}
               target="_blank"
               rel="noopener noreferrer"
-              class="text-[var(--chat-accent-text)] hover:underline truncate"
+              class="text-[var(--chat-accent-text)] hover:underline truncate font-mono"
             >
-              {matrixUserId || seed.userKey}
+              {extFullId}
             </a>
           </div>
           {#if relayOriginInfo && !relayOriginInfo.userId.startsWith("n_")}
@@ -999,8 +1108,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           {/if}
           {#if origin.host}
             <div class="flex items-center justify-between gap-2">
-              <span class="shrink-0">中继节点:</span>
-              <span class="truncate">{origin.host}</span>
+              <span class="shrink-0">服务器:</span>
+              <span class="truncate font-mono">{origin.host}</span>
             </div>
           {/if}
         </div>
@@ -1355,6 +1464,11 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                     <span>{profile.location}</span>
                   </span>
                 {/if}
+
+                {#if roomId === "interconnect"}
+                  <span class="opacity-40 select-none">·</span>
+                  <span>本站 Matrix 节点</span>
+                {/if}
               </div>
             </div>
           </div>
@@ -1379,6 +1493,36 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               <span class="truncate">{safeProfileUrl}</span>
               <span class="text-[10px] shrink-0 opacity-85">访问主页 ↗</span>
             </a>
+          {/if}
+
+          {#if roomId === "interconnect" && localMatrixInfo}
+            <div class="mt-2.5 pt-2 border-t border-[var(--chat-divider-color)]/60 text-[0.6875rem] text-[var(--chat-meta-color)] space-y-1">
+              <div class="flex items-center justify-between gap-2">
+                <span class="shrink-0">Matrix 用户名:</span>
+                <span class="font-mono font-medium text-[var(--deep-text)] dark:text-white/90 truncate">
+                  {localMatrixInfo.username}
+                </span>
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="shrink-0">Matrix 账号:</span>
+                {#if localMatrixInfo.matrixId}
+                  <a
+                    href={`https://matrix.to/#/${encodeURIComponent(localMatrixInfo.matrixId)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-[var(--chat-accent-text)] hover:underline truncate font-mono"
+                  >
+                    {localMatrixInfo.matrixId}
+                  </a>
+                {:else}
+                  <span class="truncate font-mono">待分配</span>
+                {/if}
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="shrink-0">服务器:</span>
+                <span class="truncate font-mono">{localMatrixInfo.server}</span>
+              </div>
+            </div>
           {/if}
         </div>
 
