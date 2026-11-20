@@ -1,0 +1,626 @@
+import { DatabaseSync } from 'node:sqlite';
+import { dirname } from 'node:path';
+import { mkdirSync } from 'node:fs';
+
+export class ChatDatabase {
+  constructor(dbPath) {
+    this.dbPath = dbPath;
+    mkdirSync(dirname(dbPath), { recursive: true });
+    this.db = new DatabaseSync(dbPath);
+    this.init();
+  }
+
+  init() {
+    // 开启 WAL 模式以获得极高的并发读写性能并杜绝写放大
+    this.db.exec('PRAGMA journal_mode = WAL;');
+    this.db.exec('PRAGMA synchronous = NORMAL;');
+    this.db.exec('PRAGMA foreign_keys = ON;');
+
+    // 1. 聊天消息表与索引
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        room_id TEXT NOT NULL,
+        event_id TEXT UNIQUE NOT NULL,
+        msg_uid TEXT,
+        kind TEXT,
+        sender_key TEXT NOT NULL,
+        sender_name TEXT,
+        sender_avatar TEXT,
+        sender_url TEXT,
+        badge TEXT,
+        badge_type TEXT,
+        is_admin INTEGER DEFAULT 0,
+        content TEXT NOT NULL,
+        msg_type TEXT DEFAULT 'm.text',
+        thread_root_id TEXT,
+        reply_to_json TEXT,
+        attachments_json TEXT,
+        mentions_json TEXT,
+        mention_keys_json TEXT,
+        custom_badges_json TEXT,
+        is_redacted INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_messages_room_created ON chat_messages (room_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages (room_id, thread_root_id);
+      CREATE INDEX IF NOT EXISTS idx_chat_messages_sender ON chat_messages (sender_key);
+    `);
+
+    // 2. 表情回应表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS chat_reactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_event_id TEXT NOT NULL,
+        sender_key TEXT NOT NULL,
+        sender_name TEXT,
+        reaction_key TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE (message_event_id, sender_key, reaction_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_reactions_msg ON chat_reactions (message_event_id);
+    `);
+
+    // 3. 歌曲元数据去重主表（永久保存、无上限）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS music_tracks (
+        id TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        artist TEXT,
+        album TEXT,
+        cover_url TEXT,
+        duration_sec REAL DEFAULT 0,
+        track_json TEXT NOT NULL,
+        total_requests INTEGER DEFAULT 0,
+        first_requested_at INTEGER,
+        last_requested_at INTEGER,
+        total_rotations INTEGER DEFAULT 0,
+        first_rotated_at INTEGER,
+        last_rotated_at INTEGER,
+        last_playlist_name TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_music_tracks_req ON music_tracks (last_requested_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_music_tracks_req_count ON music_tracks (total_requests DESC);
+      CREATE INDEX IF NOT EXISTS idx_music_tracks_rot ON music_tracks (last_rotated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_music_tracks_rot_count ON music_tracks (total_rotations DESC);
+    `);
+
+    // 4. 点歌流水日志表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS music_request_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_uid TEXT UNIQUE,
+        room_id TEXT NOT NULL,
+        track_id TEXT NOT NULL REFERENCES music_tracks(id),
+        requester_key TEXT NOT NULL,
+        requester_name TEXT,
+        requester_avatar TEXT,
+        outcome TEXT DEFAULT 'queued',
+        requested_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_music_req_logs_room_time ON music_request_logs (room_id, requested_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_music_req_logs_user ON music_request_logs (requester_key, requested_at DESC);
+    `);
+
+    // 5. 歌单轮播流水日志表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS music_rotation_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid TEXT UNIQUE,
+        room_id TEXT NOT NULL,
+        track_id TEXT NOT NULL REFERENCES music_tracks(id),
+        playlist_id TEXT,
+        playlist_name TEXT,
+        rotated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_music_rot_logs_room_time ON music_rotation_logs (room_id, rotated_at DESC);
+    `);
+
+    // 6. 歌单元信息表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS playlists (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        creator_key TEXT NOT NULL,
+        creator_name TEXT,
+        cover_url TEXT,
+        is_public INTEGER DEFAULT 1,
+        track_count INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_playlists_creator ON playlists (creator_key);
+      CREATE INDEX IF NOT EXISTS idx_playlists_public ON playlists (is_public, updated_at DESC);
+    `);
+
+    // 7. 歌单单曲关联表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS playlist_tracks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+        track_id TEXT NOT NULL,
+        sort_order INTEGER NOT NULL,
+        track_json TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        UNIQUE (playlist_id, track_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pl_tracks_order ON playlist_tracks (playlist_id, sort_order ASC);
+    `);
+
+    // 8. 成员名录与资料表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS chat_members (
+        user_key TEXT PRIMARY KEY,
+        auth_type TEXT,
+        name TEXT,
+        avatar TEXT,
+        url TEXT,
+        badge TEXT,
+        badge_type TEXT,
+        is_admin INTEGER DEFAULT 0,
+        bio TEXT,
+        status TEXT,
+        location TEXT,
+        matrix_user TEXT,
+        matrix_id TEXT,
+        custom_badges_json TEXT,
+        last_seen_at INTEGER,
+        created_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_members_seen ON chat_members (last_seen_at DESC);
+    `);
+
+    // 9. 系统键值存储表（置顶消息、话题公告、通知偏好、同步游标）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS system_kv (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `);
+
+    this.prepareStatements();
+  }
+
+  prepareStatements() {
+    // 预编译高频执行的 SQL 语句以获得最高性能
+    this.stmtInsertMessage = this.db.prepare(`
+      INSERT OR REPLACE INTO chat_messages (
+        room_id, event_id, msg_uid, kind, sender_key, sender_name, sender_avatar, sender_url,
+        badge, badge_type, is_admin, content, msg_type, thread_root_id, reply_to_json,
+        attachments_json, mentions_json, mention_keys_json, custom_badges_json, is_redacted, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    this.stmtRedactMessage = this.db.prepare(`
+      UPDATE chat_messages SET is_redacted = 1, content = '此消息已撤回' WHERE event_id = ?
+    `);
+
+    this.stmtUpsertTrackRequest = this.db.prepare(`
+      INSERT INTO music_tracks (
+        id, provider, source_id, title, artist, album, cover_url, duration_sec, track_json,
+        total_requests, first_requested_at, last_requested_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        artist = excluded.artist,
+        album = excluded.album,
+        cover_url = excluded.cover_url,
+        duration_sec = excluded.duration_sec,
+        track_json = excluded.track_json,
+        total_requests = music_tracks.total_requests + 1,
+        last_requested_at = excluded.last_requested_at
+    `);
+
+    this.stmtInsertRequestLog = this.db.prepare(`
+      INSERT OR REPLACE INTO music_request_logs (
+        request_uid, room_id, track_id, requester_key, requester_name, requester_avatar, outcome, requested_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    this.stmtUpsertTrackRotation = this.db.prepare(`
+      INSERT INTO music_tracks (
+        id, provider, source_id, title, artist, album, cover_url, duration_sec, track_json,
+        total_rotations, first_rotated_at, last_rotated_at, last_playlist_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        artist = excluded.artist,
+        album = excluded.album,
+        cover_url = excluded.cover_url,
+        duration_sec = excluded.duration_sec,
+        track_json = excluded.track_json,
+        total_rotations = music_tracks.total_rotations + 1,
+        last_rotated_at = excluded.last_rotated_at,
+        last_playlist_name = excluded.last_playlist_name
+    `);
+
+    this.stmtInsertRotationLog = this.db.prepare(`
+      INSERT OR REPLACE INTO music_rotation_logs (
+        uid, room_id, track_id, playlist_id, playlist_name, rotated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    this.stmtUpdateLogOutcome = this.db.prepare(`
+      UPDATE music_request_logs SET outcome = ? WHERE request_uid = ?
+    `);
+
+    this.stmtSetKv = this.db.prepare(`
+      INSERT INTO system_kv (key, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+    `);
+
+    this.stmtGetKv = this.db.prepare(`
+      SELECT value FROM system_kv WHERE key = ?
+    `);
+  }
+
+  // --- 点歌历史 API ---
+
+  recordSongRequest({ roomId = 'chat', track, requesterKey, requesterName, requesterAvatar, requestedAt = Date.now(), requestUid }) {
+    if (!track?.id) return;
+    const uid = requestUid || 'q_' + requestedAt + '_' + Math.random().toString(36).slice(2, 9);
+    const trackJson = JSON.stringify(track);
+
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      this.stmtUpsertTrackRequest.run(
+        track.id,
+        track.provider || 'qq',
+        track.sourceId || track.id.replace(/^qq:/, ''),
+        track.title || '未知曲目',
+        track.artist || '',
+        track.album || '',
+        track.cover || '',
+        Number(track.durationSec) || 0,
+        trackJson,
+        requestedAt,
+        requestedAt
+      );
+
+      this.stmtInsertRequestLog.run(
+        uid,
+        roomId,
+        track.id,
+        requesterKey || '',
+        requesterName || '',
+        requesterAvatar || '',
+        'queued',
+        requestedAt
+      );
+      this.db.exec('COMMIT');
+      return uid;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  recordSongRotation({ roomId = 'chat', track, playlistId = '', playlistName = '歌单轮播', rotatedAt = Date.now(), uid }) {
+    if (!track?.id) return;
+    const rotUid = uid || 'rot_' + rotatedAt + '_' + Math.random().toString(36).slice(2, 8);
+    const trackJson = JSON.stringify(track);
+
+    this.db.exec('BEGIN TRANSACTION');
+    try {
+      this.stmtUpsertTrackRotation.run(
+        track.id,
+        track.provider || 'qq',
+        track.sourceId || track.id.replace(/^qq:/, ''),
+        track.title || '未知曲目',
+        track.artist || '',
+        track.album || '',
+        track.cover || '',
+        Number(track.durationSec) || 0,
+        trackJson,
+        rotatedAt,
+        rotatedAt,
+        playlistName
+      );
+
+      this.stmtInsertRotationLog.run(
+        rotUid,
+        roomId,
+        track.id,
+        playlistId,
+        playlistName,
+        rotatedAt
+      );
+      this.db.exec('COMMIT');
+      return rotUid;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  markOutcome(uid, outcome) {
+    if (!uid) return;
+    this.stmtUpdateLogOutcome.run(outcome, uid);
+  }
+
+  getMusicHistoryPage({ roomId = 'chat', type = 'request', sort = 'recent', requesterKey = '', offset = 0, limit = 100 } = {}) {
+    offset = Math.max(0, Number.parseInt(offset, 10) || 0);
+    limit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 100));
+
+    if (type === 'rotation') {
+      const countStmt = this.db.prepare('SELECT COUNT(*) AS total FROM music_tracks WHERE total_rotations > 0');
+      const total = Number(countStmt.get().total) || 0;
+
+      const orderClause = sort === 'count'
+        ? 'ORDER BY total_rotations DESC, last_rotated_at DESC'
+        : 'ORDER BY last_rotated_at DESC, total_rotations DESC';
+
+      const queryStmt = this.db.prepare(`
+        SELECT track_json, total_rotations, first_rotated_at, last_rotated_at, last_playlist_name
+        FROM music_tracks
+        WHERE total_rotations > 0
+        ${orderClause}
+        LIMIT ? OFFSET ?
+      `);
+
+      const rows = queryStmt.all(limit, offset);
+      const items = rows.map((r) => {
+        let track = {};
+        try { track = JSON.parse(r.track_json); } catch {}
+        return {
+          track,
+          requestCount: r.total_rotations,
+          lastRequesterName: r.last_playlist_name ? `${r.last_playlist_name} (轮播)` : '歌单轮播',
+          firstRequestedAt: r.first_rotated_at,
+          lastRequestedAt: r.last_rotated_at,
+          isRotation: true
+        };
+      });
+
+      return {
+        ok: true,
+        type: 'rotation',
+        total,
+        offset,
+        limit,
+        hasMore: offset + limit < total,
+        items
+      };
+    }
+
+    // type === 'request'
+    if (requesterKey) {
+      // 查询特定点歌人点过的歌（去重并汇总点歌次数与最近时间）
+      const countStmt = this.db.prepare(`
+        SELECT COUNT(DISTINCT track_id) AS total
+        FROM music_request_logs
+        WHERE room_id = ? AND requester_key = ?
+      `);
+      const total = Number(countStmt.get(roomId, requesterKey).total) || 0;
+
+      const orderClause = sort === 'count'
+        ? 'ORDER BY req_count DESC, last_at DESC'
+        : 'ORDER BY last_at DESC, req_count DESC';
+
+      const queryStmt = this.db.prepare(`
+        SELECT t.track_json,
+               COUNT(l.id) AS req_count,
+               MIN(l.requested_at) AS first_at,
+               MAX(l.requested_at) AS last_at,
+               (SELECT requester_name FROM music_request_logs WHERE room_id = ? AND requester_key = ? AND track_id = l.track_id ORDER BY requested_at DESC LIMIT 1) AS last_name
+        FROM music_request_logs l
+        JOIN music_tracks t ON l.track_id = t.id
+        WHERE l.room_id = ? AND l.requester_key = ?
+        GROUP BY l.track_id
+        ${orderClause}
+        LIMIT ? OFFSET ?
+      `);
+
+      const rows = queryStmt.all(roomId, requesterKey, roomId, requesterKey, limit, offset);
+      const items = rows.map((r) => {
+        let track = {};
+        try { track = JSON.parse(r.track_json); } catch {}
+        return {
+          track,
+          requestCount: r.req_count,
+          lastRequesterName: r.last_name || '',
+          firstRequestedAt: r.first_at,
+          lastRequestedAt: r.last_at,
+          isRotation: false
+        };
+      });
+
+      return {
+        ok: true,
+        type: 'request',
+        total,
+        offset,
+        limit,
+        hasMore: offset + limit < total,
+        items
+      };
+    }
+
+    // 默认全房间点歌历史
+    const countStmt = this.db.prepare('SELECT COUNT(*) AS total FROM music_tracks WHERE total_requests > 0');
+    const total = Number(countStmt.get().total) || 0;
+
+    const orderClause = sort === 'count'
+      ? 'ORDER BY total_requests DESC, last_requested_at DESC'
+      : 'ORDER BY last_requested_at DESC, total_requests DESC';
+
+    const queryStmt = this.db.prepare(`
+      SELECT t.track_json, t.total_requests, t.first_requested_at, t.last_requested_at,
+             (SELECT requester_name FROM music_request_logs WHERE track_id = t.id ORDER BY requested_at DESC LIMIT 1) AS last_requester_name
+      FROM music_tracks t
+      WHERE t.total_requests > 0
+      ${orderClause}
+      LIMIT ? OFFSET ?
+    `);
+
+    const rows = queryStmt.all(limit, offset);
+    const items = rows.map((r) => {
+      let track = {};
+      try { track = JSON.parse(r.track_json); } catch {}
+      return {
+        track,
+        requestCount: r.total_requests,
+        lastRequesterName: r.last_requester_name || '',
+        firstRequestedAt: r.first_requested_at,
+        lastRequestedAt: r.last_requested_at,
+        isRotation: false
+      };
+    });
+
+    return {
+      ok: true,
+      type: 'request',
+      total,
+      offset,
+      limit,
+      hasMore: offset + limit < total,
+      items
+    };
+  }
+
+  // --- 歌单 API ---
+
+  upsertPlaylist({ id, title, creatorKey, creatorName, coverUrl = '', isPublic = 1, trackCount = 0, createdAt = Date.now(), updatedAt = Date.now() }) {
+    const stmt = this.db.prepare(`
+      INSERT INTO playlists (id, title, creator_key, creator_name, cover_url, is_public, track_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        creator_name = excluded.creator_name,
+        cover_url = excluded.cover_url,
+        is_public = excluded.is_public,
+        track_count = excluded.track_count,
+        updated_at = excluded.updated_at
+    `);
+    stmt.run(id, title, creatorKey, creatorName, coverUrl, isPublic ? 1 : 0, trackCount, createdAt, updatedAt);
+  }
+
+  savePlaylistTracks(playlistId, tracks, inTransaction = false) {
+    if (!playlistId || !Array.isArray(tracks)) return;
+    if (!inTransaction) this.db.exec('BEGIN TRANSACTION');
+    try {
+      this.db.prepare('DELETE FROM playlist_tracks WHERE playlist_id = ?').run(playlistId);
+      const insertStmt = this.db.prepare(`
+        INSERT OR REPLACE INTO playlist_tracks (playlist_id, track_id, sort_order, track_json, added_at)
+        VALUES (?, ?, ?, ?, ?)
+      `);
+      const now = Date.now();
+      for (let i = 0; i < tracks.length; i++) {
+        const t = tracks[i];
+        if (!t?.id) continue;
+        insertStmt.run(playlistId, t.id, i, JSON.stringify(t), now);
+      }
+      this.db.prepare('UPDATE playlists SET track_count = ?, updated_at = ? WHERE id = ?').run(tracks.length, now, playlistId);
+      if (!inTransaction) this.db.exec('COMMIT');
+    } catch (err) {
+      if (!inTransaction) this.db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+
+  getPlaylistTracks(playlistId) {
+    const stmt = this.db.prepare(`
+      SELECT track_json FROM playlist_tracks WHERE playlist_id = ? ORDER BY sort_order ASC
+    `);
+    const rows = stmt.all(playlistId);
+    return rows.map((r) => {
+      try { return JSON.parse(r.track_json); } catch { return null; }
+    }).filter(Boolean);
+  }
+
+  // --- 聊天消息 API ---
+
+  insertMessage(msg) {
+    if (!msg?.id && !msg?.msgUid) return;
+    const eventId = msg.id || msg.msgUid;
+    this.stmtInsertMessage.run(
+      msg.roomId || 'chat',
+      eventId,
+      msg.msgUid || '',
+      msg.kind || 'chat',
+      msg.userKey || '',
+      msg.name || '',
+      msg.avatar || '',
+      msg.url || '',
+      msg.badge || '',
+      msg.badgeType || '',
+      msg.isAdmin ? 1 : 0,
+      msg.content || '',
+      msg.msgType || 'm.text',
+      msg.threadRootId || '',
+      msg.replyTo ? JSON.stringify(msg.replyTo) : '',
+      msg.attachments ? JSON.stringify(msg.attachments) : '',
+      msg.mentions ? JSON.stringify(msg.mentions) : '',
+      msg.mentionKeys ? JSON.stringify(msg.mentionKeys) : '',
+      msg.customBadges ? JSON.stringify(msg.customBadges) : '',
+      msg.isRedacted ? 1 : 0,
+      msg.createdAt || Date.now()
+    );
+  }
+
+  getMessages({ roomId = 'chat', limit = 50, beforeTime = null, threadRootId = null } = {}) {
+    limit = Math.min(100, Math.max(1, limit));
+    let sql = 'SELECT * FROM chat_messages WHERE room_id = ?';
+    const params = [roomId];
+
+    if (threadRootId) {
+      sql += ' AND thread_root_id = ?';
+      params.push(threadRootId);
+    }
+    if (beforeTime) {
+      sql += ' AND created_at < ?';
+      params.push(beforeTime);
+    }
+
+    sql += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(limit);
+
+    const rows = this.db.prepare(sql).all(...params);
+    return rows.reverse().map((r) => ({
+      id: r.event_id,
+      msgUid: r.msg_uid,
+      kind: r.kind,
+      userKey: r.sender_key,
+      name: r.sender_name,
+      avatar: r.sender_avatar,
+      url: r.sender_url,
+      badge: r.badge,
+      badgeType: r.badge_type,
+      isAdmin: Boolean(r.is_admin),
+      content: r.content,
+      msgType: r.msg_type,
+      threadRootId: r.thread_root_id || undefined,
+      replyTo: r.reply_to_json ? JSON.parse(r.reply_to_json) : undefined,
+      attachments: r.attachments_json ? JSON.parse(r.attachments_json) : undefined,
+      mentions: r.mentions_json ? JSON.parse(r.mentions_json) : undefined,
+      mentionKeys: r.mention_keys_json ? JSON.parse(r.mention_keys_json) : undefined,
+      customBadges: r.custom_badges_json ? JSON.parse(r.custom_badges_json) : undefined,
+      isRedacted: Boolean(r.is_redacted),
+      createdAt: r.created_at
+    }));
+  }
+
+  // --- 系统 KV 键值操作 ---
+
+  setKv(key, value) {
+    const valStr = typeof value === 'string' ? value : JSON.stringify(value);
+    this.stmtSetKv.run(key, valStr, Date.now());
+  }
+
+  getKv(key, defaultValue = null) {
+    const row = this.stmtGetKv.get(key);
+    if (!row) return defaultValue;
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return row.value;
+    }
+  }
+
+  close() {
+    this.db.close();
+  }
+}

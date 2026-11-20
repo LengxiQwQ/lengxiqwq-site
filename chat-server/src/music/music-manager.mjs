@@ -29,9 +29,10 @@ const START_LEAD_MS = 1200;
 const PREPARED_REUSE_TTL_MS = 25 * 60_000;
 
 export class MusicManager {
-  constructor({ roomId = 'chat', dataDir, musicRegistry, signSecret, serverOrigin, onStateChanged, onPrefetchTrack, onUnavailable, getListeners = () => [] }) {
+  constructor({ roomId = 'chat', dataDir, musicRegistry, signSecret, serverOrigin, onStateChanged, onPrefetchTrack, onUnavailable, getListeners = () => [], chatDb = null }) {
     this.roomId = roomId;
     this.dataDir = dataDir;
+    this.chatDb = chatDb;
     this.musicRegistry = musicRegistry;
     this.signSecret = signSecret;
     this.serverOrigin = serverOrigin;
@@ -368,8 +369,24 @@ export class MusicManager {
       histEntry.track = { ...histEntry.track, ...track };
     }
 
-    // Record into historyLogs
+    // Record into historyLogs & database
     const uid = 'q_' + now + '_' + Math.random().toString(36).slice(2, 9);
+    if (this.chatDb) {
+      try {
+        this.chatDb.recordSongRequest({
+          roomId: this.roomId,
+          track,
+          requesterKey,
+          requesterName,
+          requesterAvatar,
+          requestedAt: now,
+          requestUid: uid
+        });
+      } catch (dbErr) {
+        console.error(`[Music:${this.roomId}] 写入 SQLite 失败:`, dbErr.message);
+      }
+    }
+
     const logEntry = {
       requestUid: uid,
       outcome: 'queued',
@@ -382,12 +399,14 @@ export class MusicManager {
       requestCount: histEntry.requestCount
     };
     this.historyLogs.push(logEntry);
-    if (this.historyLogs.length > 500) this.historyLogs.shift();
-    if (this.historyMap.size > 300) {
-      const oldest = [...this.historyMap.entries()].reduce((a, b) => a[1].lastRequestedAt <= b[1].lastRequestedAt ? a : b);
-      this.historyMap.delete(oldest[0]);
+    if (!this.chatDb) {
+      if (this.historyLogs.length > 500) this.historyLogs.shift();
+      if (this.historyMap.size > 300) {
+        const oldest = [...this.historyMap.entries()].reduce((a, b) => a[1].lastRequestedAt <= b[1].lastRequestedAt ? a : b);
+        this.historyMap.delete(oldest[0]);
+      }
+      this.saveDataDebounced();
     }
-    this.saveDataDebounced();
 
     // If nothing playing or currently playing fallback, play immediately!
     if ((!this.current || this.current.isFallback) && this.queue.length === 0) {
@@ -425,10 +444,17 @@ export class MusicManager {
   }
 
   markOutcome(uid, outcome) {
+    if (this.chatDb) {
+      try {
+        this.chatDb.markOutcome(uid, outcome);
+      } catch (e) {
+        console.error(`[Music:${this.roomId}] 更新 SQLite 状态失败:`, e.message);
+      }
+    }
     const entry = this.historyLogs.findLast(log => log.requestUid === uid);
     if (entry) {
       entry.outcome = outcome;
-      this.saveDataDebounced();
+      if (!this.chatDb) this.saveDataDebounced();
     }
   }
 
@@ -538,19 +564,46 @@ export class MusicManager {
       rotatedAt: now,
       rotationCount: entry.rotationCount
     };
-    this.rotationLogs.push(logEntry);
-    if (this.rotationLogs.length > 3000) this.rotationLogs.shift();
-    if (this.rotationHistoryMap.size > 3000) {
-      const oldest = [...this.rotationHistoryMap.entries()].reduce(
-        (a, b) => a[1].lastRotatedAt <= b[1].lastRotatedAt ? a : b
-      );
-      this.rotationHistoryMap.delete(oldest[0]);
+    if (this.chatDb) {
+      try {
+        this.chatDb.recordSongRotation({
+          roomId: this.roomId,
+          track,
+          playlistId,
+          playlistName,
+          rotatedAt: now,
+          uid: logEntry.uid
+        });
+      } catch (e) {
+        console.error(`[Music:${this.roomId}] 轮播写入 SQLite 失败:`, e.message);
+      }
     }
 
-    this.saveDataDebounced();
+    this.rotationLogs.push(logEntry);
+    if (!this.chatDb) {
+      if (this.rotationLogs.length > 3000) this.rotationLogs.shift();
+      if (this.rotationHistoryMap.size > 3000) {
+        const oldest = [...this.rotationHistoryMap.entries()].reduce(
+          (a, b) => a[1].lastRotatedAt <= b[1].lastRotatedAt ? a : b
+        );
+        this.rotationHistoryMap.delete(oldest[0]);
+      }
+      this.saveDataDebounced();
+    }
   }
 
   getHistoryPage({ type = 'request', sort = 'recent', requesterKey = '', offset = 0, limit = 100 } = {}) {
+    if (this.chatDb) {
+      return this.chatDb.getMusicHistoryPage({
+        roomId: this.roomId,
+        type,
+        sort,
+        requesterKey,
+        offset,
+        limit
+      });
+    }
+
     offset = Math.max(0, Number.parseInt(offset, 10) || 0);
     limit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 100));
 
