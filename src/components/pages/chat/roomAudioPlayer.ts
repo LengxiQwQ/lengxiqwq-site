@@ -76,9 +76,8 @@ export class RoomAudioPlayer {
 		if (this.state === "BLOCKED") return;
 		if (!this.play) return;
 
-		const now = this.callbacks.now();
 		// If wake-up happens after deadline while we were still waiting, fire immediately!
-		if (this.state === "SCHEDULED_WAIT" && now >= this.play.startedAt) {
+		if (this.state === "SCHEDULED_WAIT" && !this.isScheduledFuture()) {
 			this.onFireTimeline();
 			return;
 		}
@@ -101,6 +100,8 @@ export class RoomAudioPlayer {
 		attach("playing", () => this.onPlaying());
 		attach("waiting", () => this.onWaiting());
 		attach("timeupdate", () => this.onTimeUpdate());
+		attach("seeking", () => this.onSeeking());
+		attach("seeked", () => this.onSeeked());
 		attach("ended", () => this.onEnded());
 		attach("error", () => this.onError());
 		attach("pause", () => this.onPause());
@@ -223,7 +224,15 @@ export class RoomAudioPlayer {
 
 		if (key === this.key) {
 			this.play = play;
-			this.realignTimeline();
+			if (
+				this.state === "SCHEDULED_WAIT" &&
+				!this.isScheduledFuture() &&
+				this.intent
+			) {
+				this.onFireTimeline();
+			} else {
+				this.realignTimeline();
+			}
 			return;
 		}
 
@@ -260,20 +269,34 @@ export class RoomAudioPlayer {
 		this.isSynchronousStarter = isScheduled;
 
 		this.audio.playbackRate = 1;
-		this.audio.src = this.activeSrc;
+		if (
+			this.audio.src !== this.activeSrc &&
+			this.audio.getAttribute("src") !== this.activeSrc
+		) {
+			this.audio.src = this.activeSrc;
+		}
 
 		if (isScheduled) {
 			this.transition("SCHEDULED_WAIT");
-			this.audio.currentTime = 0;
 			this.audio.muted = true;
+			try {
+				if (this.audio.readyState >= 1) {
+					this.audio.currentTime = 0;
+				}
+			} catch {}
 			// Keep decoding pipeline warm while muted so user gesture permission is preserved
 			this.invokeNativePlay();
 			const leadMs = Math.max(0, play.startedAt - now);
 			this.fireTimer = setTimeout(() => this.onFireTimeline(), leadMs);
 		} else {
 			this.transition("LOADING");
-			this.audio.muted = false;
-			this.audio.volume = this.volume;
+			this.audio.muted = true; // Mute while seeking/locking onto live position
+			const expectedOffset = Math.max(0, (now - play.startedAt) / 1000);
+			try {
+				if (this.audio.readyState >= 1) {
+					this.audio.currentTime = expectedOffset;
+				}
+			} catch {}
 			this.invokeNativePlay();
 			this.realignTimeline(true);
 		}
@@ -313,13 +336,24 @@ export class RoomAudioPlayer {
 			const now = this.callbacks.now();
 			const leadMs = Math.max(0, (this.play.startedAt || 0) - now);
 			this.fireTimer = setTimeout(() => this.onFireTimeline(), leadMs);
-			this.audio.currentTime = 0;
 			this.audio.muted = true;
+			try {
+				if (this.audio.readyState >= 1) {
+					this.audio.currentTime = 0;
+				}
+			} catch {}
 			this.transition("SCHEDULED_WAIT");
 			this.invokeNativePlay();
 		} else {
-			this.audio.muted = false;
-			this.audio.volume = this.volume;
+			this.audio.muted = true; // Mute first to prevent ANY stale audio buffer leakage!
+			const now = this.callbacks.now();
+			const expectedOffset = Math.max(0, (now - this.play.startedAt) / 1000);
+			try {
+				if (this.audio.readyState >= 1) {
+					this.audio.currentTime = expectedOffset;
+				}
+			} catch {}
+			this.transition("LOADING");
 			this.invokeNativePlay();
 			this.realignTimeline(true);
 		}
@@ -348,15 +382,17 @@ export class RoomAudioPlayer {
 		// Zero-Point Firing: Ensure playhead is pinned at 0.00s before starting
 		if (this.intent) {
 			try {
-				this.audio.currentTime = 0;
+				if (this.audio.readyState >= 1) {
+					this.audio.currentTime = 0;
+				}
 			} catch {}
 			this.audio.muted = false;
 			this.audio.volume = this.volume;
+			this.transition("PLAYING");
 			if (this.audio.paused) {
 				this.invokeNativePlay();
-			} else {
-				this.transition("PLAYING");
 			}
+			this.realignTimeline(true);
 		} else {
 			this.audio.muted = true;
 			this.transition("IDLE");
@@ -366,16 +402,23 @@ export class RoomAudioPlayer {
 	private invokeNativePlay() {
 		void this.audio.play().then(
 			() => {
-				if (this.state === "BLOCKED") {
-					this.transition(
-						this.isScheduledFuture() ? "SCHEDULED_WAIT" : "PLAYING",
-					);
-					this.realignTimeline();
-				} else if (this.state === "SCHEDULED_WAIT") {
-					// While in scheduled wait, keep muted and stay in SCHEDULED_WAIT
+				if (!this.intent) {
 					this.audio.muted = true;
-				} else if (this.intent && !this.isScheduledFuture()) {
+					this.transition("IDLE");
+					return;
+				}
+				if (this.isScheduledFuture()) {
+					// While in scheduled wait, keep decoding muted and stay in SCHEDULED_WAIT
+					this.audio.muted = true;
+					this.transition("SCHEDULED_WAIT");
+				} else {
+					// Wall-clock startedAt reached or passed: realign timeline first, then unmute
 					this.transition("PLAYING");
+					this.realignTimeline();
+					if (!this.audio.seeking) {
+						this.audio.muted = false;
+						this.audio.volume = this.volume;
+					}
 				}
 			},
 			(err: unknown) => {
@@ -386,9 +429,10 @@ export class RoomAudioPlayer {
 				if (err instanceof DOMException && err.name === "NotAllowedError") {
 					this.audio.muted = true;
 					this.transition("BLOCKED");
-				} else {
-					this.transition("ERROR");
+					return;
 				}
+				// For transient play rejection, log warning; let native <audio onerror> or canplay handle recovery
+				console.warn("[RoomAudioPlayer] Native play() rejected:", err);
 			},
 		);
 	}
@@ -406,7 +450,9 @@ export class RoomAudioPlayer {
 			// First-frame ready ahead of time: Keep cleanly at 0.00s and wait for fire timer
 			if (this.audio.currentTime !== 0) {
 				try {
-					this.audio.currentTime = 0;
+					if (this.audio.readyState >= 1) {
+						this.audio.currentTime = 0;
+					}
 				} catch {}
 			}
 			this.audio.muted = true;
@@ -414,14 +460,13 @@ export class RoomAudioPlayer {
 			this.callbacks.ready(this.play.uid, this.play.sourceRevision ?? 0);
 		} else if (this.intent) {
 			this.callbacks.ready(this.play.uid, this.play.sourceRevision ?? 0);
-			this.realignTimeline();
+			this.audio.muted = false;
+			this.audio.volume = this.volume;
+			this.transition("PLAYING");
 			if (this.audio.paused) {
 				this.invokeNativePlay();
-			} else {
-				this.audio.muted = false;
-				this.audio.volume = this.volume;
-				this.transition("PLAYING");
 			}
+			this.realignTimeline();
 		}
 	}
 
@@ -448,6 +493,19 @@ export class RoomAudioPlayer {
 	private onWaiting() {
 		if (this.state === "PLAYING") {
 			this.transition("BUFFERING");
+		}
+	}
+
+	private onSeeking() {
+		// Hardware seek in progress: keep muted to eliminate any stale buffer PCM leaks or scratch noises
+		this.audio.muted = true;
+	}
+
+	private onSeeked() {
+		// Seek completed: unmute only if we have active listening intent and not waiting for future schedule
+		if (this.intent && !this.isScheduledFuture() && this.state === "PLAYING") {
+			this.audio.muted = false;
+			this.audio.volume = this.volume;
 		}
 	}
 
@@ -506,7 +564,15 @@ export class RoomAudioPlayer {
 	 * Triggered purely on native timeupdate (every ~250ms) without any synthetic polling loop.
 	 */
 	private onTimeUpdate() {
-		if (!this.play || this.state !== "PLAYING" || this.audio.seeking) return;
+		if (!this.play || this.audio.seeking) return;
+		if (this.state === "SCHEDULED_WAIT") {
+			if (this.intent && !this.isScheduledFuture()) {
+				// Precision fire fallback watchdog: catches any timer throttling or sleep coalescing on iOS/mobile
+				this.onFireTimeline();
+			}
+			return;
+		}
+		if (this.state !== "PLAYING") return;
 		this.realignTimeline();
 	}
 
@@ -537,6 +603,10 @@ export class RoomAudioPlayer {
 
 		// Deadband check: Imperceptible drift is intentionally ignored
 		if (Math.abs(drift) < DEADBAND_TOLERANCE_SEC && !force) {
+			if (this.intent && !this.isScheduledFuture() && !this.audio.seeking) {
+				this.audio.muted = false;
+				this.audio.volume = this.volume;
+			}
 			return;
 		}
 
@@ -554,6 +624,11 @@ export class RoomAudioPlayer {
 				this.audio.currentTime = target;
 				this.lastSeekMono = mono;
 			} catch {}
+		}
+
+		if (this.intent && !this.isScheduledFuture() && !this.audio.seeking) {
+			this.audio.muted = false;
+			this.audio.volume = this.volume;
 		}
 	}
 

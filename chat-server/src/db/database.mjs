@@ -728,10 +728,27 @@ export class ChatDatabase {
 
     this.upsertTrackMeta(normalized);
 
-    const existing = this.stmtCheckFavorite.get(trackId, userKey);
+    // 检查是否存在匹配的收藏（先精确匹配 trackId，若无则跨音源按 title + artist 匹配同一首歌）
+    let existing = this.stmtCheckFavorite.get(trackId, userKey);
+    let matchedTrackId = trackId;
+    if (!existing && normalized.title && normalized.artist) {
+      const match = this.db.prepare(`
+        SELECT f.track_id FROM music_favorites f
+        JOIN music_tracks t ON f.track_id = t.id
+        WHERE f.user_key = ? AND LOWER(TRIM(t.title)) = LOWER(TRIM(?)) AND LOWER(TRIM(t.artist)) = LOWER(TRIM(?))
+      `).get(userKey, normalized.title, normalized.artist);
+      if (match) {
+        existing = match;
+        matchedTrackId = match.track_id;
+      }
+    }
+
     let favorited = false;
     if (existing) {
-      this.stmtDeleteFavorite.run(trackId, userKey);
+      this.stmtDeleteFavorite.run(matchedTrackId, userKey);
+      if (matchedTrackId !== trackId) {
+        this.stmtDeleteFavorite.run(trackId, userKey);
+      }
       favorited = false;
     } else {
       this.stmtInsertFavorite.run(trackId, userKey, userName || '', userAvatar || '', now, trackJson);
@@ -878,7 +895,7 @@ export class ChatDatabase {
     const rows = this.db.prepare(sql).all();
     return rows.map((r) => ({
       userKey: r.userKey,
-      userName: r.userName || '未知客官',
+      userName: r.userName || '未知成员',
       userAvatar: r.userAvatar || '',
       trackCount: Number(r.trackCount) || 0,
       lastFavTime: r.lastFavTime,
@@ -921,6 +938,31 @@ export class ChatDatabase {
       limit,
       items,
     };
+  }
+
+  getUserFavoriteKeys(userKey) {
+    if (!userKey) return { ok: true, trackIds: [], titleArtists: [] };
+    const rows = this.db.prepare('SELECT track_id, track_json FROM music_favorites WHERE user_key = ?').all(userKey);
+    const trackIds = [];
+    const titleArtists = [];
+    for (const r of rows) {
+      if (r.track_id) {
+        trackIds.push(r.track_id);
+        const bareId = r.track_id.replace(/^[a-z_]+:/i, '');
+        if (bareId && bareId !== r.track_id) {
+          trackIds.push(bareId);
+        }
+      }
+      try {
+        const t = JSON.parse(r.track_json);
+        if (t?.title) {
+          const cleanTitle = String(t.title).toLowerCase().replace(/\s+/g, ' ').trim();
+          const cleanArtist = String(t.artist || '').toLowerCase().replace(/\s+/g, ' ').trim();
+          titleArtists.push(`${cleanTitle}:::${cleanArtist}`);
+        }
+      } catch {}
+    }
+    return { ok: true, trackIds, titleArtists };
   }
 
   // --- 系统 KV 键值操作 ---

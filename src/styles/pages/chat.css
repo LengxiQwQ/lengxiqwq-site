@@ -1510,6 +1510,61 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	color: #fff;
 }
 
+/* 收藏星星粒子爆发动效 */
+.chat-fav-sparkle-burst {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+	z-index: 10;
+}
+
+.chat-fav-sparkle {
+	position: absolute;
+	font-size: 10px;
+	line-height: 1;
+	color: #fbbf24;
+	animation: chatSparkleFly 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+	text-shadow: 0 0 6px rgba(251, 191, 36, 0.7);
+	user-select: none;
+}
+
+.chat-fav-sparkle.s-1 { --dx: -14px; --dy: -14px; animation-delay: 0ms; }
+.chat-fav-sparkle.s-2 { --dx: 14px; --dy: -13px; animation-delay: 30ms; }
+.chat-fav-sparkle.s-3 { --dx: -16px; --dy: 6px; animation-delay: 15ms; }
+.chat-fav-sparkle.s-4 { --dx: 16px; --dy: 7px; animation-delay: 45ms; }
+.chat-fav-sparkle.s-5 { --dx: 0px; --dy: -18px; animation-delay: 10ms; }
+.chat-fav-sparkle.s-6 { --dx: 2px; --dy: 16px; animation-delay: 25ms; }
+
+@keyframes chatSparkleFly {
+	0% {
+		transform: translate(0, 0) scale(0) rotate(0deg);
+		opacity: 1;
+	}
+	55% {
+		transform: translate(var(--dx), var(--dy)) scale(1.3) rotate(90deg);
+		opacity: 0.95;
+	}
+	100% {
+		transform: translate(calc(var(--dx) * 1.35), calc(var(--dy) * 1.35)) scale(0) rotate(180deg);
+		opacity: 0;
+	}
+}
+
+.is-sparkling {
+	animation: chatStarPop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes chatStarPop {
+	0% { transform: scale(1); }
+	25% { transform: scale(0.6); }
+	55% { transform: scale(1.4) rotate(15deg); }
+	75% { transform: scale(0.92) rotate(-8deg); }
+	100% { transform: scale(1) rotate(0deg); }
+}
+
 [data-chat-floating] {
 	position: absolute;
 	/* Measure above and to the left of the anchor without extending the scroll tail. */

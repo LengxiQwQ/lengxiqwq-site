@@ -726,7 +726,7 @@ export async function removeFavoriteTrack(params: {
 }
 
 /**
- * 获取全站「茶室星愿」共同收藏列表与筛选客官
+ * 获取全站「茶室星愿」共同收藏列表与筛选成员
  */
 export async function fetchCollectiveFavorites(params: {
 	chatServerUrl: string;
@@ -771,4 +771,39 @@ export async function fetchUserFavorites(params: {
 		.json()
 		.catch(() => null)) as UserFavoritesResponse | null;
 	return json ?? { ok: false, total: 0, offset: 0, limit: 50, items: [] };
+}
+
+export interface UserFavoriteKeysResponse {
+	ok: boolean;
+	trackIds: string[];
+	titleArtists: string[];
+}
+
+/**
+ * 获取当前登录成员所有已收藏的 trackId 与 title:::artist 键集合，用于全站歌曲匹配
+ */
+export async function fetchUserFavoriteKeys(params: {
+	chatServerUrl: string;
+	token?: string;
+	authKind?: "guest" | "waline";
+	userKey?: string;
+}): Promise<UserFavoriteKeysResponse> {
+	const base = normalizeServerUrl(params.chatServerUrl);
+	const q = new URLSearchParams();
+	if (params.userKey) q.set("userKey", params.userKey);
+	const headers: Record<string, string> = {};
+	if (params.token?.trim()) {
+		headers.Authorization = `Bearer ${params.token.trim()}`;
+		if (params.authKind) {
+			headers["x-auth-kind"] = params.authKind;
+		}
+	}
+	const resp = await fetch(
+		`${base}/api/music/favorites/user-keys?${q.toString()}`,
+		{ headers },
+	);
+	const json = (await resp
+		.json()
+		.catch(() => null)) as UserFavoriteKeysResponse | null;
+	return json ?? { ok: false, trackIds: [], titleArtists: [] };
 }
