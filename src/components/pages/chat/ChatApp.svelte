@@ -54,6 +54,7 @@ import type {
 	PlaylistSummary,
 	RoomMusicState,
 } from "./chatTypes";
+import { recordMusicEvent } from "./musicTrace";
 import { MusicClock } from "./musicClock";
 import type { ChatMusicTrack } from "./musicTypes";
 import RoomPanel from "./RoomPanel.svelte";
@@ -765,7 +766,6 @@ let MusicPanelComp = $state<
 >(null);
 let musicPanelLoading = false;
 let pendingOpenPlayerTab = false;
-let pendingToggleListen = false;
 
 function ensureMusicPanelLoaded() {
 	if (MusicPanelComp || musicPanelLoading || isUnmounted) return;
@@ -779,7 +779,6 @@ function ensureMusicPanelLoaded() {
 		.catch((err) => {
 			console.error("[chat] Failed to load MusicPanel:", err);
 			pendingOpenPlayerTab = false;
-			pendingToggleListen = false;
 		})
 		.finally(() => {
 			musicPanelLoading = false;
@@ -792,10 +791,7 @@ $effect(() => {
 		pendingOpenPlayerTab = false;
 		musicPanelRef.openPlayerTab?.();
 	}
-	if (pendingToggleListen) {
-		pendingToggleListen = false;
-		musicPanelRef.toggleListenControl?.();
-	}
+
 });
 
 let ChatAuthModalComp = $state<
@@ -1006,6 +1002,7 @@ function handleSkipTrack() {
 		return;
 	}
 	if (isSkippingTrack) return;
+	recordMusicEvent("command-skip", musicState?.current?.uid);
 	if (sendPacket({ type: "music:skip", playUid: musicState?.current?.uid })) {
 		startSkipPending();
 	}
@@ -1017,6 +1014,7 @@ function handleVoteSkip() {
 		return;
 	}
 	if (isSkippingTrack) return;
+	recordMusicEvent("command-vote_skip", musicState?.current?.uid);
 	const hasVoted = Boolean(
 		musicState?.current?.skipVotes.includes(currentUser.userKey),
 	);
@@ -1039,6 +1037,7 @@ function handlePlayQueued(uid: string) {
 		showAuthModal = true;
 		return;
 	}
+	recordMusicEvent("command-play_queued", musicState?.current?.uid);
 	sendPacket({
 		type: "music:play_queued",
 		uid,
@@ -1964,6 +1963,7 @@ function connectRoom(roomId: string) {
 						clearSkipPending();
 					}
 					if (nextUid && nextUid !== prevUid) {
+						recordMusicEvent("broadcast", nextUid, { previous: prevUid, serverSent: packet.serverTime, deadline: packet.current!.startedAt, selectionStartedAt: packet.current!.selectionStartedAt ?? 0, clock: Math.round(serverNow()) });
 						sampleRoomClock(socket);
 					}
 					musicClock.seed(packet.serverTime);
@@ -3319,7 +3319,7 @@ onMount(() => {
           onMentionUser={handleMentionUser}
           onOpenUserProfile={handleOpenUserProfile}
           otherRoomsUnreadCount={otherRoomsUnreadCount}
-          mobilePlaybackStatus={mobilePlaybackStatus}
+          mobilePlaybackStatus={musicPanelRef ? mobilePlaybackStatus : undefined}
           onOpenRoomDrawer={() => (mobileDrawer = "room")}
           splitRoomPanelId={roomPanelId}
           splitRoomOpen={isSplitLayout && splitRoomOpen}
@@ -3337,14 +3337,7 @@ onMount(() => {
               ensureMusicPanelLoaded();
             }
           }}
-          onToggleListen={() => {
-            if (musicPanelRef) {
-              musicPanelRef.toggleListenControl?.();
-            } else {
-              pendingToggleListen = true;
-              ensureMusicPanelLoaded();
-            }
-          }}
+          onToggleListen={() => musicPanelRef?.toggleListenControl?.()}
         />
       </div>
 

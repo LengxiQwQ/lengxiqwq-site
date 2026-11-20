@@ -58,7 +58,7 @@ const isBusy = $derived(
 );
 const listenAction = $derived(
 	isBusy
-		? "取消收听"
+		? "恢复收听"
 		: audioStatus === "blocked" || audioStatus === "error"
 			? "重试收听"
 			: isListening

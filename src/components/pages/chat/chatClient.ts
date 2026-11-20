@@ -11,6 +11,8 @@ import type {
 	ChatSessionUser,
 	ChatUserDetailProfile,
 	ChatUserTracksPage,
+	FetchMusicHistoryParams,
+	FetchMusicHistoryResponse,
 	RoomMusicState,
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
@@ -1054,9 +1056,10 @@ export async function searchOnlineMusic(
 	keyword: string,
 	options?: { signal?: AbortSignal; limit?: number; page?: number },
 ): Promise<MusicSearchResponse> {
-	const base = normalizeServerUrl(chatServerUrl);
+	const base =
+		normalizeServerUrl(chatServerUrl) || "https://chat-server.lengxiqwq.com";
 	const q = keyword.trim();
-	if (!base || !q) return { tracks: [], hasMore: false, page: 1 };
+	if (!q) return { tracks: [], hasMore: false, page: 1 };
 	const limit = Math.min(30, Math.max(1, options?.limit ?? 30));
 	const page = Math.max(1, options?.page ?? 1);
 
@@ -1099,6 +1102,70 @@ export async function searchOnlineMusic(
 	} catch (err) {
 		if (controller.signal.aborted && controller.signal.reason === "timeout") {
 			throw new Error("搜索超时，请稍后重试");
+		}
+		throw err;
+	} finally {
+		window.clearTimeout(timeoutId);
+		options?.signal?.removeEventListener("abort", onExternalAbort);
+	}
+}
+
+export async function fetchMusicHistory(
+	chatServerUrl: string,
+	params: FetchMusicHistoryParams = {},
+	options?: { signal?: AbortSignal },
+): Promise<FetchMusicHistoryResponse> {
+	const base =
+		normalizeServerUrl(chatServerUrl) || "https://chat-server.lengxiqwq.com";
+	const roomId = params.roomId || "interconnect";
+	const type = params.type || "request";
+	const sort = params.sort || "recent";
+	const offset = Math.max(0, params.offset ?? 0);
+	const limit = Math.min(100, Math.max(1, params.limit ?? 100));
+	const requesterKey = params.requesterKey || "";
+
+	const searchParams = new URLSearchParams({
+		roomId,
+		type,
+		sort,
+		offset: String(offset),
+		limit: String(limit),
+	});
+	if (requesterKey && type === "request") {
+		searchParams.set("requesterKey", requesterKey);
+	}
+
+	const controller = new AbortController();
+	const timeoutId = window.setTimeout(
+		() => controller.abort("timeout"),
+		10_000,
+	);
+	const onExternalAbort = () => controller.abort(options?.signal?.reason);
+	if (options?.signal) {
+		if (options.signal.aborted) {
+			window.clearTimeout(timeoutId);
+			controller.abort(options.signal.reason);
+		} else {
+			options.signal.addEventListener("abort", onExternalAbort, { once: true });
+		}
+	}
+
+	try {
+		const resp = await fetch(
+			`${base}/api/music/history?${searchParams.toString()}`,
+			{
+				signal: controller.signal,
+				cache: "no-store",
+			},
+		);
+		const data = (await resp.json().catch(() => null)) as FetchMusicHistoryResponse | null;
+		if (!resp.ok || !data?.ok || !Array.isArray(data.items)) {
+			throw new Error(data?.error || `获取历史记录失败 (${resp.status})`);
+		}
+		return data;
+	} catch (err) {
+		if (controller.signal.aborted && controller.signal.reason === "timeout") {
+			throw new Error("加载历史记录超时，请稍后重试");
 		}
 		throw err;
 	} finally {

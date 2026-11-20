@@ -1,0 +1,10 @@
+{
+  "src/music/music-manager.mjs": {
+    "before": "488f661a5d9929903ea95431ea3ad68dbfab5ddb51bb988810241bddabbcbae6",
+    "after": "595d0478ffd2718569766fc120d28d5791f0cdd24e7fa1d67504aa0c54fabc35"
+  },
+  "server.mjs": {
+    "before": "84da5d2800fb63790a8091d62f7a7f9255236c450e2b04698801297ad1b7d30c",
+    "after": "4d3b7c06e69c6e355189e799a2f84cf7355b3f52d4189bafaf4d15c49c1cbdee"
+  }
+}

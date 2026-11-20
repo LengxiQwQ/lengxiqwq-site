@@ -43,7 +43,7 @@ import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import { positionChatFloating } from "./chatFloating";
-import { formatClockSeconds } from "./chatClient";
+import { fetchMusicHistory, formatClockSeconds } from "./chatClient";
 import type {
 	ChatMentionCandidate,
 	ChatOnlineMember,
@@ -58,6 +58,7 @@ import type {
 	RoomRotation,
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
+import { downloadMusicTrace } from "./musicTrace";
 import { RoomAudioPlayer, audioStatusLabel, type AudioStatus } from "./roomAudioPlayer";
 import type { ChatMusicTrack } from "./musicTypes";
 import {
@@ -209,6 +210,20 @@ interface HistoryRequesterOption {
 
 let activeTab = $state<MusicTab>("player");
 let historySort = $state<HistorySortMode>("recent");
+let historySubTab = $state<"request" | "rotation">("request");
+let pagedRequestHistory = $state<MusicHistoryEntry[]>([]);
+let requestHistoryTotal = $state(0);
+let requestHistoryHasMore = $state(false);
+let isRequestHistoryLoading = $state(false);
+let isRequestHistoryLoadingMore = $state(false);
+
+let pagedRotationHistory = $state<MusicHistoryEntry[]>([]);
+let rotationHistoryTotal = $state(0);
+let rotationHistoryHasMore = $state(false);
+let isRotationHistoryLoading = $state(false);
+let isRotationHistoryLoadingMore = $state(false);
+
+let historyReqSeq = 0;
 let selectedRequesterKey = $state("");
 let showRequesterFilter = $state(false);
 const shouldInitialListen = untrack(() => Boolean(initialListening));
@@ -605,8 +620,48 @@ const displayedHistoryEntries = $derived.by<MusicHistoryEntry[]>(() => {
 	return sortHistory([...mergedMap.values()]);
 });
 
+const activeHistoryEntries = $derived.by<MusicHistoryEntry[]>(() => {
+	if (historySubTab === "rotation") {
+		return pagedRotationHistory;
+	}
+	if (pagedRequestHistory.length > 0) {
+		return pagedRequestHistory;
+	}
+	return displayedHistoryEntries;
+});
+
+const activeHistoryTotal = $derived.by<number>(() => {
+	if (historySubTab === "rotation") {
+		return rotationHistoryTotal || pagedRotationHistory.length;
+	}
+	return (
+		requestHistoryTotal ||
+		(selectedRequesterKey
+			? displayedHistoryEntries.length
+			: (musicState?.history?.length ?? displayedHistoryEntries.length))
+	);
+});
+
+const isCurrentHistoryLoading = $derived(
+	historySubTab === "rotation"
+		? isRotationHistoryLoading
+		: isRequestHistoryLoading,
+);
+
+const isCurrentHistoryLoadingMore = $derived(
+	historySubTab === "rotation"
+		? isRotationHistoryLoadingMore
+		: isRequestHistoryLoadingMore,
+);
+
+const currentHistoryHasMore = $derived(
+	historySubTab === "rotation"
+		? rotationHistoryHasMore
+		: requestHistoryHasMore,
+);
+
 const historyVirtual = $derived.by(() => {
-	const list = displayedHistoryEntries;
+	const list = activeHistoryEntries;
 	const len = list.length;
 	if (len <= VIRTUAL_MUSIC_THRESHOLD) {
 		return {
@@ -632,6 +687,103 @@ const historyVirtual = $derived.by(() => {
 	};
 });
 
+async function loadHistoryPage(
+	tab: "request" | "rotation",
+	isNextPage = false,
+): Promise<void> {
+	if (isNextPage) {
+		if (tab === "request") {
+			if (isRequestHistoryLoadingMore || !requestHistoryHasMore) return;
+			isRequestHistoryLoadingMore = true;
+		} else {
+			if (isRotationHistoryLoadingMore || !rotationHistoryHasMore) return;
+			isRotationHistoryLoadingMore = true;
+		}
+	} else {
+		if (tab === "request") {
+			isRequestHistoryLoading = true;
+		} else {
+			isRotationHistoryLoading = true;
+		}
+	}
+
+	const seq = ++historyReqSeq;
+	const currentList =
+		tab === "request" ? pagedRequestHistory : pagedRotationHistory;
+	const offset = isNextPage ? currentList.length : 0;
+
+	try {
+		const res = await fetchMusicHistory(chatServerUrl, {
+			roomId,
+			type: tab,
+			sort: historySort,
+			requesterKey: tab === "request" ? selectedRequesterKey : undefined,
+			offset,
+			limit: 100,
+		});
+
+		if (seq !== historyReqSeq) return;
+
+		if (res?.ok && Array.isArray(res.items)) {
+			if (tab === "request") {
+				requestHistoryTotal = res.total;
+				requestHistoryHasMore = res.hasMore;
+				if (isNextPage) {
+					const existingIds = new Set(pagedRequestHistory.map((e) => e.track.id));
+					const newItems = res.items.filter((e) => !existingIds.has(e.track.id));
+					pagedRequestHistory = [...pagedRequestHistory, ...newItems];
+				} else {
+					pagedRequestHistory = res.items;
+				}
+			} else {
+				rotationHistoryTotal = res.total;
+				rotationHistoryHasMore = res.hasMore;
+				if (isNextPage) {
+					const existingIds = new Set(
+						pagedRotationHistory.map((e) => e.track.id),
+					);
+					const newItems = res.items.filter((e) => !existingIds.has(e.track.id));
+					pagedRotationHistory = [...pagedRotationHistory, ...newItems];
+				} else {
+					pagedRotationHistory = res.items;
+				}
+			}
+		}
+	} catch (err) {
+		console.warn("[MusicPanel] 加载历史记录失败:", err);
+	} finally {
+		if (seq === historyReqSeq) {
+			if (tab === "request") {
+				isRequestHistoryLoading = false;
+				isRequestHistoryLoadingMore = false;
+			} else {
+				isRotationHistoryLoading = false;
+				isRotationHistoryLoadingMore = false;
+			}
+		}
+	}
+}
+
+function switchHistorySubTab(subTab: "request" | "rotation"): void {
+	if (historySubTab === subTab) return;
+	historySubTab = subTab;
+	if (historyScrollEl) {
+		historyScrollEl.scrollTop = 0;
+		historyScrollTop = 0;
+	}
+	void loadHistoryPage(subTab, false);
+}
+
+$effect(() => {
+	if (activeTab === "history") {
+		const _tab = historySubTab;
+		const _sort = historySort;
+		const _filter = selectedRequesterKey;
+		const _room = roomId;
+		void loadHistoryPage(_tab, false);
+	}
+});
+
 function handleHistoryScroll(): void {
 	if (!historyScrollEl || historyScrollRaf !== null) return;
 	historyScrollRaf = requestAnimationFrame(() => {
@@ -640,6 +792,12 @@ function handleHistoryScroll(): void {
 		historyScrollTop = historyScrollEl.scrollTop;
 		if (historyScrollEl.clientHeight > 0) {
 			historyViewportH = historyScrollEl.clientHeight;
+		}
+
+		// 边滚动边加载：当距离底部小于 260px 时，自动加载下一页 100 首
+		const { scrollTop, scrollHeight, clientHeight } = historyScrollEl;
+		if (scrollHeight - (scrollTop + clientHeight) < 260) {
+			void loadHistoryPage(historySubTab, true);
 		}
 	});
 }
@@ -721,7 +879,7 @@ const isOwnRequest = $derived(
 	),
 );
 // 能否直接切歌：
-// 1. 冷场轮播歌单：所有人随便切
+// 1. 歌单轮播歌单：所有人随便切
 // 2. 自己点的歌：自己随便切
 // 3. 站长：随便切
 // 4. 正在听歌人数 <= 2：无论谁都可以随便切
@@ -1927,8 +2085,8 @@ function handleVolumeInput(value: number) {
 		startOrResumeAudio();
 	} else if (clamped === 0 && isListening) {
 		muteLocally();
-	} else if (audioEl) {
-		audioEl.volume = clamped;
+	} else if (player) {
+		player.setVolume(clamped);
 	}
 }
 
@@ -2117,7 +2275,7 @@ async function loadMoreSearchResults() {
 }
 
 function markPendingAutoUnmuteIfImmediate(songId: string): void {
-	// 当前没有歌或正在冷场轮播时，点歌会立即切播，自动取消静音开播；已有用户点播在放则保持静音
+	// 当前没有歌或正在歌单轮播时，点歌会立即切播，自动取消静音开播；已有用户点播在放则保持静音
 	if ((!currentPlay || currentPlay.isFallback) && currentUser) {
 		pendingAutoUnmuteTrackId = songId;
 		pendingAutoUnmuteAt = Date.now();
@@ -2170,7 +2328,7 @@ onMount(() => {
 			audioStatus === "preparing"
 				? 0
 				: listenIntent && audioEl && audioStatus === "playing"
-					? audioEl.currentTime
+					? (player?.position ?? audioEl.currentTime)
 					: expected;
 		syncLyricIndex(roomElapsed);
 
@@ -2239,7 +2397,7 @@ $effect(() => {
 		status: (status, intent) => {
 			audioStatus = status;
 			listenIntent = intent;
-			isListening = intent && status !== "blocked" && status !== "error";
+			isListening = intent && status === "playing";
 			updateMediaSessionMetadata();
 		},
 		ready: (uid, revision) => onReady?.(uid, revision),
@@ -2711,6 +2869,7 @@ $effect(() => {
           </div>
         </div>
 
+        <button type="button" class="ml-auto block text-xs text-[var(--chat-meta-color)]" onclick={downloadMusicTrace}>导出播放诊断</button>
         <!-- 只读同步进度条（未播放时也保留显示 0%） -->
         <div class="mb-2">
           <div class="chat-sync-progress" style="--pct: {currentPlay ? progressRatio : 0};" aria-label="当前歌曲同步进度">
@@ -2944,7 +3103,7 @@ $effect(() => {
               <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 pt-2 pb-7">
                 {#if currentPlay?.isFallback}
                   <span class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)]">
-                    正在冷场轮播
+                    正在歌单轮播
                   </span>
                   <span class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] leading-relaxed">
                     背景音乐轮播中，点歌将立即切播 · 所有人可随时切歌
@@ -3250,7 +3409,7 @@ $effect(() => {
               <span class="text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)] truncate">{pl.title}</span>
               {#if pl.isFallback}
                 <span class="shrink-0 text-[10px] xl:text-[10px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
-                  冷场轮播
+                  歌单轮播
                 </span>
               {/if}
               {#if pl.isFeatured}
@@ -3426,7 +3585,7 @@ $effect(() => {
                 </span>
                 {#if selectedPlaylist.isFallback}
                   <span class="shrink-0 text-[10px] xl:text-[10px] font-semibold px-1.5 py-px rounded-full bg-(--primary)/15 text-[var(--chat-accent-text)]">
-                    冷场轮播
+                    歌单轮播
                   </span>
                 {/if}
                 {#if selectedPlaylist.isFeatured}
@@ -3739,7 +3898,7 @@ $effect(() => {
         {#if rotation && isWalineLoggedIn}
           <button type="button" class="w-full flex items-center justify-between gap-2 rounded-lg border border-[var(--chat-divider-color)] bg-transparent px-3 py-2 text-left cursor-pointer hover:bg-(--btn-plain-bg-hover)"
             disabled={rotationSaving} onclick={toggleRotationSettings}>
-            <span class="text-[13.5px] xl:text-[13px] font-semibold text-[var(--deep-text)]">冷场轮播</span>
+            <span class="text-[13.5px] xl:text-[13px] font-semibold text-[var(--deep-text)]">歌单轮播</span>
             <span class="min-w-0 truncate text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">{rotationLabel} · 设置</span>
           </button>
         {/if}
@@ -3918,8 +4077,37 @@ $effect(() => {
       </div>
     {/if}
   {:else}
-    <!-- Tab 4：点歌历史记录（支持 按时间 / 按次数 两种排序与按点歌人筛选，紧凑两行展示） -->
-    <div class="px-3 pt-2.5 pb-1.5 flex items-center justify-between gap-1.5 shrink-0 relative">
+    <!-- Tab 4：历史记录（支持 点播历史 / 轮播历史 切换，按时间 / 按次数 排序，按点歌人筛选，边滚动边加载） -->
+    <div class="px-3 pt-2.5 pb-1 shrink-0">
+      <div class="grid grid-cols-2 p-0.5 rounded-lg bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)]" role="tablist" aria-label="历史类型">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={historySubTab === 'request'}
+          class="py-1 px-2 text-[13px] xl:text-[12px] font-semibold rounded-md border-none cursor-pointer transition-colors text-center truncate
+            {historySubTab === 'request'
+              ? 'bg-(--primary) text-white shadow-xs'
+              : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
+          onclick={() => switchHistorySubTab('request')}
+        >
+          点播历史
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={historySubTab === 'rotation'}
+          class="py-1 px-2 text-[13px] xl:text-[12px] font-semibold rounded-md border-none cursor-pointer transition-colors text-center truncate
+            {historySubTab === 'rotation'
+              ? 'bg-(--primary) text-white shadow-xs'
+              : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
+          onclick={() => switchHistorySubTab('rotation')}
+        >
+          轮播历史
+        </button>
+      </div>
+    </div>
+
+    <div class="px-3 py-1.5 flex items-center justify-between gap-1.5 shrink-0 relative">
       <div class="inline-flex items-center gap-0.5 rounded-lg bg-[var(--card-bg)]/60 p-0.5 border border-[var(--chat-divider-color)]" role="group" aria-label="历史排序方式">
         <button
           type="button"
@@ -3943,70 +4131,76 @@ $effect(() => {
         </button>
       </div>
 
-      <div class="relative shrink-0" data-history-filter-wrap>
-        <button
-          type="button"
-          aria-expanded={showRequesterFilter}
-          class="inline-flex items-center gap-1.5 max-w-36 px-3 py-1.5 md:px-2 md:py-1 text-[13px] xl:text-[12px] font-medium rounded-lg border cursor-pointer transition-colors
-            {selectedRequester
-              ? 'bg-(--primary) text-white border-transparent'
-              : 'bg-[var(--card-bg)]/60 text-[var(--chat-meta-color)] border-[var(--chat-divider-color)] hover:text-[var(--deep-text)]'}"
-          onclick={() => (showRequesterFilter = !showRequesterFilter)}
-        >
-          <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-          <span class="truncate">{selectedRequester ? selectedRequester.name : "筛选"}</span>
-        </button>
+      {#if historySubTab === 'request'}
+        <div class="relative shrink-0" data-history-filter-wrap>
+          <button
+            type="button"
+            aria-expanded={showRequesterFilter}
+            class="inline-flex items-center gap-1.5 max-w-36 px-3 py-1.5 md:px-2 md:py-1 text-[13px] xl:text-[12px] font-medium rounded-lg border cursor-pointer transition-colors
+              {selectedRequester
+                ? 'bg-(--primary) text-white border-transparent'
+                : 'bg-[var(--card-bg)]/60 text-[var(--chat-meta-color)] border-[var(--chat-divider-color)] hover:text-[var(--deep-text)]'}"
+            onclick={() => (showRequesterFilter = !showRequesterFilter)}
+          >
+            <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+            </svg>
+            <span class="truncate">{selectedRequester ? selectedRequester.name : "筛选"}</span>
+          </button>
 
-        {#if showRequesterFilter}
-          <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end" }} class="chat-requester-menu custom-scrollbar" role="menu" aria-label="按点歌人筛选">
-            <button
-              type="button"
-              role="menuitem"
-              class="chat-requester-option {!selectedRequesterKey ? 'active' : ''}"
-              onclick={() => {
-                selectedRequesterKey = "";
-                showRequesterFilter = false;
-              }}
-            >
-              <span class="truncate">全部点歌记录</span>
-              <span class="text-[12px] xl:text-[11px] opacity-70 tabular-nums shrink-0">{musicState?.history?.length ?? displayedHistoryEntries.length}首</span>
-            </button>
+          {#if showRequesterFilter}
+            <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end" }} class="chat-requester-menu custom-scrollbar" role="menu" aria-label="按点歌人筛选">
+              <button
+                type="button"
+                role="menuitem"
+                class="chat-requester-option {!selectedRequesterKey ? 'active' : ''}"
+                onclick={() => {
+                  selectedRequesterKey = "";
+                  showRequesterFilter = false;
+                }}
+              >
+                <span class="truncate">全部点歌记录</span>
+                <span class="text-[12px] xl:text-[11px] opacity-70 tabular-nums shrink-0">{activeHistoryTotal}首</span>
+              </button>
 
-            {#if historyRequesters.length > 0}
-              <div class="my-1 border-t border-black/5 dark:border-white/10"></div>
-              {#each historyRequesters as person (person.key)}
-                <button
-                  type="button"
-                  role="menuitem"
-                  class="chat-requester-option {selectedRequesterKey === person.key ? 'active' : ''}"
-                  onclick={() => {
-                    selectedRequesterKey = person.key;
-                    showRequesterFilter = false;
-                  }}
-                >
-                  <span class="flex items-center gap-1.5 min-w-0 flex-1">
-                    <ChatAvatar
-                      src={person.avatar}
-                      name={person.name}
-                      size="2xs"
-                    />
-                    <span class="truncate">{person.name}</span>
-                    {#if person.badge}
-                      <span class="shrink-0 text-[10px] xl:text-[10px] px-1 py-px rounded bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)]">{person.badge}</span>
-                    {/if}
-                    {#if person.isMe}
-                      <span class="shrink-0 text-[10px] xl:text-[10px] px-1 py-px rounded bg-(--primary)/15 text-[var(--chat-accent-text)]">我</span>
-                    {/if}
-                  </span>
-                  <span class="text-[12px] xl:text-[11px] opacity-70 tabular-nums shrink-0">{person.trackCount}首</span>
-                </button>
-              {/each}
-            {/if}
-          </div>
-        {/if}
-      </div>
+              {#if historyRequesters.length > 0}
+                <div class="my-1 border-t border-black/5 dark:border-white/10"></div>
+                {#each historyRequesters as person (person.key)}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    class="chat-requester-option {selectedRequesterKey === person.key ? 'active' : ''}"
+                    onclick={() => {
+                      selectedRequesterKey = person.key;
+                      showRequesterFilter = false;
+                    }}
+                  >
+                    <span class="flex items-center gap-1.5 min-w-0 flex-1">
+                      <ChatAvatar
+                        src={person.avatar}
+                        name={person.name}
+                        size="2xs"
+                      />
+                      <span class="truncate">{person.name}</span>
+                      {#if person.badge}
+                        <span class="shrink-0 text-[10px] xl:text-[10px] px-1 py-px rounded bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)]">{person.badge}</span>
+                      {/if}
+                      {#if person.isMe}
+                        <span class="shrink-0 text-[10px] xl:text-[10px] px-1 py-px rounded bg-(--primary)/15 text-[var(--chat-accent-text)]">我</span>
+                      {/if}
+                    </span>
+                    <span class="text-[12px] xl:text-[11px] opacity-70 tabular-nums shrink-0">{person.trackCount}首</span>
+                  </button>
+                {/each}
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] font-medium tabular-nums shrink-0">
+          共 {activeHistoryTotal} 首
+        </div>
+      {/if}
     </div>
 
     <div
@@ -4014,27 +4208,43 @@ $effect(() => {
       class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-1.5"
       onscroll={handleHistoryScroll}
     >
-      {#if displayedHistoryEntries.length === 0}
+      {#if activeHistoryEntries.length === 0}
         <div class="text-center py-8 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-2">
-          <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">
-            {selectedRequester ? `${selectedRequester.name} 还没有点歌记录` : "房间里还没有历史点歌记录"}
-          </p>
-          {#if selectedRequester}
-            <button
-              type="button"
-              class="chat-queue-toggle-btn"
-              onclick={() => (selectedRequesterKey = "")}
-            >
-              查看全部
-            </button>
+          {#if isCurrentHistoryLoading}
+            <div class="flex items-center justify-center gap-2 py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
+              <svg class="w-4 h-4 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+              <span>正在加载历史记录...</span>
+            </div>
+          {:else if historySubTab === 'rotation'}
+            <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">
+              房间里还没有歌单轮播记录
+            </p>
+            <span class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)]/70">
+              开启歌单轮播后，播放过的歌曲将自动记录在此
+            </span>
           {:else}
-            <button
-              type="button"
-              class="chat-queue-toggle-btn"
-              onclick={() => switchMusicTab("search")}
-            >
-              去点歌
-            </button>
+            <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">
+              {selectedRequester ? `${selectedRequester.name} 还没有点歌记录` : "房间里还没有历史点歌记录"}
+            </p>
+            {#if selectedRequester}
+              <button
+                type="button"
+                class="chat-queue-toggle-btn"
+                onclick={() => (selectedRequesterKey = "")}
+              >
+                查看全部
+              </button>
+            {:else}
+              <button
+                type="button"
+                class="chat-queue-toggle-btn"
+                onclick={() => switchMusicTab("search")}
+              >
+                去点歌
+              </button>
+            {/if}
           {/if}
         </div>
       {:else}
@@ -4042,7 +4252,7 @@ $effect(() => {
           <div style="height: {historyVirtual.topSpacerPx}px;" aria-hidden="true"></div>
         {/if}
         <div class="space-y-0.5">
-          {#each historyVirtual.items as entry (`${entry.track.id}-${historySort}-${selectedRequesterKey}`)}
+          {#each historyVirtual.items as entry (`${entry.track.id}-${historySubTab}-${historySort}-${selectedRequesterKey}`)}
             {@const subtitle = [
               entry.track.artist,
               entry.track.durationSec ? formatTime(entry.track.durationSec) : "",
@@ -4058,12 +4268,25 @@ $effect(() => {
         {#if historyVirtual.bottomSpacerPx > 0}
           <div style="height: {historyVirtual.bottomSpacerPx}px;" aria-hidden="true"></div>
         {/if}
+
+        {#if isCurrentHistoryLoadingMore}
+          <div class="py-3 flex items-center justify-center gap-2 text-xs text-[var(--chat-meta-color)]">
+            <svg class="w-3.5 h-3.5 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+            <span>正在加载更多歌曲...</span>
+          </div>
+        {:else if !currentHistoryHasMore && activeHistoryEntries.length >= 20}
+          <div class="py-2.5 text-center text-[11px] text-[var(--chat-meta-color)]/70">
+            已加载全部 {activeHistoryEntries.length} 首歌曲
+          </div>
+        {/if}
       {/if}
     </div>
   {/if}
 
   <ChatModal open={rotationExpanded && isWalineLoggedIn}
-    title="冷场轮播设置" subtitle="仅作用于当前房间，待播队列优先" size="md"
+    title="歌单轮播设置" subtitle="仅作用于当前房间，待播队列优先" size="md"
     topPriority
     onClose={() => { if (!rotationSaving) rotationExpanded = false; }}>
     <form class="flex flex-col min-h-0 p-4 gap-3" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>

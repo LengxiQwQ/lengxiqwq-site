@@ -353,6 +353,27 @@ export interface MusicHistoryEntry {
 	lastRequesterName: string;
 	firstRequestedAt: number;
 	lastRequestedAt: number;
+	isRotation?: boolean;
+}
+
+export interface FetchMusicHistoryParams {
+	roomId?: string;
+	type?: "request" | "rotation";
+	sort?: "recent" | "count";
+	requesterKey?: string;
+	offset?: number;
+	limit?: number;
+}
+
+export interface FetchMusicHistoryResponse {
+	ok: boolean;
+	type: "request" | "rotation";
+	total: number;
+	offset: number;
+	limit: number;
+	hasMore: boolean;
+	items: MusicHistoryEntry[];
+	error?: string;
 }
 
 export interface MusicHistoryLogEntry {
@@ -375,6 +396,7 @@ export interface CurrentPlayback {
 	requesterKey: string;
 	requesterName: string;
 	isFallback: boolean;
+	selectionStartedAt?: number;
 	startedAt: number;
 	durationSec: number;
 	skipVotes: string[];

@@ -1,58 +1,76 @@
-// Prepare an overlay against an explicitly supplied local snapshot. Never deploys.
-
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { integrateMusicSync } from "./server-integration.mjs";
 
 const [sourceArg, outputArg] = process.argv.slice(2);
 if (!sourceArg || !outputArg)
 	throw new Error(
 		"Usage: node prepare-candidate.mjs <local-runtime-snapshot> <new-output-directory>",
 	);
-const sourceDir = path.resolve(sourceArg),
-	outputDir = path.resolve(outputArg);
+const source = path.resolve(sourceArg);
+const output = path.resolve(outputArg);
 if (
-	outputDir === sourceDir ||
-	outputDir.startsWith(sourceDir + path.sep) ||
-	sourceDir.startsWith(outputDir + path.sep)
-) {
-	throw new Error("Source and candidate directories must be separate");
-}
+	source === output ||
+	output.startsWith(source + path.sep) ||
+	source.startsWith(output + path.sep)
+)
+	throw new Error("Source and output must be separate directories");
+
 const root = path.dirname(fileURLToPath(import.meta.url));
-const baseline = JSON.parse(
-	await readFile(path.join(root, "baseline-sha256.json"), "utf8"),
+const manifest = JSON.parse(
+	await readFile(path.join(root, "handoff-sha256.json"), "utf8"),
 );
-for (const [name, expected] of Object.entries(baseline)) {
-	const bytes = await readFile(path.join(sourceDir, name));
-	if (createHash("sha256").update(bytes).digest("hex") !== expected) {
-		throw new Error(
-			"Runtime source changed: " +
-				name +
-				"; refresh and review before preparing",
-		);
+const files = ["server.mjs", "src/music/music-manager.mjs"];
+const staging = await mkdtemp(path.join(tmpdir(), "chat-handoff-"));
+const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
+try {
+	await mkdir(path.join(staging, "src/music"), { recursive: true });
+	for (const file of files) {
+		const bytes = await readFile(path.join(source, file));
+		if (digest(bytes) !== manifest[file].before)
+			throw new Error(
+				"Production baseline changed. Review and merge again: " + file,
+			);
+		await writeFile(path.join(staging, file), bytes, { mode: 0o600 });
 	}
+	execFileSync(
+		"git",
+		[
+			"-c",
+			"core.autocrlf=false",
+			"apply",
+			"--no-index",
+			path.join(root, "playback-handoff.patch"),
+		],
+		{ cwd: staging },
+	);
+	const verified = new Map();
+	for (const file of files) {
+		const bytes = await readFile(path.join(staging, file));
+		if (digest(bytes) !== manifest[file].after)
+			throw new Error("Unexpected patched output: " + file);
+		execFileSync(process.execPath, ["--check", path.join(staging, file)]);
+		verified.set(file, bytes);
+	}
+	await mkdir(output);
+	try {
+		await mkdir(path.join(output, "src/music"), { recursive: true });
+		for (const [file, bytes] of verified)
+			await writeFile(path.join(output, file), bytes, {
+				flag: "wx",
+				mode: 0o600,
+			});
+	} catch (error) {
+		// This invocation exclusively created the output directory above.
+		await rm(output, { recursive: true, force: true });
+		throw error;
+	}
+	console.log(
+		"Verified both files. Keep the generated gateway private. No deployment performed.",
+	);
+} finally {
+	await rm(staging, { recursive: true, force: true });
 }
-const patched = integrateMusicSync(
-	await readFile(path.join(sourceDir, "server.mjs"), "utf8"),
-);
-// Refuse to overwrite an existing candidate or deployment directory.
-await mkdir(outputDir);
-for (const name of await readdir(path.join(root, "candidate"))) {
-	await cp(path.join(root, "candidate", name), path.join(outputDir, name), {
-		recursive: true,
-		force: false,
-		errorOnExist: true,
-	});
-}
-await writeFile(path.join(outputDir, "server.mjs"), patched, {
-	flag: "wx",
-	mode: 0o600,
-});
-console.log(
-	"Prepared local overlay. No service files, state, credentials or running processes were changed.",
-);
-console.log(
-	"The generated server.mjs inherits the snapshot configuration; keep the output private and untracked.",
-);

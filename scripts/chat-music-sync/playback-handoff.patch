@@ -1,0 +1,211 @@
+--- a/src/music/music-manager.mjs
++++ b/src/music/music-manager.mjs
+@@ -25,6 +25,7 @@
+   }
+ }
+ 
++const START_LEAD_MS = 1200;
+ const PREPARED_REUSE_TTL_MS = 25 * 60_000;
+ 
+ export class MusicManager {
+@@ -185,7 +186,7 @@
+       const elapsedMs = now - startedAt;
+ 
+       // 如果尚未超时（剩余至少 2 秒），尝试断点续播！
+-      if (elapsedMs >= -1200 && elapsedMs < (durationSec - 2) * 1000) {
++      if (elapsedMs >= -START_LEAD_MS && elapsedMs < (durationSec - 2) * 1000) {
+         try {
+           const playable = await this.resolve(current.track);
+           if (playable) {
+@@ -326,6 +327,7 @@
+   }
+ 
+   async enqueueTrack(rawTrack, requester) {
++    const selectionStartedAt = Date.now();
+     const requesterKey = requester.userKey;
+     const requesterName = requester.name;
+     const requesterAvatar = requester.avatar || '';
+@@ -395,7 +397,7 @@
+         this.playTrack(
+           playable,
+           { userKey: requesterKey, name: requesterName, avatar: requesterAvatar },
+-          false, undefined, uid
++          false, undefined, uid, selectionStartedAt
+         );
+         this.markOutcome(uid, 'played');
+         this.onStateChanged();
+@@ -437,8 +439,12 @@
+     if (!play) return;
+     const remaining = Math.max(0, play.startedAt + play.durationSec * 1000 - Date.now());
+     this._advanceTimer = setTimeout(() => {
+-      if (this.current === play) void this.advanceNext();
+-    }, remaining);
++      if (this.current !== play) return;
++      if (this.queue.length || this.fallbackTracks.length) void this.advanceNext();
++      else this._advanceTimer = setTimeout(() => {
++        if (this.current === play) void this.advanceNext();
++      }, Math.max(0, play.startedAt + play.durationSec * 1000 - Date.now()));
++    }, Math.max(0, remaining - START_LEAD_MS));
+     if (remaining > 30_000) {
+       this._refreshPreparedTimer = setTimeout(() => {
+         if (this.current === play) void this.prepareNext(undefined, true);
+@@ -452,7 +458,7 @@
+ 
+   recheckReady() {}
+ 
+-  playTrack(track, requester, isFallback = false, startedAt = Date.now() + 1200, requestUid) {
++  playTrack(track, requester, isFallback = false, startedAt = Date.now() + START_LEAD_MS, requestUid, selectionStartedAt) {
+     this.generation++;
+     this.fallbackGeneration++;
+     this.preparedFallback = null;
+@@ -468,6 +474,7 @@
+       requesterName: requester.name,
+       requesterAvatar: requester.avatar || '',
+       startedAt,
++      selectionStartedAt,
+       phase: startedAt > Date.now() ? 'scheduled' : 'playing',
+       durationSec: durationOf(track.durationSec) || 240,
+       isFallback,
+@@ -476,7 +483,14 @@
+       skipVotes: [],
+       skipVoteNames: []
+     };
+-    this.onPrefetchTrack(track.streamUrl, true);
++    const uid = this.current.uid;
++    const selectedAt = Date.now();
++    Promise.resolve(this.onPrefetchTrack(track.streamUrl, 'warm')).then(ready => {
++      console.info('[MusicHandoff]', JSON.stringify({
++        room: this.roomId, uid, selectionStartedAt, selectedAt, startedAt,
++        warmCheckAt: Date.now(), firstChunkReady: ready === true
++      }));
++    }).catch(() => {});
+     this.savePlayback();
+     this.scheduleAdvance();
+ 
+@@ -688,7 +702,9 @@
+     if (!Array.isArray(this.preparedFallbackPool)) this.preparedFallbackPool = [];
+ 
+     const promise = (async () => {
++      let attempts = 0;
+       while (
++        attempts++ < 4 &&
+         this.current &&
+         this.queue.length === 0 &&
+         this.fallbackTracks.length > 0 &&
+@@ -793,14 +809,8 @@
+     if (!record) return null;
+     if (!record.checkedAt) {
+       if (!record.pending) return null;
+-      let timer;
+-      const playable = await Promise.race([
+-        record.pending,
+-        new Promise(resolve => {
+-          timer = setTimeout(() => resolve(null), 2500);
+-        })
+-      ]).finally(() => clearTimeout(timer));
+-      return playable || null;
++      // The providers already bound their requests. Join the same resolution on a skip.
++      return record.pending;
+     }
+     if (Date.now() - record.checkedAt < PREPARED_REUSE_TTL_MS) return record.playable;
+     const cached = await this.musicRegistry.isCached?.(record.playable, this.signSecret).catch(() => false);
+@@ -808,12 +818,18 @@
+   }
+ 
+   async resolve(track, options) {
+-    try {
+-      return await this.musicRegistry.resolvePlayable(track, this.serverOrigin, this.signSecret, options);
+-    } catch (error) {
++    this.pendingResolutions ??= new Map();
++    const key = JSON.stringify([track.id, Boolean(options?.fresh)]);
++    const running = this.pendingResolutions.get(key);
++    if (running) return running;
++    const pending = Promise.resolve().then(() =>
++      this.musicRegistry.resolvePlayable(track, this.serverOrigin, this.signSecret, options)
++    ).catch(error => {
+       console.warn('[Music] resolve', this.roomId, track.id, error.message);
+       return null;
+-    }
++    }).finally(() => this.pendingResolutions.delete(key));
++    this.pendingResolutions.set(key, pending);
++    return pending;
+   }
+ 
+   advanceNext() {
+@@ -829,7 +845,7 @@
+     return promise;
+   }
+ 
+-  async selectNext(generation) {
++  async selectNext(generation, selectionStartedAt = Date.now()) {
+     while (this.queue.length) {
+       const next = this.queue[0];
+       const prepared = this.preparedQueue?.key === next.uid ? this.preparedQueue : null;
+@@ -847,7 +863,7 @@
+           ? next.startedAt : undefined;
+         this.playTrack(playable, {
+           userKey: next.requesterKey, name: next.requesterName, avatar: next.requesterAvatar
+-        }, false, startedAt, next.uid);
++        }, false, startedAt, next.uid, selectionStartedAt);
+         this.markOutcome(next.uid, 'played');
+         this.onStateChanged();
+         return;
+@@ -875,15 +891,15 @@
+     }
+     const playable = known || await this.resolveFallbackTrackPlayable();
+     if (generation !== this.generation) return;
+-    if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation);
++    if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt);
+     if (playable) {
+       // playTrack starts the shared download alongside the client preparation window.
+       if (generation !== this.generation) return;
+-      if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation);
++      if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt);
+       this.playTrack(playable, {
+         userKey: 'system:fallback',
+         name: (this.fallbackPlaylistName || '歌单轮播') + ' (轮播)'
+-      }, true);
++      }, true, undefined, undefined, selectionStartedAt);
+     } else {
+       this.current = null;
+       this.savePlayback();
+@@ -969,6 +985,7 @@
+   }
+ 
+   async playQueued(uid, actor, listeningCount = 0, playUid) {
++    const selectionStartedAt = Date.now();
+     if (playUid && playUid !== this.current?.uid) return { ok: false, error: '歌曲已切换，请重试' };
+     const item = this.queue.find(entry => entry.uid === uid);
+     if (!item) return { ok: false, error: '排队曲目不存在' };
+@@ -1016,7 +1033,7 @@
+     if (afterWarmIndex === 0) this.preparedQueue = null;
+     this.playTrack(playable, {
+       userKey: item.requesterKey, name: item.requesterName, avatar: item.requesterAvatar
+-    }, false, undefined, item.uid);
++    }, false, undefined, item.uid, selectionStartedAt);
+     this.markOutcome(uid, 'played');
+     this.onStateChanged();
+     return { ok: true };
+--- a/server.mjs
++++ b/server.mjs
+@@ -1083,12 +1083,20 @@
+   } catch {}
+ }
+ 
++const lastMusicHistory = new Map();
+ function broadcastMusicState(targetRoom = null) {
+   const rooms = targetRoom ? [targetRoom] : ['chat', 'interconnect'];
+   for (const rId of rooms) {
+     const mgr = musicManagers[rId];
+     if (mgr) {
+       const snap = mgr.getSnapshot(getOnlineUserKeys(rId));
++      const history = JSON.stringify([snap.history, snap.historyLogs]);
++      if (lastMusicHistory.get(rId) === history) {
++        delete snap.history;
++        delete snap.historyLogs;
++      } else {
++        lastMusicHistory.set(rId, history);
++      }
+       if (snap.current?.track?.streamUrl) {
+         prefetchTrackStream(snap.current.track.streamUrl);
+       }

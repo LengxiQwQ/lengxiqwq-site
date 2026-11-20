@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { getMaxListeners, setMaxListeners } from "node:events";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { MusicClock } from "../../src/components/pages/chat/musicClock.ts";
 import {
@@ -28,6 +31,9 @@ function manager({ healthy = false, resolved = null, listeners = [] } = {}) {
 		generation: 1,
 		fallbackGeneration: 1,
 		_actorLastErrorAt: new Map(),
+		rotationHistoryMap: new Map(),
+		rotationLogs: [],
+		saveDataDebounced() {},
 		getListeners: () => listeners,
 		events: { changed: 0, advance: 0, resolve: 0 },
 		musicRegistry: { isHealthy: async () => healthy },
@@ -86,7 +92,7 @@ test("old recovery cannot overwrite a newer track", async () => {
 	assert.equal(m.events.changed, 0);
 });
 
-test("playTrack starts immediately with authoritative startedAt timestamp and increments fallbackGeneration to invalidate stale prepared tracks", () => {
+test("playTrack schedules one future start and increments fallbackGeneration to invalidate stale prepared tracks", () => {
 	const m = manager();
 	m.preparedFallback = {
 		key: 1,
@@ -96,9 +102,9 @@ test("playTrack starts immediately with authoritative startedAt timestamp and in
 	const beforeGen = m.fallbackGeneration;
 	const t0 = Date.now();
 	m.playTrack({ id: "qq:new", streamUrl: "x" }, { userKey: "a" });
-	assert.equal(m.current.phase, "playing");
+	assert.equal(m.current.phase, "scheduled");
 	assert.ok(
-		m.current.startedAt >= t0 && m.current.startedAt <= Date.now() + 50,
+		m.current.startedAt >= t0 + 1200 && m.current.startedAt <= Date.now() + 1200,
 	);
 	assert.equal(m.fallbackGeneration, beforeGen + 1);
 	assert.equal(
@@ -107,6 +113,54 @@ test("playTrack starts immediately with authoritative startedAt timestamp and in
 		"stale preparedFallback must be cleared on every track switch",
 	);
 	clearTimeout(m._prepareFallbackTimer);
+});
+
+test("real manager preserves rotation history while scheduling synchronized starts", async () => {
+	const dataDir = mkdtempSync(join(tmpdir(), "music-rotation-test-"));
+	const historyPath = join(dataDir, "music_rotation_history_chat.json");
+	const oldTrack = { id: "old", title: "Old rotation" };
+	writeFileSync(historyPath, JSON.stringify([{
+		track: oldTrack, rotationCount: 2, lastPlaylistName: "Old list",
+		firstRotatedAt: 100, lastRotatedAt: 200,
+	}]));
+	const m = new MusicManager({ dataDir, roomId: "chat" });
+	const requester = { userKey: "test", name: "Test" };
+	try {
+		let page = m.getHistoryPage({ type: "rotation" });
+		assert.equal(page.total, 1);
+		assert.equal(page.items[0].requestCount, 2);
+
+		const before = Date.now();
+		m.playTrack({ ...oldTrack, streamUrl: "https://example.invalid/old" }, requester, true);
+		assert.equal(m.current.phase, "scheduled");
+		assert.ok(m.current.startedAt >= before + 1200 && m.current.startedAt <= Date.now() + 1200);
+		m.playTrack({ id: "new", title: "New rotation", streamUrl: "https://example.invalid/new" }, requester, true);
+		m.playTrack({ id: "request", title: "Requested", streamUrl: "https://example.invalid/request" }, requester, false);
+
+		page = m.getHistoryPage({ type: "rotation", sort: "count", offset: 0, limit: 1 });
+		assert.equal(page.total, 2);
+		assert.equal(page.hasMore, true);
+		assert.equal(page.items[0].track.id, "old");
+		assert.equal(page.items[0].requestCount, 3);
+		const second = m.getHistoryPage({ type: "rotation", sort: "count", offset: 1, limit: 1 });
+		assert.equal(second.items[0].track.id, "new");
+		assert.equal(second.hasMore, false);
+		assert.equal(m.rotationHistoryMap.has("request"), false);
+
+		await new Promise((resolve) => setTimeout(resolve, 2200));
+		const stored = JSON.parse(readFileSync(historyPath, "utf8"));
+		assert.equal(stored.length, 2);
+		assert.ok(stored.every((item) => !item.track.streamUrl));
+		const restored = new MusicManager({ dataDir, roomId: "chat" });
+		const restoredPage = restored.getHistoryPage({ type: "rotation", sort: "count" });
+		assert.deepEqual(restoredPage.items.map((item) => [item.track.id, item.requestCount]), [["old", 3], ["new", 1]]);
+	} finally {
+		clearTimeout(m._saveTimer);
+		clearTimeout(m._advanceTimer);
+		clearTimeout(m._refreshPreparedTimer);
+		clearTimeout(m._prepareFallbackTimer);
+		rmSync(dataDir, { recursive: true, force: true });
+	}
 });
 
 test("deterministic CDN-friendly stream signer includes static extension and preserves trackKey", () => {
@@ -541,8 +595,8 @@ test("fresh track switch (< 500ms) plays from 0.0s immediately with zero seek an
 	}
 });
 
-test("3-track fallback pool enables 3 consecutive 0ms skips and awaits warm first-chunk before stamping startedAt", async () => {
-	const warmDelayMs = 35;
+test("prepared skips announce one future start while the first-chunk request is pending", async () => {
+	const finishWarm = [];
 	let warmCalls = 0;
 	const tracks = [
 		{
@@ -585,6 +639,9 @@ test("3-track fallback pool enables 3 consecutive 0ms skips and awaits warm firs
 	const m = Object.create(MusicManager.prototype);
 	Object.assign(m, {
 		roomId: "test",
+		rotationHistoryMap: new Map(),
+		rotationLogs: [],
+		saveDataDebounced() {},
 		current: {
 			uid: "p0",
 			track: {
@@ -621,9 +678,7 @@ test("3-track fallback pool enables 3 consecutive 0ms skips and awaits warm firs
 		onPrefetchTrack: (_url, mode) => {
 			if (mode === "warm") {
 				warmCalls++;
-				return new Promise((resolve) =>
-					setTimeout(() => resolve(true), warmDelayMs),
-				);
+				return new Promise((resolve) => finishWarm.push(resolve));
 			}
 		},
 		onStateChanged() {},
@@ -641,15 +696,15 @@ test("3-track fallback pool enables 3 consecutive 0ms skips and awaits warm firs
 			"2 additional backup tracks pre-warmed in pool",
 		);
 
-		// When a skip occurs and warm takes 35ms, startedAt must be stamped AFTER warm finishes (not 35ms earlier!)
+		// Keep warm requests pending through all three switches.
 		const playedIds = [m.current.track.id];
 		for (let i = 0; i < 3; i++) {
 			const beforeSkip = Date.now();
 			await m.advanceNext();
 			clearTimeout(m._prepareFallbackTimer);
 			assert.ok(
-				m.current.startedAt >= beforeSkip + 25,
-				"startedAt must be stamped after warm first-chunk completes",
+				m.current.startedAt >= beforeSkip + 1200,
+				"room receives a shared preparation window",
 			);
 			assert.ok(
 				!playedIds.slice(-1).includes(m.current.track.id),
@@ -658,6 +713,7 @@ test("3-track fallback pool enables 3 consecutive 0ms skips and awaits warm firs
 			playedIds.push(m.current.track.id);
 		}
 		assert.equal(warmCalls, 3);
+		for (const resolve of finishWarm) resolve(true);
 	} finally {
 		clearTimeout(m._prepareFallbackTimer);
 	}
@@ -717,15 +773,18 @@ test("20 listeners wait for the same deadline and resume in place after muting",
 	}
 });
 
-test("a prepared next song becomes the media source without another network load", async () => {
-	const originalFetch = globalThis.fetch;
-	globalThis.fetch = async () =>
-		new Response(new Uint8Array(256), {
-			headers: { "content-length": "256", "content-type": "audio/mpeg" },
-		});
+test("an incomplete native preload is promoted with the same url and no second load", async () => {
 	const audio = new FakeAudio();
+	const standby = new FakeAudio();
+	standby.readyState = 2;
+	audio.ownerDocument = { createElement: () => standby };
+	for (const element of [audio, standby]) {
+		element.setAttribute = () => {};
+		element.hasAttribute = () => !!element.src;
+	}
+	let now = 10000;
 	const player = new RoomAudioPlayer(audio, {
-		now: () => 10000,
+		now: () => now,
 		status() {},
 		ready() {},
 		error() {},
@@ -735,17 +794,31 @@ test("a prepared next song becomes the media source without another network load
 	try {
 		player.setTrack({
 			uid: "one",
-			startedAt: 10000,
+			startedAt: now,
 			track: { streamUrl: "one" },
 		});
-		const next = { uid: "two", startedAt: 11000, track: { streamUrl: "two" } };
+		player.listen();
+		await Promise.resolve();
+		const next = {
+			uid: "two",
+			startedAt: 11200,
+			phase: "scheduled",
+			track: { streamUrl: "two" },
+		};
 		player.preloadNext(next);
-		await new Promise((resolve) => setImmediate(resolve));
 		player.setTrack(next);
-		assert.match(audio.src, /^blob:/);
+		assert.equal(audio.paused, false);
+		assert.equal(standby.plays, 0);
+		now = 11200;
+		audio.dispatchEvent(new Event("timeupdate"));
+		await Promise.resolve();
+		assert.equal(standby.src, "two");
+		assert.equal(standby.loads, 1);
+		assert.equal(standby.plays, 1);
+		assert.equal(standby.muted, false);
+		assert.equal(audio.paused, true);
 	} finally {
 		player.destroy();
-		globalThis.fetch = originalFetch;
 	}
 });
 

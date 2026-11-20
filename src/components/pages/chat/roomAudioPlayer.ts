@@ -1,3 +1,4 @@
+import { recordMusicEvent } from "./musicTrace";
 import type { CurrentPlayback } from "./chatTypes";
 
 export type AudioStatus =
@@ -23,16 +24,11 @@ const PLAYBACK_DRIFT_SEEK_SEC = 2.2;
 const SEEK_COOLDOWN_MS = 5000;
 const INITIAL_SEEK_COOLDOWN_MS = 900;
 
-export function correctionForDrift(
-	drift: number,
-	bufferedHeadroom = 0,
-): {
+export function correctionForDrift(drift: number): {
 	seek: boolean;
 	rate: number;
 } {
-	if (
-		Math.abs(drift) >= (bufferedHeadroom >= 2 ? 0.5 : PLAYBACK_DRIFT_SEEK_SEC)
-	) {
+	if (Math.abs(drift) >= PLAYBACK_DRIFT_SEEK_SEC) {
 		return { seek: true, rate: 1 };
 	}
 	return { seek: false, rate: 1 };
@@ -51,7 +47,6 @@ let instanceCounter = 0;
 
 /**
  * Simple, deterministic timestamp-offset audio controller.
- * - Never uses a second <audio> element (prevents Chromium HttpCache exclusive write lock deadlocks).
  * - Never mutates playbackRate during playback (prevents iPad/iOS CoreAudio Time-Pitch DSP stutters).
  * - Aligns playhead directly to (serverNow - startedAt) / 1000 once active playback begins.
  */
@@ -80,19 +75,104 @@ export class RoomAudioPlayer {
 	private starting = false;
 	private destroyed = false;
 	private timer: ReturnType<typeof setTimeout> | undefined;
-	private preloadUrl = "";
-	private preparedBlob: Blob | null = null;
 	private preloadRetryAt = 0;
-	private objectUrl = "";
 	private awaitingStart = false;
 	private followMuted = false;
+	private staged: CurrentPlayback | null = null;
+	private standby: HTMLAudioElement | null = null;
+	private standbyUrl = "";
+	private standbyRevision = 0;
+	private loadSerial = 0;
+	private promoted = false;
+	private requiresOriginalElement = false;
+	private firstProgress = false;
+	private recoverDrift = false;
+	private groupStart = false;
+	private gesturePreroll = false;
+	private standbyReady = () => {
+		if (this.standby && this.standbyUrl) this.trace("next-canplay", { ready: this.standby.readyState, bufferedTo: this.bufferedTo(this.standby) });
+	};
+	private bufferedTo(el: HTMLAudioElement): number {
+		const ranges = el.buffered;
+		for (let i = 0; i < ranges.length; i++) {
+			if (ranges.start(i) <= el.currentTime + 0.05 && ranges.end(i) >= el.currentTime)
+				return ranges.end(i);
+		}
+		return el.currentTime;
+	}
+	private prepareStandby(next: CurrentPlayback): void {
+		if (!this.audio.ownerDocument || this.requiresOriginalElement) return;
+		if (
+			this.standbyUrl === next.track.streamUrl &&
+			this.standbyRevision === (next.sourceRevision ?? 0)
+		)
+			return;
+		if (!this.standby)
+			this.standby = this.audio.ownerDocument.createElement("audio");
+		const el = this.standby;
+		el.removeEventListener("canplay", this.standbyReady);
+		el.addEventListener("canplay", this.standbyReady, { once: true });
+		el.preload = "auto";
+		el.muted = true;
+		el.setAttribute("playsinline", "");
+		this.standbyUrl = next.track.streamUrl;
+		this.standbyRevision = next.sourceRevision ?? 0;
+		el.src = this.buildStreamSrc(
+			this.standbyUrl,
+			this.standbyRevision,
+			"next" + ++this.loadSerial,
+		);
+		el.load();
+		this.trace("prepare-next", { next: next.uid });
+	}
+	private clearStandby(): void {
+		this.standby?.removeEventListener("canplay", this.standbyReady);
+		if (this.standby?.hasAttribute("src")) {
+			this.standby.pause();
+			this.standby.removeAttribute("src");
+			this.standby.load();
+		}
+		this.standbyUrl = "";
+	}
+	get position(): number {
+		return this.audio.currentTime;
+	}
+	private swapElements(): void {
+		const next = this.standby;
+		if (!next) return;
+		next.removeEventListener("canplay", this.standbyReady);
+		this.audio.muted = true;
+		this.audio.pause();
+		for (const [event, listener] of this.listeners) {
+			this.audio.removeEventListener(event, listener);
+			next.addEventListener(event, listener);
+		}
+		this.standby = this.audio;
+		this.audio = next;
+		this.clearStandby();
+	}
+	private trace(
+		event: string,
+		detail: Record<string, string | number | boolean> = {},
+	) {
+		recordMusicEvent(event, this.play?.uid, {
+			clock: Math.round(this.callbacks.now()),
+			position: this.audio.currentTime,
+			bufferedTo: this.bufferedTo(this.audio),
+			paused: this.audio.paused,
+			seeking: this.audio.seeking,
+			ready: this.audio.readyState,
+			muted: this.audio.muted,
+			...detail,
+		});
+	}
 	private bufferEnd = 0;
-	private preloadAbort: AbortController | null = null;
 	private desiredPreload: CurrentPlayback | null = null;
 	private listeners: [string, EventListener][] = [];
 
 	private resume = () => {
 		if (document.hidden || !this.intent || this.status === "blocked") return;
+		this.recoverDrift = true;
 		this.progressAt = performance.now();
 		if (this.waitingSince) this.waitingSince = this.progressAt;
 		if (this.status === "error") this.listen();
@@ -100,7 +180,7 @@ export class RoomAudioPlayer {
 	};
 
 	constructor(
-		private readonly audio: HTMLAudioElement,
+		private audio: HTMLAudioElement,
 		private readonly callbacks: Callbacks,
 	) {
 		for (const event of [
@@ -129,6 +209,7 @@ export class RoomAudioPlayer {
 	}
 
 	private emit(status: AudioStatus): void {
+		if (status !== this.status) this.trace(status);
 		this.status = status;
 		this.callbacks.status(status, this.intent);
 	}
@@ -157,23 +238,60 @@ export class RoomAudioPlayer {
 	}
 
 	setTrack(play: CurrentPlayback | null): void {
+		// Prepare the next native media element while the old element remains audible.
+		if (
+			play &&
+			this.play &&
+			play.uid !== this.play.uid &&
+			(this.intent || this.followMuted) &&
+			!this.audio.paused &&
+			play.phase === "scheduled" &&
+			play.startedAt > this.callbacks.now() &&
+			this.audio.ownerDocument &&
+			!this.requiresOriginalElement
+		) {
+			if (this.staged?.uid !== play.uid)
+				this.trace("handoff-scheduled", {
+					next: play.uid,
+					deadline: play.startedAt,
+				});
+			this.staged = play;
+			this.prepareStandby(play);
+			return;
+		}
+		this.staged = null;
+
 		const key = play
 			? `${play.uid}:${play.sourceRevision ?? 0}:${play.track.streamUrl}`
 			: "";
+		const previous = this.play;
 		this.play = play;
 		if (key === this.key) {
 			this.check();
 			return;
 		}
-		const prepared =
-			play?.track.streamUrl === this.preloadUrl && !play?.sourceRevision
-				? this.preparedBlob
-				: null;
-		this.preparedBlob = null;
-		this.preloadUrl = "";
-		this.cancelPreloadFetch();
-		if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
-		this.objectUrl = prepared ? URL.createObjectURL(prepared) : "";
+		this.groupStart =
+			!!previous &&
+			previous.uid !== play?.uid &&
+			this.intent &&
+			!!play &&
+			Math.abs(this.callbacks.now() - play.startedAt) < 2000;
+		this.firstProgress = this.gesturePreroll = this.recoverDrift = false;
+		const promote =
+			!!play &&
+			!!this.standby &&
+			this.standbyUrl === play.track.streamUrl &&
+			this.standbyRevision === (play.sourceRevision ?? 0) &&
+			!this.standby.error;
+		this.trace("track", {
+			deadline: play?.startedAt ?? 0,
+			groupStart: this.groupStart,
+			prepared: promote,
+			ready: promote ? this.standby!.readyState : 0,
+		});
+		this.promoted = promote;
+		if (promote) this.swapElements();
+		else this.clearStandby();
 		this.awaitingStart = false;
 		this.bufferEnd = 0;
 		this.key = key;
@@ -192,7 +310,7 @@ export class RoomAudioPlayer {
 		this.lastSeek = Number.NEGATIVE_INFINITY;
 		this.progressAt = performance.now();
 		this.lastProgress = 0;
-		this.audio.pause();
+		if (!promote) this.audio.pause();
 		this.audio.playbackRate = 1;
 		if (!play?.track.streamUrl) {
 			this.activeSrc = "";
@@ -202,11 +320,18 @@ export class RoomAudioPlayer {
 			this.emit("idle");
 			return;
 		}
-		this.activeSrc =
-			this.objectUrl ||
-			this.buildStreamSrc(play.track.streamUrl, play.sourceRevision ?? 0);
-		this.audio.src = this.activeSrc;
-		this.audio.load();
+		this.activeSrc = this.buildStreamSrc(
+			play.track.streamUrl,
+			play.sourceRevision ?? 0,
+		);
+		if (promote) {
+			this.activeSrc = this.audio.getAttribute("src") || this.activeSrc;
+			this.trace("reuse-native-buffer");
+		} else {
+			this.audio.src = this.activeSrc;
+			this.trace("load-track");
+			this.audio.load();
+		}
 		if ((this.intent || this.followMuted) && this.scheduled()) {
 			this.awaitingStart = true;
 			this.audio.muted = true;
@@ -219,32 +344,25 @@ export class RoomAudioPlayer {
 		}
 	}
 
-	private cancelPreloadFetch(): void {
-		if (this.preloadAbort) {
-			this.preloadAbort.abort();
-			this.preloadAbort = null;
-		}
-	}
-
 	preloadNext(play: CurrentPlayback | null): void {
+		if (this.staged) {
+			this.desiredPreload = play;
+			return;
+		}
 		if (this.desiredPreload?.track.streamUrl !== play?.track.streamUrl) {
 			this.preloadRetryAt = 0;
-			this.cancelPreloadFetch();
-			this.preparedBlob = null;
-			this.preloadUrl = "";
+			if (this.standbyUrl !== play?.track.streamUrl) this.clearStandby();
 		}
 		this.desiredPreload = play;
 		if (!play) {
-			this.preloadUrl = "";
-			this.cancelPreloadFetch();
+			this.clearStandby();
 			return;
 		}
 		this.maybeRunPreload();
 	}
 
 	private maybeRunPreload(): void {
-		if (typeof fetch !== "function" || performance.now() < this.preloadRetryAt)
-			return;
+		if (this.staged || performance.now() < this.preloadRetryAt) return;
 		const connection = (
 			navigator as Navigator & {
 				connection?: { saveData?: boolean; effectiveType?: string };
@@ -266,7 +384,7 @@ export class RoomAudioPlayer {
 			return;
 		}
 		const url = this.desiredPreload?.track.streamUrl ?? "";
-		if (!url || url === this.preloadUrl || url === this.play.track.streamUrl) {
+		if (!url || url === this.standbyUrl || url === this.play.track.streamUrl) {
 			return;
 		}
 		// Only warm the next track once the current track has buffered at least 10s ahead
@@ -291,40 +409,22 @@ export class RoomAudioPlayer {
 			duration > 0 &&
 			ranges?.length > 0 &&
 			ranges.end(ranges.length - 1) >= duration - 0.5;
-		if (bufferedAhead < 10 && !fullyBuffered) return;
+		// WebKit can report HAVE_ENOUGH_DATA with an empty TimeRanges during playback.
+		const unreportedBuffer =
+			!ranges?.length &&
+			this.audio.readyState === 4 &&
+			!!this.audio.ownerDocument;
+		if (bufferedAhead < 10 && !fullyBuffered && !unreportedBuffer) return;
 
-		this.preloadUrl = url;
-		this.cancelPreloadFetch();
-		// Keep one complete next song for direct use by the same media element.
-		const controller = new AbortController();
-		this.preloadAbort = controller;
-		void fetch(this.buildStreamSrc(url, 0, "pre"), {
-			signal: controller.signal,
-		})
-			.then(async (response) => {
-				const size = Number(response.headers.get("content-length"));
-				if (response.status !== 200 || !(size > 0 && size <= 8 * 1024 * 1024)) {
-					await response.body?.cancel();
-					return;
-				}
-				const blob = await response.blob();
-				if (this.preloadAbort === controller && blob.size === size)
-					this.preparedBlob = blob;
-			})
-			.catch(() => {
-				if (this.preloadAbort === controller) {
-					this.preloadUrl = "";
-					this.preloadRetryAt = performance.now() + 30000;
-				}
-			})
-			.finally(() => {
-				if (this.preloadAbort === controller) this.preloadAbort = null;
-			});
+		if (this.desiredPreload) this.prepareStandby(this.desiredPreload);
 	}
 
 	listen(): void {
+		this.trace("listen-click");
+		this.groupStart = false;
 		this.intent = true;
 		this.followMuted = false;
+		if (this.starting && !this.audio.paused && !this.audio.error) return;
 		if (
 			this.play &&
 			!this.starting &&
@@ -364,11 +464,15 @@ export class RoomAudioPlayer {
 			);
 			this.audio.src = this.activeSrc;
 		}
-		if (this.audio.error || this.status === "error") this.audio.load();
-		this.start(); // Synchronous play() retains the explicit user gesture on Safari.
+		if (this.audio.error) {
+			this.trace("load-media-error");
+			this.audio.load();
+		}
+		this.start(true); // Synchronous play() retains the explicit user gesture on Safari.
 	}
 
 	stop(): void {
+		this.trace("stop");
 		this.followMuted = !this.destroyed && (this.intent || this.followMuted);
 		this.intent = false;
 		this.epoch++;
@@ -384,7 +488,14 @@ export class RoomAudioPlayer {
 	private startMuted(): void {
 		this.awaitingStart = false;
 		this.audio.muted = true;
-		void this.audio.play().catch(() => {});
+		const epoch = this.epoch;
+		void this.audio.play().catch((error: unknown) => {
+			if (this.epoch !== epoch) return;
+			this.followMuted = false;
+			this.trace("muted-play-rejected", {
+				reason: error instanceof Error ? error.name : "unknown",
+			});
+		});
 	}
 
 	private scheduled(): boolean {
@@ -451,7 +562,16 @@ export class RoomAudioPlayer {
 				this.initialSeeks === 0
 					? INITIAL_ALIGN_THRESHOLD_SEC
 					: PLAYBACK_DRIFT_SEEK_SEC;
-			const needsSeek = Math.abs(drift) > threshold;
+			const needsSeek =
+				Math.abs(drift) >
+				(this.groupStart && !this.initialSeeks ? 1.5 : threshold);
+			if (
+				this.groupStart &&
+				needsSeek &&
+				this.initialSeeks === 0 &&
+				!this.starting
+			)
+				this.trace("missed-opening");
 			if (!needsSeek) {
 				if (
 					!this.starting &&
@@ -466,6 +586,7 @@ export class RoomAudioPlayer {
 			if (mono - this.lastSeek < INITIAL_SEEK_COOLDOWN_MS) return;
 			if (!this.isTargetSeekable(target)) return;
 			try {
+				this.trace("seek-initial", { target });
 				this.audio.currentTime = target;
 				this.lastSeek = mono;
 				this.initialSeeks++;
@@ -495,28 +616,21 @@ export class RoomAudioPlayer {
 			return;
 		}
 
-		// Correct smaller drift only if the destination is already buffered.
-		const ranges = this.audio.buffered;
-		let headroom = 0;
-		for (let i = 0; i < ranges.length; i++) {
-			if (ranges.start(i) <= target && target <= ranges.end(i)) {
-				headroom = ranges.end(i) - target;
-				break;
-			}
-		}
-		if (correctionForDrift(drift, headroom).seek) {
+		if (this.recoverDrift && correctionForDrift(drift).seek) {
 			if (mono - this.lastSeek < SEEK_COOLDOWN_MS) return;
 			if (!this.isTargetSeekable(target)) return;
 			try {
+				this.trace("seek-recovery", { target });
 				this.audio.currentTime = target;
 				this.lastSeek = mono;
 			} catch {
 				return;
 			}
 		}
+		this.recoverDrift = false;
 	}
 
-	private start(): void {
+	private start(gesture = false): void {
 		if (this.destroyed || !this.intent || !this.play || this.starting) return;
 		this.awaitingStart = false;
 		const epoch = this.epoch;
@@ -536,29 +650,48 @@ export class RoomAudioPlayer {
 				? 0
 				: this.volume;
 		this.audio.muted =
-			isScheduledFuture || (needsInitialSeek && !this.initialAligned);
+			isScheduledFuture ||
+			(needsInitialSeek &&
+				!this.initialAligned &&
+				!(gesture && this.audio.readyState >= 1));
 		this.emit(
 			isScheduledFuture ? "preparing" : this.retries ? "recovering" : "loading",
 		);
 		try {
+			this.gesturePreroll = gesture && isScheduledFuture;
+			this.trace("play-call", { gesture });
 			void this.audio.play().then(
 				() => {
 					if (epoch !== this.epoch || this.destroyed) return;
 					this.starting = false;
-					if (isScheduledFuture && this.scheduled()) {
-						this.audio.pause();
-						this.audio.currentTime = 0;
-						this.awaitingStart = true;
-					}
+					this.trace("play-resolved");
 					this.check();
 				},
 				(error: unknown) => {
 					if (epoch !== this.epoch || this.destroyed) return;
 					this.starting = false;
+					this.trace("play-rejected", {
+						reason: error instanceof Error ? error.name : "unknown",
+					});
 					if (
 						error instanceof DOMException &&
 						error.name === "NotAllowedError"
 					) {
+						if (this.promoted && this.standby && !gesture) {
+							this.promoted = false;
+							this.requiresOriginalElement = true;
+							this.swapElements();
+							this.activeSrc = this.buildStreamSrc(
+								this.play!.track.streamUrl,
+								this.play!.sourceRevision,
+								"resume" + ++this.loadSerial,
+							);
+							this.audio.src = this.activeSrc;
+							this.trace("retry-authorized-element");
+							this.audio.load();
+							this.start();
+							return;
+						}
 						this.audio.muted = true;
 						this.emit("blocked");
 					} else {
@@ -581,6 +714,7 @@ export class RoomAudioPlayer {
 			this.status === "error"
 		)
 			return;
+		this.trace("recovery-needed", { mediaError: this.audio.error?.code ?? 0, waitMs: Math.round(performance.now() - this.progressAt) });
 		this.audio.muted = true;
 		this.audio.playbackRate = 1;
 		if (this.retries < 3) {
@@ -596,6 +730,13 @@ export class RoomAudioPlayer {
 	}
 
 	private check(): void {
+		if (this.staged && this.callbacks.now() >= this.staged.startedAt) {
+			const next = this.staged;
+			this.staged = null;
+			this.setTrack(next);
+			return;
+		}
+
 		if (
 			this.followMuted &&
 			!this.intent &&
@@ -618,6 +759,18 @@ export class RoomAudioPlayer {
 			this.start();
 			return;
 		}
+		if (
+			this.retryAt &&
+			!this.audio.error &&
+			!this.audio.paused &&
+			!this.audio.seeking &&
+			this.audio.readyState >= 3 &&
+			this.audio.currentTime > this.lastProgress + 0.05
+		) {
+			this.retryAt = this.waitingSince = 0;
+			this.progressAt = mono;
+			this.trace("recovered-in-place");
+		}
 		if (this.retryAt) {
 			if (mono >= this.retryAt && navigator.onLine) {
 				this.retryAt = 0;
@@ -631,6 +784,7 @@ export class RoomAudioPlayer {
 					this.play.sourceRevision ?? 0,
 					`r${this.retries}`,
 				);
+				this.trace("reload", { attempt: this.retries });
 				this.audio.src = this.activeSrc;
 				this.audio.load();
 				this.start();
@@ -652,6 +806,14 @@ export class RoomAudioPlayer {
 			audio.muted = true;
 			this.emitIfChanged("preparing");
 		} else if (audio.readyState >= 1) {
+			if (this.gesturePreroll && !audio.seeking && !this.starting) {
+				this.gesturePreroll = false;
+				if (audio.currentTime - this.expected() > 0.15) {
+					this.trace("seek-preroll", { target: this.expected() });
+					audio.currentTime = this.expected();
+					return;
+				}
+			}
 			if (!this.initialAligned) {
 				if (this.expected() > INITIAL_ALIGN_THRESHOLD_SEC) {
 					audio.volume = 0;
@@ -675,6 +837,15 @@ export class RoomAudioPlayer {
 			}
 		}
 		if (Math.abs(audio.currentTime - this.lastProgress) > 0.02) {
+			if (
+				!this.firstProgress &&
+				this.status === "playing" &&
+				!audio.muted &&
+				!audio.seeking
+			) {
+				this.firstProgress = true;
+				this.trace("first-unmuted-progress");
+			}
 			this.lastProgress = audio.currentTime;
 			this.progressAt = mono;
 		}
@@ -707,6 +878,12 @@ export class RoomAudioPlayer {
 		if (attrSrc !== this.activeSrc && attrSrc !== this.play.track.streamUrl) {
 			return;
 		}
+		if (
+			["error", "pause", "waiting", "stalled", "seeked", "playing"].includes(
+				event,
+			)
+		)
+			this.trace("media-" + event);
 		if (event === "error") {
 			this.fail();
 			return;
@@ -737,11 +914,11 @@ export class RoomAudioPlayer {
 			!this.retryAt &&
 			this.audio.readyState < 3
 		) {
-			if (this.preloadAbort) {
-				this.cancelPreloadFetch();
-				this.preloadUrl = "";
+			if (this.standbyUrl) {
+				if (!this.staged) this.clearStandby();
 				this.preloadRetryAt = performance.now() + 30000;
 			}
+			this.recoverDrift = true;
 			this.waitingSince ||= performance.now();
 			this.emitIfChanged("loading");
 		}
@@ -751,7 +928,7 @@ export class RoomAudioPlayer {
 			!this.starting &&
 			!this.retryAt &&
 			!this.audio.ended &&
-			this.status === "playing" &&
+			(this.status === "playing" || this.status === "loading") &&
 			this.audio.paused
 		) {
 			this.audio.muted = true;
@@ -762,8 +939,9 @@ export class RoomAudioPlayer {
 
 	private tick(): void {
 		this.check();
-		const remaining = this.play
-			? this.play.startedAt - this.callbacks.now()
+		const next = this.staged ?? this.play;
+		const remaining = next
+			? next.startedAt - this.callbacks.now()
 			: Number.POSITIVE_INFINITY;
 		this.timer = setTimeout(
 			() => this.tick(),
@@ -773,13 +951,12 @@ export class RoomAudioPlayer {
 
 	destroy(): void {
 		this.destroyed = true;
-		this.cancelPreloadFetch();
+		this.staged = null;
+		this.clearStandby();
 		this.stop();
 		this.audio.pause();
 		this.audio.removeAttribute("src");
 		this.audio.load();
-		if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
-		this.preparedBlob = null;
 		clearTimeout(this.timer);
 		for (const [event, listener] of this.listeners)
 			this.audio.removeEventListener(event, listener);
