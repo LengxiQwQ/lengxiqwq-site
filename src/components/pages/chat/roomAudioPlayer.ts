@@ -460,6 +460,27 @@ export class RoomAudioPlayer {
 
 	private onError() {
 		this.clearFireTimer();
+		const fallbackProxy = this.play?.track?.proxyUrl;
+		if (fallbackProxy) {
+			const proxySrc = this.buildStreamSrc(
+				fallbackProxy,
+				this.play?.sourceRevision ?? 0,
+			);
+			if (this.activeSrc !== proxySrc) {
+				console.warn(
+					"[RoomAudioPlayer] Direct CDN stream error, falling back to proxy stream:",
+					proxySrc,
+				);
+				this.activeSrc = proxySrc;
+				this.audio.src = proxySrc;
+				this.audio.load();
+				this.transition("LOADING");
+				if (this.intent) {
+					this.invokeNativePlay();
+				}
+				return;
+			}
+		}
 		this.transition("ERROR");
 		if (this.play) {
 			this.callbacks.error(this.play.uid, this.play.sourceRevision ?? 0);

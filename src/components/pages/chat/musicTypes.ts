@@ -10,6 +10,8 @@ export interface ChatMusicTrack {
 	album?: string;
 	url?: string;
 	streamUrl?: string;
+	proxyUrl?: string;
+	directUrl?: string;
 	cover: string;
 	lrc?: string;
 	lrcUrl?: string;

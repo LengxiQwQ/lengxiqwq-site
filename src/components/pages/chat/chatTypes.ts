@@ -404,6 +404,8 @@ export interface CurrentPlayback {
 	track: ChatMusicTrack & {
 		streamUrl: string;
 		lrcUrl: string;
+		proxyUrl?: string;
+		directUrl?: string;
 	};
 	requesterKey: string;
 	requesterName: string;
