@@ -635,15 +635,6 @@ export async function issueGuestSession(
 		return { ok: false, error: "请输入有效的邮箱地址", status: 400 };
 	}
 
-	const regCheck = checkGuestRegistrationEmail(email);
-	if (!regCheck.deliverable) {
-		return {
-			ok: false,
-			error: regCheck.reason || "该邮箱为不可用或虚拟占位地址，禁止注册",
-			status: 400,
-		};
-	}
-
 	if (isAdminEmail(env, email)) {
 		return {
 			ok: false,
@@ -651,6 +642,15 @@ export async function issueGuestSession(
 			status: 403,
 			code: "WALINE_LOGIN_REQUIRED",
 			allowSplitGuest: false,
+		};
+	}
+
+	const regCheck = checkGuestRegistrationEmail(email);
+	if (!regCheck.deliverable) {
+		return {
+			ok: false,
+			error: regCheck.reason || "该邮箱为不可用或虚拟占位地址，禁止注册",
+			status: 400,
 		};
 	}
 

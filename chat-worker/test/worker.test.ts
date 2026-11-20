@@ -179,12 +179,12 @@ describe("Auth & anti-impersonation", () => {
 
 		const splitA = await issueGuestSession(MOCK_ENV, {
 			nickname: "小明",
-			email: "alice@example.com",
+			email: "12345678@qq.com",
 			allowSplitGuest: true,
 		});
 		const splitB = await issueGuestSession(MOCK_ENV, {
 			nickname: "小明",
-			email: "alice@example.com",
+			email: "12345678@qq.com",
 			allowSplitGuest: true,
 		});
 		expect(splitA.ok).toBe(true);
@@ -196,7 +196,7 @@ describe("Auth & anti-impersonation", () => {
 		expect(splitA.user.userKey).not.toBe(splitB.user.userKey);
 		expect(splitA.user.userKey).not.toBe(
 			computeGuestUserKey(
-				"alice@example.com",
+				"12345678@qq.com",
 				MOCK_ENV.CHAT_GUEST_SECRET ?? "",
 			),
 		);
