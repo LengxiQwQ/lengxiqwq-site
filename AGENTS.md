@@ -274,6 +274,26 @@ lengxiqwq-site/
 | 查看 Docker 容器（Caddy/Tuwunel） | `ssh -n ... "docker ps"` |
 | 查看持久化数据目录 | `ssh -n ... "ls -la /opt/chat-server/data"` |
 
+### E. Matrix 规范与聊天室协议铁律（Matrix Client-Server API SOP）
+
+> **官方标准参考**：[Matrix Client-Server API 规范（latest）](https://spec.matrix.org/latest/client-server-api/)。
+> 全站聊天室前端组件（`src/components/pages/chat/`）与 VPS 独立聊天网关（`/opt/chat-server/`）的交互设计、数据建模与协议通信，**必须无条件严格遵照 Matrix 官方规范**，严禁臆造非标准私有字段或流程。
+
+1. **唯一权威基准**：
+   - 消息体模型、事件类型（`m.room.message`、`m.reaction`、`m.sticker`、`m.room.member`、`m.room.redaction`、`m.read` 等）、媒体资源（`mxc://` URI）、在线状态与 MSC3440 单层线程（`m.thread`）等，全流程遵循 Matrix 规范。
+2. **房间入群与邀请机制（Membership & Room Joining）**：
+   - **严禁假设房间恒为公开（`public`）**：Matrix 互联房间可能随时由上游站点调整为 `invite`（仅限邀请加入模式）。
+   - **新成员邀请直通铁律**：新访客或新注册用户（包括分配的影子 Puppet 账号）进入房间前，**必须先由站长管理员账号（`@lengxiqwq:matrix.lengxiqwq.com`，PL 100）调用 `POST /rooms/{roomId}/invite` 进行主动邀请**，然后再由用户调用 `POST /join/{roomId}` 完成加入。
+   - **Membership 校验门控**：向 Matrix 发信前，必须确保用户在目标房间内的 membership 真正处于 `join` 状态；绝对严禁使用 membership 仍为 `leave` 的用户凭据直发消息，否则 Matrix 服务端会直接抛出 `403 M_FORBIDDEN (Auth check failed: sender's membership leave is not join)` 导致同步失败。
+   - **平滑降级（Admin Proxy 兜底）**：若因任何外部网络抖动导致新账号入群失败，网关必须立刻平滑降级为 `Admin Proxy`（由管理员账号代发，正文前缀附带 `[ID:xxx];[URL:xxx];[KEY:xxx]`），**绝不允许丢弃任何消息**，且失败状态严禁缓存为正常凭据，确保下次发信继续自动重试升级。
+3. **消息格式与富文本（Message Content & Formatting）**：
+   - 文本与富文本排版遵循 HTML 格式化子集（`org.matrix.custom.html`），保持安全转义（`escapeHtml`）；
+   - 表情贴纸通过 `m.sticker` 投递，统一走媒体服务器转换后的合法 `mxc://` 地址；
+   - 表情回应（Reactions）遵循 `m.reaction` 及 `m.relates_to` 的 `m.annotation` 规范。
+4. **已读回执与在线状态（Read Receipts & Presence）**：
+   - 阅读游标通过 `/receipt/m.read/{eventId}` 与 `/read_markers` 推进，仅在窗口激活且聚焦时合规上报；
+   - 在线感知通过 `/presence/{userId}/status` 维持。
+
 ---
 
 ## 9. 内容模型与写作约定（供判断“该改哪”）

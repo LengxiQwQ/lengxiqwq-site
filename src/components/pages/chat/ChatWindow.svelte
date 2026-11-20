@@ -138,6 +138,7 @@ interface Props {
 		soloCooldownRemainSec: number;
 		hasVotedSkip: boolean;
 		volume?: number;
+		currentLyric?: string;
 	};
 	onOpenRoomDrawer?: () => void;
 	splitRoomPanelId: string;
@@ -706,8 +707,11 @@ function isChatPaneFocused(): boolean {
 		return false;
 	}
 	if (!isWindowFocused) return false;
-	const usesPanelTabs = window.matchMedia("(width < 768px)").matches;
-	return !usesPanelTabs || isChatTabActive;
+	if (!isChatTabActive) return false;
+	if (document.querySelector(".fancybox__container, .chat-modal-backdrop")) {
+		return false;
+	}
+	return true;
 }
 
 const baseFilteredMessages = $derived(
@@ -1277,12 +1281,13 @@ function collectChatImageSources(): Array<{ src: string }> {
 		}
 		if (msg.content?.includes("![")) {
 			mdImgRe.lastIndex = 0;
-			let m: RegExpExecArray | null;
-			while ((m = mdImgRe.exec(msg.content)) !== null) {
+			let m = mdImgRe.exec(msg.content);
+			while (m !== null) {
 				const safe = sanitizeChatUrl(m[1]);
 				if (safe && !safe.includes("/assets/stickers/")) {
 					items.push({ src: safe });
 				}
+				m = mdImgRe.exec(msg.content);
 			}
 		}
 	}
@@ -3564,9 +3569,9 @@ function setInputFromText(rawText: string, shouldFocus = true): void {
 
 	const mentionPattern = /@([^\s@]+(?:\s[·•・]\s[^\s@]+)?)(?=\s|$)/g;
 	let lastIndex = 0;
-	let match: RegExpExecArray | null;
+	let match = mentionPattern.exec(rawText);
 
-	while ((match = mentionPattern.exec(rawText)) !== null) {
+	while (match !== null) {
 		const matchStart = match.index;
 		const matchEnd = match.index + match[0].length;
 		if (matchStart > lastIndex) {
@@ -3579,6 +3584,7 @@ function setInputFromText(rawText: string, shouldFocus = true): void {
 		inputEl.appendChild(pill);
 		inputEl.appendChild(document.createTextNode("\u00A0"));
 		lastIndex = matchEnd + (rawText.charAt(matchEnd) === " " ? 1 : 0);
+		match = mentionPattern.exec(rawText);
 	}
 
 	if (lastIndex < rawText.length) {
@@ -4541,6 +4547,7 @@ function removePendingImage(index: number) {
           voteCount={musicState.voteCount}
           voteThreshold={musicState.voteThreshold}
           isSkippingTrack={isSkippingTrack}
+          currentLyric={mobilePlaybackStatus.currentLyric}
           variant="mobile"
           onOpenLyrics={() => onOpenLyricsDrawer?.()}
           onToggleListen={() => onToggleListen?.()}

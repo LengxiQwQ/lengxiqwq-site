@@ -24,6 +24,7 @@ import type {
 	ChatUserTopArtistItem,
 	ChatUserTopTrackItem,
 	MusicHistoryLogEntry,
+	PlaylistSummary,
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
 import { formatPlatformLabel } from "./playlistClient";
@@ -42,7 +43,10 @@ interface Props {
 	onMention: (name: string, userKey?: string) => void;
 	onEditSelf: () => void;
 	onEnqueueTrack?: (track: ChatMusicTrack) => void;
-	onOpenPlaylist?: (playlistId: string) => void;
+	onOpenPlaylist?: (
+		playlistId: string,
+		summary?: Partial<PlaylistSummary>,
+	) => void;
 	onJumpToMessage?: (msgUid: string) => void;
 	onUpdateMemberBadges?: (
 		targetUserKey: string,
@@ -1609,7 +1613,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                   class="w-full flex items-center gap-2 p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left bg-transparent border-none cursor-pointer"
                   onclick={() => {
                     onClose();
-                    onOpenPlaylist?.(pl.id);
+                    onOpenPlaylist?.(pl.id, pl);
                   }}
                 >
                   <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">

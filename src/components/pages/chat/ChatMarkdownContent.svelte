@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { Token, Tokens } from "marked";
+import ChatCodeBlock from "./ChatCodeBlock.svelte";
 import {
 	getCachedChatImageDims,
 	openChatImageLightbox,
@@ -240,12 +241,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
       </div>
     {:else if tok.type === "code"}
       {@const codeTok = tok as Tokens.Code}
-      <div class="chat-md-pre-wrap">
-        {#if codeTok.lang}
-          <div class="chat-md-pre-lang">{codeTok.lang}</div>
-        {/if}
-        <pre class="chat-md-pre custom-scrollbar"><code>{codeTok.text}</code></pre>
-      </div>
+      <ChatCodeBlock code={codeTok.text} lang={codeTok.lang || ""} />
     {:else if tok.type === "blockquote"}
       {@const qTok = tok as Tokens.Blockquote}
       <blockquote class="chat-md-quote">

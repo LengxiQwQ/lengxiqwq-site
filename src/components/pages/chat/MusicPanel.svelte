@@ -113,7 +113,11 @@ interface Props {
 	onRequestWalineAuth?: () => void;
 	walineLoginWaiting?: boolean;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
-	externalPlaylistRequest?: { playlistId: string; seq: number };
+	externalPlaylistRequest?: {
+		playlistId: string;
+		seq: number;
+		summary?: Partial<PlaylistSummary>;
+	};
 	onPlaybackStatusChange?: (status: {
 		isListening: boolean;
 		audioStatus?: AudioStatus;
@@ -126,6 +130,7 @@ interface Props {
 		soloCooldownRemainSec: number;
 		hasVotedSkip: boolean;
 		volume?: number;
+		currentLyric?: string;
 	}) => void;
 	onNotify?: (message: string) => void;
 }
@@ -215,6 +220,13 @@ let audioStatus = $state<AudioStatus>("idle");
 let lyricRequest: AbortController | undefined;
 const listenAction = $derived(audioStatus === "error" || audioStatus === "blocked" ? "重试收听" : isListening ? "停止收听" : "开始收听");
 let playerPaneMode = $state<PlayerPaneMode>("split");
+const playerPaneModeLabel = $derived(
+	playerPaneMode === "split"
+		? "并列显示"
+		: playerPaneMode === "lyrics"
+			? "纯歌词"
+			: "播放列表",
+);
 let lyricsScrolling = $state(false);
 let queueScrolling = $state(false);
 let lyricsScrollHideTimer: number | null = null;
@@ -823,7 +835,7 @@ function resolveSafeExternalUrl(raw?: string): string {
 
 const PLAYLIST_CACHE_TTL_MS = 30 * 1000;
 const SEARCH_CACHE_TTL_MS = 30 * 1000;
-const MAX_PLAYLIST_DETAIL_CACHE = 3;
+const MAX_PLAYLIST_DETAIL_CACHE = 20;
 let lastLoadedPlaylistKey = "";
 let lastLoadedPlaylistAt = 0;
 const playlistDetailCache = new Map<
@@ -933,8 +945,9 @@ async function loadPlaylists(force = false): Promise<void> {
 					isFallback: stillExists.isFallback,
 					isPublic: stillExists.isPublic,
 				};
-			} else {
+			} else if (lastPlaylistSummarySigs.has(selectedPlaylist.id)) {
 				selectedPlaylist = null;
+				isLoadingPlaylistDetail = false;
 				playlistTrackFilter = "";
 			}
 		}
@@ -959,7 +972,11 @@ $effect(() => {
 			return;
 		}
 		activeTab = "playlist";
-		void openPlaylistDetail(externalPlaylistRequest.playlistId);
+		void openPlaylistDetail(
+			externalPlaylistRequest.playlistId,
+			false,
+			externalPlaylistRequest.summary,
+		);
 	}
 });
 
@@ -1046,6 +1063,14 @@ function schedulePlaylistDetailPrefetch(playlistId: string): void {
 	}, 180);
 }
 
+function findPlaylistSummary(playlistId: string): PlaylistSummary | undefined {
+	return (
+		featuredPlaylists.find((p) => p.id === playlistId) ??
+		myPlaylists.find((p) => p.id === playlistId) ??
+		membersPlaylists.find((p) => p.id === playlistId)
+	);
+}
+
 function syncDetailFlags(detail: PlaylistDetail): PlaylistDetail {
 	const inFeatured = featuredPlaylists.some((p) => p.id === detail.id);
 	const inFallback = [...featuredPlaylists, ...myPlaylists, ...membersPlaylists].some(
@@ -1061,34 +1086,73 @@ function syncDetailFlags(detail: PlaylistDetail): PlaylistDetail {
 async function openPlaylistDetail(
 	playlistId: string,
 	force = false,
+	initialSummary?: Partial<PlaylistSummary> | PlaylistDetail,
 ): Promise<void> {
 	if (!chatServerUrl) return;
 	cancelPlaylistDetailPrefetch();
 	const authSeg = isWalineLoggedIn ? walineToken : "";
 	const detailKey = `${roomId}|${authSeg}|${playlistId}`;
+
+	// 1. 若本地已有新鲜缓存且非强制刷新，立刻以完整详情打开
 	if (!force) {
 		const cached = playlistDetailCache.get(detailKey);
 		if (cached && Date.now() - cached.fetchedAt < PLAYLIST_CACHE_TTL_MS) {
 			selectedPlaylist = syncDetailFlags(cached.detail);
+			isLoadingPlaylistDetail = false;
 			playlistTrackFilter = "";
 			confirmDeletePlaylistId = "";
 			playlistsError = "";
 			return;
 		}
 	}
+
+	// 2. 核心优化：先立刻进入歌单详情页（保留已有/概览元数据，曲目转圈异步加载），彻底消除点击不跟手的延迟感
+	const existing = selectedPlaylist?.id === playlistId ? selectedPlaylist : undefined;
+	const summaryFromList = findPlaylistSummary(playlistId);
+	const baseSummary = initialSummary ?? existing ?? summaryFromList;
+	const existingTracks = existing?.tracks ?? playlistDetailCache.get(detailKey)?.detail?.tracks ?? [];
+
+	selectedPlaylist = syncDetailFlags({
+		id: playlistId,
+		ownerKey: baseSummary?.ownerKey ?? "",
+		ownerName: baseSummary?.ownerName ?? "",
+		ownerAvatar: baseSummary?.ownerAvatar,
+		title: baseSummary?.title || "歌单",
+		platform: baseSummary?.platform || "external",
+		sourceUrl: baseSummary?.sourceUrl || "",
+		coverUrl: baseSummary?.coverUrl || "",
+		creator: baseSummary?.creator || "",
+		trackCount: baseSummary?.trackCount ?? existingTracks.length,
+		retrievalMode: baseSummary?.retrievalMode ?? "full",
+		isPublic: baseSummary?.isPublic ?? true,
+		isFeatured: baseSummary?.isFeatured ?? false,
+		isFallback: baseSummary?.isFallback ?? false,
+		createdAt: baseSummary?.createdAt ?? Date.now(),
+		tracks: existingTracks,
+	});
+
 	isLoadingPlaylistDetail = true;
 	playlistsError = "";
 	confirmDeletePlaylistId = "";
+	playlistTrackFilter = "";
+
+	// 3. 后台异步拉取曲目清单与最新数据
 	try {
 		const detail = await getOrFetchPlaylistDetail(playlistId, authSeg, force);
-		selectedPlaylist = syncDetailFlags(detail);
-		playlistTrackFilter = "";
+		if (selectedPlaylist?.id === playlistId) {
+			selectedPlaylist = syncDetailFlags(detail);
+			playlistsError = "";
+		}
 	} catch (err) {
-		const msg = err instanceof Error ? err.message : "加载歌单详情失败";
-		playlistsError = msg;
-		onNotify?.(msg);
+		if (selectedPlaylist?.id === playlistId) {
+			const msg = err instanceof Error ? err.message : "加载歌单详情失败";
+			playlistsError = msg;
+			onNotify?.(msg);
+		}
 	} finally {
-		isLoadingPlaylistDetail = false;
+		if (selectedPlaylist?.id === playlistId) {
+			isLoadingPlaylistDetail = false;
+		}
 	}
 }
 
@@ -1147,8 +1211,8 @@ async function handleImportSubmit(overrideOptions?: {
 				: `已导入歌单《${saved.playlist.title}》`,
 		);
 		invalidatePlaylistCaches(saved.playlist.id);
-		await loadPlaylists(true);
-		await openPlaylistDetail(saved.playlist.id, true);
+		void loadPlaylists(true);
+		void openPlaylistDetail(saved.playlist.id, true, saved.playlist);
 	} catch (err) {
 		importError = err instanceof Error ? err.message : "歌单导入失败";
 	} finally {
@@ -1182,8 +1246,8 @@ async function handleImportUserCandidate(
 		}
 		onNotify?.(`已导入歌单《${saved.playlist.title}》`);
 		invalidatePlaylistCaches(saved.playlist.id);
-		await loadPlaylists(true);
-		await openPlaylistDetail(saved.playlist.id, true);
+		void loadPlaylists(true);
+		void openPlaylistDetail(saved.playlist.id, true, saved.playlist);
 	} catch (err) {
 		importError = err instanceof Error ? err.message : "拉取选定歌单失败";
 	} finally {
@@ -1209,9 +1273,9 @@ async function handleRefreshPlaylist(playlist: PlaylistSummary): Promise<void> {
 		);
 		onNotify?.(`已刷新《${updated.title}》（共 ${updated.trackCount} 首）`);
 		invalidatePlaylistCaches(playlist.id);
-		await loadPlaylists(true);
+		void loadPlaylists(true);
 		if (selectedPlaylist?.id === playlist.id) {
-			await openPlaylistDetail(playlist.id, true);
+			await openPlaylistDetail(playlist.id, true, updated);
 		}
 	} catch (err) {
 		onNotify?.(err instanceof Error ? err.message : "刷新歌单失败");
@@ -2200,6 +2264,16 @@ const displayedBrowseTracks = $derived(
 );
 const elapsedWholeSec = $derived(Math.floor(roomElapsed));
 
+const currentLyricText = $derived.by(() => {
+	if (!currentPlay) return "";
+	if (lyricsStatus === "loading") return "歌词加载中...";
+	if (lyricsStatus === "empty" || lyrics.length === 0) return "纯音乐或暂无歌词";
+	if (activeLyricIndex >= 0 && activeLyricIndex < lyrics.length) {
+		return lyrics[activeLyricIndex].text || "♪ ~ ♪ ~ ♪";
+	}
+	return "♪ ~ 伴奏中 ~ ♪";
+});
+
 $effect(() => {
 	onPlaybackStatusChange?.({
 		isListening,
@@ -2213,6 +2287,7 @@ $effect(() => {
 		soloCooldownRemainSec,
 		hasVotedSkip,
 		volume,
+		currentLyric: currentLyricText,
 	});
 });
 </script>
@@ -2234,6 +2309,7 @@ $effect(() => {
       voteCount={musicState?.voteCount ?? 0}
       voteThreshold={musicState?.voteThreshold ?? 2}
       isSkippingTrack={isSkippingTrack}
+      currentLyric={currentLyricText}
       variant="panel"
       onOpenLyrics={() => switchMusicTab("player")}
       onToggleListen={() => toggleListen()}
@@ -2642,9 +2718,65 @@ $effect(() => {
           </div>
         </div>
 
-        <!-- 控制栏：左 切歌/投票切歌 + 中 收听/静音 + 右 队列抽屉开关 -->
+        <!-- 控制栏：左 视图切换（歌词/即将播放/并列） + 中 收听/静音 + 右 切歌/投票切歌 -->
         <div class="grid grid-cols-[1fr_auto_1fr] items-center py-1 gap-1.5">
-          <div class="flex items-center justify-start min-w-0">
+          <div class="flex items-center justify-start">
+            <ChatTooltip text={playerPaneModeLabel} align="left">
+              <button
+                type="button"
+                class="p-1.5 active:scale-95 transition-colors border-none bg-transparent cursor-pointer {playerPaneMode !== 'split' ? 'text-(--primary)' : 'text-[var(--chat-meta-color)] hover:text-(--primary)'}"
+                aria-label={playerPaneModeLabel}
+                onclick={cyclePlayerPaneMode}
+              >
+                {#if playerPaneMode === "split"}
+                  <!-- 并列视图：上歌词 + 下列表 -->
+                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+                    <line x1="3" y1="13" x2="21" y2="13" />
+                    <line x1="7" y1="8.5" x2="17" y2="8.5" />
+                    <line x1="7" y1="16.5" x2="15" y2="16.5" />
+                  </svg>
+                {:else if playerPaneMode === "lyrics"}
+                  <!-- 纯歌词视图 -->
+                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                    <line x1="4" y1="6" x2="20" y2="6" />
+                    <line x1="7" y1="10.5" x2="17" y2="10.5" />
+                    <line x1="5" y1="15" x2="19" y2="15" />
+                    <line x1="8" y1="19.5" x2="16" y2="19.5" />
+                  </svg>
+                {:else}
+                  <!-- 纯播放列表视图 -->
+                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
+                  </svg>
+                {/if}
+              </button>
+            </ChatTooltip>
+          </div>
+
+          <button
+            type="button"
+            disabled={!currentPlay}
+            class="chat-play-btn {audioStatus === 'playing' && currentPlay ? 'playing' : ''} justify-self-center shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+            aria-label={listenAction}
+            onclick={toggleListen}
+          >
+            {#if audioStatus === "loading" || audioStatus === "preparing" || audioStatus === "recovering"}
+                  <svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2"/></svg>
+                {:else if audioStatus === "playing" && currentPlay}
+              <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+              </svg>
+              <span>停止收听</span>
+            {:else}
+              <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z" />
+              </svg>
+              <span>开始收听</span>
+            {/if}
+          </button>
+
+          <div class="flex items-center justify-end min-w-0">
             {#if !currentPlay}
               <button
                 type="button"
@@ -2669,7 +2801,7 @@ $effect(() => {
                       : activeVotes > 0
                         ? `同意切歌（已有 ${activeVotes}/${activeThreshold} 票）`
                         : "投票切歌（0/2 票）"}
-              <ChatTooltip text={mainSkipTooltipText} align="left">
+              <ChatTooltip text={mainSkipTooltipText} align="right">
                 {#if canDirectSkip}
                   <button
                     type="button"
@@ -2719,60 +2851,6 @@ $effect(() => {
                 {/if}
               </ChatTooltip>
             {/if}
-          </div>
-
-          <button
-            type="button"
-            disabled={!currentPlay}
-            class="chat-play-btn {audioStatus === 'playing' && currentPlay ? 'playing' : ''} justify-self-center shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-            aria-label={listenAction}
-            onclick={toggleListen}
-          >
-            {#if audioStatus === "loading" || audioStatus === "preparing" || audioStatus === "recovering"}
-                  <svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2"/></svg>
-                {:else if audioStatus === "playing" && currentPlay}
-              <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
-              </svg>
-              <span>停止收听</span>
-            {:else}
-              <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h3c1.66 0 3-1.34 3-3v-7c0-4.97-4.03-9-9-9z" />
-              </svg>
-              <span>开始收听</span>
-            {/if}
-          </button>
-
-          <div class="flex items-center justify-end">
-            <button
-              type="button"
-              class="p-1.5 active:scale-95 transition-colors border-none bg-transparent cursor-pointer {playerPaneMode !== 'split' ? 'text-(--primary)' : 'text-[var(--chat-meta-color)] hover:text-(--primary)'}"
-              aria-label={playerPaneMode === "split" ? "当前：歌词与列表并列，点击切换纯歌词" : playerPaneMode === "lyrics" ? "当前：纯歌词，点击切换纯播放列表" : "当前：纯播放列表，点击切换并列显示"}
-              onclick={cyclePlayerPaneMode}
-            >
-              {#if playerPaneMode === "split"}
-                <!-- 并列视图：上歌词 + 下列表 -->
-                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <rect x="3" y="4" width="18" height="16" rx="2.5" />
-                  <line x1="3" y1="13" x2="21" y2="13" />
-                  <line x1="7" y1="8.5" x2="17" y2="8.5" />
-                  <line x1="7" y1="16.5" x2="15" y2="16.5" />
-                </svg>
-              {:else if playerPaneMode === "lyrics"}
-                <!-- 纯歌词视图 -->
-                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                  <line x1="4" y1="6" x2="20" y2="6" />
-                  <line x1="7" y1="10.5" x2="17" y2="10.5" />
-                  <line x1="5" y1="15" x2="19" y2="15" />
-                  <line x1="8" y1="19.5" x2="16" y2="19.5" />
-                </svg>
-              {:else}
-                <!-- 纯播放列表视图 -->
-                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
-                </svg>
-              {/if}
-            </button>
           </div>
         </div>
       </div>
@@ -2858,7 +2936,7 @@ $effect(() => {
           >
             <div class="flex items-center justify-between mb-1.5 shrink-0">
               <span class="text-[13px] xl:text-[12px] font-medium text-[var(--chat-meta-color)]">
-                即将播放 ({queue.length})
+                播放列表 ({queue.length})
               </span>
             </div>
 
@@ -3086,13 +3164,13 @@ $effect(() => {
       <div>
         <div class="flex items-center justify-between mb-1 px-0.5">
           <span class="text-[13px] xl:text-[12px] font-medium text-[var(--chat-meta-color)]">
-            房间待播队列 ({queue.length})
+            播放列表 ({queue.length})
           </span>
         </div>
 
         {#if queue.length === 0}
           <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
-            待播队列为空，去挑一首歌加入电台吧
+            播放列表为空，去挑一首歌加入电台吧
           </div>
         {:else}
           <div class="space-y-0.5">
@@ -3156,7 +3234,9 @@ $effect(() => {
         <button
           type="button"
           class="flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-0 cursor-pointer"
-          onclick={() => openPlaylistDetail(pl.id)}
+          onpointerenter={() => schedulePlaylistDetailPrefetch(pl.id)}
+          onpointerleave={cancelPlaylistDetailPrefetch}
+          onclick={() => openPlaylistDetail(pl.id, false, pl)}
         >
           <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
             {#if pl.coverUrl}
@@ -3333,7 +3413,7 @@ $effect(() => {
           <div class="flex items-center gap-2.5">
             <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
               {#if selectedPlaylist.coverUrl}
-                <img src={selectedPlaylist.coverUrl} alt="" class="w-full h-full object-cover" />
+                <img src={resolveMusicThumbUrl(selectedPlaylist.coverUrl)} alt="" class="w-full h-full object-cover" />
               {:else}
                 <span class="text-xs text-(--primary)">♪</span>
               {/if}
@@ -3356,7 +3436,7 @@ $effect(() => {
                 {/if}
               </div>
               <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5 flex items-center gap-1">
-                <span>{formatPlatformLabel(selectedPlaylist.platform)} · {selectedPlaylist.tracks.length} 首</span>
+                <span>{formatPlatformLabel(selectedPlaylist.platform)} · {selectedPlaylist.tracks.length || selectedPlaylist.trackCount || 0} 首</span>
                 {#if selectedPlaylist.ownerName}
                   <span>·</span>
                   {#if onOpenUserProfile && selectedPlaylist.ownerKey}
@@ -3547,6 +3627,7 @@ $effect(() => {
               aria-label="返回歌单列表"
               onclick={() => {
                 selectedPlaylist = null;
+                isLoadingPlaylistDetail = false;
                 playlistTrackFilter = "";
                 confirmDeletePlaylistId = "";
               }}
@@ -3599,15 +3680,39 @@ $effect(() => {
               {@render playlistMetaHeader()}
             </div>
           {/if}
-          {#if isLoadingPlaylistDetail}
-            <div class="text-center py-6 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
-              正在加载歌单曲目...
+          {#if isLoadingPlaylistDetail && selectedPlaylist.tracks.length === 0}
+            <div class="flex flex-col items-center justify-center py-12 gap-2.5 text-[var(--chat-meta-color)]">
+              <svg class="w-5 h-5 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                <path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+              </svg>
+              <span class="text-[13px] xl:text-[12px]">正在加载歌单曲目...</span>
+            </div>
+          {:else if playlistsError && selectedPlaylist.tracks.length === 0}
+            <div class="text-center py-8 px-3 rounded-xl border border-dashed border-red-400/40 space-y-2">
+              <p class="text-[13px] xl:text-[12px] text-red-500 m-0">{playlistsError}</p>
+              <button
+                type="button"
+                class="px-3 py-1 rounded-full text-[12px] xl:text-[11px] border border-red-400/40 bg-transparent text-red-500 hover:bg-red-500/10 cursor-pointer"
+                onclick={() => selectedPlaylist && openPlaylistDetail(selectedPlaylist.id, true, selectedPlaylist)}
+              >
+                重试加载
+              </button>
             </div>
           {:else if filteredPlaylistTracks.length === 0}
             <div class="text-center py-6 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
               {playlistTrackFilter.trim() ? "没有匹配的歌曲" : "歌单暂无曲目"}
             </div>
           {:else}
+            {#if isLoadingPlaylistDetail}
+              <div class="flex items-center justify-center gap-1.5 py-1 text-[11px] text-[var(--chat-meta-color)]">
+                <svg class="w-3.5 h-3.5 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                  <path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                </svg>
+                <span>正在刷新歌单...</span>
+              </div>
+            {/if}
             {#if playlistVirtual.topSpacerPx > 0}
               <div style="height: {playlistVirtual.topSpacerPx}px;" aria-hidden="true"></div>
             {/if}

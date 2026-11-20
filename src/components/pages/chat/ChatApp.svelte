@@ -50,6 +50,7 @@ import type {
 	ChatUserDetailSeed,
 	ConnectionState,
 	ImageAttachment,
+	PlaylistSummary,
 	RoomMusicState,
 } from "./chatTypes";
 import { MusicClock } from "./musicClock";
@@ -102,6 +103,9 @@ const isSplitLayout = $derived(
 		stageContentRect.width < splitLayoutBreakpoint,
 );
 let splitRoomOpen = $state(false);
+const isChatPaneActive = $derived(
+	mobileDrawer === "none" && !(isSplitLayout && splitRoomOpen),
+);
 let roomPanelEl: HTMLDivElement;
 let splitRoomTrigger: HTMLButtonElement | undefined;
 let currentRoom = $state(rooms[0]?.id || "chat");
@@ -288,6 +292,7 @@ let mobilePlaybackStatus = $state<{
 	soloCooldownRemainSec: number;
 	hasVotedSkip: boolean;
 	volume?: number;
+	currentLyric?: string;
 }>({
 	isListening: false,
 	isMuted: true,
@@ -298,6 +303,7 @@ let mobilePlaybackStatus = $state<{
 	soloCooldownRemainSec: 0,
 	hasVotedSkip: false,
 	volume: initialMusicVolume,
+	currentLyric: "",
 });
 
 // 全局收听意愿管理（仅在同一次页面会话内跨房间切换时保持，刚进页面默认未收听）
@@ -887,7 +893,8 @@ $effect(() => {
 });
 let userDetailSeed = $state<ChatUserDetailSeed | null>(null);
 let externalPlaylistRequest = $state<
-	{ playlistId: string; seq: number } | undefined
+	| { playlistId: string; seq: number; summary?: Partial<PlaylistSummary> }
+	| undefined
 >(undefined);
 let walineLoginWaiting = $state(false);
 let mentionEvent = $state<
@@ -932,6 +939,15 @@ function runSecondaryStartup() {
 	}
 	enablePanelBackgroundsSoon();
 	ensureMusicPanelLoaded();
+	// 闲时后台预载常用弹窗组件，确保用户点击名片或资料编辑时毫无网络卡顿感
+	void import("./ChatUserDetailModal.svelte").then((mod) => {
+		if (!isUnmounted && !ChatUserDetailModalComp)
+			ChatUserDetailModalComp = mod.default;
+	});
+	void import("./ChatProfileModal.svelte").then((mod) => {
+		if (!isUnmounted && !ChatProfileModalComp)
+			ChatProfileModalComp = mod.default;
+	});
 	void loadStickerPacks(stickerPackUrls).then((packs) => {
 		if (!isUnmounted) stickerPacks = packs;
 	});
@@ -952,7 +968,7 @@ $effect(() => {
 });
 
 $effect(() => {
-	if (externalPlaylistRequest) {
+	if (externalPlaylistRequest || musicState?.current) {
 		ensureMusicPanelLoaded();
 	}
 });
@@ -2223,14 +2239,17 @@ function handleOpenUserProfile(seed: ChatUserDetailSeed) {
 	showUserDetailModal = true;
 }
 
-function handleOpenPlaylistFromProfile(playlistId: string) {
+function handleOpenPlaylistFromProfile(
+	playlistId: string,
+	summary?: Partial<PlaylistSummary>,
+) {
 	if (!currentUser) {
 		openAuthModal();
 		return;
 	}
 	showUserDetailModal = false;
 	externalPlaylistSeq += 1;
-	externalPlaylistRequest = { playlistId, seq: externalPlaylistSeq };
+	externalPlaylistRequest = { playlistId, seq: externalPlaylistSeq, summary };
 	mobileDrawer = "music";
 	closeSplitRoom();
 }
@@ -2372,8 +2391,15 @@ function handleLoadHistory(sinceCreatedAt = 0, jumpTarget = false) {
 
 function handleMarkRead(timestamp: number, msgUid?: string) {
 	if (!isRoomReady || !Number.isFinite(timestamp) || timestamp <= 0) return;
-	// 严格门控：仅当前台可见且窗口真正聚焦、未处于离开态时才允许标记已读
-	if (!isEffectiveFocused || !isDocumentActivelyVisibleAndFocused()) return;
+	// 严格门控：仅在连接正常、前台可见、窗口真正聚焦、未处于离开态、且聊天面板未被抽屉/分屏侧栏遮挡时才允许标记已读
+	if (
+		connectionState !== "connected" ||
+		!isChatPaneActive ||
+		!isEffectiveFocused ||
+		!isDocumentActivelyVisibleAndFocused()
+	) {
+		return;
+	}
 	if (!currentUser) {
 		persistUserLastSeen(currentRoom, "guest", timestamp);
 		return;
@@ -2767,7 +2793,7 @@ onMount(() => {
 		}
 	}, 30000);
 
-	const IDLE_AWAY_MS = 2 * 60 * 1000;
+	const IDLE_AWAY_MS = 60 * 1000;
 	let idleAwayTimer: number | null = null;
 	let lastActivityResetAt = 0;
 	let lastMouseX = -1;
@@ -3226,7 +3252,7 @@ onMount(() => {
           roomOnlineMembers={roomOnlineMembers}
           observers={observers}
           mentionMembers={mentionMembers}
-          isChatTabActive={mobileDrawer === "none"}
+          isChatTabActive={isChatPaneActive}
           isWindowFocused={isEffectiveFocused}
           targetMessageUid={targetMessageUid}
           clockOffsetMs={clockOffsetMs}
@@ -3423,8 +3449,12 @@ onMount(() => {
       />
       {/key}
       {:else}
-        <div class="relative z-10 flex flex-1 flex-col items-center justify-center gap-2 p-6 text-xs text-[var(--chat-meta-color)] opacity-75">
-          <span>正在加载点歌台...</span>
+        <div class="relative z-10 flex flex-1 flex-col items-center justify-center gap-2.5 p-6 text-xs text-[var(--chat-meta-color)]">
+          <svg class="w-5 h-5 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+            <path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+          </svg>
+          <span>正在载入点歌台...</span>
         </div>
       {/if}
     </div>

@@ -5,6 +5,7 @@ let activeGlobalVoiceStop: (() => void) | null = null;
 <script lang="ts">
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
+import ChatMessageActivityModal from "./ChatMessageActivityModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import {
 	hasExplicitRoomMentionText,
@@ -648,6 +649,85 @@ let pointerStartPos: { id: number; x: number; y: number } | null = null;
 let longPressTimer: number | null = null;
 let pendingBubbleClick: "tap" | "long-press" | null = null;
 
+let showActivityModal = $state(false);
+let activityModalTab = $state<string>("read");
+
+function handleOpenReadActivity(e: MouseEvent) {
+	e.stopPropagation();
+	activityModalTab = "read";
+	showActivityModal = true;
+}
+
+function handleOpenReactionActivity(emoji: string) {
+	activityModalTab = emoji;
+	showActivityModal = true;
+}
+
+let reactionPressTimer: number | null = null;
+let reactionPressPos: { x: number; y: number; id: number } | null = null;
+let didLongPressReaction = false;
+
+function handleReactionPointerDown(e: PointerEvent, emoji: string) {
+	if (e.pointerType !== "touch") return;
+	reactionPressPos = { x: e.clientX, y: e.clientY, id: e.pointerId };
+	didLongPressReaction = false;
+	if (reactionPressTimer !== null) {
+		window.clearTimeout(reactionPressTimer);
+	}
+	reactionPressTimer = window.setTimeout(() => {
+		reactionPressTimer = null;
+		didLongPressReaction = true;
+		try {
+			navigator.vibrate?.(18);
+		} catch {}
+		handleOpenReactionActivity(emoji);
+	}, 380);
+}
+
+function handleReactionPointerMove(e: PointerEvent) {
+	if (reactionPressPos && reactionPressPos.id === e.pointerId) {
+		if (
+			Math.abs(e.clientX - reactionPressPos.x) > 8 ||
+			Math.abs(e.clientY - reactionPressPos.y) > 8
+		) {
+			if (reactionPressTimer !== null) {
+				window.clearTimeout(reactionPressTimer);
+				reactionPressTimer = null;
+			}
+		}
+	}
+}
+
+function handleReactionPointerUp() {
+	if (reactionPressTimer !== null) {
+		window.clearTimeout(reactionPressTimer);
+		reactionPressTimer = null;
+	}
+	reactionPressPos = null;
+}
+
+function handleReactionPointerCancel() {
+	if (reactionPressTimer !== null) {
+		window.clearTimeout(reactionPressTimer);
+		reactionPressTimer = null;
+	}
+	reactionPressPos = null;
+}
+
+function handleReactionContextMenu(e: MouseEvent) {
+	e.preventDefault();
+}
+
+function handleReactionClick(e: MouseEvent, emoji: string) {
+	e.stopPropagation();
+	if (didLongPressReaction) {
+		didLongPressReaction = false;
+		e.preventDefault();
+		return;
+	}
+	onReaction?.(message.msgUid, emoji);
+}
+
 function clearLongPress() {
 	if (longPressTimer !== null) {
 		window.clearTimeout(longPressTimer);
@@ -1134,7 +1214,13 @@ function handleBubbleClick(e: MouseEvent) {
           <button
             type="button"
             class="chat-reaction-pill {isMine ? 'is-active' : ''}"
-            onclick={() => onReaction?.(message.msgUid, emoji)}
+            onpointerdown={(e) => handleReactionPointerDown(e, emoji)}
+            onpointermove={handleReactionPointerMove}
+            onpointerup={handleReactionPointerUp}
+            onpointercancel={handleReactionPointerCancel}
+            oncontextmenu={handleReactionContextMenu}
+            onclick={(e) => handleReactionClick(e, emoji)}
+            aria-label={`${emoji} ${users.length} 人回应（长按查看成员）`}
           >
             <span>{emoji}</span>
             <span class="text-[0.6875rem] font-medium opacity-85">{users.length}</span>
@@ -1352,9 +1438,11 @@ function handleBubbleClick(e: MouseEvent) {
     }))}
     {@const shown = resolvedReaders.slice(0, 4)}
     {@const restCount = resolvedReaders.length - shown.length}
-    <span
+    <button
+      type="button"
       class="chat-read-receipts-wrap select-none"
-      aria-label={`已读：${resolvedReaders.map((item) => item.resolved.displayName).join("、")}`}
+      onclick={handleOpenReadActivity}
+      aria-label={`查看已读成员：${resolvedReaders.map((item) => item.resolved.displayName).join("、")}`}
     >
       <span class="inline-flex items-center -space-x-1">
         {#each shown as item (item.reader.userKey)}
@@ -1384,8 +1472,10 @@ function handleBubbleClick(e: MouseEvent) {
         </div>
         <div class="chat-read-receipts-list custom-scrollbar space-y-0.5">
           {#each resolvedReaders as item (item.reader.userKey)}
-            <button
-              type="button"
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <div
+              role="button"
+              tabindex="0"
               class="chat-reaction-user-btn"
               onclick={(e) => {
                 e.stopPropagation();
@@ -1404,11 +1494,11 @@ function handleBubbleClick(e: MouseEvent) {
               <svg class="w-3 h-3 shrink-0 opacity-45" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="m9 18 6-6-6-6" />
               </svg>
-            </button>
+            </div>
           {/each}
         </div>
       </div>
-    </span>
+    </button>
   {/if}
 {/snippet}
 
@@ -1732,4 +1822,19 @@ function handleBubbleClick(e: MouseEvent) {
       {/if}
     </div>
   </div>
+{/if}
+
+{#if showActivityModal}
+  <ChatMessageActivityModal
+    open={showActivityModal}
+    initialTab={activityModalTab}
+    message={message}
+    readReceipts={readReceipts}
+    currentUserKey={currentUserKey}
+    userProfileMap={userProfileMap}
+    userNameMap={userNameMap}
+    interconnectSites={interconnectSites}
+    onOpenUserProfile={onOpenUserProfile}
+    onClose={() => (showActivityModal = false)}
+  />
 {/if}

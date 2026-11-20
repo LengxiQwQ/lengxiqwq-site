@@ -17,6 +17,7 @@ interface Props {
 	voteCount: number;
 	voteThreshold: number;
 	isSkippingTrack?: boolean;
+	currentLyric?: string;
 	variant?: "panel" | "mobile";
 	onOpenLyrics: () => void;
 	onToggleListen: () => void;
@@ -36,6 +37,7 @@ const {
 	voteCount,
 	voteThreshold,
 	isSkippingTrack = false,
+	currentLyric,
 	variant = "panel",
 	audioStatus = "idle",
 	onOpenLyrics,
@@ -66,6 +68,16 @@ const listenAction = $derived(
 
 const progressRatio = $derived(
 	durationSec > 0 ? Math.min(1, Math.max(0, elapsedSec / durationSec)) : 0,
+);
+
+const displayLyric = $derived(
+	currentLyric && currentLyric.trim().length > 0
+		? currentLyric.trim()
+		: currentPlay.track.title,
+);
+
+const formattedTimeText = $derived(
+	`${formatClockSeconds(elapsedSec)}${durationSec > 0 ? ` / ${formatClockSeconds(durationSec)}` : ""}`,
 );
 
 const skipTooltipText = $derived.by(() => {
@@ -111,11 +123,22 @@ const skipTooltipText = $derived.by(() => {
     </div>
 
     <div class="min-w-0 flex-1 select-text">
-      <div class="{variant === 'mobile' ? 'text-[13.5px]' : 'text-[13.5px] xl:text-[13px]'} font-bold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors truncate leading-snug select-text cursor-text">
-        {currentPlay.track.title}
+      <div
+        class="{variant === 'mobile' ? 'text-[12px]' : 'text-[12px] xl:text-[11.5px]'} font-bold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors truncate leading-snug select-text cursor-text"
+        title={displayLyric}
+      >
+        {displayLyric}
       </div>
-      <div class="{variant === 'mobile' ? 'text-[11.5px]' : 'text-[12px] xl:text-[11px]'} text-[var(--chat-meta-color)] truncate tabular-nums leading-tight mt-0.5 select-text cursor-text">
-        {audioStatus !== "playing" && audioStatus !== "idle" ? audioStatusLabel[audioStatus] : currentPlay.track.artist}<span class={variant === "mobile" ? "hidden min-[440px]:inline" : undefined}> · {formatClockSeconds(elapsedSec)}{durationSec > 0 ? ` / ${formatClockSeconds(durationSec)}` : ""}</span>
+      <div
+        class="{variant === 'mobile' ? 'text-[10.5px]' : 'text-[11px] xl:text-[10.5px]'} text-[var(--chat-meta-color)] tabular-nums leading-tight mt-0.5 select-text cursor-text flex items-center min-w-0 gap-1"
+        title={`${currentPlay.track.title} - ${currentPlay.track.artist} · ${formattedTimeText}`}
+      >
+        <span class="truncate min-w-0 flex-1">
+          {currentPlay.track.title} - {currentPlay.track.artist}
+        </span>
+        <span class="shrink-0 text-[var(--chat-meta-color)]/85 text-[10px] {variant === 'mobile' ? '' : 'xl:text-[9.5px]'}">
+          · {audioStatus !== "playing" && audioStatus !== "idle" ? audioStatusLabel[audioStatus] : formattedTimeText}
+        </span>
       </div>
     </div>
   </button>
