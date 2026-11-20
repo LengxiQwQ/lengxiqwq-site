@@ -82,6 +82,9 @@ export class RoomAudioPlayer {
 			this.onFireTimeline();
 			return;
 		}
+		if (this.audio.paused && this.state !== "SCHEDULED_WAIT") {
+			this.invokeNativePlay();
+		}
 		this.realignTimeline(true);
 	};
 
@@ -158,7 +161,7 @@ export class RoomAudioPlayer {
 				break;
 		}
 		// If user has no listening intent, external status is cleanly idle to prevent UI spinning on page entry
-		if (!this.intent && external !== "error") {
+		if (!this.intent && external !== "error" && external !== "blocked") {
 			external = "idle";
 		}
 		this.callbacks.status(external, this.intent);
@@ -203,17 +206,19 @@ export class RoomAudioPlayer {
 	 * and arms the precision fire timer for synchronized zero-point start.
 	 */
 	setTrack(play: CurrentPlayback | null): void {
-		// Handle transitioning state (stopping audio immediately when server prepares next track)
+		// Handle transitioning state (server preparing next track):
+		// DO NOT call audio.pause()! That kills the iOS AudioSession and revokes autoplay permission.
+		// Simply mute immediately while waiting for the next song packet.
 		if (play?.phase === "transitioning") {
 			this.clearFireTimer();
 			this.play = play;
-			this.audio.pause();
+			this.audio.muted = true;
 			this.transition("SCHEDULED_WAIT");
 			return;
 		}
 
 		const key = play
-			? `${play.uid}:${play.sourceRevision ?? 0}:${play.track.streamUrl}`
+			? `${play.uid}:${play.sourceRevision ?? 0}:${play.track.streamUrl || play.track.proxyUrl || ""}`
 			: "";
 
 		if (key === this.key) {
@@ -226,7 +231,8 @@ export class RoomAudioPlayer {
 		this.play = play;
 		this.key = key;
 
-		if (!play?.track.streamUrl) {
+		const targetUrl = play?.track.streamUrl || play?.track.proxyUrl || "";
+		if (!targetUrl || !play) {
 			this.activeSrc = "";
 			this.audio.pause();
 			this.audio.muted = true;
@@ -234,10 +240,7 @@ export class RoomAudioPlayer {
 			return;
 		}
 
-		this.activeSrc = this.buildStreamSrc(
-			play.track.streamUrl,
-			play.sourceRevision ?? 0,
-		);
+		this.activeSrc = this.buildStreamSrc(targetUrl, play.sourceRevision ?? 0);
 		this.trace("load-track", { uid: play.uid, phase: play.phase ?? "" });
 
 		// When user has no intent to listen, pause and stay idle (never spin UI)
@@ -246,35 +249,29 @@ export class RoomAudioPlayer {
 			this.audio.muted = true;
 			this.audio.playbackRate = 1;
 			this.audio.src = this.activeSrc;
-			this.audio.load();
 			this.transition("IDLE");
 			return;
 		}
 
 		// When listening intent is active: Keep WebKit AudioSession alive during track switch!
-		// DO NOT invoke audio.pause() on iOS/Safari, which immediately revokes background playback permission.
-		this.audio.muted = true;
-		this.audio.playbackRate = 1;
-		this.audio.src = this.activeSrc;
-		this.audio.load();
-
-		this.transition("LOADING");
-
+		// Pre-transition state BEFORE changing src so browser pause events cannot falsely trigger BLOCKED.
 		const now = this.callbacks.now();
 		const isScheduled = play.phase === "scheduled" && now < play.startedAt;
-
 		this.isSynchronousStarter = isScheduled;
 
+		this.audio.playbackRate = 1;
+		this.audio.src = this.activeSrc;
+
 		if (isScheduled) {
-			// Schedule precision fire timer
-			const leadMs = Math.max(0, play.startedAt - now);
-			this.fireTimer = setTimeout(() => this.onFireTimeline(), leadMs);
+			this.transition("SCHEDULED_WAIT");
 			this.audio.currentTime = 0;
 			this.audio.muted = true;
-			this.transition("SCHEDULED_WAIT");
 			// Keep decoding pipeline warm while muted so user gesture permission is preserved
 			this.invokeNativePlay();
+			const leadMs = Math.max(0, play.startedAt - now);
+			this.fireTimer = setTimeout(() => this.onFireTimeline(), leadMs);
 		} else {
+			this.transition("LOADING");
 			this.audio.muted = false;
 			this.audio.volume = this.volume;
 			this.invokeNativePlay();
@@ -291,9 +288,11 @@ export class RoomAudioPlayer {
 			return;
 		}
 
-		if (!this.activeSrc && this.play.track.streamUrl) {
+		const targetUrl =
+			this.play.track.streamUrl || this.play.track.proxyUrl || "";
+		if (!this.activeSrc && targetUrl) {
 			this.activeSrc = this.buildStreamSrc(
-				this.play.track.streamUrl,
+				targetUrl,
 				this.play.sourceRevision ?? 0,
 			);
 		}
@@ -347,16 +346,17 @@ export class RoomAudioPlayer {
 		this.trace("synchronous-fire", { pos: this.audio.currentTime });
 
 		// Zero-Point Firing: Ensure playhead is pinned at 0.00s before starting
-		if (this.audio.currentTime > 0.05 && this.audio.readyState >= 2) {
+		if (this.intent) {
 			try {
 				this.audio.currentTime = 0;
 			} catch {}
-		}
-
-		if (this.intent) {
 			this.audio.muted = false;
 			this.audio.volume = this.volume;
-			this.invokeNativePlay();
+			if (this.audio.paused) {
+				this.invokeNativePlay();
+			} else {
+				this.transition("PLAYING");
+			}
 		} else {
 			this.audio.muted = true;
 			this.transition("IDLE");
@@ -366,9 +366,16 @@ export class RoomAudioPlayer {
 	private invokeNativePlay() {
 		void this.audio.play().then(
 			() => {
-				if (this.state === "BLOCKED" || this.state === "SCHEDULED_WAIT") {
-					this.transition("PLAYING");
+				if (this.state === "BLOCKED") {
+					this.transition(
+						this.isScheduledFuture() ? "SCHEDULED_WAIT" : "PLAYING",
+					);
 					this.realignTimeline();
+				} else if (this.state === "SCHEDULED_WAIT") {
+					// While in scheduled wait, keep muted and stay in SCHEDULED_WAIT
+					this.audio.muted = true;
+				} else if (this.intent && !this.isScheduledFuture()) {
+					this.transition("PLAYING");
 				}
 			},
 			(err: unknown) => {
@@ -423,8 +430,13 @@ export class RoomAudioPlayer {
 		const isScheduled = this.isScheduledFuture();
 
 		if (isScheduled) {
-			this.audio.pause();
+			// Keep decoding silently: DO NOT pause
 			this.audio.muted = true;
+			if (this.audio.currentTime > 0.05) {
+				try {
+					this.audio.currentTime = 0;
+				} catch {}
+			}
 			this.transition("SCHEDULED_WAIT");
 		} else if (this.intent) {
 			this.audio.muted = false;
@@ -440,14 +452,16 @@ export class RoomAudioPlayer {
 	}
 
 	private onPause() {
+		// Only handle unexpected external pauses while actively playing on timeline.
+		// Never transition to BLOCKED here — browser pause is not an autoplay rejection!
 		if (
 			this.intent &&
 			this.state === "PLAYING" &&
 			!this.audio.ended &&
-			!this.audio.seeking
+			!this.audio.seeking &&
+			!this.isScheduledFuture()
 		) {
-			this.audio.muted = true;
-			this.transition("BLOCKED");
+			this.transition("BUFFERING");
 		}
 	}
 

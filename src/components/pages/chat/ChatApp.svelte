@@ -3488,6 +3488,8 @@ onMount(() => {
       messages={messages}
       musicHistoryLogs={musicState?.historyLogs ?? []}
       interconnectSites={interconnectSites}
+      walineToken={walineToken}
+      onToast={showNotice}
       onClose={() => (showUserDetailModal = false)}
       onMention={handleMentionUser}
       onEditSelf={() => {

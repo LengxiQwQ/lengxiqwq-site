@@ -2,6 +2,44 @@ import { DatabaseSync } from 'node:sqlite';
 import { dirname } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
+export function normalizePlaylistOutTrack(rawTrack) {
+  if (!rawTrack) return null;
+  const provider = rawTrack.provider || rawTrack.sourcePlatform || 'qq';
+  const sourcePlatform = rawTrack.sourcePlatform || (provider === 'qq' ? 'qqmusic' : provider);
+  const sourceId = String(rawTrack.sourceId || rawTrack.sourceTrackId || rawTrack.id || '').replace(/^qq:/, '');
+  const id = rawTrack.id || `${provider}:${sourceId}`;
+  const title = String(rawTrack.title || '未知曲目').trim();
+  const artist = String(rawTrack.artist || '群友精选').trim();
+  const album = String(rawTrack.album || '').trim();
+  const cover = String(rawTrack.cover || rawTrack.coverUrl || '').trim();
+  const durationSec = Number(rawTrack.durationSec) || (Number(rawTrack.durationMs) ? Math.round(Number(rawTrack.durationMs) / 1000) : 0);
+  const sourceUrl = String(rawTrack.sourceUrl || rawTrack.url || '').trim();
+  const streamUrl = String(rawTrack.streamUrl || '').trim();
+  const lrc = rawTrack.lrc || '';
+  const lrcUrl = rawTrack.lrcUrl || '';
+
+  return {
+    id,
+    provider,
+    sourceId,
+    sourcePlatform,
+    sourceTrackId: sourceId,
+    title,
+    artist,
+    album,
+    cover,
+    coverUrl: cover,
+    durationSec,
+    durationMs: durationSec * 1000,
+    sourceUrl,
+    url: sourceUrl || rawTrack.url || '',
+    streamUrl,
+    lrc,
+    lrcUrl,
+    quality: rawTrack.quality || '320k',
+  };
+}
+
 export class ChatDatabase {
   constructor(dbPath) {
     this.dbPath = dbPath;
@@ -181,6 +219,23 @@ export class ChatDatabase {
       );
     `);
 
+    // 10. 全站音乐收藏表（茶室星愿与个人收藏，基于 Playlist Out 标准数据）
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS music_favorites (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        track_id TEXT NOT NULL REFERENCES music_tracks(id),
+        user_key TEXT NOT NULL,
+        user_name TEXT NOT NULL,
+        user_avatar TEXT,
+        created_at INTEGER NOT NULL,
+        track_json TEXT NOT NULL,
+        UNIQUE (track_id, user_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_fav_user ON music_favorites (user_key, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_fav_track ON music_favorites (track_id);
+      CREATE INDEX IF NOT EXISTS idx_fav_time ON music_favorites (created_at DESC);
+    `);
+
     this.prepareStatements();
   }
 
@@ -254,6 +309,46 @@ export class ChatDatabase {
 
     this.stmtGetKv = this.db.prepare(`
       SELECT value FROM system_kv WHERE key = ?
+    `);
+
+    // 音乐元数据更新（供收藏等无需累加点歌/轮播次数的场景）
+    this.stmtUpsertTrackMeta = this.db.prepare(`
+      INSERT INTO music_tracks (
+        id, provider, source_id, title, artist, album, cover_url, duration_sec, track_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title,
+        artist = excluded.artist,
+        album = excluded.album,
+        cover_url = excluded.cover_url,
+        duration_sec = CASE WHEN excluded.duration_sec > 0 THEN excluded.duration_sec ELSE music_tracks.duration_sec END,
+        track_json = excluded.track_json
+    `);
+
+    // 收藏管理 SQL
+    this.stmtCheckFavorite = this.db.prepare(`
+      SELECT id FROM music_favorites WHERE track_id = ? AND user_key = ?
+    `);
+
+    this.stmtInsertFavorite = this.db.prepare(`
+      INSERT INTO music_favorites (
+        track_id, user_key, user_name, user_avatar, created_at, track_json
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `);
+
+    this.stmtDeleteFavorite = this.db.prepare(`
+      DELETE FROM music_favorites WHERE track_id = ? AND user_key = ?
+    `);
+
+    this.stmtDeleteAllFavoritesForTrack = this.db.prepare(`
+      DELETE FROM music_favorites WHERE track_id = ?
+    `);
+
+    this.stmtGetFavoriteUsersForTrack = this.db.prepare(`
+      SELECT user_key, user_name, user_avatar, created_at
+      FROM music_favorites
+      WHERE track_id = ?
+      ORDER BY created_at ASC
     `);
   }
 
@@ -601,6 +696,231 @@ export class ChatDatabase {
       isRedacted: Boolean(r.is_redacted),
       createdAt: r.created_at
     }));
+  }
+
+  // --- 音乐元数据与收藏 API ---
+
+  upsertTrackMeta(rawTrack) {
+    const track = normalizePlaylistOutTrack(rawTrack);
+    if (!track?.id) return null;
+    this.stmtUpsertTrackMeta.run(
+      track.id,
+      track.provider || 'qq',
+      track.sourceId || track.id.replace(/^qq:/, ''),
+      track.title || '未知曲目',
+      track.artist || '',
+      track.album || '',
+      track.cover || '',
+      Number(track.durationSec) || 0,
+      JSON.stringify(track)
+    );
+    return track;
+  }
+
+  toggleFavorite({ track, userKey, userName = '', userAvatar = '' }) {
+    if (!track || !userKey) {
+      throw new Error('track and userKey are required');
+    }
+    const normalized = normalizePlaylistOutTrack(track);
+    const trackId = normalized.id;
+    const now = Date.now();
+    const trackJson = JSON.stringify(normalized);
+
+    this.upsertTrackMeta(normalized);
+
+    const existing = this.stmtCheckFavorite.get(trackId, userKey);
+    let favorited = false;
+    if (existing) {
+      this.stmtDeleteFavorite.run(trackId, userKey);
+      favorited = false;
+    } else {
+      this.stmtInsertFavorite.run(trackId, userKey, userName || '', userAvatar || '', now, trackJson);
+      favorited = true;
+    }
+
+    const rows = this.stmtGetFavoriteUsersForTrack.all(trackId);
+    const favoritedUsers = rows.map((r) => ({
+      userKey: r.user_key,
+      userName: r.user_name,
+      userAvatar: r.user_avatar,
+      createdAt: r.created_at,
+    }));
+
+    return {
+      ok: true,
+      favorited,
+      favCount: favoritedUsers.length,
+      favoritedUsers,
+      track: normalized,
+    };
+  }
+
+  isFavorite(trackId, userKey) {
+    if (!trackId || !userKey) return false;
+    const row = this.stmtCheckFavorite.get(trackId, userKey);
+    return Boolean(row);
+  }
+
+  getFavoriteTrackStatus(trackId, userKey = '') {
+    if (!trackId) return { isFavorited: false, favCount: 0, favoritedUsers: [] };
+    const rows = this.stmtGetFavoriteUsersForTrack.all(trackId);
+    const favoritedUsers = rows.map((r) => ({
+      userKey: r.user_key,
+      userName: r.user_name,
+      userAvatar: r.user_avatar,
+      createdAt: r.created_at,
+    }));
+    const isFavorited = userKey ? favoritedUsers.some((u) => u.userKey === userKey) : false;
+    return {
+      isFavorited,
+      favCount: favoritedUsers.length,
+      favoritedUsers,
+    };
+  }
+
+  removeFavorite({ trackId, userKey = null, isAdmin = false }) {
+    if (!trackId) return { ok: false, message: 'trackId is required' };
+    if (isAdmin && !userKey) {
+      this.stmtDeleteAllFavoritesForTrack.run(trackId);
+      return { ok: true, removedCount: 'all', favCount: 0, favoritedUsers: [] };
+    }
+    if (!userKey) return { ok: false, message: 'userKey is required' };
+    this.stmtDeleteFavorite.run(trackId, userKey);
+    const status = this.getFavoriteTrackStatus(trackId, userKey);
+    return { ok: true, favCount: status.favCount, favoritedUsers: status.favoritedUsers };
+  }
+
+  getCollectiveFavorites({ filterUserKey = null, sort = 'recent', offset = 0, limit = 100 } = {}) {
+    offset = Math.max(0, Number.parseInt(offset, 10) || 0);
+    limit = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 100));
+
+    let countSql = 'SELECT COUNT(DISTINCT track_id) AS total FROM music_favorites';
+    const countParams = [];
+    if (filterUserKey) {
+      countSql += ' WHERE user_key = ?';
+      countParams.push(filterUserKey);
+    }
+    const totalRow = this.db.prepare(countSql).get(...countParams);
+    const total = Number(totalRow?.total) || 0;
+
+    let sql = `
+      SELECT 
+        track_id,
+        track_json,
+        COUNT(*) as fav_count,
+        MAX(created_at) as last_favorited_at,
+        json_group_array(
+          json_object(
+            'userKey', user_key,
+            'userName', user_name,
+            'userAvatar', user_avatar,
+            'createdAt', created_at
+          )
+        ) as favorited_users_json
+      FROM music_favorites
+    `;
+    const params = [];
+
+    if (filterUserKey) {
+      sql += ' GROUP BY track_id HAVING SUM(CASE WHEN user_key = ? THEN 1 ELSE 0 END) > 0 ';
+      params.push(filterUserKey);
+    } else {
+      sql += ' GROUP BY track_id ';
+    }
+
+    if (sort === 'count' || sort === 'hot') {
+      sql += ' ORDER BY fav_count DESC, last_favorited_at DESC ';
+    } else {
+      sql += ' ORDER BY last_favorited_at DESC, fav_count DESC ';
+    }
+
+    sql += ' LIMIT ? OFFSET ? ';
+    params.push(limit, offset);
+
+    const rows = this.db.prepare(sql).all(...params);
+    const items = rows.map((r) => {
+      let track = {};
+      try {
+        track = JSON.parse(r.track_json);
+      } catch {
+        track = { id: r.track_id };
+      }
+      let favoritedUsers = [];
+      try {
+        favoritedUsers = JSON.parse(r.favorited_users_json) || [];
+      } catch {
+        favoritedUsers = [];
+      }
+      return {
+        ...track,
+        favCount: Number(r.fav_count) || favoritedUsers.length,
+        lastFavoritedAt: r.last_favorited_at,
+        favoritedUsers,
+      };
+    });
+
+    return {
+      ok: true,
+      total,
+      offset,
+      limit,
+      items,
+    };
+  }
+
+  getCollectiveFavoriters() {
+    const sql = `
+      SELECT user_key as userKey, user_name as userName, user_avatar as userAvatar, COUNT(*) as trackCount, MAX(created_at) as lastFavTime
+      FROM music_favorites
+      GROUP BY user_key
+      ORDER BY trackCount DESC, lastFavTime DESC
+    `;
+    const rows = this.db.prepare(sql).all();
+    return rows.map((r) => ({
+      userKey: r.userKey,
+      userName: r.userName || '未知客官',
+      userAvatar: r.userAvatar || '',
+      trackCount: Number(r.trackCount) || 0,
+      lastFavTime: r.lastFavTime,
+    }));
+  }
+
+  getUserFavorites({ userKey, offset = 0, limit = 50 } = {}) {
+    if (!userKey) return { ok: true, total: 0, items: [] };
+    offset = Math.max(0, Number.parseInt(offset, 10) || 0);
+    limit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 50));
+
+    const countRow = this.db.prepare('SELECT COUNT(*) as total FROM music_favorites WHERE user_key = ?').get(userKey);
+    const total = Number(countRow?.total) || 0;
+
+    const rows = this.db.prepare(`
+      SELECT f.track_id, f.created_at as favorited_at, f.track_json
+      FROM music_favorites f
+      WHERE f.user_key = ?
+      ORDER BY f.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(userKey, limit, offset);
+
+    const items = rows.map((r) => {
+      let track = {};
+      try {
+        track = JSON.parse(r.track_json);
+      } catch {
+        track = { id: r.track_id };
+      }
+      return {
+        ...track,
+        favoritedAt: r.favorited_at,
+      };
+    });
+
+    return {
+      ok: true,
+      total,
+      offset,
+      limit,
+      items,
+    };
   }
 
   // --- 系统 KV 键值操作 ---

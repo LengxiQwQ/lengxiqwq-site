@@ -7,6 +7,7 @@ import {
 	fetchUserDetailProfile,
 	fetchUserDetailTracks,
 	isExternalMatrixIdentity,
+	readStoredGuestToken,
 	readStoredWalineToken,
 	resolveExternalOrigin,
 	sanitizeChatUrl,
@@ -27,7 +28,11 @@ import type {
 	PlaylistSummary,
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
-import { formatPlatformLabel } from "./playlistClient";
+import {
+	fetchUserFavorites,
+	formatPlatformLabel,
+	removeFavoriteTrack,
+} from "./playlistClient";
 
 interface Props {
 	open: boolean;
@@ -39,6 +44,7 @@ interface Props {
 	messages: ChatMessageRecord[];
 	musicHistoryLogs?: MusicHistoryLogEntry[];
 	interconnectSites?: InterconnectSite[];
+	walineToken?: string;
 	onClose: () => void;
 	onMention: (name: string, userKey?: string) => void;
 	onEditSelf: () => void;
@@ -52,6 +58,7 @@ interface Props {
 		targetUserKey: string,
 		badges: ChatCustomBadge[],
 	) => Promise<boolean> | boolean;
+	onToast?: (message: string) => void;
 }
 
 const TRACK_PAGE_SIZE = 50;
@@ -70,6 +77,7 @@ const {
 	messages = [],
 	musicHistoryLogs = [],
 	interconnectSites = [],
+	walineToken,
 	onClose,
 	onMention,
 	onEditSelf,
@@ -77,6 +85,7 @@ const {
 	onOpenPlaylist,
 	onJumpToMessage,
 	onUpdateMemberBadges,
+	onToast,
 }: Props = $props();
 
 let remoteProfile = $state<ChatUserDetailProfile | null>(null);
@@ -87,7 +96,12 @@ let isLoading = $state(false);
 let isLoadingMore = $state(false);
 let tracksLoadFailed = $state(false);
 let localVisibleLimit = $state(TRACK_PAGE_SIZE);
-let trackTab = $state<"recent" | "top">("recent");
+let trackTab = $state<"recent" | "top" | "favorites">("recent");
+let userFavorites = $state<Array<ChatMusicTrack & { favoritedAt: number }>>([]);
+let isLoadingFavorites = $state(false);
+let favoritesLoaded = $state(false);
+let favoritesLoadFailed = $state(false);
+const currentTargetUserKey = $derived(seed?.userKey ?? "");
 let bodyContainerEl: HTMLDivElement | null = $state(null);
 let lockedMinHeight = $state(0);
 const relayOriginInfo = $derived.by(() => {
@@ -653,6 +667,10 @@ $effect(() => {
 	tracksLoadFailed = false;
 	trackTab = "recent";
 	lockedMinHeight = 0;
+	userFavorites = [];
+	favoritesLoaded = false;
+	favoritesLoadFailed = false;
+	isLoadingFavorites = false;
 
 	if (!currentOpen || !targetUserKey) {
 		remoteProfile = null;
@@ -818,7 +836,60 @@ $effect(() => {
 	}
 });
 
-function handleSwitchTrackTab(nextTab: "recent" | "top") {
+function formatTrackDuration(sec?: number): string {
+	if (!sec || sec <= 0) return "";
+	const m = Math.floor(sec / 60);
+	const s = Math.floor(sec % 60);
+	return `${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+async function loadFavorites(force = false) {
+	if (!chatServerUrl || !currentTargetUserKey) return;
+	if (favoritesLoaded && !force) return;
+	isLoadingFavorites = true;
+	favoritesLoadFailed = false;
+	try {
+		const res = await fetchUserFavorites({
+			chatServerUrl,
+			userKey: currentTargetUserKey,
+			limit: 100,
+		});
+		if (res.ok) {
+			userFavorites = res.items || [];
+			favoritesLoaded = true;
+		} else {
+			favoritesLoadFailed = true;
+		}
+	} catch (err) {
+		console.error("[chat] Failed to load user favorites:", err);
+		favoritesLoadFailed = true;
+	} finally {
+		isLoadingFavorites = false;
+	}
+}
+
+async function handleRemoveUserFavorite(trackId: string) {
+	if (!chatServerUrl || !currentTargetUserKey) return;
+	const token =
+		walineToken ||
+		(currentUser?.authType === "guest" ? readStoredGuestToken() : "");
+	try {
+		await removeFavoriteTrack({
+			chatServerUrl,
+			token,
+			authKind: currentUser?.authType === "guest" ? "guest" : "waline",
+			trackId,
+			targetUserKey: currentTargetUserKey,
+			userKey: currentUser?.userKey,
+		});
+		userFavorites = userFavorites.filter((f) => f.id !== trackId);
+		onToast?.("已移出收藏");
+	} catch (err) {
+		onToast?.(err instanceof Error ? err.message : "移出收藏失败");
+	}
+}
+
+function handleSwitchTrackTab(nextTab: "recent" | "top" | "favorites") {
 	if (nextTab === trackTab) return;
 	const cardEl = bodyContainerEl?.closest(
 		".chat-dialog-card",
@@ -830,6 +901,9 @@ function handleSwitchTrackTab(nextTab: "recent" | "top") {
 		}
 	}
 	trackTab = nextTab;
+	if (nextTab === "favorites" && !favoritesLoaded) {
+		void loadFavorites();
+	}
 }
 
 function handleScrollNearBottom(el: HTMLElement) {
@@ -1797,13 +1871,19 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
       <div class="w-full md:min-w-0 md:min-h-0 flex flex-col">
         <div class="shrink-0 flex items-center justify-between gap-2 px-3.5 sm:px-4 py-2.5 border-b border-(--chat-divider-color) md:overflow-y-auto custom-scrollbar chat-scrollbar-stable">
           <div class="flex items-center gap-2 min-w-0">
-            <span class="text-xs font-bold text-[var(--deep-text)]">点过的歌</span>
+            <span class="text-xs font-bold text-[var(--deep-text)]">
+              {trackTab === "favorites" ? "收藏的歌" : "点过的歌"}
+            </span>
             <span class="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-(--primary)/12 text-[var(--chat-accent-text)] tabular-nums">
-              {tracksLoadFailed ? "统计未完成" : remoteHasMore ? "正在统计" : `共 ${totalSongCount} 首`}
+              {#if trackTab === "favorites"}
+                {isLoadingFavorites ? "加载中..." : `共 ${userFavorites.length} 首`}
+              {:else}
+                {tracksLoadFailed ? "统计未完成" : remoteHasMore ? "正在统计" : `共 ${totalSongCount} 首`}
+              {/if}
             </span>
           </div>
 
-          <div class="inline-flex items-center gap-0.5 rounded-lg bg-(--btn-regular-bg) p-0.5 shrink-0" role="tablist" aria-label="点歌视图切换">
+          <div class="inline-flex items-center gap-0.5 rounded-lg bg-(--btn-regular-bg) p-0.5 shrink-0" role="tablist" aria-label="点歌与收藏视图切换">
             <button
               type="button"
               role="tab"
@@ -1821,6 +1901,15 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               onclick={() => handleSwitchTrackTab("top")}
             >
               按次数
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={trackTab === "favorites"}
+              class="px-2 py-0.5 rounded-md text-[11px] font-medium border-none cursor-pointer transition-colors {trackTab === 'favorites' ? 'bg-(--primary) text-white' : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
+              onclick={() => handleSwitchTrackTab("favorites")}
+            >
+              ★ 收藏
             </button>
           </div>
         </div>
@@ -1907,52 +1996,138 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 {/if}
               </div>
             {/if}
-          {:else if topTracks.length === 0}
-            <div class="flex flex-col items-center justify-center py-8 px-4 text-center rounded-xl bg-(--btn-regular-bg)/60">
-              <div class="w-9 h-9 rounded-full bg-(--primary)/12 flex items-center justify-center text-sm text-(--primary) mb-2">
-                ♪
+          {:else if trackTab === "top"}
+            {#if topTracks.length === 0}
+              <div class="flex flex-col items-center justify-center py-8 px-4 text-center rounded-xl bg-(--btn-regular-bg)/60">
+                <div class="w-9 h-9 rounded-full bg-(--primary)/12 flex items-center justify-center text-sm text-(--primary) mb-2">
+                  ♪
+                </div>
+                <div class="text-xs font-medium text-[var(--deep-text)]/80">
+                  暂无点歌排行
+                </div>
+                <div class="text-[11px] text-[var(--chat-meta-color)] mt-0.5">
+                  点过的歌曲会在这里自动统计次数~
+                </div>
               </div>
-              <div class="text-xs font-medium text-[var(--deep-text)]/80">
-                暂无点歌排行
-              </div>
-              <div class="text-[11px] text-[var(--chat-meta-color)] mt-0.5">
-                点过的歌曲会在这里自动统计次数~
-              </div>
-            </div>
-          {:else}
-            {#each topTracks as item, idx (`${item.track.id}:${idx}`)}
-              <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/70 hover:bg-(--btn-regular-bg) transition-colors">
-                <span class="w-5 text-center text-[10px] font-bold tabular-nums shrink-0 {idx < 3 ? 'text-[var(--chat-accent-text)]' : 'text-[var(--chat-meta-color)]'}">
-                  #{idx + 1}
-                </span>
-                <div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
-                  {#if item.track.cover}
-                    <img src={item.track.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
-                  {:else}
-                    <span class="text-xs text-(--primary)">♪</span>
+            {:else}
+              {#each topTracks as item, idx (`${item.track.id}:${idx}`)}
+                <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/70 hover:bg-(--btn-regular-bg) transition-colors">
+                  <span class="w-5 text-center text-[10px] font-bold tabular-nums shrink-0 {idx < 3 ? 'text-[var(--chat-accent-text)]' : 'text-[var(--chat-meta-color)]'}">
+                    #{idx + 1}
+                  </span>
+                  <div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+                    {#if item.track.cover}
+                      <img src={item.track.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
+                    {:else}
+                      <span class="text-xs text-(--primary)">♪</span>
+                    {/if}
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-xs font-semibold text-[var(--deep-text)] truncate">
+                      {item.track.title}
+                    </div>
+                    <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
+                      {item.track.artist} · 点过 {remoteHasMore ? "至少 " : ""}{item.requestCount} 次
+                    </div>
+                  </div>
+                  {#if onEnqueueTrack}
+                    <button
+                      type="button"
+                      class="chat-queue-toggle-btn text-[11px]! px-2.5! py-1! shrink-0"
+                      onclick={() => {
+                        onEnqueueTrack(item.track);
+                      }}
+                    >
+                      + 点歌
+                    </button>
                   {/if}
                 </div>
-                <div class="min-w-0 flex-1">
-                  <div class="text-xs font-semibold text-[var(--deep-text)] truncate">
-                    {item.track.title}
-                  </div>
-                  <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
-                    {item.track.artist} · 点过 {remoteHasMore ? "至少 " : ""}{item.requestCount} 次
-                  </div>
+              {/each}
+            {/if}
+          {:else if trackTab === "favorites"}
+            {#if isLoadingFavorites && userFavorites.length === 0}
+              <div class="flex flex-col items-center justify-center py-8 px-4 text-center rounded-xl bg-(--btn-regular-bg)/60">
+                <div class="w-8 h-8 rounded-full bg-(--primary)/12 flex items-center justify-center mb-2">
+                  <svg class="w-4 h-4 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                    <path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                  </svg>
                 </div>
-                {#if onEnqueueTrack}
-                  <button
-                    type="button"
-                    class="chat-queue-toggle-btn text-[11px]! px-2.5! py-1! shrink-0"
-                    onclick={() => {
-                      onEnqueueTrack(item.track);
-                    }}
-                  >
-                    + 点歌
-                  </button>
-                {/if}
+                <div class="text-xs text-[var(--chat-meta-color)]">正在加载收藏歌曲...</div>
               </div>
-            {/each}
+            {:else if favoritesLoadFailed && userFavorites.length === 0}
+              <div class="flex flex-col items-center justify-center py-8 px-4 text-center rounded-xl bg-(--btn-regular-bg)/60 gap-2">
+                <div class="text-xs text-red-500">加载收藏失败</div>
+                <button
+                  type="button"
+                  class="btn-regular h-7 px-3 rounded-lg text-[11px] font-medium cursor-pointer border-none"
+                  onclick={() => void loadFavorites(true)}
+                >
+                  重试
+                </button>
+              </div>
+            {:else if userFavorites.length === 0}
+              <div class="flex flex-col items-center justify-center py-8 px-4 text-center rounded-xl bg-(--btn-regular-bg)/60">
+                <div class="w-9 h-9 rounded-full bg-amber-500/12 flex items-center justify-center text-sm text-amber-500 mb-2">
+                  ★
+                </div>
+                <div class="text-xs font-medium text-[var(--deep-text)]/80">
+                  暂无收藏歌曲
+                </div>
+                <div class="text-[11px] text-[var(--chat-meta-color)] mt-0.5">
+                  在点歌台播放歌曲时点击星愿星星即可收藏~
+                </div>
+              </div>
+            {:else}
+              {#each userFavorites as item, idx (item.id)}
+                {@const canManageFav = currentUser?.isAdmin || currentUser?.userKey === currentTargetUserKey}
+                <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/70 hover:bg-(--btn-regular-bg) transition-colors">
+                  <span class="w-5 text-center text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums shrink-0">
+                    {idx + 1}
+                  </span>
+                  <div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+                    {#if item.cover}
+                      <img src={item.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
+                    {:else}
+                      <span class="text-xs text-(--primary)">♪</span>
+                    {/if}
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <div class="text-xs font-semibold text-[var(--deep-text)] truncate">
+                      {item.title}
+                    </div>
+                    <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
+                      {item.artist}{item.durationSec ? ` · ${formatTrackDuration(item.durationSec)}` : ""}{item.favoritedAt ? ` · ${formatTrackTime(item.favoritedAt)} 收藏` : ""}
+                    </div>
+                  </div>
+                  {#if canManageFav}
+                    <button
+                      type="button"
+                      class="chat-queue-icon-btn w-7! h-7! rounded-lg! shrink-0 aspect-square text-amber-500/70 hover:text-red-500! transition-colors"
+                      aria-label="取消收藏"
+                      title={currentUser?.userKey === currentTargetUserKey ? "取消收藏" : "移出该用户收藏（站长管理）"}
+                      onclick={() => handleRemoveUserFavorite(item.id)}
+                    >
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  {/if}
+                  {#if onEnqueueTrack}
+                    <button
+                      type="button"
+                      class="chat-queue-toggle-btn text-[11px]! px-2.5! py-1! shrink-0"
+                      onclick={() => {
+                        onEnqueueTrack(item);
+                      }}
+                    >
+                      + 点歌
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+            {/if}
           {/if}
         </div>
       </div>

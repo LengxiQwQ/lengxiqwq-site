@@ -441,12 +441,63 @@ export type ConnectionState =
 	| "reconnecting"
 	| "offline";
 
+export interface FavoriteUserItem {
+	userKey: string;
+	userName: string;
+	userAvatar?: string;
+	createdAt?: number;
+	trackCount?: number;
+}
+
+export interface FavoriteTrackStatusResponse {
+	ok: boolean;
+	isFavorited: boolean;
+	favCount: number;
+	favoritedUsers: FavoriteUserItem[];
+	error?: string;
+}
+
+export interface ToggleFavoriteResponse {
+	ok: boolean;
+	favorited: boolean;
+	favCount: number;
+	favoritedUsers: FavoriteUserItem[];
+	track: ChatMusicTrack;
+	error?: string;
+}
+
+export interface CollectiveFavoritesResponse {
+	ok: boolean;
+	total: number;
+	offset: number;
+	limit: number;
+	items: Array<
+		ChatMusicTrack & {
+			favCount: number;
+			lastFavoritedAt: number;
+			favoritedUsers: FavoriteUserItem[];
+		}
+	>;
+	favoriters?: FavoriteUserItem[];
+	error?: string;
+}
+
+export interface UserFavoritesResponse {
+	ok: boolean;
+	total: number;
+	offset: number;
+	limit: number;
+	items: Array<ChatMusicTrack & { favoritedAt: number }>;
+	error?: string;
+}
+
 export interface PlaylistSummary {
 	id: string;
 	ownerKey: string;
 	ownerName: string;
 	ownerAvatar?: string;
 	title: string;
+	subtitle?: string;
 	platform: string;
 	sourceUrl: string;
 	coverUrl: string;
@@ -456,6 +507,7 @@ export interface PlaylistSummary {
 	isPublic: boolean;
 	isFeatured: boolean;
 	isFallback: boolean;
+	isSystemProtected?: boolean;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -471,10 +523,14 @@ export interface PlaylistTrackItem {
 	durationSec: number;
 	sourceUrl: string;
 	matchedTrack: ChatMusicTrack | null;
+	favCount?: number;
+	lastFavoritedAt?: number;
+	favoritedUsers?: FavoriteUserItem[];
 }
 
 export interface PlaylistDetail extends PlaylistSummary {
 	tracks: PlaylistTrackItem[];
+	favoriters?: FavoriteUserItem[];
 }
 
 export type RoomRotation =

@@ -1,11 +1,15 @@
 import { normalizeServerUrl } from "./chatClient";
 import type {
+	CollectiveFavoritesResponse,
+	FavoriteTrackStatusResponse,
 	PlaylistDetail,
 	PlaylistImportPayload,
 	PlaylistSummary,
 	PlaylistsResponse,
 	PlaylistTrackItem,
 	RoomRotation,
+	ToggleFavoriteResponse,
+	UserFavoritesResponse,
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
 
@@ -89,6 +93,8 @@ const PLATFORM_LABELS: Record<string, string> = {
 	youtube_music: "YouTube Music",
 	ytmusic: "YouTube Music",
 	youtube: "YouTube Music",
+	local: "站内",
+	collective: "茶室",
 };
 
 export function formatPlatformLabel(platform: string): string {
@@ -438,15 +444,18 @@ export async function fetchPlaylistDetail(
 	roomId: string,
 	playlistId: string,
 	walineToken?: string,
+	filterUser?: string,
 ): Promise<PlaylistDetail> {
 	const base = normalizeServerUrl(chatServerUrl);
-	const resp = await fetch(
-		`${base}/api/playlists/detail?room=${encodeURIComponent(roomId)}&id=${encodeURIComponent(playlistId)}`,
-		{
-			method: "GET",
-			headers: buildAuthHeaders(walineToken),
-		},
-	);
+	const q = new URLSearchParams({
+		room: roomId,
+		id: playlistId,
+		...(filterUser ? { filterUser } : {}),
+	});
+	const resp = await fetch(`${base}/api/playlists/detail?${q.toString()}`, {
+		method: "GET",
+		headers: buildAuthHeaders(walineToken),
+	});
 	const json = (await resp.json().catch(() => null)) as {
 		ok?: boolean;
 		playlist?: PlaylistDetail;
@@ -595,4 +604,171 @@ export function toEnqueueableTrack(
 		cover: item.cover,
 		durationSec: item.durationSec,
 	};
+}
+
+/**
+ * 切换歌曲收藏状态（支持已登录账号与临时访客）
+ */
+export async function toggleFavoriteTrack(params: {
+	chatServerUrl: string;
+	token?: string;
+	authKind?: "waline" | "guest";
+	track: ChatMusicTrack;
+	userKey?: string;
+	userName?: string;
+	userAvatar?: string;
+}): Promise<ToggleFavoriteResponse> {
+	const base = normalizeServerUrl(params.chatServerUrl);
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json",
+	};
+	if (params.token?.trim()) {
+		headers.Authorization = `Bearer ${params.token.trim()}`;
+		if (params.authKind) {
+			headers["x-auth-kind"] = params.authKind;
+		}
+	}
+	const resp = await fetch(`${base}/api/music/favorite/toggle`, {
+		method: "POST",
+		headers,
+		body: JSON.stringify({
+			track: params.track,
+			userKey: params.userKey,
+			userName: params.userName,
+			userAvatar: params.userAvatar,
+		}),
+	});
+	const json = (await resp
+		.json()
+		.catch(() => null)) as ToggleFavoriteResponse | null;
+	if (!resp.ok || !json?.ok) {
+		throw new Error(json?.error || "收藏操作失败");
+	}
+	return json;
+}
+
+/**
+ * 查询单曲收藏状态与收藏人数
+ */
+export async function fetchFavoriteTrackStatus(params: {
+	chatServerUrl: string;
+	token?: string;
+	trackId: string;
+	userKey?: string;
+}): Promise<FavoriteTrackStatusResponse> {
+	const base = normalizeServerUrl(params.chatServerUrl);
+	const headers: Record<string, string> = {};
+	if (params.token?.trim()) {
+		headers.Authorization = `Bearer ${params.token.trim()}`;
+	}
+	const q = new URLSearchParams({
+		trackId: params.trackId,
+		...(params.userKey ? { userKey: params.userKey } : {}),
+	});
+	const resp = await fetch(
+		`${base}/api/music/favorite/status?${q.toString()}`,
+		{
+			headers,
+		},
+	);
+	const json = (await resp
+		.json()
+		.catch(() => null)) as FavoriteTrackStatusResponse | null;
+	return (
+		json ?? {
+			ok: false,
+			isFavorited: false,
+			favCount: 0,
+			favoritedUsers: [],
+		}
+	);
+}
+
+/**
+ * 移出/取消收藏（支持自己取消或管理员全量/定向移出）
+ */
+export async function removeFavoriteTrack(params: {
+	chatServerUrl: string;
+	token?: string;
+	authKind?: "waline" | "guest";
+	trackId: string;
+	targetUserKey?: string;
+	userKey?: string;
+}): Promise<{ ok: boolean; favCount?: number; error?: string }> {
+	const base = normalizeServerUrl(params.chatServerUrl);
+	const headers: Record<string, string> = {
+		"Content-Type": "application/json",
+	};
+	if (params.token?.trim()) {
+		headers.Authorization = `Bearer ${params.token.trim()}`;
+		if (params.authKind) {
+			headers["x-auth-kind"] = params.authKind;
+		}
+	}
+	const resp = await fetch(`${base}/api/music/favorite/remove`, {
+		method: "POST",
+		headers,
+		body: JSON.stringify({
+			trackId: params.trackId,
+			targetUserKey: params.targetUserKey,
+			userKey: params.userKey,
+		}),
+	});
+	const json = (await resp.json().catch(() => null)) as {
+		ok: boolean;
+		favCount?: number;
+		error?: string;
+	} | null;
+	if (!resp.ok || !json?.ok) {
+		throw new Error(json?.error || "取消收藏失败");
+	}
+	return json;
+}
+
+/**
+ * 获取全站「茶室星愿」共同收藏列表与筛选客官
+ */
+export async function fetchCollectiveFavorites(params: {
+	chatServerUrl: string;
+	filterUser?: string;
+	sort?: "recent" | "count";
+	offset?: number;
+	limit?: number;
+}): Promise<CollectiveFavoritesResponse> {
+	const base = normalizeServerUrl(params.chatServerUrl);
+	const q = new URLSearchParams();
+	if (params.filterUser) q.set("filterUser", params.filterUser);
+	if (params.sort) q.set("sort", params.sort);
+	if (params.offset !== undefined) q.set("offset", String(params.offset));
+	if (params.limit !== undefined) q.set("limit", String(params.limit));
+
+	const resp = await fetch(
+		`${base}/api/music/favorites/public?${q.toString()}`,
+	);
+	const json = (await resp
+		.json()
+		.catch(() => null)) as CollectiveFavoritesResponse | null;
+	return json ?? { ok: false, total: 0, offset: 0, limit: 100, items: [] };
+}
+
+/**
+ * 获取指定用户的个人收藏列表
+ */
+export async function fetchUserFavorites(params: {
+	chatServerUrl: string;
+	userKey: string;
+	offset?: number;
+	limit?: number;
+}): Promise<UserFavoritesResponse> {
+	const base = normalizeServerUrl(params.chatServerUrl);
+	const q = new URLSearchParams({
+		userKey: params.userKey,
+		...(params.offset !== undefined ? { offset: String(params.offset) } : {}),
+		...(params.limit !== undefined ? { limit: String(params.limit) } : {}),
+	});
+	const resp = await fetch(`${base}/api/music/favorites/user?${q.toString()}`);
+	const json = (await resp
+		.json()
+		.catch(() => null)) as UserFavoritesResponse | null;
+	return json ?? { ok: false, total: 0, offset: 0, limit: 50, items: [] };
 }
