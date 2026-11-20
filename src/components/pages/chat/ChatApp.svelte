@@ -18,12 +18,18 @@ import {
 } from "./chatAppearance";
 import {
 	buildWsUrl,
+	CHAT_SESSION_USER_KEY,
 	clearGuestAuth,
+	clearStoredChatUser,
 	clearWalineAuth,
 	consumeUrlWalineToken,
+	GUEST_TOKEN_STORAGE_KEY,
 	isMentionedForUser,
 	normalizeServerUrl,
 	openWalineLoginPopup,
+	persistStoredChatUser,
+	readInitialCachedUser,
+	readStoredChatUser,
 	readStoredWalineToken,
 	resolveChatAvatarUrl,
 	resolveInitialAuth,
@@ -112,7 +118,12 @@ function isDocumentActivelyVisibleAndFocused(): boolean {
 let isWindowFocused = $state(false);
 let isIdleAway = $state(false);
 const isEffectiveFocused = $derived(isWindowFocused && !isIdleAway);
-let currentUser = $state<ChatSessionUser | null>(null);
+let currentAuth: { kind: "waline" | "guest"; token: string } | null =
+	resolveInitialAuth();
+let currentUser = $state<ChatSessionUser | null>(readInitialCachedUser());
+let walineToken = $state(
+	currentAuth?.kind === "waline" ? currentAuth.token : "",
+);
 let onlineMembers = $state<ChatOnlineMember[]>([]);
 let observers = $state<ChatOnlineMember[]>([]);
 function uniqueObservers(list: ChatOnlineMember[]): ChatOnlineMember[] {
@@ -222,6 +233,15 @@ let pinnedUids = $state<string[]>([]);
 let roomTopic = $state<string>("");
 let roomAvatars = $state<Record<string, string>>({});
 let typingUsers = $state<string[]>([]);
+const typingUserTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearAllTypingTimers() {
+	for (const timer of typingUserTimers.values()) {
+		clearTimeout(timer);
+	}
+	typingUserTimers.clear();
+	typingUsers = [];
+}
 let readReceipts = $state<Record<string, ChatReadReceipt[]>>({});
 let musicState = $state<RoomMusicState | null>(null);
 let musicAudience = $state({ onlineCount: 0, listeningCount: 0 });
@@ -252,7 +272,6 @@ let targetMessageUid = $state("");
 let showInterconnect = $state(false);
 let activeThreads = $state<ChatActiveThreadItem[]>([]);
 let totalChatterCount = $state(0);
-let walineToken = $state("");
 let playlistRefreshSeq = $state(0);
 let musicPanelRef: {
 	toggleListenControl?: () => void;
@@ -886,7 +905,6 @@ let noticeTimer: number | null = null;
 let cancelWalinePopup: (() => void) | null = null;
 let reconnectAttempt = 0;
 let isUnmounted = false;
-let currentAuth: { kind: "waline" | "guest"; token: string } | null = null;
 let secondaryStartupDone = false;
 let secondaryStartupTimer: number | null = null;
 let panelBgReady = $state(false);
@@ -1298,6 +1316,18 @@ function connectRoom(roomId: string) {
 		switch (packet.type) {
 			case "room:init": {
 				currentUser = packet.self;
+				if (packet.self) {
+					persistStoredChatUser(packet.self);
+				} else if (currentAuth) {
+					clearStoredChatUser();
+					if (currentAuth.kind === "waline") {
+						clearWalineAuth();
+					} else {
+						clearGuestAuth();
+					}
+					currentAuth = null;
+					walineToken = "";
+				}
 				messages = mergeRoomMessages(
 					packet.messages,
 					roomMessageCache.get(packet.roomId) ?? [],
@@ -1360,7 +1390,7 @@ function connectRoom(roomId: string) {
 					};
 				}
 				readReceipts = packet.readReceipts ?? {};
-				typingUsers = [];
+				clearAllTypingTimers();
 				clearSkipPending();
 				roomInitSeq += 1;
 				isRoomReady = true;
@@ -1420,6 +1450,11 @@ function connectRoom(roomId: string) {
 			}
 			case "auth:result": {
 				currentUser = packet.user;
+				if (packet.user) {
+					persistStoredChatUser(packet.user);
+				} else {
+					clearStoredChatUser();
+				}
 				if (packet.user?.authType !== "waline") {
 					walineToken = "";
 				}
@@ -1807,23 +1842,35 @@ function connectRoom(roomId: string) {
 				if (packet.roomId === currentRoom) {
 					const myName = currentUser?.name?.trim();
 					if (Array.isArray(packet.users)) {
-						typingUsers = packet.users.filter(
-							(u: string) => !myName || u.trim() !== myName,
-						);
+						const matrixUsers = packet.users
+							.map((u: string) => u?.trim())
+							.filter((u: string) => Boolean(u) && (!myName || u !== myName));
+						const localUsers = Array.from(typingUserTimers.keys());
+						typingUsers = Array.from(new Set([...matrixUsers, ...localUsers]));
 					} else if (packet.userName) {
-						if (myName && packet.userName.trim() === myName) {
+						const targetName = packet.userName.trim();
+						if (!targetName || (myName && targetName === myName)) {
 							break;
 						}
+						const existingTimer = typingUserTimers.get(targetName);
 						if (packet.typing) {
-							if (!typingUsers.includes(packet.userName)) {
-								typingUsers = [...typingUsers, packet.userName];
+							if (existingTimer) {
+								clearTimeout(existingTimer);
 							}
-							const targetName = packet.userName;
-							setTimeout(() => {
+							if (!typingUsers.includes(targetName)) {
+								typingUsers = [...typingUsers, targetName];
+							}
+							const timer = setTimeout(() => {
+								typingUserTimers.delete(targetName);
 								typingUsers = typingUsers.filter((u) => u !== targetName);
-							}, 5000);
+							}, 6000);
+							typingUserTimers.set(targetName, timer);
 						} else {
-							typingUsers = typingUsers.filter((u) => u !== packet.userName);
+							if (existingTimer) {
+								clearTimeout(existingTimer);
+								typingUserTimers.delete(targetName);
+							}
+							typingUsers = typingUsers.filter((u) => u !== targetName);
 						}
 					}
 				}
@@ -1874,7 +1921,7 @@ function connectRoom(roomId: string) {
 					else if (!packet.ok)
 						showNotice(packet.error || "点歌失败，请重试", "error");
 					else if (!packet.playImmediately && packet.position)
-						showNotice("已加入待播队列，第 " + packet.position + " 首");
+						showNotice(`已加入待播队列，第 ${packet.position} 首`);
 				}
 				break;
 			}
@@ -1927,6 +1974,7 @@ function connectRoom(roomId: string) {
 					showAuthModal = true;
 				} else if (packet.code === "TOKEN_INVALID") {
 					const invalidKind = packet.authKind ?? currentAuth?.kind;
+					clearStoredChatUser();
 					if (invalidKind === "waline") {
 						clearWalineAuth();
 						walineToken = "";
@@ -2016,7 +2064,7 @@ function handleRoomSelect(roomId: string) {
 	pinnedUids = [];
 	roomTopic = "";
 	readReceipts = {};
-	typingUsers = [];
+	clearAllTypingTimers();
 	sessionUnreadSince = 0;
 	serverUnreadCount = 0;
 	serverUnreadUserCount = 0;
@@ -2094,6 +2142,13 @@ function handleAuthenticated(
 	lastMarkedServerReadUid = "";
 	if (user) {
 		currentUser = user;
+		persistStoredChatUser(user);
+	} else {
+		const cached = readInitialCachedUser();
+		if (cached) {
+			currentUser = cached;
+			persistStoredChatUser(cached);
+		}
 	}
 	playlistRefreshSeq += 1;
 	sendPacket({
@@ -2109,6 +2164,7 @@ function handleLogout() {
 	} else if (currentAuth?.kind === "guest") {
 		clearGuestAuth();
 	}
+	clearStoredChatUser();
 	currentAuth = null;
 	walineToken = "";
 	currentUser = null;
@@ -2201,6 +2257,22 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 	if (typeof draft.notifyEmail === "boolean") {
 		packet.notifyEmail = draft.notifyEmail;
 	}
+	const updatedUser: ChatSessionUser = {
+		...currentUser,
+		name: cleanNick,
+		badge: cleanBadge,
+		status: cleanStatus,
+		url: cleanUrl,
+		bio: cleanBio,
+		...(typeof draft.avatar === "string" && draft.avatar.trim()
+			? { avatar: draft.avatar.trim().slice(0, 400) }
+			: {}),
+		...(typeof draft.notifyEmail === "boolean"
+			? { notifyEmail: draft.notifyEmail }
+			: {}),
+	};
+	currentUser = updatedUser;
+	persistStoredChatUser(updatedUser);
 	if (sendPacket(packet)) {
 		showNotice("个人资料已更新");
 	}
@@ -2222,6 +2294,7 @@ async function handleUpdateMemberBadges(
 	if (httpOk) {
 		if (currentUser.userKey === targetUserKey) {
 			currentUser = { ...currentUser, customBadges: badges };
+			persistStoredChatUser(currentUser);
 		}
 		roomOnlineMembers = roomOnlineMembers.map((m) =>
 			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
@@ -2600,6 +2673,9 @@ onMount(() => {
 	baseDocumentTitle = document.title;
 	currentAuth = resolveInitialAuth();
 	walineToken = currentAuth?.kind === "waline" ? currentAuth.token : "";
+	if (!currentUser) {
+		currentUser = readInitialCachedUser();
+	}
 
 	void consumeUrlWalineToken(walineServerUrl).then((res) => {
 		if (res?.token) {
@@ -2812,14 +2888,50 @@ onMount(() => {
 		if (
 			e.key !== "WALINE_USER" &&
 			e.key !== "TOKEN" &&
-			e.key !== "WALINE_ADMIN_TOKEN"
+			e.key !== "WALINE_ADMIN_TOKEN" &&
+			e.key !== GUEST_TOKEN_STORAGE_KEY &&
+			e.key !== CHAT_SESSION_USER_KEY
 		) {
 			return;
 		}
-		if (!e.newValue) return;
+
+		// 跨标签页主动退出登录
+		if (
+			!e.newValue &&
+			(e.key === "WALINE_USER" ||
+				e.key === "TOKEN" ||
+				e.key === GUEST_TOKEN_STORAGE_KEY ||
+				e.key === CHAT_SESSION_USER_KEY)
+		) {
+			const activeAuth = resolveInitialAuth();
+			if (!activeAuth && currentUser) {
+				currentAuth = null;
+				walineToken = "";
+				currentUser = null;
+				clearStoredChatUser();
+				sendPacket({ type: "auth:logout" });
+			}
+			return;
+		}
+
+		// 跨标签页更新了个人会话与资料
+		if (e.key === CHAT_SESSION_USER_KEY && e.newValue) {
+			try {
+				const parsed = JSON.parse(e.newValue) as ChatSessionUser;
+				if (parsed?.userKey) {
+					currentUser = parsed;
+				}
+			} catch {
+				// Ignore
+			}
+			return;
+		}
+
 		const nextToken = readStoredWalineToken();
-		if (!nextToken) return;
-		if (currentAuth?.kind !== "waline" || currentAuth.token !== nextToken) {
+		if (
+			nextToken &&
+			(currentAuth?.kind !== "waline" || currentAuth.token !== nextToken)
+		) {
 			walineLoginWaiting = false;
 			cancelWalinePopup?.();
 			cancelWalinePopup = null;
@@ -2943,6 +3055,7 @@ onMount(() => {
 		}
 		isUnmounted = true;
 		clearHistoryLoadTimer();
+		clearAllTypingTimers();
 		if (secondaryStartupTimer !== null) {
 			window.clearTimeout(secondaryStartupTimer);
 			secondaryStartupTimer = null;

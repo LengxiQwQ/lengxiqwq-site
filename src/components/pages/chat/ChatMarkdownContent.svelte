@@ -13,7 +13,11 @@ import {
 	restoreTextSegments,
 } from "./chatMarkdown";
 import LottieSticker from "./LottieSticker.svelte";
-import type { StickerItem } from "./stickerLoader";
+import {
+	isChatInlineSticker,
+	resolveInlineStickerCategory,
+	type StickerItem,
+} from "./stickerLoader";
 
 interface Props {
 	content: string;
@@ -125,29 +129,42 @@ function getInlineChildren(token: Token): Token[] | undefined {
       {@const imgTok = tok as Tokens.Image}
       {@const safeSrc = isSafeImageUrl(imgTok.href)}
       {#if safeSrc}
-        {@const cachedDims = getCachedChatImageDims(safeSrc)}
-        <a
-          href={safeSrc}
-          data-chat-image={safeSrc}
-          class="inline-flex max-w-full align-top my-1 overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
-          onclick={(e) => {
-            e.preventDefault();
-            void openChatImageLightbox(safeSrc, e.currentTarget);
-          }}
-        >
+        {@const isSticker = isChatInlineSticker(safeSrc, imgTok.text, stickerMap)}
+        {#if isSticker}
+          {@const cat = resolveInlineStickerCategory(safeSrc, imgTok.text)}
           <img
             src={safeSrc}
-            alt={imgTok.text || "图片"}
+            alt={imgTok.text || "表情"}
+            title={imgTok.text || "表情"}
             loading="lazy"
             decoding="async"
-            width={cachedDims?.w}
-            height={cachedDims?.h}
-            style:--chat-image-width={cachedDims ? `${cachedDims.w}px` : undefined}
-            style:--chat-image-ratio={cachedDims ? cachedDims.w / cachedDims.h : undefined}
-            onload={(e) => rememberChatImageDims(safeSrc, e.currentTarget)}
-            class="chat-msg-image"
+            class="chat-sticker chat-sticker--{cat} chat-sticker--inline select-none"
           />
-        </a>
+        {:else}
+          {@const cachedDims = getCachedChatImageDims(safeSrc)}
+          <a
+            href={safeSrc}
+            data-chat-image={safeSrc}
+            class="inline-flex max-w-full align-top my-1 overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
+            onclick={(e) => {
+              e.preventDefault();
+              void openChatImageLightbox(safeSrc, e.currentTarget);
+            }}
+          >
+            <img
+              src={safeSrc}
+              alt={imgTok.text || "图片"}
+              loading="lazy"
+              decoding="async"
+              width={cachedDims?.w}
+              height={cachedDims?.h}
+              style:--chat-image-width={cachedDims ? `${cachedDims.w}px` : undefined}
+              style:--chat-image-ratio={cachedDims ? cachedDims.w / cachedDims.h : undefined}
+              onload={(e) => rememberChatImageDims(safeSrc, e.currentTarget)}
+              class="chat-msg-image"
+            />
+          </a>
+        {/if}
       {:else}
         {imgTok.raw}
       {/if}

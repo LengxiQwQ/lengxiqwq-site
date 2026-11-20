@@ -169,8 +169,7 @@ interface RawStickerManifest {
 
 const STICKER_TOKEN_PATTERN =
 	":[A-Za-z0-9_.-]+_[^:\\s<>\"']+?:|\\[lottie:[a-zA-Z0-9-]+\\]|\\[sticker:[a-zA-Z0-9/_-]+\\]";
-const MENTION_BOUNDARY_AFTER =
-	"(?=$|[\\s,，。、！!？?：:；;()\\[\\]{}<>\"'~`’”）】》」』])";
+const MENTION_BOUNDARY_AFTER = "(?![A-Za-z0-9_])";
 
 function isRoomBroadcastName(name: string): boolean {
 	const trimmed = name.trim();
@@ -199,6 +198,8 @@ export function buildVerifiedMentionNames(
 	for (const raw of mentions) {
 		const clean = raw.trim().replace(/^@+/, "");
 		if (!clean) continue;
+		// 防御性过滤：昵称长度上限（正常昵称不超过 32 字符），杜绝被正文污染的超长字符串与换行
+		if (clean.length > 32 || /[\r\n\t]/.test(clean)) continue;
 		if (isRoomBroadcastName(clean)) {
 			if (canRoomHighlight) {
 				hasRoomMention = true;
@@ -222,12 +223,6 @@ function buildMentionRegexPattern(name: string): string {
 	const withDotFlexible = escaped
 		.replace(/\\\s\*\\[·•・]\\\s\*/g, "\\s*[·•・]\\s*")
 		.replace(/\\[·•・]/g, "\\s*[·•・]\\s*");
-	if (isRoomBroadcastName(name)) {
-		return withDotFlexible;
-	}
-	if (!/[·•・]/.test(name)) {
-		return `${withDotFlexible}(?:\\s*[·•・]\\s*[^\\s,，。、！!？?：:；;()\\[\\]{}<>"'~\`'”）】》」』]+)?`;
-	}
 	return withDotFlexible;
 }
 
@@ -520,4 +515,79 @@ export function formatStickerAttachmentAlt(rawName?: string): string {
 		return stickerMatch[1].split("/").pop() || "贴纸";
 	}
 	return text;
+}
+
+const INLINE_STICKER_PATH_RE =
+	/(?:\/assets\/stickers\/|\/chat-api\/emoji\/|\/waline-emojis\/|\/stickers?\/|\/emojis?\/|qface|somoe\.xyz\/stickers)/i;
+
+export function isChatInlineSticker(
+	url?: string,
+	alt?: string,
+	stickerMap?: Map<string, StickerItem>,
+): boolean {
+	const rawUrl = (url || "").trim();
+	const rawAlt = (alt || "").trim();
+	if (!rawUrl && !rawAlt) return false;
+
+	if (rawUrl) {
+		if (INLINE_STICKER_PATH_RE.test(rawUrl)) {
+			return true;
+		}
+		if (stickerMap) {
+			for (const item of stickerMap.values()) {
+				if (item.url && item.url === rawUrl) {
+					return true;
+				}
+			}
+		}
+	}
+
+	if (rawAlt) {
+		const lowerAlt = rawAlt.toLowerCase();
+		if (
+			lowerAlt.startsWith("mx-sticker:") ||
+			lowerAlt.startsWith("emoji:") ||
+			lowerAlt.startsWith("sticker:") ||
+			rawAlt.startsWith("表情：") ||
+			rawAlt.startsWith("表情:") ||
+			/^:[a-zA-Z0-9_.-]+:$/.test(rawAlt)
+		) {
+			return true;
+		}
+		if (Object.values(LOTTIE_LABELS).includes(rawAlt)) {
+			return true;
+		}
+		if (stickerMap) {
+			for (const item of stickerMap.values()) {
+				if (item.name && item.name === rawAlt) {
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+export function resolveInlineStickerCategory(
+	url: string,
+	alt?: string,
+): StickerCategory {
+	const lowerUrl = url.toLowerCase();
+	const lowerAlt = (alt || "").toLowerCase();
+	if (
+		lowerUrl.includes("/qq/") ||
+		lowerAlt.includes("qq") ||
+		lowerUrl.includes("qface")
+	) {
+		return "qq";
+	}
+	if (
+		lowerUrl.includes("/bmoji/") ||
+		lowerUrl.includes("/emoji/") ||
+		lowerUrl.includes("/bilibili/")
+	) {
+		return "emoji";
+	}
+	return "sticker";
 }

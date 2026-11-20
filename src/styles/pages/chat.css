@@ -3014,6 +3014,12 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	vertical-align: middle;
 	margin: 0.06rem 0.14rem;
 	object-fit: contain;
+	cursor: default;
+}
+
+.chat-sticker.chat-sticker--inline {
+	max-height: 2.25rem;
+	cursor: default;
 }
 
 .chat-sticker.chat-sticker--emoji {

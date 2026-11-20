@@ -30,6 +30,7 @@ import LottieSticker from "./LottieSticker.svelte";
 import {
 	formatChatReplyPreview,
 	formatStickerAttachmentAlt,
+	isChatInlineSticker,
 	parseChatSegments,
 	type StickerItem,
 } from "./stickerLoader";
@@ -373,11 +374,31 @@ const effectiveSenderUrl = $derived.by(() => {
 	return sanitizeChatUrl(externalOrigin?.site?.url, false);
 });
 
-const safeAttachments = $derived.by(() =>
-	(message.attachments || [])
+const safeAttachments = $derived.by(() => {
+	const raw = message.attachments || [];
+	const content = message.content || "";
+	const hasMdImg = /!\[[^\]]*\]\((https?:\/\/[^)]+)\)/i.test(content);
+	return raw
 		.map((att) => ({ ...att, url: sanitizeChatUrl(att.url, true) }))
-		.filter((att) => Boolean(att.url)),
-);
+		.filter((att) => {
+			if (!att.url) return false;
+			// 1. 如果正文中已经包含了该附件的 URL，去重过滤
+			if (content.includes(att.url)) {
+				return false;
+			}
+			// 2. 如果正文已经包含 Markdown 图片语法，且当前附件是贴纸/表情，或者正文非空且当前附件是内嵌表情，去重过滤
+			if (
+				(hasMdImg &&
+					(att.isSticker ||
+						isChatInlineSticker(att.url, att.name, stickerMap))) ||
+				(content.trim().length > 0 &&
+					isChatInlineSticker(att.url, att.name, stickerMap))
+			) {
+				return false;
+			}
+			return true;
+		});
+});
 
 const canRoomHighlight = $derived(
 	Boolean(
@@ -1171,15 +1192,7 @@ function handleBubbleClick(e: MouseEvent) {
     <div class="flex flex-col gap-2 {message.replyTo || message.content.trim().length > 0 ? 'mt-2' : ''}">
       {#each safeAttachments as att (att.url)}
         {#if att.type === "image" && att.isSticker}
-          <a
-            href={att.url}
-            data-chat-image={att.url}
-            class="inline-block cursor-zoom-in"
-            onclick={(e) => {
-              e.preventDefault();
-              void openChatImageLightbox(att.url, e.currentTarget);
-            }}
-          >
+          <div class="inline-block select-none">
             <img
               src={att.url}
               loading="lazy"
@@ -1188,7 +1201,7 @@ function handleBubbleClick(e: MouseEvent) {
               decoding="async"
               class="chat-sticker-large single"
             />
-          </a>
+          </div>
         {:else if att.type === "image"}
           {@const cachedDims = getCachedChatImageDims(att.url)}
           <a
@@ -1437,15 +1450,7 @@ function handleBubbleClick(e: MouseEvent) {
     {/if}
     <div class="chat-sticker-only-wrap {alignEnd ? 'justify-end' : 'justify-start'}">
       {#each safeAttachments as att (att.url)}
-        <a
-          href={att.url}
-          data-chat-image={att.url}
-          class="block cursor-zoom-in"
-          onclick={(e) => {
-            e.preventDefault();
-            void openChatImageLightbox(att.url, e.currentTarget);
-          }}
-        >
+        <div class="block select-none">
           <img
             src={att.url}
             alt={formatStickerAttachmentAlt(att.name)}
@@ -1454,7 +1459,7 @@ function handleBubbleClick(e: MouseEvent) {
             decoding="async"
             class="chat-sticker-large {safeAttachments.length === 1 ? 'single' : ''}"
           />
-        </a>
+        </div>
       {/each}
     </div>
   </div>

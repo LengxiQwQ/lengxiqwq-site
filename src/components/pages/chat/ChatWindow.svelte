@@ -473,6 +473,14 @@ function releaseMobileActions() {
 }
 
 let unreadBarDismissed = $state(false);
+let unfocusedArrivalUids: string[] = [];
+let unfocusedBanner = $state<{
+	firstUid: string;
+	count: number;
+} | null>(null);
+let isLocatingTargetMessage = $state(false);
+let targetMessageNotFound = $state(false);
+let isJumpingToTarget = false;
 let isUnreadDividerInView = $state(false);
 let hasVisitedUnreadDivider = $state(false);
 let highlightUnreadDivider = $state(false);
@@ -1312,6 +1320,8 @@ const showUnreadJumpBar = $derived(
 		sessionUnreadSince > 0 &&
 			unreadBadgeCount > 0 &&
 			!unreadBarDismissed &&
+			!unfocusedBanner &&
+			isStickyAtBottom &&
 			(hasUnloadedUnread || !isUnreadDividerInView),
 	),
 );
@@ -1708,6 +1718,15 @@ const displayTypingUsers = $derived.by<string[]>(() => {
 	return (typingUsers || []).filter((name) => name && name.trim() !== myName);
 });
 
+const typingDisplayText = $derived.by<string>(() => {
+	const count = displayTypingUsers.length;
+	if (count === 0) return "";
+	if (count === 1) return `${displayTypingUsers[0]} 正在输入...`;
+	if (count === 2)
+		return `${displayTypingUsers[0]}、${displayTypingUsers[1]} 正在输入...`;
+	return `${count} 人正在输入...`;
+});
+
 const activeAlertMessage = $derived.by<ChatMessageRecord | null>(() => {
 	const targetUid =
 		alertBannerUid ??
@@ -1834,9 +1853,6 @@ function markCurrentRoomReadIfReady(forceIgnoreSticky = false): void {
 		if (targetMessageUid || !isStickyAtBottom) {
 			return;
 		}
-		if (hasUnreadBlockingAutoRead()) {
-			return;
-		}
 		// 切回界面时要求持续聚焦满 READ_FOCUS_SETTLE_MS，防止切标签页路过误标已读
 		const now = Date.now();
 		if (paneFocusedSince <= 0) {
@@ -1866,6 +1882,7 @@ function markCurrentRoomReadIfReady(forceIgnoreSticky = false): void {
 	lastWrittenSeenMsgKey = seenKey;
 	writeLastSeenAt(roomId, currentUser.userKey, readTs);
 	onMarkRead?.(readTs, receiptMsg?.msgUid);
+	unreadBarDismissed = true;
 }
 
 function handleMessageScroll() {
@@ -1928,21 +1945,27 @@ function handleMessageScroll() {
 
 	if (Date.now() < suppressStickyScrollUntil) {
 		isStickyAtBottom = false;
-	} else if (movedUpward || gap > BOTTOM_RELEASE_GAP_PX) {
-		isStickyAtBottom = false;
 	} else if (
 		gap <= BOTTOM_REENGAGE_GAP_PX &&
 		!isSmoothScrolling &&
 		!touchDraggedUp &&
-		scrollDeviation === 0 &&
-		renderedWindow.end >= visibleMessages.length
+		scrollDeviation === 0
 	) {
+		ensureTailWindowForBottom();
 		isStickyAtBottom = true;
+	} else if (
+		gap > BOTTOM_RELEASE_GAP_PX ||
+		(movedUpward && gap > BOTTOM_REENGAGE_GAP_PX)
+	) {
+		isStickyAtBottom = false;
 	}
 
 	if (isStickyAtBottom) {
 		newMessagesWhileScrolled = 0;
 		showScrollBottomBtn = false;
+		if (gap <= 4) {
+			unfocusedBanner = null;
+		}
 		markCurrentRoomReadIfReady();
 	} else {
 		showScrollBottomBtn = gap > 180 || newMessagesWhileScrolled > 0;
@@ -1983,6 +2006,13 @@ async function scrollToBottom(smooth = false) {
 		if (!messageContainer) return;
 		snapScrollToBottom();
 		measureMountedRows();
+		if (typeof window !== "undefined") {
+			window.requestAnimationFrame(() => {
+				if (isStickyAtBottom && messageContainer) {
+					snapScrollToBottom();
+				}
+			});
+		}
 		return;
 	}
 
@@ -2089,7 +2119,7 @@ async function jumpToMessage(msgUid: string) {
 	isActivelyScrolling = false;
 	commitScrollDeviation();
 	showMentionHistory = false;
-	suppressStickyScrollUntil = Date.now() + 900;
+	suppressStickyScrollUntil = Date.now() + 2500;
 	isStickyAtBottom = false;
 	const targetMsg = messages.find((m) => m.msgUid === msgUid);
 	if (currentUser && targetMsg) {
@@ -2114,7 +2144,7 @@ async function jumpToMessage(msgUid: string) {
 	if (seq !== jumpSeq) return;
 	measureMountedRows();
 	const container = messageContainer;
-	const el = container?.querySelector<HTMLElement>(
+	let el = container?.querySelector<HTMLElement>(
 		`[data-msg-uid="${CSS.escape(msgUid)}"]`,
 	);
 	if (!el || !container) {
@@ -2142,12 +2172,28 @@ async function jumpToMessage(msgUid: string) {
 	const completed = await smoothScrollContainerTo(container, targetTop, seq);
 	if (!completed || seq !== jumpSeq) return;
 
+	// 二阶段真实 DOM 物理居中微调校准
+	await tick();
+	if (seq !== jumpSeq) return;
+	el = container.querySelector<HTMLElement>(
+		`[data-msg-uid="${CSS.escape(msgUid)}"]`,
+	);
+	if (el) {
+		const fcRect = container.getBoundingClientRect();
+		const feRect = el.getBoundingClientRect();
+		const finalDiff =
+			feRect.top + feRect.height / 2 - (fcRect.top + fcRect.height / 2);
+		if (Math.abs(finalDiff) > 1.5) {
+			setScrollTopProgrammatically(container.scrollTop + finalDiff);
+		}
+	}
+
 	highlightedMsgUid = msgUid;
 	highlightClearTimer = window.setTimeout(() => {
 		if (seq === jumpSeq) {
 			highlightedMsgUid = "";
 		}
-	}, 3600);
+	}, 3800);
 }
 
 async function scrollToUnreadDivider() {
@@ -2217,6 +2263,13 @@ function handleJumpToUnread() {
 function dismissUnreadBar() {
 	unreadBarDismissed = true;
 	markCurrentRoomReadIfReady(true);
+}
+
+function handleJumpToUnfocusedStart() {
+	if (!unfocusedBanner?.firstUid) return;
+	const uid = unfocusedBanner.firstUid;
+	unfocusedBanner = null;
+	void jumpToMessage(uid);
 }
 
 function triggerAutoLoadOlderHistory(manualClick = false) {
@@ -2545,6 +2598,8 @@ $effect(() => {
 		showScrollBottomBtn = false;
 		newMessagesWhileScrolled = 0;
 		maxKnownCreatedAt = 0;
+		unfocusedArrivalUids = [];
+		unfocusedBanner = null;
 		if (!targetMessageUid) {
 			void scrollToBottom();
 		}
@@ -2569,7 +2624,18 @@ $effect(() => {
 
 		if (visLen > VIRTUAL_ENABLE_THRESHOLD) {
 			virtualEnabled = true;
-			if (isFirstHydration || isStickyAtBottom) {
+			const targetIdx = targetMessageUid
+				? visMsgs.findIndex((m) => m.msgUid === targetMessageUid)
+				: -1;
+			if (targetIdx >= 0) {
+				let nextStart = Math.max(0, targetIdx - WINDOW_HALF_COUNT);
+				const nextEnd = Math.min(visLen, nextStart + WINDOW_TARGET_COUNT);
+				if (nextEnd === visLen) {
+					nextStart = Math.max(0, visLen - WINDOW_TARGET_COUNT);
+				}
+				windowStart = nextStart;
+				windowEnd = nextEnd;
+			} else if (isFirstHydration || isStickyAtBottom) {
 				windowEnd = visLen;
 				windowStart = Math.max(0, visLen - WINDOW_TARGET_COUNT);
 			} else {
@@ -2624,7 +2690,7 @@ $effect(() => {
 		for (const m of msgs) {
 			if (!seenMessageUids.has(m.msgUid)) {
 				seenMessageUids.add(m.msgUid);
-				if (m.createdAt > maxKnownCreatedAt) {
+				if (m.createdAt >= maxKnownCreatedAt) {
 					liveIncoming.push(m);
 				} else {
 					olderBatch.push(m);
@@ -2772,33 +2838,23 @@ $effect(() => {
 				? liveIncoming.length
 				: liveIncoming.filter((m) => !isMusicNoticeMessage(m)).length;
 			if (visibleIncomingCount > 0) {
-				const paneFocused = isChatPaneFocused();
-				if (
-					paneFocused &&
-					isStickyAtBottom &&
-					!isUserTouching &&
-					!targetMessageUid
-				) {
+				const currentGap = getScrollGap();
+				const wasAtBottom =
+					isStickyAtBottom || currentGap <= BOTTOM_REENGAGE_GAP_PX;
+				if (wasAtBottom && !isUserTouching && !targetMessageUid) {
+					isStickyAtBottom = true;
+					showScrollBottomBtn = false;
+					newMessagesWhileScrolled = 0;
 					void scrollToBottom();
-				} else if (!paneFocused && isStickyAtBottom && !targetMessageUid) {
-					// 后台/失焦期间不自动滚底，待 DOM 更新后若新消息溢出可视区则断开粘底并保留新消息提示
-					const incomingDelta = visibleIncomingCount;
-					const roomAtArrival = currentRoomId;
-					void tick().then(() => {
-						if (roomId !== roomAtArrival || !messageContainer) return;
-						if (isChatPaneFocused()) return;
-						const maxScroll = Math.max(
-							0,
-							messageContainer.scrollHeight - messageContainer.clientHeight,
-						);
-						const gap = Math.max(0, maxScroll - messageContainer.scrollTop);
-						if (gap > BOTTOM_REENGAGE_GAP_PX) {
-							isStickyAtBottom = false;
-							newMessagesWhileScrolled += incomingDelta;
-							showScrollBottomBtn = true;
+					if (!isChatPaneFocused()) {
+						for (const m of liveIncoming) {
+							if (showMusicNotices || !isMusicNoticeMessage(m)) {
+								unfocusedArrivalUids.push(m.msgUid);
+							}
 						}
-					});
+					}
 				} else {
+					// 用户在上方翻看历史消息：整体不用动，保留新消息提示
 					newMessagesWhileScrolled += visibleIncomingCount;
 					showScrollBottomBtn = true;
 				}
@@ -2857,6 +2913,28 @@ $effect(() => {
 	}
 	if (paneFocusedSince <= 0) {
 		paneFocusedSince = Date.now();
+	}
+	if (unfocusedArrivalUids.length > 0) {
+		const uids = [...unfocusedArrivalUids];
+		unfocusedArrivalUids = [];
+		const firstUid = uids[0];
+		void tick().then(() => {
+			if (!messageContainer || !isStickyAtBottom) return;
+			const el = messageContainer.querySelector<HTMLElement>(
+				`[data-msg-uid="${CSS.escape(firstUid)}"]`,
+			);
+			const cRect = messageContainer.getBoundingClientRect();
+			const isOffscreenAbove =
+				!el || el.getBoundingClientRect().bottom < cRect.top + 20;
+			if (isOffscreenAbove) {
+				unfocusedBanner = {
+					firstUid,
+					count: uids.length,
+				};
+			} else {
+				unfocusedBanner = null;
+			}
+		});
 	}
 	void visibleMessages;
 	void messages;
@@ -2967,12 +3045,44 @@ $effect(() => {
 
 $effect(() => {
 	const deepTarget = targetMessageUid;
-	if (!deepTarget) return;
-	if (messages.some((m) => m.msgUid === deepTarget)) {
-		void tick().then(() => {
-			void jumpToMessage(deepTarget);
+	if (!deepTarget) {
+		isLocatingTargetMessage = false;
+		return;
+	}
+
+	// 只要存在定位目标，锁定粘底逻辑，防止任何异步重排将视口扯回最底部
+	isStickyAtBottom = false;
+	suppressStickyScrollUntil = Date.now() + 2500;
+
+	const found = messages.some((m) => m.msgUid === deepTarget);
+	if (found) {
+		isLocatingTargetMessage = false;
+		targetMessageNotFound = false;
+		if (!isJumpingToTarget) {
+			isJumpingToTarget = true;
+			void tick().then(async () => {
+				await jumpToMessage(deepTarget);
+				isJumpingToTarget = false;
+				onClearTargetMessage?.();
+			});
+		}
+		return;
+	}
+
+	// 目标尚未在当前列表中：若房间已就绪且还有更早历史，自动追溯拉取更早批次历史
+	if (roomReady && messages.length > 0) {
+		if (hasMoreHistory) {
+			isLocatingTargetMessage = true;
+			targetMessageNotFound = false;
+			if (!isLoadingHistory) {
+				onLoadHistory?.();
+			}
+		} else if (!isLoadingHistory) {
+			// 已全部加载完毕仍未找到：说明该消息已被撤回或物理删除
+			isLocatingTargetMessage = false;
+			targetMessageNotFound = true;
 			onClearTargetMessage?.();
-		});
+		}
 	}
 });
 
@@ -3145,12 +3255,15 @@ function syncInputState(): void {
 		) {
 			inputEl.innerHTML = "";
 		}
+		if (typingTimer) clearTimeout(typingTimer);
+		onTyping?.(false);
+		lastTypingSentAt = 0;
 	} else {
 		delete inputEl.dataset.empty;
+		triggerTyping();
 	}
 	saveRoomDraft(roomId, inputText);
 	syncMentionTrigger();
-	triggerTyping();
 }
 
 function createMentionPillElement(name: string, userKey?: string): HTMLElement {
@@ -3228,8 +3341,7 @@ function insertNewlineAtCursor(): void {
 
 function handleBackspaceMentionPill(): boolean {
 	const sel = window.getSelection();
-	if (!sel || !sel.isCollapsed || sel.rangeCount === 0 || !inputEl)
-		return false;
+	if (!sel?.isCollapsed || sel.rangeCount === 0 || !inputEl) return false;
 	const range = sel.getRangeAt(0);
 	const container = range.startContainer;
 	const offset = range.startOffset;
@@ -3312,7 +3424,7 @@ function formatCandidateMentionName(candidate: {
 		const isExt = isExternalMatrixIdentity(candidate);
 		if (isExt) {
 			const extOrigin = resolveExternalOrigin(candidate, interconnectSites);
-			if (extOrigin && extOrigin.cleanName && extOrigin.siteName) {
+			if (extOrigin?.cleanName && extOrigin.siteName) {
 				return `${extOrigin.cleanName} · ${extOrigin.siteName}`;
 			}
 		} else if (
@@ -3361,8 +3473,7 @@ function syncMentionTrigger(): void {
 	}
 	const sel = window.getSelection();
 	if (
-		!sel ||
-		!sel.isCollapsed ||
+		!sel?.isCollapsed ||
 		sel.rangeCount === 0 ||
 		!inputEl.contains(sel.anchorNode)
 	) {
@@ -3595,6 +3706,8 @@ function handleSend() {
 	uploadError = "";
 	activePopover = "none";
 	unreadBarDismissed = true;
+	unfocusedBanner = null;
+	unfocusedArrivalUids = [];
 	isStickyAtBottom = true;
 	void scrollToBottom();
 }
@@ -4573,7 +4686,60 @@ function removePendingImage(index: number) {
           </div>
         {/if}
 
-        {#if showUnreadJumpBar}
+        {#if isLocatingTargetMessage}
+          <div class="chat-mention-floating-bar chat-unread-floating-bar" role="status" aria-live="polite">
+            <div class="flex-1 min-w-0 flex items-center gap-2 text-[var(--deep-text)] dark:text-white/90 text-xs py-0.5">
+              <svg class="w-3.5 h-3.5 animate-spin text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+              <span class="font-medium truncate">正在追溯历史记录，定位目标消息...</span>
+            </div>
+          </div>
+        {:else if targetMessageNotFound}
+          <div class="chat-mention-floating-bar" role="status" aria-live="polite">
+            <div class="flex-1 min-w-0 flex items-center gap-2 text-xs text-[var(--chat-meta-color)] py-0.5">
+              <span>该消息可能已被撤回或不存在</span>
+            </div>
+            <button
+              type="button"
+              class="w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] cursor-pointer shrink-0 text-xs"
+              aria-label="关闭提示"
+              onclick={() => { targetMessageNotFound = false; }}
+            >
+              ×
+            </button>
+          </div>
+        {/if}
+
+        {#if unfocusedBanner}
+          <div class="chat-mention-floating-bar chat-unread-floating-bar" role="status" aria-live="polite">
+            <button
+              type="button"
+              class="flex-1 min-w-0 flex items-center gap-2 text-left bg-transparent border-none p-0 cursor-pointer text-inherit"
+              onclick={handleJumpToUnfocusedStart}
+            >
+              <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="17 11 12 6 7 11" />
+                <polyline points="17 18 12 13 7 18" />
+              </svg>
+              <span class="font-semibold text-[var(--deep-text)] dark:text-white/90 truncate">
+                离开期间有 {unfocusedBanner.count} 条新消息
+              </span>
+              <span class="chat-mention-jump-pill shrink-0">
+                定位到未读起始 ↑
+              </span>
+            </button>
+            <button
+              type="button"
+              class="w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] cursor-pointer shrink-0 text-xs"
+              aria-label="关闭提示"
+              onclick={() => { unfocusedBanner = null; }}
+            >
+              ×
+            </button>
+          </div>
+        {:else if showUnreadJumpBar}
           <div class="chat-mention-floating-bar chat-unread-floating-bar" role="status" aria-live="polite">
             <button
               type="button"
@@ -4760,6 +4926,8 @@ function removePendingImage(index: number) {
           aria-label="滚动到底部最新消息"
           onclick={() => {
             unreadBarDismissed = true;
+            unfocusedBanner = null;
+            unfocusedArrivalUids = [];
             void scrollToBottom(true);
             markCurrentRoomReadIfReady(true);
           }}
@@ -5021,7 +5189,7 @@ function removePendingImage(index: number) {
           <span class="chat-typing-dot"></span>
           <span class="chat-typing-dot"></span>
         </span>
-        <span>{displayTypingUsers.join("、")} 正在输入...</span>
+        <span>{typingDisplayText}</span>
       </div>
     {/if}
 

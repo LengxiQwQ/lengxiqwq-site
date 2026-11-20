@@ -17,6 +17,7 @@ import type { ChatMusicTrack } from "./musicTypes";
 export const GUEST_TOKEN_STORAGE_KEY = "fireflyChatGuestToken";
 export const GUEST_EMAIL_STORAGE_KEY = "fireflyChatGuestMeta";
 export const WALINE_USER_META_KEY = "WALINE_USER_META";
+export const CHAT_SESSION_USER_KEY = "fireflyChatSessionUser";
 
 export interface StoredGuestMeta {
 	nickname: string;
@@ -329,6 +330,10 @@ export function clearWalineAuth(): void {
 		localStorage.removeItem("WALINE_USER");
 		localStorage.removeItem("WALINE_ADMIN_TOKEN");
 		localStorage.removeItem("TOKEN");
+		const storedUser = readStoredChatUser();
+		if (storedUser?.authType === "waline") {
+			clearStoredChatUser();
+		}
 		dispatchWalineUserStorageEvent(null, prevValue);
 	} catch {
 		// Ignore
@@ -488,9 +493,170 @@ export function clearGuestAuth(): void {
 	if (typeof localStorage === "undefined") return;
 	try {
 		localStorage.removeItem(GUEST_TOKEN_STORAGE_KEY);
+		const storedUser = readStoredChatUser();
+		if (storedUser?.authType === "guest") {
+			clearStoredChatUser();
+		}
 	} catch {
 		// Ignore
 	}
+}
+
+/**
+ * 校验并持久化已认证的聊天会话用户实体。
+ * 在接收到 room:init / auth:result / 更新个人资料 时调用，
+ * 确保页面刷新或重载时可首帧秒级恢复已登录态。
+ */
+export function persistStoredChatUser(user: ChatSessionUser): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		if (
+			!user ||
+			typeof user !== "object" ||
+			typeof user.userKey !== "string" ||
+			!user.userKey.trim() ||
+			(user.authType !== "waline" && user.authType !== "guest")
+		) {
+			return;
+		}
+		localStorage.setItem(CHAT_SESSION_USER_KEY, JSON.stringify(user));
+	} catch {
+		// Ignore storage errors (quota, incognito, etc.)
+	}
+}
+
+/**
+ * 读取本地缓存的聊天会话用户实体。
+ */
+export function readStoredChatUser(): ChatSessionUser | null {
+	if (typeof localStorage === "undefined") return null;
+	try {
+		const raw = localStorage.getItem(CHAT_SESSION_USER_KEY);
+		if (!raw) return null;
+		const parsed = JSON.parse(raw) as Partial<ChatSessionUser>;
+		if (
+			parsed &&
+			typeof parsed.userKey === "string" &&
+			parsed.userKey.trim() &&
+			(parsed.authType === "waline" || parsed.authType === "guest") &&
+			typeof parsed.name === "string" &&
+			parsed.name.trim()
+		) {
+			return parsed as ChatSessionUser;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * 清除本地缓存的聊天会话用户实体。
+ */
+export function clearStoredChatUser(): void {
+	if (typeof localStorage === "undefined") return;
+	try {
+		localStorage.removeItem(CHAT_SESSION_USER_KEY);
+	} catch {
+		// Ignore
+	}
+}
+
+/**
+ * 从本地凭证多层推导与恢复首帧会话用户。
+ * 1. 若存在 CHAT_SESSION_USER_KEY 且与当前 token 匹配，直接返回完整实体；
+ * 2. 若无专用缓存但有 WALINE_USER / 访客信息，即时合成保底合法用户，确保 0 延迟首帧已登录；
+ * 3. 若无凭据则返回 null。
+ */
+export function readInitialCachedUser(): ChatSessionUser | null {
+	if (typeof window === "undefined" || typeof localStorage === "undefined") {
+		return null;
+	}
+	const currentAuth = resolveInitialAuth();
+	if (!currentAuth) {
+		clearStoredChatUser();
+		return null;
+	}
+
+	// 1. 优先读取完整缓存的 ChatSessionUser
+	const storedUser = readStoredChatUser();
+	if (storedUser && storedUser.authType === currentAuth.kind) {
+		return storedUser;
+	}
+
+	// 2. 二级保底：从 WALINE_USER 推导（例如刚在评论区登录或升级后的首访）
+	if (currentAuth.kind === "waline") {
+		try {
+			const rawWaline = localStorage.getItem("WALINE_USER");
+			if (rawWaline) {
+				const walineData = JSON.parse(rawWaline) as {
+					token?: string;
+					display_name?: string;
+					email?: string;
+					type?: string;
+					avatar?: string;
+					url?: string;
+					label?: string;
+					objectId?: string | number;
+					mailMd5?: string;
+				};
+				const name =
+					(typeof walineData.display_name === "string" &&
+						walineData.display_name.trim()) ||
+					"用户";
+				const isAdmin =
+					walineData.type === "administrator" || walineData.type === "admin";
+				const rawAvatar =
+					typeof walineData.avatar === "string" && walineData.avatar.trim()
+						? walineData.avatar.trim()
+						: walineData.mailMd5
+							? `https://cravatar.cn/avatar/${walineData.mailMd5}?d=mp`
+							: "";
+				const synthesizedUser: ChatSessionUser = {
+					userKey:
+						walineData.objectId !== undefined
+							? `waline:${walineData.objectId}`
+							: "waline:me",
+					authType: "waline",
+					name,
+					avatar: rawAvatar,
+					url: typeof walineData.url === "string" ? walineData.url.trim() : "",
+					badge: isAdmin
+						? "站长"
+						: (typeof walineData.label === "string" &&
+								walineData.label.trim()) ||
+							"用户",
+					badgeType: isAdmin ? "host" : "accent",
+					isAdmin,
+					status: "",
+				};
+				return synthesizedUser;
+			}
+		} catch {
+			// Ignore
+		}
+	}
+
+	// 3. 二级保底：从 Guest 元数据推导
+	if (currentAuth.kind === "guest") {
+		const guestMeta = readStoredGuestMeta();
+		if (guestMeta.nickname) {
+			const synthesizedGuest: ChatSessionUser = {
+				userKey: "guest",
+				authType: "guest",
+				name: guestMeta.nickname,
+				avatar: guestMeta.email ? previewAvatarFromEmail(guestMeta.email) : "",
+				url: guestMeta.url || "",
+				badge: "访客",
+				badgeType: "tag",
+				isAdmin: false,
+				status: "",
+			};
+			return synthesizedGuest;
+		}
+	}
+
+	return null;
 }
 
 export function readStoredGuestMeta(): StoredGuestMeta {
