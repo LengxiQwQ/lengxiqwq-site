@@ -27,11 +27,21 @@ import {
 	uploadChatMedia,
 } from "./chatClient";
 import { positionChatFloating } from "./chatFloating";
+import {
+	type ChatDraft,
+	deleteChatMentionBeforeCaret,
+	getChatMentionQuery,
+	insertChatMention,
+	readChatComposer,
+	trimChatDraft,
+	writeChatComposer,
+} from "./chatMentions";
 import { setChatLightboxSourceProvider } from "./chatLightbox";
 import { closeChatActionSheet, fadeChatSheetBackdrop } from "./chatSheetMotion";
 import type {
 	ChatActiveThreadItem,
 	ChatMentionCandidate,
+	ChatMentionEntity,
 	ChatMessageRecord,
 	ChatOnlineMember,
 	ChatReadReceipt,
@@ -100,7 +110,7 @@ interface Props {
 	typingUsers?: string[];
 	readReceipts?: Record<string, ChatReadReceipt[]>;
 	onReaction?: (msgUid: string, key: string) => void;
-	onEditMessage?: (msgUid: string, content: string) => void;
+	onEditMessage?: (msgUid: string, content: string, entities: ChatMentionEntity[]) => void;
 	onPinMessage?: (msgUid: string, unpin?: boolean) => void;
 	onVotePoll?: (pollUid: string, answerId: string) => void;
 	onEndPoll?: (pollUid: string) => void;
@@ -116,7 +126,7 @@ interface Props {
 	onSendMessage: (
 		content: string,
 		attachments: ImageAttachment[],
-		mentionKeys: string[],
+		mentionEntities: ChatMentionEntity[],
 		replyToUid?: string,
 		threadRootUid?: string,
 	) => void;
@@ -231,6 +241,7 @@ const {
 }: Props = $props();
 
 let inputText = $state("");
+let inputMentionEntities = $state<ChatMentionEntity[]>([]);
 let pendingImages = $state<ImageAttachment[]>([]);
 let replyingTo = $state<ChatMessageRecord | null>(null);
 let editingMessage = $state<ChatMessageRecord | null>(null);
@@ -375,19 +386,7 @@ let showMusicNotices = $state(false);
 
 let mentionMenuOpen = $state(false);
 let mentionQuery = $state("");
-let mentionTriggerStart = $state(-1);
-let mentionActiveIndex = $state(0);
-let selectedMentionMap = $state<Record<string, string[]>>({});
-
-function addSelectedMentionKey(name: string, userKey?: string) {
-	if (!name || !userKey) return;
-	const existing = selectedMentionMap[name] ?? [];
-	if (existing.includes(userKey)) return;
-	selectedMentionMap = {
-		...selectedMentionMap,
-		[name]: [...existing, userKey],
-	};
-}
+let mentionActiveIndex = $state(-1);
 
 let showMentionHistory = $state(false);
 let showThreadListMenu = $state(false);
@@ -1470,43 +1469,17 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 		if (!m.userKey || m.userKey === currentUser?.userKey) continue;
 		const isExt = isExternalMatrixIdentity(m);
 		if (isExt && !allowExternal) continue;
-		const cleanName = isExt
-			? resolveExternalOrigin(
-					{
-						name: m.name,
-						userKey: m.userKey,
-						badge: m.badge,
-						site: m.site,
-						siteUrl: m.siteUrl,
-						url: m.url,
-					},
-					interconnectSites,
-				).cleanName || m.name
-			: m.name;
-		map.set(m.userKey, isExt ? { ...m, name: cleanName } : m);
+		map.set(m.userKey, m);
 	}
 	for (const m of onlineMembers) {
 		if (!m.userKey || m.userKey === currentUser?.userKey) continue;
 		const isExt = isExternalMatrixIdentity(m);
 		if (isExt && !allowExternal) continue;
-		const cleanName = isExt
-			? resolveExternalOrigin(
-					{
-						name: m.name,
-						userKey: m.userKey,
-						badge: m.badge,
-						site: m.site,
-						siteUrl: m.siteUrl,
-						url: m.url,
-					},
-					interconnectSites,
-				).cleanName || m.name
-			: m.name;
 		const prev = map.get(m.userKey);
 		map.set(m.userKey, {
 			userKey: m.userKey,
 			authType: m.authType,
-			name: cleanName,
+			name: m.name,
 			avatar: m.avatar,
 			url: m.url,
 			site: m.site,
@@ -1549,9 +1522,21 @@ const filteredMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 			return "room".includes(q) || "all".includes(q) || "所有人".includes(q);
 		}
 		return (
-			c.name.toLowerCase().includes(q) || c.userKey.toLowerCase().includes(q)
+			formatCandidateMentionName(c).toLowerCase().includes(q) ||
+			c.userKey.toLowerCase().includes(q)
 		);
 	});
+});
+
+const repeatedMentionLabels = $derived.by(() => {
+	const seen = new Set<string>();
+	const repeated = new Set<string>();
+	for (const candidate of filteredMentionCandidates) {
+		const label = formatCandidateMentionName(candidate);
+		if (seen.has(label)) repeated.add(label);
+		seen.add(label);
+	}
+	return repeated;
 });
 
 const unreadMentionSet = $derived(new Set(unreadMentionUids));
@@ -3134,11 +3119,7 @@ $effect(() => {
 	return () => observer.disconnect();
 });
 
-let mentionSavedRange: {
-	textNode: Text;
-	atIndex: number;
-	caretOffset: number;
-} | null = null;
+let mentionSavedRange: Range | null = null;
 
 function focusInput(toEnd = true): void {
 	if (!inputEl) return;
@@ -3165,64 +3146,20 @@ function placeCaretAfter(node: Node): void {
 	sel.addRange(range);
 }
 
-function serializeInputToText(container: HTMLElement | null): string {
-	if (!container) return "";
-	let text = "";
-	function walk(node: Node) {
-		if (node.nodeType === Node.TEXT_NODE) {
-			text += (node.nodeValue || "").replace(/\u00A0/g, " ");
-			return;
-		}
-		if (node.nodeType === Node.ELEMENT_NODE) {
-			const el = node as HTMLElement;
-			if (el.classList.contains("chat-mention-pill")) {
-				const name =
-					el.dataset.mentionName ||
-					el.textContent?.replace(/^@/, "").trim() ||
-					"";
-				text += `@${name}`;
-				const next = el.nextSibling;
-				const nextStartsWithSpace =
-					next &&
-					next.nodeType === Node.TEXT_NODE &&
-					/^\s/.test(next.nodeValue || "");
-				if (!nextStartsWithSpace) {
-					text += " ";
-				}
-				return;
-			}
-			if (el.tagName === "BR") {
-				text += "\n";
-				return;
-			}
-			const isBlock = el.tagName === "DIV" || el.tagName === "P";
-			for (let i = 0; i < el.childNodes.length; i++) {
-				walk(el.childNodes[i]);
-			}
-			if (isBlock && el !== container && el.nextSibling) {
-				text += "\n";
-			}
-		}
-	}
-	walk(container);
-	return text;
-}
-
 function getDraftStorageKey(rId: string): string {
 	return `chat_input_draft:${rId || "chat"}`;
 }
 
-function saveRoomDraft(rId: string, text: string): void {
+function saveRoomDraft(rId: string, draft: ChatDraft): void {
 	if (typeof window === "undefined" || !rId || editingMessage) return;
 	const key = getDraftStorageKey(rId);
-	const trimmed = text.trim();
-	if (!trimmed) {
+	if (!draft.content.trim()) {
 		try {
 			localStorage.removeItem(key);
 		} catch {}
 	} else {
 		try {
-			localStorage.setItem(key, text);
+			localStorage.setItem(key, JSON.stringify({ version: 2, ...draft }));
 		} catch {}
 	}
 }
@@ -3232,7 +3169,14 @@ function loadRoomDraft(rId: string): void {
 	try {
 		const saved = localStorage.getItem(getDraftStorageKey(rId));
 		if (saved?.trim()) {
-			setInputFromText(saved, false);
+			let draft: ChatDraft = { content: saved, mentionEntities: [] };
+			try {
+				const parsed = JSON.parse(saved);
+				if (parsed?.version === 2 && typeof parsed.content === "string" && Array.isArray(parsed.mentionEntities)) {
+					draft = parsed;
+				}
+			} catch {}
+			setInputDraft(draft, false);
 		} else if (inputEl && !editingMessage) {
 			clearInput();
 		}
@@ -3248,7 +3192,9 @@ function clearRoomDraft(rId: string): void {
 
 function syncInputState(): void {
 	if (!inputEl) return;
-	inputText = serializeInputToText(inputEl);
+	const draft = readChatComposer(inputEl);
+	inputText = draft.content;
+	inputMentionEntities = draft.mentionEntities;
 	const hasPills = inputEl.querySelector(".chat-mention-pill") !== null;
 	const isEffectivelyEmpty = !inputText.trim() && !hasPills;
 	if (isEffectivelyEmpty) {
@@ -3267,43 +3213,8 @@ function syncInputState(): void {
 		delete inputEl.dataset.empty;
 		triggerTyping();
 	}
-	saveRoomDraft(roomId, inputText);
+	saveRoomDraft(roomId, draft);
 	syncMentionTrigger();
-}
-
-function createMentionPillElement(name: string, userKey?: string): HTMLElement {
-	const pill = document.createElement("span");
-	pill.contentEditable = "false";
-	pill.className = "chat-mention-pill";
-	pill.dataset.mentionName = name;
-	if (userKey) {
-		pill.dataset.userKey = userKey;
-	}
-	pill.textContent = `@${name}`;
-	return pill;
-}
-
-function insertMentionPill(targetMentionName: string, userKey?: string): void {
-	if (!inputEl) return;
-	const pill = createMentionPillElement(targetMentionName, userKey);
-	const space = document.createTextNode("\u00A0");
-
-	focusInput(false);
-	const sel = window.getSelection();
-	if (sel && sel.rangeCount > 0 && inputEl.contains(sel.anchorNode)) {
-		const range = sel.getRangeAt(0);
-		range.deleteContents();
-		range.insertNode(pill);
-		if (pill.parentNode) {
-			pill.parentNode.insertBefore(space, pill.nextSibling);
-		}
-		placeCaretAfter(space);
-	} else {
-		inputEl.appendChild(pill);
-		inputEl.appendChild(space);
-		placeCaretAfter(space);
-	}
-	syncInputState();
 }
 
 function insertAtCursor(snippet: string): void {
@@ -3344,77 +3255,6 @@ function insertNewlineAtCursor(): void {
 	syncInputState();
 }
 
-function handleBackspaceMentionPill(): boolean {
-	const sel = window.getSelection();
-	if (!sel?.isCollapsed || sel.rangeCount === 0 || !inputEl) return false;
-	const range = sel.getRangeAt(0);
-	const container = range.startContainer;
-	const offset = range.startOffset;
-
-	if (!inputEl.contains(container)) return false;
-
-	if (container.nodeType === Node.TEXT_NODE) {
-		const textNode = container as Text;
-		const val = textNode.nodeValue || "";
-
-		if (offset === 0) {
-			const prev = textNode.previousSibling;
-			if (
-				prev instanceof HTMLElement &&
-				prev.classList.contains("chat-mention-pill")
-			) {
-				prev.remove();
-				syncInputState();
-				return true;
-			}
-		}
-
-		if (offset === 1 && (val.charAt(0) === " " || val.charAt(0) === "\u00A0")) {
-			const prev = textNode.previousSibling;
-			if (
-				prev instanceof HTMLElement &&
-				prev.classList.contains("chat-mention-pill")
-			) {
-				if (val.length === 1) {
-					textNode.remove();
-				} else {
-					textNode.nodeValue = val.slice(1);
-				}
-				prev.remove();
-				syncInputState();
-				return true;
-			}
-		}
-	} else if (container.nodeType === Node.ELEMENT_NODE) {
-		const childBefore = container.childNodes[offset - 1];
-		if (
-			childBefore instanceof HTMLElement &&
-			childBefore.classList.contains("chat-mention-pill")
-		) {
-			childBefore.remove();
-			syncInputState();
-			return true;
-		}
-
-		if (childBefore && childBefore.nodeType === Node.TEXT_NODE) {
-			const val = childBefore.nodeValue || "";
-			if (val === " " || val === "\u00A0" || val === "") {
-				const prev = childBefore.previousSibling;
-				if (
-					prev instanceof HTMLElement &&
-					prev.classList.contains("chat-mention-pill")
-				) {
-					childBefore.remove();
-					prev.remove();
-					syncInputState();
-					return true;
-				}
-			}
-		}
-	}
-	return false;
-}
-
 function formatCandidateMentionName(candidate: {
 	name: string;
 	userKey?: string;
@@ -3432,12 +3272,9 @@ function formatCandidateMentionName(candidate: {
 			if (extOrigin?.cleanName && extOrigin.siteName) {
 				return `${extOrigin.cleanName} · ${extOrigin.siteName}`;
 			}
-		} else if (
-			!rawName.includes("·") &&
-			!rawName.includes("•") &&
-			!rawName.includes("・")
-		) {
-			return `${rawName} · 冷汐的杂货铺`;
+		} else {
+			const suffix = ` · ${localSiteName}`;
+			return rawName.endsWith(suffix) ? rawName : rawName + suffix;
 		}
 	}
 	return normalizeDotSpacing(rawName);
@@ -3446,14 +3283,12 @@ function formatCandidateMentionName(candidate: {
 $effect(() => {
 	if (mentionEvent && mentionEvent.seq !== lastMentionSeq) {
 		lastMentionSeq = mentionEvent.seq;
-		const targetMentionName = formatCandidateMentionName({
-			name: mentionEvent.name,
-			userKey: mentionEvent.userKey,
-		});
-		if (mentionEvent.userKey) {
-			addSelectedMentionKey(targetMentionName, mentionEvent.userKey);
-		}
-		insertMentionPill(targetMentionName, mentionEvent.userKey);
+		const userKey = mentionEvent.userKey;
+		if (!inputEl || !userKey) return;
+		const candidate = mergedMentionCandidates.find((member) => member.userKey === userKey);
+		const label = formatCandidateMentionName(candidate ?? { name: mentionEvent.name, userKey });
+		insertChatMention(inputEl, label, userKey);
+		syncInputState();
 	}
 });
 
@@ -3470,173 +3305,39 @@ $effect(() => {
 });
 
 function syncMentionTrigger(): void {
-	if (!inputEl) {
-		mentionMenuOpen = false;
-		mentionTriggerStart = -1;
-		mentionSavedRange = null;
-		return;
-	}
-	const sel = window.getSelection();
-	if (
-		!sel?.isCollapsed ||
-		sel.rangeCount === 0 ||
-		!inputEl.contains(sel.anchorNode)
-	) {
-		mentionMenuOpen = false;
-		mentionTriggerStart = -1;
-		mentionSavedRange = null;
-		return;
-	}
-
-	const range = sel.getRangeAt(0);
-	const container = range.startContainer;
-	const caretOffset = range.startOffset;
-
-	if (container.nodeType === Node.TEXT_NODE) {
-		const textNode = container as Text;
-		const beforeCaret = textNode.nodeValue?.slice(0, caretOffset) || "";
-		const match = beforeCaret.match(/@([^\s@]{0,16})$/);
-		if (match && mergedMentionCandidates.length > 0) {
-			mentionQuery = match[1] ?? "";
-			mentionTriggerStart = caretOffset - mentionQuery.length - 1;
-			mentionSavedRange = {
-				textNode,
-				atIndex: mentionTriggerStart,
-				caretOffset,
-			};
-			mentionActiveIndex = 0;
-			mentionMenuOpen = true;
-			activePopover = "none";
-			return;
-		}
-	}
-
-	mentionMenuOpen = false;
-	mentionTriggerStart = -1;
-	mentionSavedRange = null;
+	const match = getChatMentionQuery(inputEl);
+	mentionSavedRange = match?.range ?? null;
+	mentionMenuOpen = Boolean(match && mergedMentionCandidates.length);
+	mentionQuery = match?.query ?? "";
+	mentionActiveIndex = -1;
+	if (mentionMenuOpen) activePopover = "none";
 }
 
 function selectMentionCandidate(candidate: ChatMentionCandidate): void {
-	if (!inputEl) return;
-	const targetMentionName = formatCandidateMentionName(candidate);
-	addSelectedMentionKey(targetMentionName, candidate.userKey);
-
-	const pill = createMentionPillElement(targetMentionName, candidate.userKey);
-	const space = document.createTextNode("\u00A0");
-
-	if (mentionSavedRange && inputEl.contains(mentionSavedRange.textNode)) {
-		const { textNode, atIndex, caretOffset } = mentionSavedRange;
-		const fullText = textNode.nodeValue || "";
-		const beforeText = fullText.slice(0, atIndex);
-		const afterText = fullText.slice(caretOffset);
-
-		textNode.nodeValue = beforeText;
-		const parent = textNode.parentNode;
-		if (parent) {
-			const nextSibling = textNode.nextSibling;
-			parent.insertBefore(pill, nextSibling);
-			parent.insertBefore(space, pill.nextSibling);
-			if (afterText) {
-				const afterNode = document.createTextNode(afterText);
-				parent.insertBefore(afterNode, space.nextSibling);
-			}
-		}
-		placeCaretAfter(space);
-	} else {
-		insertMentionPill(targetMentionName, candidate.userKey);
-	}
-
-	mentionMenuOpen = false;
-	mentionTriggerStart = -1;
-	mentionQuery = "";
-	mentionSavedRange = null;
-
+	if (!inputEl || !mentionSavedRange) return;
+	insertChatMention(inputEl, formatCandidateMentionName(candidate), candidate.userKey, mentionSavedRange);
 	syncInputState();
-	inputEl.focus();
 }
 
-function setInputFromText(rawText: string, shouldFocus = true): void {
-	if (!inputEl) {
-		inputText = rawText;
-		return;
-	}
-	inputEl.innerHTML = "";
-	if (!rawText) {
-		inputText = "";
-		inputEl.dataset.empty = "true";
-		return;
-	}
-
-	const mentionPattern = /@([^\s@]+(?:\s[·•・]\s[^\s@]+)?)(?=\s|$)/g;
-	let lastIndex = 0;
-	let match = mentionPattern.exec(rawText);
-
-	while (match !== null) {
-		const matchStart = match.index;
-		const matchEnd = match.index + match[0].length;
-		if (matchStart > lastIndex) {
-			inputEl.appendChild(
-				document.createTextNode(rawText.slice(lastIndex, matchStart)),
-			);
-		}
-		const name = match[1];
-		const pill = createMentionPillElement(name);
-		inputEl.appendChild(pill);
-		inputEl.appendChild(document.createTextNode("\u00A0"));
-		lastIndex = matchEnd + (rawText.charAt(matchEnd) === " " ? 1 : 0);
-		match = mentionPattern.exec(rawText);
-	}
-
-	if (lastIndex < rawText.length) {
-		inputEl.appendChild(document.createTextNode(rawText.slice(lastIndex)));
-	}
-
+function setInputDraft(draft: ChatDraft, shouldFocus = true): void {
+	if (!inputEl) return;
+	writeChatComposer(inputEl, draft);
 	syncInputState();
-	if (shouldFocus) {
-		focusInput(true);
-	}
+	if (shouldFocus) focusInput(true);
 }
 
 function clearInput(): void {
 	inputText = "";
+	inputMentionEntities = [];
 	if (inputEl) {
-		inputEl.innerHTML = "";
+		inputEl.replaceChildren();
 		inputEl.dataset.empty = "true";
 	}
 	mentionSavedRange = null;
 	mentionMenuOpen = false;
-	mentionTriggerStart = -1;
 	mentionQuery = "";
 }
 
-function collectMentionKeys(content: string): string[] {
-	const lower = content.toLowerCase();
-	const keys = new Set<string>();
-	for (const [name, keyList] of Object.entries(selectedMentionMap)) {
-		if (lower.includes(`@${name.toLowerCase()}`)) {
-			for (const key of keyList) {
-				keys.add(key);
-			}
-		}
-	}
-	if (inputEl) {
-		for (const pill of inputEl.querySelectorAll<HTMLElement>(
-			".chat-mention-pill[data-user-key]",
-		)) {
-			const k = pill.dataset.userKey;
-			if (k) keys.add(k);
-		}
-	}
-	if (
-		currentUser?.isAdmin &&
-		/(?:^|[^A-Za-z0-9._+-])@(?:room|all|所有人)(?=$|[\s,，。、！!？?：:；;()[\]{}<>"'~`’”）】》」』])/i.test(
-			content,
-		)
-	) {
-		keys.add("room");
-	}
-	return Array.from(keys);
-}
 function handleStartReply(msg: ChatMessageRecord) {
 	if (!currentUser) {
 		onRequireAuth();
@@ -3650,7 +3351,7 @@ function handleStartReply(msg: ChatMessageRecord) {
 
 function handleStartEdit(msg: ChatMessageRecord) {
 	editingMessage = msg;
-	setInputFromText(msg.content);
+	setInputDraft({ content: msg.content, mentionEntities: msg.mentionEntities ?? [] });
 	focusInput(true);
 }
 
@@ -3679,7 +3380,7 @@ function triggerTyping() {
 }
 
 function handleSend() {
-	const trimmed = inputText.trim();
+	const { content: trimmed, mentionEntities } = trimChatDraft({ content: inputText, mentionEntities: inputMentionEntities });
 	if (!trimmed && pendingImages.length === 0) return;
 	if (!currentUser) {
 		onRequireAuth();
@@ -3691,7 +3392,7 @@ function handleSend() {
 	lastTypingSentAt = 0;
 
 	if (editingMessage) {
-		onEditMessage?.(editingMessage.msgUid, trimmed);
+		onEditMessage?.(editingMessage.msgUid, trimmed, mentionEntities);
 		editingMessage = null;
 		clearInput();
 		loadRoomDraft(roomId);
@@ -3700,15 +3401,13 @@ function handleSend() {
 		return;
 	}
 
-	const mentionKeys = collectMentionKeys(trimmed);
 	const replyToUid = replyingTo?.msgUid || "";
-	onSendMessage(trimmed, pendingImages, mentionKeys, replyToUid || undefined);
+	onSendMessage(trimmed, pendingImages, mentionEntities, replyToUid || undefined);
 	clearInput();
 	clearRoomDraft(roomId);
 	pendingImages = [];
 	isPreviewingMarkdown = false;
 	replyingTo = null;
-	selectedMentionMap = {};
 	uploadError = "";
 	activePopover = "none";
 	unreadBarDismissed = true;
@@ -3746,17 +3445,13 @@ function handleKeydown(e: KeyboardEvent) {
 		}
 		if (e.key === "ArrowDown") {
 			e.preventDefault();
-			mentionActiveIndex = (mentionActiveIndex - 1 + count) % count;
+			mentionActiveIndex = mentionActiveIndex < 0 ? 0 : (mentionActiveIndex - 1 + count) % count;
 			return;
 		}
-		if (e.key === "Enter" || e.key === "Tab") {
+		const picked = filteredMentionCandidates[mentionActiveIndex];
+		if (picked && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
 			e.preventDefault();
-			const picked =
-				filteredMentionCandidates[mentionActiveIndex] ??
-				filteredMentionCandidates[0];
-			if (picked) {
-				selectMentionCandidate(picked);
-			}
+			selectMentionCandidate(picked);
 			return;
 		}
 		if (e.key === "Escape") {
@@ -3766,11 +3461,10 @@ function handleKeydown(e: KeyboardEvent) {
 		}
 	}
 
-	if (e.key === "Backspace") {
-		if (handleBackspaceMentionPill()) {
-			e.preventDefault();
-			return;
-		}
+	if (e.key === "Backspace" && deleteChatMentionBeforeCaret(inputEl)) {
+		e.preventDefault();
+		syncInputState();
+		return;
 	}
 
 	if (e.key === "Escape") {
@@ -4882,8 +4576,6 @@ function removePendingImage(index: number) {
                 isSelf={isSelf}
                 isMentionedMe={isMentionedToMe(msg)}
                 isHighlighted={highlightedMsgUid === msg.msgUid}
-                currentUserName={currentUser?.name || ""}
-                currentUserSite={currentUser?.site || localSiteName}
                 currentUserKey={currentUser?.userKey}
                 isAdmin={isAdmin}
                 isPinned={pinnedUidSet.has(msg.msgUid)}
@@ -5103,13 +4795,11 @@ function removePendingImage(index: number) {
               type="button"
               role="option"
               aria-selected={idx === mentionActiveIndex}
-              title={`@${displayPersonName} · ${personBadgeLabel}`}
+              title={isRoomMention ? "全房提醒" : `${formatCandidateMentionName(person)} (${person.userKey})`}
               class="chat-mention-ac-item {idx === mentionActiveIndex ? 'active' : ''}"
               onmouseenter={() => (mentionActiveIndex = idx)}
-              onmousedown={(e) => {
-                e.preventDefault();
-                selectMentionCandidate(person);
-              }}
+              onpointerdown={(event) => event.preventDefault()}
+              onclick={() => selectMentionCandidate(person)}
             >
               <!-- 第一栏（最左）：头像与昵称左对齐，超长截断并支持悬停 Tooltip 完整补全 -->
               <div class="chat-mention-col-user">
@@ -5136,12 +4826,14 @@ function removePendingImage(index: number) {
                     ></span>
                   {/if}
                 </div>
-                <span
-                  class="text-xs font-medium truncate text-[var(--deep-text)] dark:text-white/90"
-                  title={displayPersonName}
-                >
-                  {displayPersonName}
-                </span>
+                <div class="min-w-0">
+                  <div class="text-xs font-medium truncate text-[var(--deep-text)] dark:text-white/90">
+                    {displayPersonName}
+                  </div>
+                  {#if repeatedMentionLabels.has(formatCandidateMentionName(person))}
+                    <div class="truncate text-[10px] text-[var(--chat-meta-color)]">{person.userKey}</div>
+                  {/if}
+                </div>
                 {#if person.customBadges && person.customBadges.length > 0}
                   {#each person.customBadges as b (b.text)}
                     <span class="chat-role-badge chat-role-badge--{b.color} scale-90 origin-left shrink-0">
@@ -5351,13 +5043,8 @@ function removePendingImage(index: number) {
               <ChatMarkdownContent
                 content={inputText}
                 stickerMap={stickerMap}
-                mentions={mentionMembers.flatMap((m) => [
-                  m.name,
-                  formatCandidateMentionName(m),
-                ])}
-                currentUserName={currentUser?.name}
-                currentUserSite={currentUser?.site || localSiteName}
-                canRoomHighlight={Boolean(currentUser?.isAdmin)}
+                mentionEntities={inputMentionEntities}
+                currentUserKey={currentUser?.userKey}
                 chatServerUrl={chatServerUrl}
               />
             {:else}
@@ -5831,7 +5518,8 @@ function removePendingImage(index: number) {
       initialRootMessage={activeThreadInitialRoot}
       roomMessages={messages}
       currentUser={currentUser}
-      currentUserSite={currentUser?.site || localSiteName}
+      mentionCandidates={mergedMentionCandidates}
+      formatMentionLabel={formatCandidateMentionName}
       isInterconnectRoom={isInterconnectRoom}
       chatServerUrl={chatServerUrl}
       interconnectSites={interconnectSites}

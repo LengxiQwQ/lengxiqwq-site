@@ -41,6 +41,7 @@ import type {
 	ChatActiveThreadItem,
 	ChatCustomBadge,
 	ChatMentionCandidate,
+	ChatMentionEntity,
 	ChatMessageRecord,
 	ChatOnlineMember,
 	ChatProfileDraft,
@@ -1524,7 +1525,9 @@ function connectRoom(roomId: string) {
 					messages = messages.map((m) => {
 						const isSender = fromSet.has(m.userKey);
 						const isReplyTarget = m.replyTo && fromSet.has(m.replyTo.userKey);
-						const hasMention = m.mentionKeys?.some((k) => fromSet.has(k));
+						const hasMention =
+							m.mentionKeys?.some((k) => fromSet.has(k)) ||
+							m.mentionEntities?.some((entity) => fromSet.has(entity.userKey));
 						if (!isSender && !isReplyTarget && !hasMention) return m;
 						return {
 							...m,
@@ -1548,7 +1551,14 @@ function connectRoom(roomId: string) {
 										},
 									}
 								: {}),
-							...(hasMention ? { mentionKeys: remapList(m.mentionKeys) } : {}),
+							...(hasMention
+								? {
+										mentionKeys: remapList(m.mentionKeys),
+										mentionEntities: m.mentionEntities?.map((entity) =>
+											fromSet.has(entity.userKey) ? { ...entity, userKey: targetUser.userKey } : entity,
+										),
+									}
+								: {}),
 						};
 					});
 					if (musicState) {
@@ -1816,8 +1826,8 @@ function connectRoom(roomId: string) {
 							return {
 								...m,
 								content: packet.content,
-								mentions: packet.mentions ?? m.mentions,
-								mentionKeys: packet.mentionKeys ?? m.mentionKeys,
+								mentionKeys: packet.mentionKeys,
+								mentionEntities: packet.mentionEntities,
 								isEdited: true,
 								editedAt: packet.editedAt,
 							};
@@ -2339,7 +2349,7 @@ async function handleUpdateMemberBadges(
 function handleSendMessage(
 	content: string,
 	attachments: ImageAttachment[],
-	mentionKeys: string[] = [],
+	mentionEntities: ChatMentionEntity[] = [],
 	replyToUid = "",
 	threadRootUid = "",
 ) {
@@ -2351,7 +2361,7 @@ function handleSendMessage(
 		type: "chat:send",
 		content,
 		attachments,
-		mentionKeys,
+		mentionEntities,
 	};
 	if (replyToUid) {
 		packet.replyToUid = replyToUid;
@@ -2443,8 +2453,8 @@ function handleReaction(msgUid: string, key: string) {
 	sendPacket({ type: "chat:reaction", msgUid, key });
 }
 
-function handleEditMessage(msgUid: string, content: string) {
-	sendPacket({ type: "chat:edit", msgUid, content });
+function handleEditMessage(msgUid: string, content: string, mentionEntities: ChatMentionEntity[]) {
+	sendPacket({ type: "chat:edit", msgUid, content, mentionEntities });
 }
 
 function handlePinMessage(msgUid: string, unpin?: boolean) {

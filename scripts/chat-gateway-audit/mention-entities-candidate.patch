@@ -1,0 +1,1935 @@
+diff --git a/server.mjs b/server.mjs
+--- a/server.mjs
++++ b/server.mjs
+@@ -18,12 +18,14 @@
+ import { escapeHtml, inferMimeType, normalizeSiteBadge, stripSiteSuffix, normalizeDotSpacing, createMatrixPersistence, buildMentionedHtml, KNOWN_MATRIX_RELAY_SENDERS, resolveMatrixRelayMeta } from './src/matrix/matrix-utils.mjs';
+ import { restoreRelayNames } from './src/matrix/restore-relay-names.mjs';
+ import { createMatrixProfileSync, ensureMatrixRoomJoined } from './src/matrix/matrix-profile-sync.mjs';
++import { completeMentionLabels, isMatrixUserId, matrixMentions, readMatrixMentionLayout, readMatrixMentionUserIds, validateMentions } from './src/matrix/chat-mention-protocol.mjs';
+ import { createMentionMailer, loadEnvFile } from './src/notify/mention-mailer.mjs';
+ 
+ loadEnvFile('/opt/chat-server/.env');
+ 
+ const PORT = 3001;
+ const DATA_DIR = '/opt/chat-server/data';
++const LOCAL_CHAT_SITE_NAME = '冷汐的杂货铺';
+ 
+ // IP Location Cache & Resolution
+ const ipLocationCache = new Map();
+@@ -562,174 +564,66 @@
+   return null;
+ }
+ const recentlySentEventIds = new Set();
++const matrixEditJobs = new Map();
+ const recentlySentReactionIds = new Set();
+ const recentlyRedactedIds = new Set();
+ 
++function getMentionSite(userKey) {
++  if (userKey.startsWith('waline:') || userKey.startsWith('guest:')) return LOCAL_CHAT_SITE_NAME;
++  if (!userKey.startsWith('matrix:')) return '';
++  const name = matrixProfileCache.get(userKey.slice(7))?.displayname;
++  const separator = name?.lastIndexOf(' · ') ?? -1;
++  return separator >= 0 ? name.slice(separator + 3).trim() : '';
++}
++
+ function resolveMatrixIdForUserKey(userKey) {
+-  if (!userKey) return null;
+-  if (userKey === 'waline:1') return MATRIX_ADMIN_USER_ID;
+   if (userKey.startsWith('matrix:')) {
+-    const raw = userKey.slice(7).split('#')[0];
+-    return raw.startsWith('@') ? raw : `@${raw}`;
+-  }
+-  if (userKey.startsWith('@') && userKey.includes(':')) return userKey.split('#')[0];
+-  return getMatrixShadowIdForUserKey(userKey);
+-}
+-
+-function isRoomBroadcastMentionToken(val) {
+-  const s = String(val || '').trim();
+-  const lower = s.toLowerCase();
+-  return lower === 'room' || lower === '@room' || lower === 'all' || lower === '@all' || s === '所有人' || s === '@所有人';
+-}
+-
+-function resolveOutgoingMentions(roomId, content = '', rawMentions = [], rawMentionKeys = [], isAdmin = false) {
+-  const candidates = getAllMentionCandidates(roomId);
+-  const mentionsSet = new Set();
+-  const mentionKeysSet = new Set();
+-
+-  if (Array.isArray(rawMentions)) {
+-    for (const x of rawMentions) {
+-      const clean = String(x || '').trim();
+-      if (!clean) continue;
+-      if (isRoomBroadcastMentionToken(clean)) {
+-        if (isAdmin) mentionsSet.add('所有人');
+-        continue;
+-      }
+-      mentionsSet.add(clean);
+-    }
+-  }
+-  if (Array.isArray(rawMentionKeys)) {
+-    for (const x of rawMentionKeys) {
+-      const clean = String(x || '').trim();
+-      if (!clean) continue;
+-      if (isRoomBroadcastMentionToken(clean)) {
+-        if (isAdmin) mentionKeysSet.add('room');
+-        continue;
+-      }
+-      mentionKeysSet.add(clean);
+-    }
+-  }
+-
+-  const mentionedUsersMap = new Map();
+-  const matrixUserIdsSet = new Set();
+-  let mentionRoom = false;
+-
+-  const addCandidate = (c, fullMatchedName = '') => {
+-    if (!c) return;
+-    const clean = stripSiteSuffix(c.name) || c.name;
+-    const isExactName = fullMatchedName && (
+-      fullMatchedName.toLowerCase() === c.name.toLowerCase() ||
+-      fullMatchedName.toLowerCase() === clean.toLowerCase()
+-    );
+-    const nameToUse = isExactName ? fullMatchedName : c.name;
+-    if (nameToUse && (!isRoomBroadcastMentionToken(nameToUse) || isAdmin)) mentionsSet.add(nameToUse);
+-    if (clean && clean !== nameToUse && (!isRoomBroadcastMentionToken(clean) || isAdmin)) mentionsSet.add(clean);
+-    if (c.userKey && (!isRoomBroadcastMentionToken(c.userKey) || isAdmin)) mentionKeysSet.add(c.userKey);
+-    const mId = resolveMatrixIdForUserKey(c.userKey);
+-    if (mId) {
+-      matrixUserIdsSet.add(mId);
+-      mentionedUsersMap.set(mId, { name: nameToUse || clean || mId, matrixId: mId, userKey: c.userKey });
+-    }
++    const id = userKey.slice(7);
++    return !id.includes('#relay:') && isMatrixUserId(id) ? id : null;
++  }
++  if (isMatrixUserId(userKey)) return userKey;
++  if (userKey.startsWith('waline:') || userKey.startsWith('guest:')) {
++    return getMatrixShadowIdForUserKey(userKey);
++  }
++  return null;
++}
++
++function resolveOutgoingMentions(roomId, content, incomingEntities, user, trimOffset = 0) {
++  const candidates = incomingEntities?.length ? getAllMentionCandidates(roomId) : [];
++  const allowedKeys = new Set(candidates.map(({ userKey }) => userKey));
++  const ranges = validateMentions(content, incomingEntities, allowedKeys, Boolean(user.isAdmin), trimOffset);
++  const keys = new Set(ranges.map(({ userKey }) => userKey));
++  const layout = roomId === 'interconnect'
++    ? completeMentionLabels({ content, mentionEntities: ranges }, keys, getMentionSite)
++    : { content, mentionEntities: ranges };
++  const { mentionEntities } = layout;
++  const mentionKeys = [...keys];
++  const mentionLinks = [];
++  const matrixUserIds = new Set();
++  if (roomId === 'interconnect') {
++    for (const entity of mentionEntities) {
++      const matrixId = resolveMatrixIdForUserKey(entity.userKey);
++      if (!matrixId) continue;
++      mentionLinks.push({ ...entity, matrixId });
++      if (entity.userKey !== user.userKey) matrixUserIds.add(matrixId);
++    }
++  }
++  return {
++    content: layout.content,
++    mentionKeys,
++    mentionEntities,
++    mentionLinks,
++    matrixUserIds: [...matrixUserIds],
++    mentionRoom: mentionKeys.includes('room')
+   };
+-
+-  for (const key of mentionKeysSet) {
+-    if (isRoomBroadcastMentionToken(key)) {
+-      if (isAdmin) mentionRoom = true;
+-      continue;
+-    }
+-    const cand = candidates.find((c) => c.userKey === key);
+-    if (cand) {
+-      addCandidate(cand);
+-    } else if (key.startsWith('matrix:') || (key.startsWith('@') && key.includes(':'))) {
+-      const mId = resolveMatrixIdForUserKey(key);
+-      if (mId) {
+-        matrixUserIdsSet.add(mId);
+-        mentionedUsersMap.set(mId, { name: mId.split(':')[0].replace('@', ''), matrixId: mId, userKey: key });
+-      }
+-    }
+-  }
+-
+-  const textMatches = String(content || '').matchAll(/@([^\s,，。！!@：()\[\]{}<>"']+(?:\s*[·•・]\s*[^\s,，。！!@：()\[\]{}<>"']+)?)/g);
+-  for (const match of textMatches) {
+-    const token = match[1].trim();
+-    if (!token) continue;
+-    const lower = token.toLowerCase();
+-    if (isRoomBroadcastMentionToken(token)) {
+-      if (isAdmin) {
+-        mentionRoom = true;
+-        mentionsSet.add('所有人');
+-        mentionKeysSet.add('room');
+-      }
+-      continue;
+-    }
+-    const tokenParts = token.split(/[·•・]/);
+-    const tokenClean = tokenParts[0].trim().toLowerCase();
+-    const tokenSite = tokenParts.slice(1).join('·').trim().toLowerCase();
+-
+-    let cand = null;
+-    if (tokenSite) {
+-      cand = candidates.find((c) => {
+-        const cLower = c.name.toLowerCase();
+-        const cClean = stripSiteSuffix(c.name).toLowerCase();
+-        const cSite = (c.site || c.name.split(/[·•・]/)[1] || '').trim().toLowerCase();
+-        if (cClean !== tokenClean) return false;
+-        return cLower.includes(tokenSite) || (cSite && (cSite.includes(tokenSite) || tokenSite.includes(cSite)));
+-      });
+-    }
+-    if (!cand && !tokenSite) {
+-      cand = candidates.find((c) => {
+-        const cName = stripSiteSuffix(c.name).toLowerCase();
+-        return (
+-          cName === lower ||
+-          c.name.toLowerCase() === lower ||
+-          cName === tokenClean ||
+-          c.userKey.toLowerCase() === lower ||
+-          c.userKey.toLowerCase() === `matrix:@${lower}`
+-        );
+-      });
+-    }
+-    if (cand) {
+-      addCandidate(cand, cand.name);
+-    } else if (token.includes(':')) {
+-      const mId = token.startsWith('@') ? token : `@${token}`;
+-      matrixUserIdsSet.add(mId);
+-      const resolved = resolveMatrixMentionName(mId);
+-      if (resolved) {
+-        mentionsSet.add(resolved.name);
+-        mentionKeysSet.add(resolved.userKey);
+-        mentionedUsersMap.set(mId, { name: resolved.name, matrixId: mId, userKey: resolved.userKey });
+-      }
+-    }
+-  }
+-
+-  for (const name of Array.from(mentionsSet)) {
+-    if (isRoomBroadcastMentionToken(name)) {
+-      if (isAdmin) {
+-        mentionRoom = true;
+-      } else {
+-        mentionsSet.delete(name);
+-      }
+-      continue;
+-    }
+-    const lower = name.toLowerCase();
+-    const cand = candidates.find((c) => stripSiteSuffix(c.name).toLowerCase() === lower || c.name.toLowerCase() === lower);
+-    if (cand) addCandidate(cand);
+-  }
+-
+-  if (!isAdmin) {
+-    mentionRoom = false;
+-    mentionKeysSet.delete('room');
+-    mentionKeysSet.delete('@room');
+-    mentionsSet.delete('所有人');
+-  }
+-
+-  return {
+-    mentions: Array.from(mentionsSet),
+-    mentionKeys: Array.from(mentionKeysSet),
+-    matrixUserIds: Array.from(matrixUserIdsSet),
+-    mentionedUsers: Array.from(mentionedUsersMap.values()),
+-    mentionRoom
+-  };
++}
++
++function rejectLegacyMentions(ws, packet, previous) {
++  if (Array.isArray(packet.mentionEntities) ||
++      !(packet.mentionKeys?.length || packet.mentions?.length || previous?.mentionKeys?.length ||
++        previous?.mentionEntities?.length || previous?.mentions?.length)) return false;
++  ws.send(JSON.stringify({ type: 'error', code: 'MENTIONS_REFRESH_REQUIRED', message: '提及格式已更新，请刷新聊天室后再发送或编辑提及。' }));
++  return true;
+ }
+ 
+ async function syncMatrixPresence(user, presence = 'online', statusMsg = '') {
+@@ -1408,7 +1302,7 @@
+     if (!mxcUri && avatarUrl.startsWith('mxc://')) mxcUri = avatarUrl;
+     await syncMatrixProfile({
+       userId, token,
+-      displayname: `${snapshot.name} · 冷汐的杂货铺`,
++      displayname: `${snapshot.name} · ${LOCAL_CHAT_SITE_NAME}`,
+       avatarUrl: mxcUri || undefined
+     });
+     if (mxcUri) userAvatarMxcMap.set(snapshot.userKey, { source: avatarUrl, mxcUri });
+@@ -1890,6 +1784,15 @@
+         m.badge = walineUser.badge;
+         m.badgeType = walineUser.badgeType;
+         m.isAdmin = walineUser.isAdmin;
++        merged = true;
++      }
++      if (m.mentionEntities?.some((entity) => entity.userKey === guestUserKey)) {
++        m.mentionEntities = m.mentionEntities.map((entity) =>
++          entity.userKey === guestUserKey ? { ...entity, userKey: walineUser.userKey } : entity);
++        merged = true;
++      }
++      if (m.mentionKeys?.includes(guestUserKey)) {
++        m.mentionKeys = [...new Set(m.mentionKeys.map((key) => key === guestUserKey ? walineUser.userKey : key))];
+         merged = true;
+       }
+       if (m.replyTo && m.replyTo.userKey === guestUserKey) {
+@@ -4620,20 +4523,24 @@
+       // Chat Message Edit
+       if (packet.type === 'chat:edit' && packet.msgUid && typeof packet.content === 'string') {
+         if (!ws.user) return;
+-        const newContent = packet.content.trim();
+-        if (!newContent) return;
++        const trimmed = packet.content.trim();
++        if (!trimmed) return;
+         const roomMsgs = messagesStore[ws.currentRoom] || [];
+         const targetMsg = roomMsgs.find((m) => m.msgUid === packet.msgUid);
+         if (!targetMsg) return;
+         const isOwner = targetMsg.userKey === ws.user.userKey;
+         const isAdmin = Boolean(ws.user.isAdmin);
+         const canEdit = isAdmin || (isOwner && Date.now() - targetMsg.createdAt < 15 * 60 * 1000);
+-        if (!canEdit) return;
+-
+-        const mentionMeta = resolveOutgoingMentions(ws.currentRoom, newContent, [], [], Boolean(ws.user.isAdmin));
++        if (!canEdit || rejectLegacyMentions(ws, packet, targetMsg)) return;
++
++        const previousMentionKeys = targetMsg.mentionEntities ? targetMsg.mentionKeys || [] : [];
++        const trimOffset = packet.content.length - packet.content.trimStart().length;
++        const mentionMeta = resolveOutgoingMentions(ws.currentRoom, trimmed, packet.mentionEntities, ws.user, trimOffset);
++        const newContent = mentionMeta.content;
+         targetMsg.content = newContent;
+-        targetMsg.mentions = mentionMeta.mentions;
++        delete targetMsg.mentions;
+         targetMsg.mentionKeys = mentionMeta.mentionKeys;
++        targetMsg.mentionEntities = mentionMeta.mentionEntities;
+         targetMsg.isEdited = true;
+         targetMsg.editedAt = Date.now();
+         const preview = newContent.replace(/\s+/g, ' ').trim().slice(0, 120);
+@@ -4642,7 +4549,7 @@
+             rm.replyTo.content = preview;
+           }
+         }
+-        mentionMailer.updateMessageContentInPending(targetMsg.msgUid, newContent);
++        mentionMailer.reconcileEditedMessage(ws.currentRoom, targetMsg, previousMentionKeys);
+         saveStoreDebounced();
+ 
+         broadcastToRoom(ws.currentRoom, {
+@@ -4650,8 +4557,8 @@
+           roomId: ws.currentRoom,
+           msgUid: targetMsg.msgUid,
+           content: newContent,
+-          mentions: targetMsg.mentions,
+           mentionKeys: targetMsg.mentionKeys,
++          mentionEntities: targetMsg.mentionEntities,
+           isEdited: true,
+           editedAt: targetMsg.editedAt
+         });
+@@ -4659,7 +4566,7 @@
+         if (ws.currentRoom === 'interconnect') {
+           const targetMatrixId = targetMsg.matrixEventId || (targetMsg.msgUid?.startsWith('$') ? targetMsg.msgUid : null);
+           if (targetMatrixId) {
+-            sendMatrixEdit(ws.user, targetMatrixId, newContent, mentionMeta, targetMsg.msgType || 'text');
++            queueMatrixEdit(ws.user, targetMatrixId, targetMsg, mentionMeta);
+           }
+         }
+         return;
+@@ -5036,6 +4943,8 @@
+           return;
+         }
+ 
++        if (rejectLegacyMentions(ws, packet)) return;
++
+         // Resolve thread root (flat 1-level threads per Matrix MSC3440)
+         const roomMsgsForSend = messagesStore[ws.currentRoom] || [];
+         let threadRootUid = '';
+@@ -5063,19 +4972,18 @@
+           }
+         }
+ 
+-        let outgoingContent = typeof packet.content === 'string' ? packet.content : '';
++        const originalContent = typeof packet.content === 'string' ? packet.content : '';
++        let trimOffset = originalContent.length - originalContent.trimStart().length;
++        let outgoingContent = originalContent.trim();
+         let msgType = 'text';
+-        const emoteMatch = /^\/me\s+([\s\S]+)$/i.exec(outgoingContent.trim());
+-        if (emoteMatch && emoteMatch[1].trim()) {
++        const emotePrefix = /^\/me\s+/i.exec(outgoingContent);
++        if (emotePrefix && outgoingContent.length > emotePrefix[0].length) {
+           msgType = 'emote';
+-          outgoingContent = emoteMatch[1].trim();
++          trimOffset += emotePrefix[0].length;
++          outgoingContent = outgoingContent.slice(emotePrefix[0].length);
+         }
+         const mentionMeta = resolveOutgoingMentions(
+-          ws.currentRoom,
+-          outgoingContent,
+-          packet.mentions,
+-          packet.mentionKeys,
+-          Boolean(ws.user.isAdmin)
++          ws.currentRoom, outgoingContent, packet.mentionEntities, ws.user, trimOffset
+         );
+         const msg = {
+           id: Date.now(),
+@@ -5090,17 +4998,17 @@
+           badgeType: ws.user.badgeType,
+           customBadges: ws.user.customBadges || [],
+           isAdmin: Boolean(ws.user.isAdmin),
+-          content: outgoingContent,
++          content: mentionMeta.content,
+           attachments: sanitizeIncomingAttachments(packet.attachments),
+-          mentions: mentionMeta.mentions,
+           mentionKeys: mentionMeta.mentionKeys,
++          mentionEntities: mentionMeta.mentionEntities,
+           replyTo,
+           replyToUid: replyToUid || undefined,
+           ...(threadRootUid ? { threadRootUid } : {}),
+           createdAt: Date.now()
+         };
+         if (ws.currentRoom === 'interconnect' && !msg.name.includes('·') && !msg.name.includes('•') && !msg.name.includes('・')) {
+-          msg.name = `${msg.name} · 冷汐的杂货铺`;
++          msg.name = `${msg.name} · ${LOCAL_CHAT_SITE_NAME}`;
+         } else if (ws.currentRoom === 'interconnect') {
+           msg.name = normalizeDotSpacing(msg.name);
+         }
+@@ -5218,7 +5126,7 @@
+ async function ensureMatrixAdminProfile(force = false) {
+   if (adminProfileEnsured && !force) return;
+   try {
+-    const adminDisplayName = '冷汐OωO · 冷汐的杂货铺';
++    const adminDisplayName = `冷汐OωO · ${LOCAL_CHAT_SITE_NAME}`;
+     const currentMember = matrixProfileCache.get(MATRIX_ADMIN_USER_ID);
+     const avatarUrl = currentMember?.avatar_url || 'mxc://matrix.lengxiqwq.com/1mmeU8x1YCq7c33j5jDeiFkfP06nk9Ci';
+     await syncMatrixProfile({ userId: MATRIX_ADMIN_USER_ID, token: MATRIX_ADMIN_TOKEN, displayname: adminDisplayName, avatarUrl });
+@@ -5263,8 +5171,8 @@
+   }
+ }
+ 
+-async function formatMatrixContent(content, attachments = [], mentionedUsers = []) {
+-  const rawSource = (content || '').trim();
++async function formatMatrixContent(content, attachments = [], mentionLinks = []) {
++  const rawSource = content || '';
+   let md = rawSource;
+   const stickerHtmlMap = new Map();
+ 
+@@ -5314,7 +5222,7 @@
+   }
+ 
+   const baseMd = md;
+-  const baseHtml = buildMentionedHtml(rawSource, mentionedUsers, stickerHtmlMap);
++  const baseHtml = buildMentionedHtml(rawSource, mentionLinks, stickerHtmlMap);
+   let html = baseHtml;
+ 
+   const uploadedAttachments = [];
+@@ -5393,25 +5301,41 @@
+   return null;
+ }
+ 
+-async function sendMatrixEdit(user, targetEventId, newContent, mentionMeta = null, msgType = 'text') {
++function queueMatrixEdit(user, targetEventId, message, mentionMeta) {
++  const revision = { content: message.content, msgType: message.msgType };
++  const previous = matrixEditJobs.get(targetEventId) || Promise.resolve();
++  const pending = previous.then(() => sendMatrixEdit(user, targetEventId, message, revision, mentionMeta));
++  matrixEditJobs.set(targetEventId, pending);
++  void pending.finally(() => {
++    if (matrixEditJobs.get(targetEventId) === pending) matrixEditJobs.delete(targetEventId);
++  });
++}
++
++async function sendMatrixEdit(user, targetEventId, message, revision, mentionMeta) {
++  const newContent = revision.content;
++  const previousMentions = message.matrixMentions;
+   try {
+     const creds = await getOrCreateMatrixAccountForUser(user);
+     const token = creds?.token || MATRIX_ADMIN_TOKEN;
+     const txnId = 'edit_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+     recentlySentEventIds.add(txnId);
+     setTimeout(() => recentlySentEventIds.delete(txnId), 120000);
+-    const mentionedUsers = mentionMeta?.mentionedUsers || [];
+-    const { markdownBody, htmlBody } = await formatMatrixContent(newContent, [], mentionedUsers);
+-    const mMentions = { user_ids: mentionMeta?.matrixUserIds || [] };
+-    if (mentionMeta?.mentionRoom) mMentions.room = true;
+-    const matrixMsgType = msgType === 'emote' ? 'm.emote' : 'm.text';
++    const { markdownBody, htmlBody } = await formatMatrixContent(newContent, [], mentionMeta.mentionLinks);
++    const senderId = creds?.userId || MATRIX_ADMIN_USER_ID;
++    const ids = mentionMeta.matrixUserIds.filter((id) => id !== senderId);
++    const fullMentions = matrixMentions(ids, mentionMeta.mentionRoom);
++    const changedMentions = matrixMentions(
++      ids.filter((id) => !previousMentions?.user_ids?.includes(id)),
++      mentionMeta.mentionRoom && !previousMentions?.room
++    );
++    const matrixMsgType = revision.msgType === 'emote' ? 'm.emote' : 'm.text';
+ 
+     const newContentPayload = {
+       msgtype: matrixMsgType,
+       body: markdownBody,
+       format: 'org.matrix.custom.html',
+       formatted_body: htmlBody,
+-      'm.mentions': mMentions
++      'm.mentions': fullMentions
+     };
+ 
+     const url = `${MATRIX_INTERNAL_URL}/_matrix/client/v3/rooms/${encodeURIComponent(MATRIX_ROOM_ID)}/send/m.room.message/${txnId}`;
+@@ -5423,17 +5347,21 @@
+         body: '* ' + markdownBody,
+         format: 'org.matrix.custom.html',
+         formatted_body: htmlBody,
+-        'm.mentions': mMentions,
++        'm.mentions': changedMentions,
+         'm.relates_to': { rel_type: 'm.replace', event_id: targetEventId },
+         'm.new_content': newContentPayload
+       })
+     });
+-    if (res.ok) {
+-      const data = await res.json().catch(() => null);
+-      if (data?.event_id) {
+-        recentlySentEventIds.add(data.event_id);
+-        setTimeout(() => recentlySentEventIds.delete(data.event_id), 120000);
+-      }
++    if (!res.ok) {
++      console.warn('[Matrix] Edit rejected:', res.status);
++      return;
++    }
++    const data = await res.json().catch(() => null);
++    if (data?.event_id) {
++      recentlySentEventIds.add(data.event_id);
++      setTimeout(() => recentlySentEventIds.delete(data.event_id), 120000);
++      message.matrixMentions = fullMentions;
++      saveStoreDebounced();
+     }
+   } catch (e) {
+     console.warn('[Matrix] Send edit error:', e.message);
+@@ -5497,8 +5425,10 @@
+       recentlySentEventIds.delete(txnId);
+     }, 60000);
+ 
+-    const mentionedUsers = mentionMeta?.mentionedUsers || [];
+-    let { markdownBody, htmlBody, baseMarkdownBody, baseHtmlBody, uploadedAttachments } = await formatMatrixContent(msg.content, msg.attachments, mentionedUsers);
++    const senderId = creds?.userId || MATRIX_ADMIN_USER_ID;
++    const matrixUserIds = (mentionMeta?.matrixUserIds || []).filter((id) => id !== senderId);
++    const fullMentions = matrixMentions(matrixUserIds, mentionMeta?.mentionRoom);
++    let { markdownBody, htmlBody, baseMarkdownBody, baseHtmlBody, uploadedAttachments } = await formatMatrixContent(msg.content, msg.attachments, mentionMeta?.mentionLinks);
+ 
+     const isProxiedGuest = Boolean(creds?.isProxy && !user.isAdmin);
+     if (isProxiedGuest) {
+@@ -5657,9 +5587,7 @@
+       }, 60000);
+ 
+       if (eventType === 'm.room.message') {
+-        const mMentions = { user_ids: idx === 0 && Array.isArray(mentionMeta?.matrixUserIds) ? mentionMeta.matrixUserIds : [] };
+-        if (idx === 0 && mentionMeta?.mentionRoom) mMentions.room = true;
+-        payload['m.mentions'] = mMentions;
++        payload['m.mentions'] = idx === 0 ? fullMentions : {};
+       }
+ 
+       if (threadRootEventId) {
+@@ -5706,6 +5634,11 @@
+         const data = await res.json().catch(() => null);
+         if (data && data.event_id) {
+           recentlySentEventIds.add(data.event_id);
++          if (idx === 0) {
++            msg.matrixSender = senderId;
++            msg.matrixMentions = fullMentions;
++            saveStoreDebounced();
++          }
+           lastSentEventId = data.event_id;
+           if (recordMatrixEventId(msg, data.event_id)) {
+             saveStoreDebounced();
+@@ -5729,91 +5662,8 @@
+ }
+ 
+ 
+-function resolveMatrixMentionName(rawTarget) {
+-  if (!rawTarget) return null;
+-  let target = String(rawTarget).trim();
+-  try { target = decodeURIComponent(target); } catch {}
+-  const lower = target.toLowerCase();
+-
+-  // 0. Check Admin aliases first
+-  if (
+-    target === MATRIX_ADMIN_USER_ID ||
+-    lower === 'lengxiqwq' ||
+-    lower === '@lengxiqwq' ||
+-    lower === '冷汐oωo' ||
+-    lower === '@冷汐oωo'
+-  ) {
+-    const adminMember = membersStore.find((m) => m.userKey === 'waline:1');
+-    return { name: adminMember?.name || '冷汐OωO', userKey: 'waline:1', isAdmin: true };
+-  }
+-
+-  // 0.5 Check matrixToLocalUserMap
+-  const normalizedKey = target.startsWith('@') ? target : `@${target}`;
+-  const mappedLocalKey = resolveLocalUserKey(normalizedKey);
+-  if (mappedLocalKey) {
+-    const lm = membersStore.find((m) => m.userKey === mappedLocalKey);
+-    if (lm) return { name: stripSiteSuffix(lm.name) || lm.name, userKey: lm.userKey };
+-  }
+-
+-  // 1. Check local accounts in membersStore (by matrix username u_${hash} or name)
+-  for (const m of membersStore) {
+-    if (!m.userKey) continue;
+-    const cleanKey = m.userKey.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+-    const rawHash = createHash('sha256').update(cleanKey).digest('hex').slice(0, 10);
+-    const uName = `u_${rawHash}`;
+-    if (target === uName || target === `@${uName}` || target.startsWith(`@${uName}:`) || target.startsWith(`${uName}:`)) {
+-      return { name: m.name, userKey: m.userKey };
+-    }
+-    if (lower === m.name.toLowerCase() || lower === `@${m.name.toLowerCase()}`) {
+-      return { name: m.name, userKey: m.userKey };
+-    }
+-  }
+-
+-  // 2. Check matrixProfileCache
+-  let profile = matrixProfileCache.get(normalizedKey);
+-  let matchedKey = normalizedKey;
+-  if (!profile) {
+-    for (const [k, p] of matrixProfileCache.entries()) {
+-      if (k === normalizedKey || k.startsWith(`${normalizedKey}:`) || k.startsWith(`@${target}:`)) {
+-        profile = p;
+-        matchedKey = k;
+-        break;
+-      }
+-    }
+-  }
+-
+-  if (profile && profile.displayname) {
+-    const clean = stripSiteSuffix(profile.displayname);
+-    const localMatch = membersStore.find((m) => m.name.toLowerCase() === clean.toLowerCase());
+-    if (localMatch) {
+-      return { name: localMatch.name, userKey: localMatch.userKey };
+-    }
+-    return { name: clean, userKey: `matrix:${matchedKey}` };
+-  }
+-
+-  // 3. Check messagesStore.interconnect
+-  const interconnectMsgs = messagesStore.interconnect || [];
+-  for (let i = interconnectMsgs.length - 1; i >= Math.max(0, interconnectMsgs.length - 250); i--) {
+-    const msg = interconnectMsgs[i];
+-    if (!msg.userKey) continue;
+-    if (
+-      msg.userKey === `matrix:${normalizedKey}` ||
+-      msg.userKey === normalizedKey ||
+-      msg.userKey.includes(target) ||
+-      msg.name?.toLowerCase() === lower
+-    ) {
+-      const clean = stripSiteSuffix(msg.name) || msg.name;
+-      return { name: clean, userKey: msg.userKey };
+-    }
+-  }
+-
+-  // Fallback for bare external Matrix MXIDs
+-  if (normalizedKey.startsWith('@') && normalizedKey.includes(':')) {
+-    const fallbackName = normalizedKey.slice(1).split(':')[0];
+-    return { name: fallbackName, userKey: `matrix:${normalizedKey}` };
+-  }
+-
+-  return null;
++function resolveMatrixMentionKey(id) {
++  return resolveLocalUserKey(id) || 'matrix:' + id;
+ }
+ 
+ // Convert Matrix event
+@@ -5822,7 +5672,7 @@
+   const msgType = ev.content?.msgtype;
+   let rawBody = isEncryptedPlaceholder
+     ? '🔒 此消息已端到端加密，当前网关暂不支持解密查看'
+-    : (ev.content?.body || '');
++    : (typeof ev.content?.body === 'string' ? ev.content.body : '');
+ 
+   const isMediaMsg = msgType === 'm.image' || msgType === 'm.audio' || msgType === 'm.video' || msgType === 'm.file' || ev.type === 'm.sticker';
+   if (!rawBody && !isMediaMsg) return null;
+@@ -5836,13 +5686,16 @@
+   const prefixMatch = !isEncryptedPlaceholder
+     ? /^\[ID:(?<name>[^\]\r\n]+)\];\[URL:(?<avatar>[^\]\r\n]*?)\](?:;\[KEY:(?<userKey>[^\]\r\n]+)\])?(?:;\[SITE:(?<site>[^\]\r\n]+)\])?(?:\r?\n)?(?<content>[\s\S]*)$/.exec(rawBody)
+     : null;
++  const relayHeader = prefixMatch
++    ? rawBody.slice(0, rawBody.length - prefixMatch.groups.content.length).trimEnd()
++    : '';
+   if (prefixMatch && prefixMatch.groups) {
+     displayName = prefixMatch.groups.name;
+     avatarUrl = prefixMatch.groups.avatar;
+     if (avatarUrl && avatarUrl.includes('chat-api.lengxiqwq.com')) {
+       avatarUrl = '';
+     }
+-    customUserKey = prefixMatch.groups.userKey || '';
++    if (ev.sender === MATRIX_ADMIN_USER_ID) customUserKey = prefixMatch.groups.userKey || '';
+     siteHint = prefixMatch.groups.site || '';
+     rawBody = prefixMatch.groups.content;
+   }
+@@ -5977,7 +5830,7 @@
+       finalUserKey = 'waline:1';
+     } else if (isRelayedExternalUser) {
+       const relayScope = relayMeta.siteKey || 'bridge';
+-      const subId = relayMeta.relayUserId || ('n_' + createHash('sha1').update(`${ev.sender}|${displayName}`).digest('hex').slice(0, 10));
++      const subId = relayMeta.relayUserId || (KNOWN_MATRIX_RELAY_SENDERS.has(ev.sender) ? prefixMatch?.groups.userKey : '') || ('n_' + createHash('sha1').update(`${ev.sender}|${displayName}`).digest('hex').slice(0, 10));
+       finalUserKey = `matrix:${ev.sender}#relay:${relayScope}:${subId}`;
+     } else {
+       finalUserKey = `matrix:${ev.sender}`;
+@@ -6032,16 +5885,18 @@
+   });
+ 
+   // Extract images from formatted_body (strip <mx-reply> fallback first so quoted images/mentions aren't duplicated)
+-  const rawFormattedBody = ev.content?.formatted_body || '';
++  const rawFormattedBody = typeof ev.content?.formatted_body === 'string' ? ev.content.formatted_body : '';
+   const formattedBody = rawFormattedBody.replace(/<mx-reply>[\s\S]*?<\/mx-reply>/gi, '');
+   const hasMarkdownImage = /!\[[^\]]*\]\(https?:\/\/[^)]+\)/.test(text);
+ 
++  const inlineMatrixImages = new Map();
+   if (formattedBody) {
+     const imgTagRegex = /<img\s+[^>]*src=["'](mxc:\/\/[^"']+|https?:\/\/[^"']+)["'][^>]*>/gi;
+     let imgMatch;
+     while ((imgMatch = imgTagRegex.exec(formattedBody)) !== null) {
+       const fullImgTag = imgMatch[0];
+-      let rawSrc = imgMatch[1];
++      const matrixImageSrc = imgMatch[1];
++      let rawSrc = matrixImageSrc;
+       if (rawSrc.startsWith('mxc://')) {
+         rawSrc = mxcToHttp(rawSrc);
+       }
+@@ -6058,6 +5913,7 @@
+         /(?:[\/=]emoji[\/=?]|[\/=]stickers?[\/=?]|waline-emojis)/i.test(rawSrc) ||
+         /^(戳一戳|仔细分析|鬼脸|开心|流泪|doge|吃瓜)$/.test(altText);
+ 
++      if (isEmoticon || hasMarkdownImage) inlineMatrixImages.set(matrixImageSrc, rawSrc);
+       if (isEmoticon) {
+         // 内嵌表情绝不作为独立附件卡片推入 attachments
+         if (!hasMarkdownImage && !text.includes(rawSrc)) {
+@@ -6080,80 +5936,23 @@
+     }
+   }
+ 
+-  // Extract and resolve mentions (MSC3952 m.mentions + matrix.to links + @id tokens)
+-  const mentionsSet = new Set();
+-  const mentionKeysSet = new Set();
+-
++  const mentionIntent = ev.content?.['m.mentions'];
++  const matrixUserIds = readMatrixMentionUserIds(mentionIntent);
+   const senderPower = matrixRoomPowerLevels.users?.[ev.sender] ?? matrixRoomPowerLevels.users_default ?? 0;
+-  const canRoomMention = ev.sender === MATRIX_ADMIN_USER_ID || senderPower >= (matrixRoomPowerLevels.notifications_room ?? 50);
+-
+-  const mMentions = ev.content?.['m.mentions'];
+-  if (mMentions && typeof mMentions === 'object') {
+-    if (Array.isArray(mMentions.user_ids)) {
+-      for (const uid of mMentions.user_ids) {
+-        const res = resolveMatrixMentionName(uid);
+-        if (res && res.name) {
+-          mentionsSet.add(res.name);
+-          if (res.userKey) mentionKeysSet.add(res.userKey);
+-        }
+-      }
+-    }
+-    const hasExplicitRoomText = /(?:^|[^A-Za-z0-9._+-])@(?:room|all|所有人|全体成员)(?=$|[\s,，。、！!？?：:；;()[\]{}<>"'~`’”）】》」』])/i.test(text);
+-    if (mMentions.room === true && canRoomMention && hasExplicitRoomText) {
+-      mentionsSet.add('所有人');
+-      mentionKeysSet.add('room');
+-    }
+-  }
+-
+-  if (formattedBody) {
+-    const anchorRegex = /<a\s+[^>]*href=["']https:\/\/matrix\.to\/#\/([^"'>]+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+-    let mMatch;
+-    while ((mMatch = anchorRegex.exec(formattedBody)) !== null) {
+-      const targetId = mMatch[1];
+-      const rawLabel = mMatch[2].replace(/<[^>]+>/g, '').trim();
+-      const res = resolveMatrixMentionName(targetId);
+-      const mentionName = rawLabel || (res ? res.name : '');
+-      if (mentionName) {
+-        mentionsSet.add(mentionName);
+-        if (mentionName.includes('·') || mentionName.includes('•')) {
+-          const stripped = stripSiteSuffix(mentionName);
+-          if (stripped) mentionsSet.add(stripped);
+-        }
+-        if (res && res.userKey) mentionKeysSet.add(res.userKey);
+-      }
+-    }
+-  }
+-
+-  // Replace raw Matrix User IDs (@alice:domain.tld) or @room tokens in text for display only.
+-  // NOTE: MSC3952 m.mentions and matrix.to HTML anchors already populate legitimate mentionsSet.
+-  //       We only normalize raw Matrix IDs or explicit room broadcasts here, and never greedily capture body text.
+-  text = text.replace(/@([a-zA-Z0-9._=\-/]+:[a-zA-Z0-9.-]+(?::\d+)?|room|all|所有人)(?![A-Za-z0-9_])/gi, (fullMatch, targetId) => {
+-    const lowerTarget = targetId.toLowerCase();
+-    if (lowerTarget === 'room' || lowerTarget === 'all' || targetId === '所有人') {
+-      return '@所有人';
+-    }
+-    const res = resolveMatrixMentionName(targetId);
+-    if (res && res.name) {
+-      const cleanName = stripSiteSuffix(res.name) || res.name;
+-      mentionsSet.add(res.name);
+-      if (cleanName) mentionsSet.add(cleanName);
+-      return `@${res.name}`;
+-    }
+-    return fullMatch;
+-  });
+-
+-  // If sender typed plain-text mentions for known members, match strictly against known member names
+-  if (Array.isArray(membersStore) && membersStore.length > 0) {
+-    for (const m of membersStore) {
+-      if (!m || !m.name) continue;
+-      const cleanName = stripSiteSuffix(m.name) || m.name;
+-      if ((m.name && text.includes(`@${m.name}`)) || (cleanName && text.includes(`@${cleanName}`))) {
+-        mentionsSet.add(m.name);
+-        if (cleanName) mentionsSet.add(cleanName);
+-      }
+-    }
+-  }
+-
++  const mentionRoom = mentionIntent?.room === true &&
++    senderPower >= matrixRoomPowerLevels.notifications_room;
++  const mentionKeys = new Set(
++    matrixUserIds.filter((id) => id !== ev.sender)
++      .map(resolveMatrixMentionKey).filter((key) => key !== finalUserKey)
++  );
++  if (mentionRoom) mentionKeys.add('room');
++
++  const layout = ev.content?.format === 'org.matrix.custom.html' && !isEncryptedPlaceholder
++    ? readMatrixMentionLayout(text, rawFormattedBody, resolveMatrixMentionKey, inlineMatrixImages, relayHeader)
++    : { content: text, mentionEntities: [] };
++  const completed = completeMentionLabels(layout, mentionKeys, getMentionSite);
++  const { mentionEntities } = completed;
++  text = completed.content;
+   if (!text && attachments.length === 0) return null;
+ 
+   return {
+@@ -6174,12 +5973,46 @@
+     isAdmin: isSelfAdmin,
+     content: text,
+     attachments,
+-    mentions: Array.from(mentionsSet),
+-    mentionKeys: Array.from(mentionKeysSet),
++    mentionKeys: [...mentionKeys],
++    mentionEntities,
++    matrixSender: ev.sender,
++    matrixMentions: matrixMentions(matrixUserIds, mentionRoom),
+     replyTo,
+     ...(threadRootUid ? { threadRootUid } : {}),
+     createdAt: ev.origin_server_ts || Date.now()
+   };
++}
++
++// Restore pre-entity Matrix messages from the event's links and notification metadata.
++async function recoverLegacyMatrixMentions() {
++  const messages = messagesStore.interconnect;
++  let recovered = 0;
++  for (const message of [...messages]) {
++    if (message.kind !== 'user' || message.isEdited || message.isRecalled ||
++        message.mentionEntities || !(message.mentions?.length || message.mentionKeys?.length)) continue;
++    const local = message.source !== 'matrix';
++    const eventId = local ? message.matrixEventId : message.msgUid;
++    if (!eventId?.startsWith('$')) continue;
++    // Old local records could contain mistaken or duplicate recipients. Recover
++    // only when the saved ID, exact Matrix link and mention metadata all agree.
++    if (local && (message.mentionKeys?.length !== 1 || message.mentionKeys[0] === 'room')) continue;
++    const previousContent = message.content;
++    const { event } = await fetchMatrixRawEvent(eventId);
++    if (!event || event.event_id !== eventId) continue;
++    if (local && event.content?.['com.lengxiqwq.msg_uid'] !== message.msgUid) continue;
++    const parsed = await parseMatrixEvent(event);
++    if (!parsed || message.isEdited || message.isRecalled ||
++        message.content !== previousContent || !messages.includes(message)) continue;
++    const { content, mentionEntities, mentionKeys } = parsed;
++    if (local && (mentionKeys.length !== 1 || mentionKeys[0] !== message.mentionKeys[0] ||
++        !mentionEntities.length || mentionEntities.some(({ userKey }) => userKey !== mentionKeys[0]))) continue;
++    Object.assign(message, { content, mentionEntities, mentionKeys });
++    delete message.mentions;
++    recovered++;
++    broadcastToRoom('interconnect', { type: 'chat:updated', roomId: 'interconnect', message });
++  }
++  if (recovered) saveStoreDebounced();
++  return recovered;
+ }
+ 
+ async function primeMatrixRoomState() {
+@@ -6849,22 +6682,27 @@
+             const interconnectMsgs = messagesStore.interconnect || [];
+             const { targetMsg } = await resolveTargetMsgByMatrixEventId(interconnectMsgs, targetEventId);
+             if (targetMsg) {
+-              const newRawContent = (ev.content?.['m.new_content']?.body || ev.content?.body || '').replace(/^\*\s*/, '').trim();
+-              const newParsed = await parseMatrixEvent({
+-                ...ev,
+-                content: {
+-                  ...ev.content,
+-                  ...(ev.content?.['m.new_content'] || {}),
+-                  body: newRawContent
+-                }
+-              }).catch(() => null);
+-              const newContent = newParsed?.content || newRawContent;
+-              if (newContent) {
++              const replaced = ev.content?.['m.new_content'];
++              if (!replaced || replaced.msgtype !== ev.content.msgtype || typeof replaced.body !== 'string') continue;
++              if (replaced.msgtype !== (targetMsg.msgType === 'emote' ? 'm.emote' : 'm.text')) continue;
++              if (targetMsg.isRecalled) continue;
++              const originalSender = targetMsg.matrixSender ||
++                (await fetchMatrixRawEvent(targetEventId)).event?.sender;
++              if (originalSender !== ev.sender) continue;
++              if (targetMsg.editedAt > ev.origin_server_ts ||
++                  (targetMsg.editedAt === ev.origin_server_ts && targetMsg.matrixEditEventId >= ev.event_id)) continue;
++              const newParsed = await parseMatrixEvent({ ...ev, content: replaced }).catch(() => null);
++              if (newParsed?.content) {
++                if (targetMsg.userKey.includes('#relay:') && targetMsg.userKey !== newParsed.userKey) continue;
++                const previousMentionKeys = targetMsg.mentionEntities ? targetMsg.mentionKeys || [] : [];
++                const newContent = newParsed.content;
+                 targetMsg.content = newContent;
+-                if (newParsed) {
+-                  targetMsg.mentions = newParsed.mentions || [];
+-                  targetMsg.mentionKeys = newParsed.mentionKeys || [];
+-                }
++                delete targetMsg.mentions;
++                targetMsg.mentionKeys = newParsed.mentionKeys;
++                targetMsg.mentionEntities = newParsed.mentionEntities;
++                targetMsg.matrixSender = ev.sender;
++                targetMsg.matrixMentions = newParsed.matrixMentions;
++                targetMsg.matrixEditEventId = ev.event_id;
+                 targetMsg.isEdited = true;
+                 targetMsg.editedAt = ev.origin_server_ts || Date.now();
+                 const preview = newContent.replace(/\s+/g, ' ').trim().slice(0, 120);
+@@ -6873,15 +6711,18 @@
+                     rm.replyTo.content = preview;
+                   }
+                 }
+-                mentionMailer.updateMessageContentInPending(targetMsg.msgUid, newContent);
++                // Only top-level Matrix mentions are eligible to notify for this revision.
++                const notifiedByEdit = new Set(readMatrixMentionUserIds(ev.content?.['m.mentions']).map(resolveMatrixMentionKey));
++                const retainedKeys = [...previousMentionKeys, ...targetMsg.mentionKeys.filter((key) => !notifiedByEdit.has(key))];
++                mentionMailer.reconcileEditedMessage('interconnect', targetMsg, retainedKeys);
+                 saveStoreDebounced();
+                 broadcastToRoom('interconnect', {
+                   type: 'chat:edited',
+                   roomId: 'interconnect',
+                   msgUid: targetMsg.msgUid,
+                   content: newContent,
+-                  mentions: targetMsg.mentions,
+                   mentionKeys: targetMsg.mentionKeys,
++                  mentionEntities: targetMsg.mentionEntities,
+                   isEdited: true,
+                   editedAt: targetMsg.editedAt
+                 });
+@@ -7001,6 +6842,7 @@
+     }
+   }, 30000);
+   syncMatrix();
++  recoverLegacyMatrixMentions().catch((err) => console.warn('[Matrix] Mention recovery failed:', err.message));
+   // Old versions stripped relay suffixes; recover only identities verified against their original event.
+   restoreRelayNames({
+     messages: messagesStore.interconnect,
+diff --git a/src/matrix/matrix-utils.mjs b/src/matrix/matrix-utils.mjs
+--- a/src/matrix/matrix-utils.mjs
++++ b/src/matrix/matrix-utils.mjs
+@@ -271,70 +271,42 @@
+   };
+ }
+ 
+-export function buildMentionedHtml(rawText, mentionedUsers = [], stickerHtmlMap = new Map()) {
++export function buildMentionedHtml(rawText, mentionLinks = [], stickerHtmlMap = new Map()) {
+   const source = String(rawText || '');
+-  if (!source) return '';
+-
+-  const sortedMentions = Array.from(
+-    new Map(
+-      mentionedUsers
+-        .filter((u) => u && u.name && u.matrixId)
+-        .map((u) => [u.matrixId, u])
+-    ).values()
+-  ).sort((a, b) => b.name.length - a.name.length);
+-
+-  const mentionRe = sortedMentions.length > 0
+-    ? new RegExp(
+-        `@(${sortedMentions.map((u) => u.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?=$|[\\s,，.。!！?？:：;；()（）\\[\\]【】<>《》"'“”‘’])`,
+-        'gi'
+-      )
+-    : null;
+-
+   const stickerRe = /:(qq|miku|bmoji)_([^:\s<>"]+):/g;
+-  const splitRe = /(```[\s\S]*?```|`[^`\n]+`|https?:\/\/[^\s<>()]+)/g;
+-  const parts = source.split(splitRe);
+-
+-  const htmlParts = parts.map((part, idx) => {
+-    if (idx % 2 === 1) {
+-      if (part.startsWith('```') && part.endsWith('```')) {
++  const splitRe = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`|https?:\/\/[^\s<>()]+)/g;
++  const escapeText = (text) => escapeHtml(text).replace(/\r?\n/g, '<br />');
++
++  function renderText(text) {
++    return text.split(splitRe).map((part, idx) => {
++      if (idx % 2 === 0) {
++        let rendered = '';
++        let end = 0;
++        for (const match of part.matchAll(stickerRe)) {
++          rendered += escapeText(part.slice(end, match.index));
++          rendered += stickerHtmlMap.get(match[0]) || escapeText(match[0]);
++          end = match.index + match[0].length;
++        }
++        return rendered + escapeText(part.slice(end));
++      }
++      if (part.startsWith('```') || part.startsWith('~~~')) {
+         const inner = part.slice(3, -3).replace(/^[a-zA-Z0-9_-]+\r?\n/, '');
+-        return `<pre><code>${escapeHtml(inner)}</code></pre>`;
++        return '<pre><code>' + escapeHtml(inner) + '</code></pre>';
+       }
+-      if (part.startsWith('`') && part.endsWith('`')) {
+-        return `<code>${escapeHtml(part.slice(1, -1))}</code>`;
+-      }
++      if (part.startsWith('`')) return '<code>' + escapeHtml(part.slice(1, -1)) + '</code>';
+       const safeUrl = escapeHtml(part);
+-      return `<a href="${safeUrl}">${safeUrl}</a>`;
+-    }
+-
+-    const tokens = [];
+-    let working = part;
+-
+-    // Protect stickers first so their names cannot collide with @mentions
+-    working = working.replace(stickerRe, (full) => {
+-      const imgHtml = stickerHtmlMap.get(full);
+-      if (!imgHtml) return full;
+-      const slot = tokens.length;
+-      tokens.push(imgHtml);
+-      return `\uE000T${slot}\uE001`;
+-    });
+-
+-    if (mentionRe) {
+-      mentionRe.lastIndex = 0;
+-      working = working.replace(mentionRe, (full, matchedName) => {
+-        const lower = String(matchedName).toLowerCase();
+-        const user = sortedMentions.find((u) => u.name.toLowerCase() === lower);
+-        if (!user) return full;
+-        const slot = tokens.length;
+-        tokens.push(`<a href="https://matrix.to/#/${encodeURIComponent(user.matrixId)}">${escapeHtml(user.name)}</a>`);
+-        return `\uE000T${slot}\uE001`;
+-      });
+-    }
+-
+-    let escaped = escapeHtml(working).replace(/\r?\n/g, '<br />');
+-    escaped = escaped.replace(/\uE000T(\d+)\uE001/g, (_m, idxStr) => tokens[Number(idxStr)] || '');
+-    return escaped;
+-  });
+-
+-  return htmlParts.join('');
+-}
+\ No newline at end of file
++      return '<a href="' + safeUrl + '">' + safeUrl + '</a>';
++    }).join('');
++  }
++
++  let html = '';
++  let offset = 0;
++  for (const entity of mentionLinks) {
++    const end = entity.offset + entity.length;
++    const label = escapeHtml(source.slice(entity.offset, end));
++    html += renderText(source.slice(offset, entity.offset));
++    html += '<a href="https://matrix.to/#/' + encodeURIComponent(entity.matrixId) + '">' + label + '</a>';
++    offset = end;
++  }
++  return html + renderText(source.slice(offset));
++}
+diff --git a/src/notify/mention-mailer.mjs b/src/notify/mention-mailer.mjs
+--- a/src/notify/mention-mailer.mjs
++++ b/src/notify/mention-mailer.mjs
+@@ -420,19 +420,29 @@
+     if (changed) savePending();
+   }
+ 
+-  function updateMessageContentInPending(msgUid, newContent) {
+-    if (!msgUid || typeof newContent !== 'string') return;
++  function reconcileEditedMessage(roomId, message, previousMentionKeys) {
++    const retained = new Set([...(message.mentionKeys || []), message.replyTo?.userKey].map(normalizeUserKey).filter(Boolean));
+     let changed = false;
+-    for (const bucket of Object.values(pending)) {
+-      if (!bucket || !Array.isArray(bucket.messages)) continue;
+-      for (const item of bucket.messages) {
+-        if (item.msgUid === msgUid) {
+-          item.content = newContent;
+-          changed = true;
++    for (const [bucketKey, bucket] of Object.entries(pending)) {
++      if (bucket?.roomId !== roomId || !Array.isArray(bucket.messages)) continue;
++      const item = bucket.messages.find((entry) => entry.msgUid === message.msgUid);
++      if (!item) continue;
++      changed = true;
++      if (retained.has(bucket.targetUserKey)) {
++        item.content = formatEmailContent(message);
++      } else {
++        bucket.messages = bucket.messages.filter((entry) => entry !== item);
++        if (!bucket.messages.length) {
++          delete pending[bucketKey];
++          cancelTimer(bucketKey);
+         }
+       }
+     }
+     if (changed) savePending();
++
++    const previous = new Set(previousMentionKeys.map(normalizeUserKey));
++    const added = (message.mentionKeys || []).filter((key) => !previous.has(normalizeUserKey(key)));
++    if (added.length) enqueueForMessage({ roomId, message: { ...message, mentionKeys: added, replyTo: null } });
+   }
+ 
+   async function sendImmediateMention(targetUserKey, roomId, item, pref) {
+@@ -579,7 +589,7 @@
+     clearPendingForUser,
+     mergeGuestPrefs,
+     removeMessageFromPending,
+-    updateMessageContentInPending,
++    reconcileEditedMessage,
+     enqueueForMessage,
+     restoreTimers
+   };
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -10,6 +10,7 @@
+   "author": "",
+   "license": "ISC",
+   "dependencies": {
++    "parse5": "7.3.0",
+     "ws": "^8.23.0"
+   }
+ }
+diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -9,7 +9,32 @@
+       "version": "1.0.0",
+       "license": "ISC",
+       "dependencies": {
++        "parse5": "7.3.0",
+         "ws": "^8.23.0"
++      }
++    },
++    "node_modules/entities": {
++      "version": "6.0.1",
++      "resolved": "https://registry.npmjs.org/entities/-/entities-6.0.1.tgz",
++      "integrity": "sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g==",
++      "license": "BSD-2-Clause",
++      "engines": {
++        "node": ">=0.12"
++      },
++      "funding": {
++        "url": "https://github.com/fb55/entities?sponsor=1"
++      }
++    },
++    "node_modules/parse5": {
++      "version": "7.3.0",
++      "resolved": "https://registry.npmjs.org/parse5/-/parse5-7.3.0.tgz",
++      "integrity": "sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==",
++      "license": "MIT",
++      "dependencies": {
++        "entities": "^6.0.0"
++      },
++      "funding": {
++        "url": "https://github.com/inikulin/parse5?sponsor=1"
+       }
+     },
+     "node_modules/ws": {
+diff --git a/src/matrix/chat-mention-protocol.mjs b/src/matrix/chat-mention-protocol.mjs
+new file mode 100644
+--- /dev/null
++++ b/src/matrix/chat-mention-protocol.mjs
+@@ -0,0 +1,309 @@
++import { parseFragment } from "parse5";
++
++const MAX_ENTITIES = 100;
++const SKIPPED_TAGS = new Set(["script", "style", "template", "mx-reply"]);
++const BLOCK_TAGS = new Set([
++	"p",
++	"div",
++	"pre",
++	"li",
++	"blockquote",
++	"tr",
++	"h1",
++	"h2",
++	"h3",
++	"h4",
++	"h5",
++	"h6",
++]);
++const LITERAL_TAGS = new Set(["code", "pre", "blockquote"]);
++const WRAPPERS = new Map([
++	["b", "**"],
++	["strong", "**"],
++	["em", "*"],
++	["i", "*"],
++	["s", "~~"],
++	["del", "~~"],
++	["code", "`"],
++	["pre", "```\n"],
++]);
++
++function splitsSurrogate(content, index) {
++	const before = content.charCodeAt(index - 1);
++	const after = content.charCodeAt(index);
++	return (
++		before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff
++	);
++}
++
++export function validateMentions(
++	content,
++	input,
++	allowedKeys,
++	isAdmin,
++	trimOffset = 0,
++) {
++	if (!Array.isArray(input) || !input.length) return [];
++	const literals = Array.from(
++		content.matchAll(
++			/(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`|https?:\/\/[^\s<>()]+)/g,
++		),
++	);
++	const entities = [];
++	let end = 0;
++	const ranges = input
++		.slice(0, MAX_ENTITIES)
++		.filter(
++			(item) =>
++				item &&
++				Number.isSafeInteger(item.offset) &&
++				Number.isSafeInteger(item.length),
++		)
++		.sort((a, b) => a.offset - b.offset);
++	for (const { offset: start, length, userKey } of ranges) {
++		const offset = start - trimOffset;
++		const nextEnd = offset + length;
++		if (offset < end || length < 2 || nextEnd > content.length) continue;
++		if (splitsSurrogate(content, offset) || splitsSurrogate(content, nextEnd))
++			continue;
++		const label = content.slice(offset, nextEnd);
++		if (!label.startsWith("@") || /[\r\n]/.test(label)) continue;
++		if (
++			literals.some(
++				(span) => offset < span.index + span[0].length && nextEnd > span.index,
++			)
++		)
++			continue;
++		if (userKey === "room" ? !isAdmin : !allowedKeys.has(userKey)) continue;
++		entities.push({ offset, length, userKey });
++		end = nextEnd;
++	}
++	return entities;
++}
++
++export function isMatrixUserId(value) {
++	if (typeof value !== "string" || !value.startsWith("@") || value.length > 255)
++		return false;
++	const sep = value.indexOf(":");
++	if (sep < 2 || /[^\x21-\x7e]/.test(value)) return false;
++	const server = value.slice(sep + 1);
++	if (!server || /[\s/@?#\\%]/.test(server)) return false;
++	try {
++		return Boolean(new URL("https://" + server).hostname);
++	} catch {
++		return false;
++	}
++}
++
++export function matrixUserIdFromLink(href) {
++	try {
++		const url = new URL(href);
++		let id = "";
++		if (url.protocol === "matrix:" && /^(?:u|userid)\//.test(url.pathname)) {
++			id =
++				"@" +
++				decodeURIComponent(url.pathname.slice(url.pathname.indexOf("/") + 1));
++		} else if (
++			url.origin === "https://matrix.to" &&
++			url.pathname === "/" &&
++			url.hash.startsWith("#/")
++		) {
++			id = decodeURIComponent(url.hash.slice(2).split("?")[0]);
++		}
++		return isMatrixUserId(id) ? id : null;
++	} catch {
++		return null;
++	}
++}
++
++function attr(node, name) {
++	return node.attrs.find((item) => item.name === name)?.value ?? "";
++}
++
++function linkLabel(node) {
++	if (SKIPPED_TAGS.has(node.tagName)) return "";
++	if (node.nodeName === "#text") return node.value;
++	if (node.tagName === "br") return "\n";
++	if (node.tagName === "img") return attr(node, "alt");
++	return (node.childNodes ?? []).map(linkLabel).join("");
++}
++
++function markdownLink(label, url, image = false) {
++	const text = label.replace(/[\\[\]]/g, "\\$&");
++	const href = url
++		.replaceAll("<", "%3C")
++		.replaceAll(">", "%3E")
++		.replace(/\s/g, "%20");
++	return (image ? "!" : "") + "[" + text + "](<" + href + ">)";
++}
++
++function escapeMatrixText(text) {
++	return text.replace(/[\\`*_~[\]<>]/g, "\\$&");
++}
++
++export function readMatrixMentionLayout(
++	body,
++	formatted,
++	resolveUserKey,
++	inlineImages,
++	relayHeader,
++) {
++	let content = "";
++	const mentionEntities = [];
++	const inlineClosers = new Map();
++	if (!formatted || formatted.length > 256_000)
++		return { content: body, mentionEntities };
++
++	function lineBreak() {
++		if (content && !content.endsWith("\n")) content += "\n";
++	}
++
++	function visit(node, inLiteral = false) {
++		const tag = node.tagName;
++		if (SKIPPED_TAGS.has(tag)) return;
++		if (node.nodeName === "#text") {
++			content += inLiteral ? node.value : escapeMatrixText(node.value);
++			return;
++		}
++		if (tag === "br") {
++			content += "\n";
++			return;
++		}
++		if (tag === "img") {
++			const alt = attr(node, "alt");
++			const url = inlineImages.get(attr(node, "src"));
++			content += url ? markdownLink(alt, url, true) : alt;
++			return;
++		}
++		const literal = inLiteral || LITERAL_TAGS.has(tag);
++		if (BLOCK_TAGS.has(tag)) lineBreak();
++		if (tag === "a" && !literal) {
++			const href = attr(node, "href");
++			const id = matrixUserIdFromLink(href);
++			const label = linkLabel(node);
++			if (
++				id &&
++				label.trim() &&
++				!label.includes("\n") &&
++				mentionEntities.length < MAX_ENTITIES
++			) {
++				mentionEntities.push({
++					offset: content.length,
++					length: label.length,
++					userKey: resolveUserKey(id),
++				});
++				content += label;
++				return;
++			}
++			if (/^https?:\/\//i.test(href)) {
++				content += markdownLink(label, href);
++				return;
++			}
++		}
++		const wrapper = inLiteral ? "" : WRAPPERS.get(tag);
++		if (wrapper) content += wrapper;
++		for (const child of node.childNodes ?? []) visit(child, literal);
++		if (wrapper) {
++			if (!literal) inlineClosers.set(content.length, wrapper.length);
++			content += tag === "pre" ? "\n```" : wrapper;
++		}
++		if (BLOCK_TAGS.has(tag)) lineBreak();
++	}
++
++	const nodes = parseFragment(formatted).childNodes.filter(
++		(node) => node.tagName !== "mx-reply",
++	);
++	if (relayHeader && nodes[0]) {
++		const firstLine = linkLabel(nodes[0]).trimEnd();
++		const shortHeader = relayHeader.split(";[URL:")[0];
++		if (
++			firstLine === relayHeader ||
++			(nodes[0].tagName === "div" && firstLine === shortHeader)
++		) {
++			nodes.shift();
++			if (nodes[0]?.tagName === "br") nodes.shift();
++		}
++	}
++	for (const node of nodes) visit(node);
++	return {
++		content: mentionEntities.length ? content : body,
++		mentionEntities,
++		inlineClosers,
++	};
++}
++
++const SITE_DIVIDER = /^[^\S\r\n]*[·•・][^\S\r\n]*/u;
++
++export function completeMentionLabels(
++	{ content, mentionEntities, inlineClosers },
++	targetKeys,
++	siteForKey,
++) {
++	if (!mentionEntities.length) return { content, mentionEntities };
++	let body = "";
++	let cursor = 0;
++	const entities = [];
++	for (const [index, entity] of mentionEntities.entries()) {
++		let start = entity.offset;
++		let end = start + entity.length;
++		if (start > cursor && content[start] !== "@" && content[start - 1] === "@")
++			start--;
++		let label = content.slice(start, end);
++		const explicit = label.startsWith("@") || targetKeys.has(entity.userKey);
++		const site = siteForKey(entity.userKey);
++		const next = mentionEntities[index + 1]?.offset ?? content.length;
++		let suffixStart = end;
++		while (inlineClosers?.has(suffixStart))
++			suffixStart += inlineClosers.get(suffixStart);
++		const following = content.slice(suffixStart, next);
++		const divider = SITE_DIVIDER.exec(following)?.[0];
++		const alreadyQualified =
++			site &&
++			label.endsWith(site) &&
++			/[·•・]$/u.test(label.slice(0, -site.length).trimEnd());
++
++		// The account is already resolved. The comparison only decides where its
++		// display label ends, with the next occurrence as a hard upper bound.
++		const matchedSite =
++			site && !alreadyQualified && divider
++				? [site, escapeMatrixText(site)].find((value) =>
++						following.startsWith(value, divider.length),
++					)
++				: undefined;
++		let closingMarkup = "";
++		if (matchedSite) {
++			label += divider + site;
++			closingMarkup = content.slice(end, suffixStart);
++			end = suffixStart + divider.length + matchedSite.length;
++		} else if (explicit && site && !divider && !/[·•・]/u.test(label)) {
++			label += " · " + site;
++		}
++		if ((explicit || matchedSite) && !label.startsWith("@"))
++			label = "@" + label;
++
++		body += content.slice(cursor, start);
++		entities.push({
++			offset: body.length,
++			length: label.length,
++			userKey: entity.userKey,
++		});
++		body += label + closingMarkup;
++		cursor = end;
++	}
++	return { content: body + content.slice(cursor), mentionEntities: entities };
++}
++
++export function readMatrixMentionUserIds(mentions) {
++	if (!Array.isArray(mentions?.user_ids)) return [];
++	return [...new Set(mentions.user_ids.filter(isMatrixUserId))].slice(
++		0,
++		MAX_ENTITIES,
++	);
++}
++
++export function matrixMentions(ids, room) {
++	return {
++		...(ids.length ? { user_ids: ids } : {}),
++		...(room ? { room: true } : {}),
++	};
++}
+diff --git a/tests/chat-mention-protocol.test.mjs b/tests/chat-mention-protocol.test.mjs
+new file mode 100644
+--- /dev/null
++++ b/tests/chat-mention-protocol.test.mjs
+@@ -0,0 +1,501 @@
++import assert from "node:assert/strict";
++import { createHash } from "node:crypto";
++import { readFileSync } from "node:fs";
++import {
++	buildMentionedHtml,
++	normalizeDotSpacing,
++} from "../src/matrix/matrix-utils.mjs";
++import {
++	completeMentionLabels,
++	isMatrixUserId,
++	matrixMentions,
++	readMatrixMentionLayout,
++	readMatrixMentionUserIds,
++	validateMentions,
++} from "../src/matrix/chat-mention-protocol.mjs";
++const server = readFileSync(new URL("../server.mjs", import.meta.url), "utf8");
++const get = (a, b) =>
++	server.slice(server.indexOf(a), server.indexOf(b, server.indexOf(a) + 1));
++const scopes = {
++	chat: [{ userKey: "waline:1", name: "同名" }],
++	interconnect: [
++		{ userKey: "waline:1", name: "同名" },
++		{ userKey: "matrix:@person:snow.example", name: "同名 · 雪茶室" },
++		{
++			userKey: "matrix:@relay:snow.example#relay:snow:1",
++			name: "转发 · 雪茶室",
++		},
++	],
++};
++const local = "@owner:local.example";
++const ext = "@person:snow.example";
++const source = "@source:rain.example";
++const resolveLocalUserKey = (id) => (id === local ? "waline:1" : null);
++const getMatrixShadowIdForUserKey = (key) =>
++	key === "waline:1" ? local : null;
++const getAllMentionCandidates = (room) => scopes[room];
++const getMentionSite = (key) =>
++	key === "waline:1" ? "本站" : key === "matrix:" + ext ? "雪茶室" : "";
++const { resolveOutgoingMentions } = new Function(
++	"validateMentions",
++	"isMatrixUserId",
++	"getAllMentionCandidates",
++	"getMatrixShadowIdForUserKey",
++	"completeMentionLabels",
++	"getMentionSite",
++	get(
++		"function resolveMatrixIdForUserKey",
++		"async function syncMatrixPresence",
++	) + ";return {resolveOutgoingMentions};",
++)(
++	validateMentions,
++	isMatrixUserId,
++	getAllMentionCandidates,
++	getMatrixShadowIdForUserKey,
++	completeMentionLabels,
++	getMentionSite,
++);
++
++const text = "@同名 · 雪茶室";
++const body = "🌙" + text + "国外CDN坏了";
++const entity = { offset: 2, length: text.length, userKey: "matrix:" + ext };
++const user = { userKey: "waline:1", isAdmin: false };
++const external = resolveOutgoingMentions("interconnect", body, [entity], user);
++assert.deepEqual(external.mentionKeys, ["matrix:" + ext]);
++assert.deepEqual(external.matrixUserIds, [ext]);
++assert.deepEqual(external.mentionEntities, [entity]);
++assert.equal(Object.hasOwn(external, "mentions"), false);
++const html = buildMentionedHtml(body, external.mentionLinks);
++assert.equal(
++	html,
++	'🌙<a href="https://matrix.to/#/%40person%3Asnow.example">@同名 · 雪茶室</a>国外CDN坏了',
++);
++assert.deepEqual(
++	resolveOutgoingMentions("chat", body, [entity], user).mentionKeys,
++	[],
++);
++assert.deepEqual(
++	resolveOutgoingMentions("interconnect", body, [], user).mentionKeys,
++	[],
++);
++assert.deepEqual(
++	resolveOutgoingMentions(
++		"interconnect",
++		body,
++		[{ ...entity, offset: 1 }],
++		user,
++	).mentionKeys,
++	[],
++);
++assert.deepEqual(
++	resolveOutgoingMentions(
++		"interconnect",
++		body,
++		[{ ...entity, offset: 4 }],
++		user,
++		2,
++	).mentionKeys,
++	["matrix:" + ext],
++);
++const relayLabel = "@转发 · 雪茶室";
++const relay = resolveOutgoingMentions(
++	"interconnect",
++	relayLabel,
++	[
++		{
++			offset: 0,
++			length: relayLabel.length,
++			userKey: scopes.interconnect[2].userKey,
++		},
++	],
++	user,
++);
++assert.equal(relay.mentionKeys[0], scopes.interconnect[2].userKey);
++assert.deepEqual(relay.matrixUserIds, []);
++assert.deepEqual(relay.mentionLinks, []);
++assert.deepEqual(
++	resolveOutgoingMentions(
++		"interconnect",
++		"@所有人",
++		[{ offset: 0, length: 4, userKey: "room" }],
++		user,
++	).mentionKeys,
++	[],
++);
++assert.deepEqual(
++	resolveOutgoingMentions(
++		"interconnect",
++		"@所有人",
++		[{ offset: 0, length: 4, userKey: "room" }],
++		{ ...user, isAdmin: true },
++	).mentionKeys,
++	["room"],
++);
++
++const matrixProfileCache = new Map([
++	[source, { displayname: "同名 · 另一站" }],
++]);
++const map = {
++	createHash,
++	isMatrixUserId,
++	resolveLocalUserKey,
++	matrixMentions,
++	completeMentionLabels,
++	getMentionSite,
++	readMatrixMentionLayout,
++	readMatrixMentionUserIds,
++	normalizeDotSpacing,
++	MATRIX_ADMIN_USER_ID: local,
++	matrixProfileCache,
++	messagesStore: { interconnect: [] },
++	KNOWN_MATRIX_RELAY_SENDERS: new Set(),
++	matrixRoomPowerLevels: { users: { [source]: 75 }, notifications_room: 50 },
++	resolveMatrixRelayMeta: () => ({ hasRelayPayload: false }),
++	normalizeSiteBadge: (_, fallback) => fallback,
++	mxcToHttp: (url) => "https://media.example/" + url.slice(6),
++};
++const parseMatrixEvent = new Function(
++	...Object.keys(map),
++	get(
++		"function resolveMatrixMentionKey",
++		"async function recoverLegacyMatrixMentions",
++	) + ";return parseMatrixEvent;",
++)(...Object.values(map));
++const make = (body, formatted_body, mMentions) => ({
++	type: "m.room.message",
++	sender: source,
++	event_id: "$matrix",
++	content: {
++		msgtype: "m.text",
++		body,
++		format: "org.matrix.custom.html",
++		formatted_body,
++		"m.mentions": mMentions,
++	},
++});
++const imported = await parseMatrixEvent(make(body, html, { user_ids: [ext] }));
++assert.deepEqual(imported.mentionKeys, ["matrix:" + ext]);
++assert.deepEqual(imported.mentionEntities, [entity]);
++assert.equal(imported.content, body);
++assert.equal(Object.hasOwn(imported, "mentions"), false);
++const nameOnly = "同名 · 雪茶室";
++const native = await parseMatrixEvent(
++	make(
++		nameOnly + "CDN",
++		'<a href="matrix:u/person:snow.example">' + nameOnly + "</a>CDN",
++		{ user_ids: [ext] },
++	),
++);
++assert.equal(native.content, "@" + nameOnly + "CDN");
++assert.deepEqual(native.mentionEntities, [
++	{ offset: 0, length: 1 + nameOnly.length, userKey: "matrix:" + ext },
++]);
++const linkOnly = await parseMatrixEvent(make(body, html, {}));
++assert.deepEqual(linkOnly.mentionKeys, []);
++assert.deepEqual(linkOnly.mentionEntities, [entity]);
++const pingOnly = await parseMatrixEvent(
++	make("通知", undefined, { user_ids: [ext] }),
++);
++assert.deepEqual(pingOnly.mentionKeys, ["matrix:" + ext]);
++assert.deepEqual(pingOnly.mentionEntities, []);
++const roomOnly = await parseMatrixEvent(
++	make("大家看看", undefined, { room: true }),
++);
++assert.deepEqual(roomOnly.mentionKeys, ["room"]);
++const double = await parseMatrixEvent(
++	make(
++		text + "和" + text,
++		'<a href="https://matrix.to/#/%40person%3Asnow.example">' +
++			text +
++			'</a>和<a href="matrix:u/owner:local.example">' +
++			text +
++			"</a>",
++		{ user_ids: [ext, local] },
++	),
++);
++assert.deepEqual(
++	double.mentionEntities.map((x) => x.userKey),
++	["matrix:" + ext, "waline:1"],
++);
++const code = await parseMatrixEvent(
++	make("代码 \x60" + ext + "\x60", undefined, {}),
++);
++assert.equal(code.content, "代码 \x60" + ext + "\x60");
++assert.deepEqual(code.mentionKeys, []);
++const rich = await parseMatrixEvent(
++	make(
++		"fallback",
++		'<mx-reply><a href="matrix:u/owner:local.example">skip</a></mx-reply><strong><a href="matrix:u/person:snow.example">雪茶室 &amp; A</a></strong>下一句',
++		{ user_ids: [ext] },
++	),
++);
++assert.equal(rich.content, "**@雪茶室 & A · 雪茶室**下一句");
++assert.deepEqual(rich.mentionEntities, [
++	{
++		offset: 2,
++		length: "@雪茶室 & A · 雪茶室".length,
++		userKey: "matrix:" + ext,
++	},
++]);
++const withLink = await parseMatrixEvent(
++	make(
++		"fallback",
++		'<a href="matrix:u/person:snow.example">同名 · 雪茶室</a> <a href="https://example.org/">链接</a>',
++		{ user_ids: [ext] },
++	),
++);
++assert.equal(withLink.content, "@同名 · 雪茶室 [链接](<https://example.org/>)");
++const media = await parseMatrixEvent(
++	make(
++		"fallback",
++		'<a href="matrix:u/person:snow.example">同名 · 雪茶室</a><img data-mx-emoticon src="mxc://example.org/face" alt="表情">',
++		{ user_ids: [ext] },
++	),
++);
++assert.equal(
++	media.content,
++	"@同名 · 雪茶室![表情](<https://media.example/example.org/face>)",
++);
++
++// The known account supplies the site boundary, even with CJK or ASCII attached.
++const partial =
++	'<a href="matrix:u/person:snow.example">同名</a> · 雪茶室CDN不通';
++const incomingPartial = await parseMatrixEvent(
++	make(text + "CDN不通", partial, { user_ids: [ext] }),
++);
++assert.equal(incomingPartial.content, text + "CDN不通");
++assert.deepEqual(incomingPartial.mentionEntities, [
++	{ offset: 0, length: text.length, userKey: "matrix:" + ext },
++]);
++const formattedPartial = await parseMatrixEvent(
++	make(
++		text + "CDN不通",
++		partial
++			.replace(">同名</a>", "><strong>同名</strong></a>")
++			.replace("<a href=", "<em><a href=")
++			.replace("</a>", "</a></em>"),
++		{ user_ids: [ext] },
++	),
++);
++assert.equal(formattedPartial.content, "*" + text + "*CDN不通");
++assert.deepEqual(formattedPartial.mentionEntities, [
++	{ offset: 1, length: text.length, userKey: "matrix:" + ext },
++]);
++const boldPartial = await parseMatrixEvent(
++	make(
++		text + "CDN不通",
++		partial
++			.replace("<a href=", "<strong><a href=")
++			.replace("</a>", "</a></strong>"),
++		{ user_ids: [ext] },
++	),
++);
++assert.equal(boldPartial.content, "**" + text + "**CDN不通");
++assert.deepEqual(boldPartial.mentionEntities, [
++	{ offset: 2, length: text.length, userKey: "matrix:" + ext },
++]);
++const silentPartial = await parseMatrixEvent(
++	make(text + "CDN不通", partial, {}),
++);
++assert.equal(silentPartial.content, incomingPartial.content);
++assert.deepEqual(
++	silentPartial.mentionEntities,
++	incomingPartial.mentionEntities,
++);
++assert.deepEqual(silentPartial.mentionKeys, []);
++const profileOnly = await parseMatrixEvent(
++	make("资料", '<a href="matrix:u/person:snow.example">资料</a>', {}),
++);
++assert.equal(profileOnly.content, "资料");
++assert.deepEqual(profileOnly.mentionKeys, []);
++const punctuationSite = "@同名 · snow_site";
++const punctuation = completeMentionLabels(
++	{
++		content: "同名 · snow" + String.fromCharCode(92) + "_site正文",
++		mentionEntities: [{ offset: 0, length: 2, userKey: "matrix:" + ext }],
++	},
++	new Set(),
++	() => "snow_site",
++);
++assert.equal(punctuation.content, punctuationSite + "正文");
++assert.equal(punctuation.mentionEntities[0].length, punctuationSite.length);
++
++const afterPlainAt = await parseMatrixEvent(
++	make(text + "CDN不通", "@" + partial, { user_ids: [ext] }),
++);
++assert.equal(afterPlainAt.content, incomingPartial.content);
++assert.deepEqual(afterPlainAt.mentionEntities, incomingPartial.mentionEntities);
++const missingSite = await parseMatrixEvent(
++	make("同名CDN", '<a href="matrix:u/person:snow.example">同名</a>CDN', {
++		user_ids: [ext],
++	}),
++);
++assert.equal(missingSite.content, text + "CDN");
++const wrongSite = await parseMatrixEvent(
++	make("同名 · 其他站正文", partial.replace("雪茶室CDN不通", "其他站正文"), {
++		user_ids: [ext],
++	}),
++);
++assert.equal(wrongSite.content, "@同名 · 其他站正文");
++assert.equal(wrongSite.mentionEntities[0].length, "@同名".length);
++const plainPartner = await parseMatrixEvent(
++	make(text + "CDN不通", undefined, {}),
++);
++assert.equal(plainPartner.content, text + "CDN不通");
++assert.deepEqual(plainPartner.mentionEntities, []);
++assert.deepEqual(plainPartner.mentionKeys, []);
++const senderPartial = resolveOutgoingMentions(
++	"interconnect",
++	text + "中文正文",
++	[{ offset: 0, length: "@同名".length, userKey: "matrix:" + ext }],
++	user,
++);
++assert.equal(senderPartial.content, text + "中文正文");
++assert.equal(
++	buildMentionedHtml(senderPartial.content, senderPartial.mentionLinks),
++	'<a href="https://matrix.to/#/%40person%3Asnow.example">' +
++		text +
++		"</a>中文正文",
++);
++
++const relayHeader = "[ID:同名·雪茶室];[URL:https://example.org/avatar?a=1&b=2]";
++const relayHtml =
++	relayHeader.replace("&", "&amp;") +
++	'<br><a href="matrix:u/owner:local.example">@同名 · 本站</a>你好';
++const relayEvent = make(relayHeader + "\n@同名 · 本站你好", relayHtml, {
++	user_ids: [local],
++});
++const parsedRelay = await parseMatrixEvent(relayEvent);
++assert.equal(parsedRelay.content, "@同名 · 本站你好");
++assert.deepEqual(parsedRelay.mentionEntities, [
++	{ offset: 0, length: "@同名 · 本站".length, userKey: "waline:1" },
++]);
++assert.deepEqual(parsedRelay.mentionKeys, ["waline:1"]);
++
++const savedMessage = {
++	kind: "user",
++	source: "matrix",
++	msgUid: "$matrix",
++	content: "@同名 · 本站你好",
++	mentions: ["同名 · 本站"],
++	mentionKeys: ["matrix:" + ext],
++};
++const oldLocal = {
++	kind: "user",
++	msgUid: "msg_local",
++	matrixEventId: "$local",
++	content: text + "CDN不通",
++	mentionKeys: ["matrix:" + ext],
++};
++const duplicate = {
++	...oldLocal,
++	msgUid: "msg_dupe",
++	mentionKeys: ["matrix:" + ext, "waline:1"],
++};
++const localEvent = {
++	...make(text + "CDN不通", partial, { user_ids: [ext] }),
++	sender: local,
++	event_id: "$local",
++};
++localEvent.content["com.lengxiqwq.msg_uid"] = oldLocal.msgUid;
++const historical = [savedMessage, oldLocal, duplicate];
++let writes = 0;
++const historicalUpdates = [];
++const recover = new Function(
++	"messagesStore",
++	"fetchMatrixRawEvent",
++	"parseMatrixEvent",
++	"broadcastToRoom",
++	"saveStoreDebounced",
++	get(
++		"async function recoverLegacyMatrixMentions",
++		"async function primeMatrixRoomState",
++	) + ";return recoverLegacyMatrixMentions;",
++)(
++	{ interconnect: historical },
++	async (id) => ({ event: id === "$local" ? localEvent : relayEvent }),
++	parseMatrixEvent,
++	(_, packet) => historicalUpdates.push(packet),
++	() => writes++,
++);
++assert.equal(await recover(), 2);
++assert.equal(await recover(), 0);
++assert.equal(writes, 1);
++assert.equal(historicalUpdates[0].type, "chat:updated");
++assert.deepEqual(savedMessage.mentionKeys, ["waline:1"]);
++assert.deepEqual(oldLocal.mentionKeys, ["matrix:" + ext]);
++assert.equal(oldLocal.mentionEntities[0].length, text.length);
++assert.equal(duplicate.mentionEntities, undefined);
++console.log(
++	"Gateway assertions passed: same name in both directions, exact spans, direct Matrix links, room permissions, relay, UTF-16 and silent links",
++);
++
++const pushed = [];
++let clock = 0;
++const editState = {
++	getOrCreateMatrixAccountForUser: async () => ({
++		userId: local,
++		token: "fixture",
++	}),
++	MATRIX_ADMIN_TOKEN: "fixture",
++	MATRIX_ADMIN_USER_ID: local,
++	recentlySentEventIds: new Set(),
++	matrixEditJobs: new Map(),
++	setTimeout: () => {},
++	formatMatrixContent: async (body) => ({ markdownBody: body, htmlBody: body }),
++	matrixMentions,
++	MATRIX_INTERNAL_URL: "http://fixture.invalid",
++	MATRIX_ROOM_ID: "!fixture:example.org",
++	fetch: async (_url, options) => {
++		pushed.push(JSON.parse(options.body));
++		return { ok: true, json: async () => ({ event_id: "$edit" + ++clock }) };
++	},
++	saveStoreDebounced: () => {},
++};
++const queueEdit = new Function(
++	...Object.keys(editState),
++	get("function queueMatrixEdit(", "function resolveSingleSticker") +
++		";return queueMatrixEdit;",
++)(...Object.values(editState));
++const message = { content: "第一版", msgType: "text", matrixMentions: {} };
++queueEdit(user, "$original", message, external);
++message.content = "第二版";
++queueEdit(user, "$original", message, external);
++await editState.matrixEditJobs.get("$original");
++assert.deepEqual(
++	pushed.map((p) => p["m.mentions"]),
++	[{ user_ids: [ext] }, {}],
++);
++assert.deepEqual(
++	pushed.map((p) => p["m.new_content"].body),
++	["第一版", "第二版"],
++);
++assert.deepEqual(
++	pushed.map((p) => p["m.new_content"]["m.mentions"]),
++	[{ user_ids: [ext] }, { user_ids: [ext] }],
++);
++console.log(
++	"Gateway edit assertions passed: both revisions keep their own body and re-editing does not re-notify",
++);
++
++const sentErrors = [];
++const oldClient = { send: (data) => sentErrors.push(JSON.parse(data)) };
++const rejectLegacy = new Function(
++	get("function rejectLegacyMentions(", "async function syncMatrixPresence") +
++		";return rejectLegacyMentions;",
++)();
++assert.equal(rejectLegacy(oldClient, { mentionKeys: [] }), false);
++assert.equal(rejectLegacy(oldClient, { mentionKeys: ["waline:1"] }), true);
++assert.equal(rejectLegacy(oldClient, {}, { mentionEntities: [entity] }), true);
++assert.equal(
++	rejectLegacy(
++		oldClient,
++		{ mentionEntities: [] },
++		{ mentionEntities: [entity] },
++	),
++	false,
++);
++assert.deepEqual(
++	sentErrors.map((pkt) => pkt.code),
++	["MENTIONS_REFRESH_REQUIRED", "MENTIONS_REFRESH_REQUIRED"],
++);

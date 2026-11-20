@@ -11,8 +11,10 @@ import {
 	isSafeImageUrl,
 	isSafeLinkUrl,
 	parseChatMarkdown,
+	restoreChatMarkdownLiterals,
 	restoreTextSegments,
 } from "./chatMarkdown";
+import type { ChatMentionEntity } from "./chatTypes";
 import LottieSticker from "./LottieSticker.svelte";
 import {
 	isChatInlineSticker,
@@ -23,66 +25,31 @@ import {
 interface Props {
 	content: string;
 	stickerMap: Map<string, StickerItem>;
-	mentions?: string[];
-	currentUserName?: string;
-	currentUserSite?: string;
-	canRoomHighlight?: boolean;
+	mentionEntities?: ChatMentionEntity[];
+	mentionKeys?: string[];
+	currentUserKey?: string;
 	chatServerUrl?: string;
-	onMentionClick?: (target: string) => void;
+	onMentionClick?: (userKey: string, text: string) => void;
 }
 
 const {
 	content = "",
 	stickerMap,
-	mentions = [],
-	currentUserName = "",
-	currentUserSite = "",
-	canRoomHighlight = false,
+	mentionEntities = [],
+	mentionKeys = [],
+	currentUserKey = "",
 	chatServerUrl,
 	onMentionClick,
 }: Props = $props();
 
 const ast: ChatMarkdownAst = $derived(
-	parseChatMarkdown(content, stickerMap, mentions, canRoomHighlight),
+	parseChatMarkdown(content, stickerMap, mentionEntities),
 );
 
-function isSelfMentionTarget(target: string): boolean {
-	const cleaned = target.trim().toLowerCase();
-	if (
-		canRoomHighlight &&
-		(cleaned === "room" || cleaned === "all" || target.trim() === "所有人")
-	) {
-		return true;
-	}
-	if (!currentUserName) return false;
-
-	const myNameClean = currentUserName.trim().toLowerCase();
-	const myParts = myNameClean.split(/\s*[·•・]\s*/);
-	const myBase = myParts[0]?.trim() || myNameClean;
-	const mySiteClean = (currentUserSite || myParts.slice(1).join(" · ") || "")
-		.trim()
-		.toLowerCase();
-
-	const targetParts = cleaned.split(/\s*[·•・]\s*/);
-	const targetBase = targetParts[0]?.trim() || "";
-	const targetSite = targetParts.slice(1).join(" · ").trim();
-
-	// 1. 基础名字必须严格相等
-	if (targetBase !== myBase) {
-		return false;
-	}
-
-	// 2. 如果提及的目标明确指定了站点后缀（例如 "AIOVTUE-雪"）
-	if (targetSite) {
-		if (mySiteClean) {
-			return targetSite === mySiteClean;
-		}
-		// 若自身没有站点信息，但目标明确带了外部站点名，不判定为自己
-		return false;
-	}
-
-	// 3. 如果提及目标没有指定站点名，纯纯的 @昵称，则匹配自己
-	return true;
+function isSelfMention(userKey: string): boolean {
+	return userKey === "room"
+		? mentionKeys.includes("room")
+		: userKey === currentUserKey && mentionKeys.includes(currentUserKey);
 }
 
 function getInlineChildren(token: Token): Token[] | undefined {
@@ -102,7 +69,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
     {:else if tok.type === "del"}
       <del class="opacity-70">{@render renderInlineList((tok as Tokens.Del).tokens)}</del>
     {:else if tok.type === "codespan"}
-      <code class="chat-md-code">{(tok as Tokens.Codespan).text}</code>
+      <code class="chat-md-code">{restoreChatMarkdownLiterals((tok as Tokens.Codespan).text, ast)}</code>
     {:else if tok.type === "br"}
       <br />
     {:else if tok.type === "link"}
@@ -172,7 +139,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
     {:else if tok.type === "escape"}
       {(tok as Tokens.Escape).text}
     {:else if tok.type === "html"}
-      {tok.raw}
+      {restoreChatMarkdownLiterals(tok.raw, ast)}
     {:else if tok.type === "text"}
       {@const children = getInlineChildren(tok)}
       {#if children && children.length > 0}
@@ -191,31 +158,26 @@ function getInlineChildren(token: Token): Token[] | undefined {
               <img src={seg.url} alt={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
             {/if}
           {:else if seg.kind === "mention"}
-            {@const isClickable = Boolean(onMentionClick && seg.target && seg.target !== "所有人" && seg.target.toLowerCase() !== "room" && seg.target.toLowerCase() !== "all")}
-            <span
-              class="chat-mention-pill {isSelfMentionTarget(seg.target) ? 'self' : ''} {isClickable ? 'clickable select-none' : ''}"
-              role={isClickable ? "button" : undefined}
-              tabindex={isClickable ? 0 : undefined}
-              title={isClickable ? `查看 @${seg.target} 的资料` : undefined}
-              onclick={isClickable ? (e) => {
-                e.stopPropagation();
-                onMentionClick?.(seg.target);
-              } : undefined}
-              onkeydown={isClickable ? (e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.stopPropagation();
-                  e.preventDefault();
-                  onMentionClick?.(seg.target);
-                }
-              } : undefined}
-            >{seg.text}</span>
+            {#if onMentionClick && seg.userKey !== "room"}
+              <button
+                type="button"
+                class="chat-mention-pill {isSelfMention(seg.userKey) ? 'self' : ''} clickable select-none"
+                title={"查看 " + seg.text + " 的资料"}
+                onclick={(event) => {
+                  event.stopPropagation();
+                  onMentionClick?.(seg.userKey, seg.text);
+                }}
+              >{seg.text}</button>
+            {:else}
+              <span class="chat-mention-pill {isSelfMention(seg.userKey) ? 'self' : ''}">{seg.text}</span>
+            {/if}
           {:else}
             {seg.text}
           {/if}
         {/each}
       {/if}
     {:else}
-      {tok.raw}
+      {restoreChatMarkdownLiterals(tok.raw, ast)}
     {/if}
   {/each}
 {/snippet}
@@ -241,7 +203,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
       </div>
     {:else if tok.type === "code"}
       {@const codeTok = tok as Tokens.Code}
-      <ChatCodeBlock code={codeTok.text} lang={codeTok.lang || ""} />
+      <ChatCodeBlock code={restoreChatMarkdownLiterals(codeTok.text, ast)} lang={codeTok.lang || ""} />
     {:else if tok.type === "blockquote"}
       {@const qTok = tok as Tokens.Blockquote}
       <blockquote class="chat-md-quote">
@@ -305,9 +267,9 @@ function getInlineChildren(token: Token): Token[] | undefined {
     {:else if tok.type === "hr"}
       <hr class="chat-md-hr" />
     {:else if tok.type === "html"}
-      <p class="chat-md-p">{tok.raw}</p>
+      <p class="chat-md-p">{restoreChatMarkdownLiterals(tok.raw, ast)}</p>
     {:else}
-      <p class="chat-md-p">{tok.raw}</p>
+      <p class="chat-md-p">{restoreChatMarkdownLiterals(tok.raw, ast)}</p>
     {/if}
   {/each}
 {/snippet}

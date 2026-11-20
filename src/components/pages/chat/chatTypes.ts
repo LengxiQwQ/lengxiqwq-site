@@ -296,6 +296,13 @@ export interface ChatReadReceipt {
 	ts: number;
 }
 
+/** One occurrence in content. Offsets and lengths count UTF-16 code units. */
+export interface ChatMentionEntity {
+	offset: number;
+	length: number;
+	userKey: string;
+}
+
 export interface ChatMessageRecord {
 	source?: "matrix";
 	id: number;
@@ -317,8 +324,8 @@ export interface ChatMessageRecord {
 	isAdmin: boolean;
 	content: string;
 	attachments: ImageAttachment[];
-	mentions: string[];
 	mentionKeys?: string[];
+	mentionEntities?: ChatMentionEntity[];
 	replyTo?: ChatReplyRef | null;
 	threadRootUid?: string;
 	threadSummary?: ChatThreadSummary | null;

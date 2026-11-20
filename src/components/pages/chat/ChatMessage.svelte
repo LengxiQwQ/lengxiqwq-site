@@ -8,7 +8,6 @@ import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessageActivityModal from "./ChatMessageActivityModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import {
-	hasExplicitRoomMentionText,
 	isExternalMatrixIdentity,
 	normalizeDotSpacing,
 	resolveExternalOrigin,
@@ -41,8 +40,6 @@ interface Props {
 	isSelf: boolean;
 	isMentionedMe?: boolean;
 	isHighlighted?: boolean;
-	currentUserName?: string;
-	currentUserSite?: string;
 	currentUserKey?: string;
 	isAdmin?: boolean;
 	isPinned?: boolean;
@@ -91,8 +88,6 @@ const {
 	isSelf,
 	isMentionedMe = false,
 	isHighlighted = false,
-	currentUserName = "",
-	currentUserSite = "",
 	currentUserKey = "",
 	isAdmin = false,
 	isPinned = false,
@@ -269,12 +264,7 @@ function handleToggleAudio(url: string) {
 }
 
 const segments = $derived(
-	parseChatSegments(
-		message.content,
-		stickerMap,
-		message.mentions,
-		canRoomHighlight,
-	),
+	parseChatSegments(message.content, stickerMap),
 );
 
 const stickerSegments = $derived(
@@ -401,15 +391,6 @@ const safeAttachments = $derived.by(() => {
 		});
 });
 
-const canRoomHighlight = $derived(
-	Boolean(
-		hasExplicitRoomMentionText(message.content) &&
-			(message.isAdmin ||
-				message.mentionKeys?.includes("room") ||
-				message.mentionKeys?.includes("@room")),
-	),
-);
-
 const roleBadge = $derived.by(() => {
 	if (isExternal) return null;
 	if (message.isAdmin) return { label: "站长", type: "host" as const };
@@ -514,58 +495,11 @@ function handleAvatarClick() {
 	}
 }
 
-function handleMentionPillClick(rawTarget: string) {
-	if (!onOpenUserProfile) return;
-	const cleanTarget = (rawTarget || "").trim().replace(/^@/, "");
-	if (
-		!cleanTarget ||
-		cleanTarget === "所有人" ||
-		cleanTarget.toLowerCase() === "room" ||
-		cleanTarget.toLowerCase() === "all"
-	) {
-		return;
-	}
-
-	const targetNormalized = normalizeDotSpacing(cleanTarget);
-	const targetBaseName = cleanTarget.split(/[·•・]/)[0].trim().toLowerCase();
-
-	// 1. 优先从用户名册 userProfileMap 匹配完整昵称或 userKey
-	let matchedSeed: ChatUserDetailSeed | null = null;
-	if (userProfileMap) {
-		for (const seed of userProfileMap.values()) {
-			if (!seed) continue;
-			const seedName = seed.name ? seed.name.trim() : "";
-			const seedNormalized = normalizeDotSpacing(seedName);
-			if (seedName === cleanTarget || seedNormalized === targetNormalized) {
-				matchedSeed = seed;
-				break;
-			}
-			if (seed.userKey === cleanTarget || seed.userKey === `matrix:${cleanTarget}`) {
-				matchedSeed = seed;
-				break;
-			}
-			const seedBase = seedName.split(/[·•・]/)[0].trim().toLowerCase();
-			if (seedBase && seedBase === targetBaseName) {
-				if (!matchedSeed) matchedSeed = seed;
-			}
-		}
-	}
-
-	if (matchedSeed) {
-		onOpenUserProfile(matchedSeed);
-		return;
-	}
-
-	// 2. 兜底方案：解析外部或本站昵称生成资料种子并打开资料卡
-	const isExt = isExternalMatrixIdentity({ name: cleanTarget });
-	const extOrigin = isExt ? resolveExternalOrigin({ name: cleanTarget }, interconnectSites) : null;
-	onOpenUserProfile({
-		userKey: "",
-		name: extOrigin?.cleanName || cleanTarget.split(/[·•・]/)[0].trim(),
-		site: extOrigin?.siteName,
-		badge: extOrigin?.siteName || "互联茶友",
-		badgeType: "tag",
-	});
+function handleMentionPillClick(userKey: string, text: string) {
+	if (!onOpenUserProfile || userKey === "room") return;
+	const profile = userProfileMap.get(userKey);
+	const label = text.startsWith("@") ? text.slice(1) : text;
+	onOpenUserProfile({ ...profile, userKey, name: profile?.name || label });
 }
 
 interface ReactionUserItem {
@@ -598,7 +532,7 @@ function resolveUserProfileSeed(
 			resolvedFallback = key;
 		}
 	}
-	const isExt = isExternalMatrixIdentity(key);
+	const isExt = isExternalMatrixIdentity({ userKey: key });
 	const baseName = profile?.name || resolvedFallback || "成员";
 	const origin = isExt
 		? resolveExternalOrigin(
@@ -1657,10 +1591,9 @@ function handleBubbleClick(e: MouseEvent) {
                 <ChatMarkdownContent
                   content={message.content}
                   stickerMap={stickerMap}
-                  mentions={message.mentions}
-                  currentUserName={currentUserName}
-                  currentUserSite={currentUserSite}
-                  canRoomHighlight={canRoomHighlight}
+                  mentionEntities={message.mentionEntities}
+                  currentUserKey={currentUserKey}
+                  mentionKeys={message.mentionKeys}
                   chatServerUrl={chatServerUrl}
                   onMentionClick={handleMentionPillClick}
                 />
@@ -1790,10 +1723,9 @@ function handleBubbleClick(e: MouseEvent) {
                 <ChatMarkdownContent
                   content={message.content}
                   stickerMap={stickerMap}
-                  mentions={message.mentions}
-                  currentUserName={currentUserName}
-                  currentUserSite={currentUserSite}
-                  canRoomHighlight={canRoomHighlight}
+                  mentionEntities={message.mentionEntities}
+                  currentUserKey={currentUserKey}
+                  mentionKeys={message.mentionKeys}
                   chatServerUrl={chatServerUrl}
                   onMentionClick={handleMentionPillClick}
                 />

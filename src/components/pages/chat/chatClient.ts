@@ -3,6 +3,7 @@ import type {
 	ChatActiveThreadItem,
 	ChatCustomBadge,
 	ChatMentionCandidate,
+	ChatMentionEntity,
 	ChatMessageRecord,
 	ChatMessageSourceResponse,
 	ChatOnlineMember,
@@ -126,8 +127,8 @@ export type ServerPacket =
 			roomId: string;
 			msgUid: string;
 			content: string;
-			mentions?: string[];
 			mentionKeys?: string[];
+			mentionEntities?: ChatMentionEntity[];
 			isEdited?: boolean;
 			editedAt?: number;
 	  }
@@ -1402,37 +1403,14 @@ export function sanitizeChatUrl(rawUrl?: string, allowRelative = true): string {
 	}
 }
 
-const EXPLICIT_ROOM_MENTION_RE =
-	/(?:^|[^A-Za-z0-9._+-])@(?:room|all|所有人|全体成员)(?=$|[\s,，。、！!？?：:；;()[\]{}<>"'~`’”）】》」』])/i;
-
-export function hasExplicitRoomMentionText(content?: string): boolean {
-	return Boolean(content && EXPLICIT_ROOM_MENTION_RE.test(content));
-}
-
 export function isMentionedForUser(
 	msg: ChatMessageRecord,
 	user: ChatSessionUser | null,
 ): boolean {
-	if (!user || msg.kind !== "user" || msg.userKey === user.userKey) {
-		return false;
-	}
-	const keys = new Set<string>([user.userKey]);
-	if (user.isAdmin) {
-		keys.add("waline:1");
-		keys.add("@lengxiqwq:matrix.lengxiqwq.com");
-		keys.add("matrix:@lengxiqwq:matrix.lengxiqwq.com");
-	}
-	const hasExplicitRoomText = hasExplicitRoomMentionText(msg.content);
-	const hasVerifiedRoomKey =
-		hasExplicitRoomText &&
-		Array.isArray(msg.mentionKeys) &&
-		(msg.mentionKeys.includes("room") || msg.mentionKeys.includes("@room"));
-	// 只认协议字段 mentionKeys，没有则不触发（历史消息无 mentionKeys 一律忽略）
-	if (!Array.isArray(msg.mentionKeys) || msg.mentionKeys.length === 0)
-		return false;
-	return msg.mentionKeys.some(
-		(k) =>
-			keys.has(k) || (hasVerifiedRoomKey && (k === "room" || k === "@room")),
+	if (!user || msg.kind !== "user" || msg.userKey === user.userKey) return false;
+	return Boolean(
+		msg.mentionEntities &&
+		msg.mentionKeys?.some((key) => key === user.userKey || key === "room"),
 	);
 }
 
@@ -1623,7 +1601,7 @@ export function resolveExternalOrigin(
 		matchedSite = matchSiteByHostname(host, sites);
 	}
 
-	if (!matchedSite && !hasExplicitRelaySite && host.includes("lengxiqwq.com")) {
+	if (!matchedSite && !hasExplicitRelaySite && (host === "lengxiqwq.com" || host.endsWith(".lengxiqwq.com"))) {
 		matchedSite = sites.find((s) => s.isSelf);
 	}
 
@@ -1631,7 +1609,7 @@ export function resolveExternalOrigin(
 		matchedSite = matchSiteByHint(siteFromSuffix, sites);
 	}
 
-	if (!matchedSite && !hasExplicitRelaySite) {
+	if (!matchedSite && !hasExplicitRelaySite && !host) {
 		for (const site of sites) {
 			if (
 				site.owner &&

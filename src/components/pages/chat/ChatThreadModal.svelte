@@ -4,7 +4,17 @@ import type { InterconnectSite } from "@/types/chatConfig";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatModal from "./ChatModal.svelte";
 import { fetchThreadMessages, isMentionedForUser } from "./chatClient";
+import {
+	deleteChatMentionBeforeCaret,
+	getChatMentionQuery,
+	insertChatMention,
+	readChatComposer,
+	trimChatDraft,
+	writeChatComposer,
+} from "./chatMentions";
 import type {
+	ChatMentionCandidate,
+	ChatMentionEntity,
 	ChatMessageRecord,
 	ChatReadReceipt,
 	ChatSessionUser,
@@ -20,7 +30,8 @@ interface Props {
 	initialRootMessage?: ChatMessageRecord | null;
 	roomMessages: ChatMessageRecord[];
 	currentUser: ChatSessionUser | null;
-	currentUserSite?: string;
+	mentionCandidates: ChatMentionCandidate[];
+	formatMentionLabel: (candidate: ChatMentionCandidate) => string;
 	isInterconnectRoom?: boolean;
 	chatServerUrl?: string;
 	interconnectSites?: InterconnectSite[];
@@ -33,11 +44,11 @@ interface Props {
 	onSendMessage: (
 		content: string,
 		attachments: ImageAttachment[],
-		mentionKeys: string[],
+		mentionEntities: ChatMentionEntity[],
 		replyToUid?: string,
 		threadRootUid?: string,
 	) => void;
-	onEditMessage?: (msgUid: string, content: string) => void;
+	onEditMessage?: (msgUid: string, content: string, entities: ChatMentionEntity[]) => void;
 	onRecallMessage?: (msgUid: string) => void;
 	onDeleteMessage: (msgUid: string) => void;
 	onReaction?: (msgUid: string, key: string) => void;
@@ -55,7 +66,8 @@ const {
 	initialRootMessage = null,
 	roomMessages,
 	currentUser,
-	currentUserSite = "",
+	mentionCandidates,
+	formatMentionLabel,
 	isInterconnectRoom = false,
 	chatServerUrl = "",
 	interconnectSites = [],
@@ -88,7 +100,18 @@ let draftText = $state("");
 let replyingTarget = $state<ChatMessageRecord | null>(null);
 let editingTarget = $state<ChatMessageRecord | null>(null);
 let listEl = $state<HTMLDivElement | null>(null);
-let textareaEl = $state<HTMLTextAreaElement | null>(null);
+let composer = $state<HTMLDivElement | null>(null);
+let mentionQuery = $state<string | null>(null);
+let mentionRange: Range | null = null;
+let mentionIndex = $state(-1);
+const candidates = $derived(
+	mentionQuery === null
+		? []
+		: mentionCandidates.filter((candidate) =>
+				formatMentionLabel(candidate).toLowerCase().includes(mentionQuery!.toLowerCase()) ||
+				candidate.userKey.toLowerCase().includes(mentionQuery!.toLowerCase()),
+			).slice(0, 20),
+);
 let fetchSeq = 0;
 let lastReplyCount = 0;
 let nowMs = $state(Date.now());
@@ -136,7 +159,7 @@ $effect(() => {
 		loadError = "";
 		fetchedRoot = null;
 		fetchedReplies = [];
-		draftText = "";
+		clearComposer();
 		replyingTarget = null;
 		editingTarget = null;
 		lastReplyCount = 0;
@@ -219,54 +242,110 @@ $effect(() => {
 	}
 });
 
+function clearComposer() {
+	draftText = "";
+	mentionQuery = null;
+	mentionRange = null;
+	composer?.replaceChildren();
+}
+
+function syncComposer() {
+	if (!composer) return;
+	draftText = readChatComposer(composer).content;
+	const match = getChatMentionQuery(composer);
+	mentionQuery = match?.query ?? null;
+	mentionRange = match?.range ?? null;
+	mentionIndex = -1;
+}
+
+function selectCandidate(candidate: ChatMentionCandidate) {
+	if (!composer || !mentionRange) return;
+	insertChatMention(composer, formatMentionLabel(candidate), candidate.userKey, mentionRange);
+	syncComposer();
+}
+
 function handleStartReplyInThread(msg: ChatMessageRecord) {
+	if (editingTarget) clearComposer();
 	editingTarget = null;
 	replyingTarget = msg;
-	textareaEl?.focus();
+	composer?.focus();
 }
 
 function handleStartEditInThread(msg: ChatMessageRecord) {
 	replyingTarget = null;
 	editingTarget = msg;
-	draftText = msg.content;
-	void tick().then(() => {
-		textareaEl?.focus();
-		if (textareaEl) {
-			const len = textareaEl.value.length;
-			textareaEl.setSelectionRange(len, len);
-		}
-	});
+	if (!composer) return;
+	writeChatComposer(composer, { content: msg.content, mentionEntities: msg.mentionEntities ?? [] });
+	composer.focus();
+	const selection = window.getSelection();
+	selection?.selectAllChildren(composer);
+	selection?.collapseToEnd();
+	syncComposer();
 }
 
 function handleSubmit() {
-	const trimmed = draftText.trim();
-	if (!trimmed) return;
+	if (!composer) return;
+	const { content, mentionEntities } = trimChatDraft(readChatComposer(composer));
+	if (!content) return;
 	if (!currentUser) {
 		onRequireAuth();
 		return;
 	}
 	if (editingTarget) {
-		onEditMessage?.(editingTarget.msgUid, trimmed);
+		onEditMessage?.(editingTarget.msgUid, content, mentionEntities);
 		editingTarget = null;
-		draftText = "";
-		return;
+	} else {
+		onSendMessage(content, [], mentionEntities, replyingTarget?.msgUid || "", canonicalRootUid);
+		replyingTarget = null;
 	}
-	onSendMessage(
-		trimmed,
-		[],
-		[],
-		replyingTarget?.msgUid || "",
-		canonicalRootUid,
-	);
-	replyingTarget = null;
-	draftText = "";
+	clearComposer();
 }
 
 function handleKeydown(e: KeyboardEvent) {
-	if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+	if (e.isComposing) return;
+	if (e.key === "Backspace" && deleteChatMentionBeforeCaret(composer)) {
+		e.preventDefault();
+		syncComposer();
+		return;
+	}
+	if (candidates.length && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+		e.preventDefault();
+		const direction = e.key === "ArrowUp" ? -1 : 1;
+		mentionIndex = mentionIndex < 0 ? 0 : (mentionIndex + direction + candidates.length) % candidates.length;
+		return;
+	}
+	const candidate = candidates[mentionIndex];
+	if (candidate && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
+		e.preventDefault();
+		selectCandidate(candidate);
+		return;
+	}
+	if (mentionQuery !== null && e.key === "Escape") {
+		e.preventDefault();
+		e.stopPropagation();
+		mentionQuery = null;
+		mentionRange = null;
+		return;
+	}
+	if (e.key === "Enter" && !e.shiftKey) {
 		e.preventDefault();
 		handleSubmit();
 	}
+}
+
+function handlePaste(e: ClipboardEvent) {
+	const text = e.clipboardData?.getData("text/plain");
+	if (!e.clipboardData) return;
+	e.preventDefault();
+	const selection = window.getSelection();
+	if (!text || !selection?.rangeCount || !composer) return;
+	const range = selection.getRangeAt(0);
+	if (!composer.contains(range.commonAncestorContainer)) return;
+	const node = document.createTextNode(text);
+	range.deleteContents();
+	range.insertNode(node);
+	selection.collapse(node, node.length);
+	syncComposer();
 }
 
 const serverNow = $derived(nowMs + clockOffsetMs);
@@ -307,8 +386,6 @@ const threadSubtitle = $derived.by(() => {
             message={liveRootMessage}
             isSelf={rootIsSelf}
             isMentionedMe={isMentionedForUser(liveRootMessage, currentUser)}
-            currentUserName={currentUser?.name || ""}
-            currentUserSite={currentUserSite}
             currentUserKey={currentUser?.userKey || ""}
             isAdmin={isAdmin}
             isInterconnectRoom={isInterconnectRoom}
@@ -390,8 +467,6 @@ const threadSubtitle = $derived.by(() => {
             message={reply}
             isSelf={replyIsSelf}
             isMentionedMe={isMentionedForUser(reply, currentUser)}
-            currentUserName={currentUser?.name || ""}
-            currentUserSite={currentUserSite}
             currentUserKey={currentUser?.userKey || ""}
             isAdmin={isAdmin}
             isInterconnectRoom={isInterconnectRoom}
@@ -431,7 +506,7 @@ const threadSubtitle = $derived.by(() => {
             class="chat-thread-banner-close"
             onclick={() => {
               editingTarget = null;
-              draftText = "";
+              clearComposer();
             }}
           >
             取消
@@ -453,15 +528,40 @@ const threadSubtitle = $derived.by(() => {
       {/if}
 
       {#if currentUser}
+        {#if candidates.length}
+          <div class="flex flex-wrap gap-1 max-h-24 overflow-auto" aria-label="线程提及候选">
+            {#each candidates as candidate, index (candidate.userKey)}
+              <button
+                type="button"
+                class="chat-mention-pill clickable {index === mentionIndex ? 'self' : ''}"
+                title={candidate.userKey}
+                onpointerdown={(event) => event.preventDefault()}
+                onclick={() => selectCandidate(candidate)}
+              >
+                {formatMentionLabel(candidate)}
+                {#if candidates.some((other) => other.userKey !== candidate.userKey && formatMentionLabel(other) === formatMentionLabel(candidate))}
+                  <small>({candidate.userKey})</small>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
         <div class="chat-thread-input-row">
-          <textarea
-            bind:this={textareaEl}
-            bind:value={draftText}
-            rows="1"
-            class="chat-thread-textarea custom-scrollbar"
-            placeholder={editingTarget ? "修改消息内容，Enter 保存..." : "在此线程中回复，Enter 发送，Shift+Enter 换行..."}
+          <div
+            bind:this={composer}
+            contenteditable="true"
+            role="textbox"
+            tabindex="0"
+            aria-label="线程消息"
+            aria-multiline="true"
+            data-empty={!draftText.trim() ? "true" : undefined}
+            data-placeholder={editingTarget ? "修改消息内容，Enter 保存..." : "在此线程中回复，输入 @ 可选人..."}
+            class="chat-input-box chat-thread-textarea custom-scrollbar"
+            oninput={syncComposer}
+            onclick={syncComposer}
             onkeydown={handleKeydown}
-          ></textarea>
+            onpaste={handlePaste}
+          ></div>
           <button
             type="button"
             class="chat-thread-send-btn"

@@ -1,20 +1,20 @@
 import { marked, type Token } from "marked";
+import { mentionRanges } from "./chatMentions";
+import type { ChatMentionEntity } from "./chatTypes";
 import {
-	buildChatTokenRegex,
+	buildStickerTokenRegex,
 	type ChatContentSegment,
-	isPrecededByEmailChar,
 	resolveExternalOrLocalSticker,
 	type StickerItem,
 } from "./stickerLoader";
 
 export interface ChatMarkdownAst {
 	tokens: Token[];
-	stickers: StickerItem[];
-	mentions: Array<{ text: string; target: string }>;
+	inlineTokens: { source: string; segment: ChatContentSegment }[];
+	placeholderPattern: string;
 }
 
 const CODE_SPLIT_RE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`)/g;
-const PLACEHOLDER_RE = /\uE000(STK|MNT)(\d+)\uE001/g;
 
 export function isSafeLinkUrl(raw?: string): string {
 	const trimmed = (raw || "").trim();
@@ -57,40 +57,51 @@ export function isSafeImageUrl(raw?: string): string {
 export function parseChatMarkdown(
 	content: string,
 	stickerMap: Map<string, StickerItem>,
-	mentions: string[] = [],
-	canRoomHighlight = false,
+	mentionEntities: ChatMentionEntity[] = [],
 ): ChatMarkdownAst {
-	const stickers: StickerItem[] = [];
-	const mentionEntries: Array<{ text: string; target: string }> = [];
-
-	if (!content) {
-		return { tokens: [], stickers, mentions: mentionEntries };
+	const inlineTokens: ChatMarkdownAst["inlineTokens"] = [];
+	let markerIndex = 0;
+	let prefix = `\uE000chat${markerIndex}:`;
+	while (content.includes(prefix)) prefix = `\uE000chat${++markerIndex}:`;
+	const placeholderPattern = `${prefix}(\\d+)\\uE001`;
+	function protect(source: string, segment: ChatContentSegment): string {
+		const slot = inlineTokens.length;
+		inlineTokens.push({ source, segment });
+		return `${prefix}${slot}\uE001`;
 	}
 
-	const tokenMatcher = buildChatTokenRegex(mentions, canRoomHighlight);
-	const parts = content.split(CODE_SPLIT_RE);
+	let end = 0;
+	let withMentions = "";
+	for (const entity of mentionRanges(content, mentionEntities)) {
+		withMentions += content.slice(end, entity.offset);
+		end = entity.offset + entity.length;
+		const text = content.slice(entity.offset, end);
+		withMentions += protect(text, {
+			kind: "mention",
+			text,
+			userKey: entity.userKey,
+		});
+	}
+	withMentions += content.slice(end);
+	const tokenMatcher = buildStickerTokenRegex();
+	const parts = withMentions.split(CODE_SPLIT_RE);
 
 	const protectedContent = parts
 		.map((part, idx) => {
 			// Odd indices match CODE_SPLIT_RE: preserve literal code blocks/spans untouched
 			if (idx % 2 === 1) return part;
 			tokenMatcher.lastIndex = 0;
-			return part.replace(tokenMatcher, (token, _captured, offset) => {
-				if (token.startsWith("@") && token.length > 1) {
-					if (isPrecededByEmailChar(part, Number(offset))) {
-						return token;
-					}
-					const slot = mentionEntries.length;
-					mentionEntries.push({ text: token, target: token.slice(1) });
-					return `\uE000MNT${slot}\uE001`;
-				}
+			return part.replace(tokenMatcher, (token) => {
 				const sticker = resolveExternalOrLocalSticker(token, stickerMap);
-				if (sticker) {
-					const slot = stickers.length;
-					stickers.push(sticker);
-					return `\uE000STK${slot}\uE001`;
-				}
-				return token;
+				if (!sticker) return token;
+				return protect(token, {
+					kind: "sticker",
+					code: sticker.code,
+					url: sticker.url,
+					alt: sticker.name,
+					category: sticker.category,
+					...(sticker.lottie ? { lottie: sticker.lottie } : {}),
+				});
 			});
 		})
 		.join("");
@@ -100,7 +111,7 @@ export function parseChatMarkdown(
 		breaks: true,
 	});
 
-	return { tokens, stickers, mentions: mentionEntries };
+	return { tokens, inlineTokens, placeholderPattern };
 }
 
 export function restoreTextSegments(
@@ -110,43 +121,28 @@ export function restoreTextSegments(
 	if (!text) return [];
 	const out: ChatContentSegment[] = [];
 	let lastIndex = 0;
-	PLACEHOLDER_RE.lastIndex = 0;
-
-	let match = PLACEHOLDER_RE.exec(text);
-	while (match !== null) {
+	for (const match of text.matchAll(new RegExp(ast.placeholderPattern, "g"))) {
+		const token = ast.inlineTokens[Number(match[1])];
+		if (!token) continue;
 		if (match.index > lastIndex) {
 			out.push({ kind: "text", text: text.slice(lastIndex, match.index) });
 		}
-		const kind = match[1];
-		const slot = Number(match[2]);
-		if (kind === "STK") {
-			const sticker = ast.stickers[slot];
-			if (sticker) {
-				out.push({
-					kind: "sticker",
-					code: sticker.code,
-					url: sticker.url,
-					alt: sticker.name,
-					category: sticker.category,
-					...(sticker.lottie ? { lottie: sticker.lottie } : {}),
-				});
-			}
-		} else if (kind === "MNT") {
-			const mention = ast.mentions[slot];
-			if (mention) {
-				out.push({
-					kind: "mention",
-					text: mention.text,
-					target: mention.target,
-				});
-			}
-		}
+		out.push(token.segment);
 		lastIndex = match.index + match[0].length;
-		match = PLACEHOLDER_RE.exec(text);
 	}
 
 	if (lastIndex < text.length) {
 		out.push({ kind: "text", text: text.slice(lastIndex) });
 	}
 	return out;
+}
+
+export function restoreChatMarkdownLiterals(
+	text: string,
+	ast: ChatMarkdownAst,
+): string {
+	return text.replace(
+		new RegExp(ast.placeholderPattern, "g"),
+		(raw, slot) => ast.inlineTokens[Number(slot)]?.source ?? raw,
+	);
 }
