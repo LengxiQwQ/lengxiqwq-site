@@ -80,6 +80,12 @@ const formattedTimeText = $derived(
 	`${formatClockSeconds(elapsedSec)}${durationSec > 0 ? ` / ${formatClockSeconds(durationSec)}` : ""}`,
 );
 
+const formattedStatusOrTime = $derived(
+	audioStatus !== "playing" && audioStatus !== "idle"
+		? audioStatusLabel[audioStatus]
+		: formattedTimeText,
+);
+
 const skipTooltipText = $derived.by(() => {
 	if (isSkippingTrack) return "正在切歌...";
 	if (canDirectSkip) {
@@ -105,11 +111,12 @@ const skipTooltipText = $derived.by(() => {
 
   <button
     type="button"
-    class="chat-mini-player-info flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-0 cursor-pointer group"
+    class="chat-mini-player-info flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-1 -m-1 rounded-xl hover:bg-black/4 dark:hover:bg-white/6 active:bg-black/6 dark:active:bg-white/10 transition-colors cursor-pointer group"
     aria-label={`查看 ${currentPlay.track.title} 歌词与播放详情`}
+    title="点击打开大播放器与完整歌词"
     onclick={onOpenLyrics}
   >
-    <div class="{variant === 'mobile' ? 'size-8 rounded-md' : 'w-8.5 h-8.5 rounded-lg'} overflow-hidden shrink-0 border border-black/5 dark:border-white/10 bg-(--primary)/12 flex items-center justify-center shadow-xs">
+    <div class="{variant === 'mobile' ? 'size-8 rounded-md' : 'w-8.5 h-8.5 rounded-lg'} overflow-hidden shrink-0 border border-black/5 dark:border-white/10 bg-(--primary)/12 flex items-center justify-center shadow-xs transition-transform group-hover:scale-102">
       {#if currentPlay.track.cover && !coverFailed}
         <img
           src={currentPlay.track.cover}
@@ -122,22 +129,25 @@ const skipTooltipText = $derived.by(() => {
       {/if}
     </div>
 
-    <div class="min-w-0 flex-1 select-text">
+    <div class="min-w-0 flex-1">
       <div
-        class="{variant === 'mobile' ? 'text-[12px]' : 'text-[12px] xl:text-[11.5px]'} font-bold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors truncate leading-snug select-text cursor-text"
-        title={displayLyric}
+        class="{variant === 'mobile' ? 'text-[12px]' : 'text-[12px] xl:text-[11.5px]'} font-bold text-[var(--deep-text)] truncate leading-snug"
       >
         {displayLyric}
       </div>
       <div
-        class="{variant === 'mobile' ? 'text-[10.5px]' : 'text-[11px] xl:text-[10.5px]'} text-[var(--chat-meta-color)] tabular-nums leading-tight mt-0.5 select-text cursor-text flex items-center min-w-0 gap-1"
-        title={`${currentPlay.track.title} - ${currentPlay.track.artist} · ${formattedTimeText}`}
+        class="{variant === 'mobile' ? 'text-[12px]' : 'text-[12px] xl:text-[11.5px]'} text-[var(--chat-meta-color)] tabular-nums leading-tight mt-0.5 flex items-center min-w-0 gap-1.5"
       >
-        <span class="truncate min-w-0 flex-1">
-          {currentPlay.track.title} - {currentPlay.track.artist}
-        </span>
-        <span class="shrink-0 text-[var(--chat-meta-color)]/85 text-[10px] {variant === 'mobile' ? '' : 'xl:text-[9.5px]'}">
-          · {audioStatus !== "playing" && audioStatus !== "idle" ? audioStatusLabel[audioStatus] : formattedTimeText}
+        <div class="flex items-center min-w-0 flex-1 overflow-hidden">
+          <span class="text-[var(--deep-text)] truncate shrink min-w-0">
+            {currentPlay.track.title}
+          </span>
+          <span class="truncate shrink min-w-0 text-[var(--chat-meta-color)]">
+            &nbsp;-&nbsp;{currentPlay.track.artist}
+          </span>
+        </div>
+        <span class="shrink-0 text-[var(--chat-meta-color)]/85 text-right tabular-nums">
+          {formattedStatusOrTime}
         </span>
       </div>
     </div>

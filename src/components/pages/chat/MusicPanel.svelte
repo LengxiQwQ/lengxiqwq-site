@@ -1302,7 +1302,7 @@ function toggleRotationPlaylist(playlistId: string) {
 }
 
 async function handleSaveRotation() {
-	if (rotationSaving || !canSaveRotation || !isWalineLoggedIn || !currentUser?.isAdmin) return;
+	if (rotationSaving || !canSaveRotation || !isWalineLoggedIn) return;
 	const selectedIds = validSelectedRotationIds;
 	const setting: RoomRotation = rotationMode === "playlist"
 		? { mode: "playlist", playlistIds: selectedIds, playlistId: selectedIds[0] }
@@ -3736,7 +3736,7 @@ $effect(() => {
           <div class="text-[13px] xl:text-[12px] text-red-500 px-1">{playlistsError}</div>
         {/if}
 
-        {#if rotation && isWalineLoggedIn && currentUser?.isAdmin}
+        {#if rotation && isWalineLoggedIn}
           <button type="button" class="w-full flex items-center justify-between gap-2 rounded-lg border border-[var(--chat-divider-color)] bg-transparent px-3 py-2 text-left cursor-pointer hover:bg-(--btn-plain-bg-hover)"
             disabled={rotationSaving} onclick={toggleRotationSettings}>
             <span class="text-[13.5px] xl:text-[13px] font-semibold text-[var(--deep-text)]">冷场轮播</span>
@@ -4062,9 +4062,9 @@ $effect(() => {
     </div>
   {/if}
 
-  <ChatModal open={rotationExpanded && isWalineLoggedIn && Boolean(currentUser?.isAdmin)}
+  <ChatModal open={rotationExpanded && isWalineLoggedIn}
     title="冷场轮播设置" subtitle="仅作用于当前房间，待播队列优先" size="md"
-    portalToChatPage topPriority
+    topPriority
     onClose={() => { if (!rotationSaving) rotationExpanded = false; }}>
     <form class="flex flex-col min-h-0 p-4 gap-3" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>
       <fieldset class="border-0 p-0 m-0 flex flex-wrap gap-x-4 gap-y-2" disabled={rotationSaving}>

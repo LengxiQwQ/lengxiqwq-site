@@ -142,6 +142,7 @@ const hasSiteSwitcher =
       // 涓庤繍琛屾椂妯″紡涓嶄竴鑷存椂锛堝 config fullscreen + 瀛樺偍 banner锛変細鍏堟寜閿欒妯″紡娓叉煋闂儊锛?
       // 杩欓噷鍦ㄨВ鏋愭湡鍚屾鎸?data-wallpaper-mode 淇锛堟棭浜?rAF/DOMContentLoaded锛?
       (function () {
+        if (document.documentElement.hasAttribute("data-chat-page")) return;
         const wm = document.documentElement.getAttribute("data-wallpaper-mode");
         const navbar = document.getElementById("navbar");
         if (!wm || !navbar) return;
@@ -287,7 +288,7 @@ const hasSiteSwitcher =
             <div class="flex col-start-3 justify-self-end">
                 <!--<SearchPanel client:load>-->
                 <Search
-                    client:idle
+                    client:visible
                 />
                 {musicPlayerConfig.showInNavbar && (
                     <button aria-label={i18n(I18nKey.music)} aria-controls="music-nav-panel" aria-expanded="false" class="btn-plain scale-animation rounded-lg h-11 w-11 active:scale-90" id="music-player-switch">
@@ -524,17 +525,17 @@ function initSemifullScrollDetection() {
     if (!navbar) return;
 
     const transparentMode = navbar.getAttribute('data-transparent-mode');
-    if (transparentMode !== 'semifull') {
-        navbar.style.removeProperty('--navbar-scroll-progress');
-        navbar.style.removeProperty('--navbar-dynamic-blur');
-        return;
-    }
-
     // 鏃犺棣栭〉/闈為椤碉紝semifull 閮界敱婊氬姩浣嶇疆鍐冲畾鏄惁杩涘叆 scrolled 鐘舵€?
     // 鍏堢Щ闄や箣鍓嶇殑婊氬姩鐩戝惉鍣紝閬垮厤閲嶅缁戝畾
     if (window.semifullScrollHandler) {
         window.removeEventListener('scroll', window.semifullScrollHandler as () => void);
         window.semifullScrollHandler = undefined;
+    }
+
+    if (transparentMode !== 'semifull' || document.documentElement.hasAttribute('data-chat-page')) {
+        navbar.style.removeProperty('--navbar-scroll-progress');
+        navbar.style.removeProperty('--navbar-dynamic-blur');
+        return;
     }
 
     let ticking = false;

@@ -70,90 +70,119 @@ onMount(() => {
     aria-label="互联茶室友站列表"
   >
     <!-- 顶栏标题 -->
-    <div class="flex items-center justify-between pt-3 pb-2 mb-2 border-b border-black/5 dark:border-white/10">
-      <div class="flex items-center gap-1.5 font-bold text-sm text-[var(--deep-text)] dark:text-white/90">
-        <span class="text-base">🍵</span>
+    <div class="flex items-center justify-between gap-1.5 pt-3 pb-2 mb-2 border-b border-black/5 dark:border-white/10">
+      <div class="flex items-center gap-1.5 font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
+        <svg class="w-4 h-4 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+          <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
+          <line x1="6" y1="1" x2="6" y2="4" />
+          <line x1="10" y1="1" x2="10" y2="4" />
+          <line x1="14" y1="1" x2="14" y2="4" />
+        </svg>
         <span>互联茶室</span>
       </div>
-      <button
-        type="button"
-        class="w-6 h-6 rounded-md flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer text-sm"
-        aria-label="关闭"
-        onclick={onClose}
-      >
-        ✕
-      </button>
+      <div class="flex items-center gap-1.5 shrink-0">
+        <a
+          href="https://app.element.io/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn-regular py-0.5 px-2 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-1 no-underline"
+          title="前往 Element 网页端"
+        >
+          <span>Element</span>
+          <svg class="w-3 h-3 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+        </a>
+        <a
+          href="https://rainzt.cn/posts/tingyu-tea-room-guide/"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn-regular py-0.5 px-2 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-1 no-underline"
+          title="查看互联加入指南"
+        >
+          <span>加入指南</span>
+          <svg class="w-3 h-3 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+            <polyline points="15 3 21 3 21 9" />
+            <line x1="10" y1="14" x2="21" y2="3" />
+          </svg>
+        </a>
+        <button
+          type="button"
+          class="w-6 h-6 rounded-md flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer text-sm"
+          aria-label="关闭"
+          onclick={onClose}
+        >
+          ✕
+        </button>
+      </div>
     </div>
 
     <!-- 简明说明（拒绝花里胡哨，讲人话） -->
     <div class="px-1 text-xs text-[var(--chat-meta-color)] leading-relaxed mb-3">
-      这个房间和下面几个博客是连通的，也可以去他们的小站坐坐：
+      以下这些博客是和本站聊天互相连通的哦，也可以去他们的小站坐坐：
     </div>
 
     <!-- 友站卡片列表 -->
-    <div class="space-y-2 max-h-[60vh] overflow-y-auto custom-scrollbar pr-0.5">
+    <div class="space-y-1.5 max-h-[60vh] overflow-y-auto custom-scrollbar pr-0.5">
       {#if sites.length === 0}
         <div class="py-6 text-center text-xs text-[var(--chat-meta-color)]">
           暂未配置互联友站，可在内容仓配置中添加~
         </div>
       {:else}
         {#each sites as site (site.url || site.name)}
-          <div class="rounded-xl bg-black/4 dark:bg-white/5 border border-black/5 dark:border-white/10 p-2.5 flex flex-col gap-2 transition-all hover:bg-black/6 dark:hover:bg-white/8">
-            <div class="flex items-center justify-between gap-2 min-w-0">
-              <div class="flex items-center gap-2 min-w-0 flex-1">
-                <ChatAvatar
-                  src={site.avatar}
-                  name={site.owner || site.name}
-                  size="sm"
-                />
-                <div class="min-w-0 flex-1">
-                  <div class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
+          {@const href = site.url || ""}
+          {#if href}
+            <a
+              {href}
+              target={site.isSelf ? undefined : "_blank"}
+              rel={site.isSelf ? undefined : "noopener noreferrer"}
+              class="group rounded-xl bg-black/4 dark:bg-white/5 border border-black/5 dark:border-white/10 px-2.5 py-2 flex items-center gap-2.5 transition-all hover:bg-black/7 dark:hover:bg-white/9 hover:border-black/10 dark:hover:border-white/15 cursor-pointer no-underline text-inherit min-w-0"
+              aria-label={site.isSelf ? "前往本站主页" : `前往 ${site.owner || site.name} 的茶室`}
+            >
+              <ChatAvatar
+                src={site.avatar}
+                name={site.owner || site.name}
+              />
+              <div class="min-w-0 flex-1 flex flex-col justify-center">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate group-hover:text-[var(--primary)] transition-colors">
                     {site.name || site.owner}
-                  </div>
+                  </span>
+                  {#if site.isSelf}
+                    <span class="shrink-0 text-[10px] font-medium px-1 py-0.2 rounded bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] leading-tight">
+                      本站
+                    </span>
+                  {/if}
                 </div>
-              </div>
-
-              {#if site.url}
-                {#if site.isSelf}
-                  <a
-                    href={site.url}
-                    class="btn-regular py-1 px-2.5 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all shrink-0 inline-flex items-center gap-1 no-underline"
-                    aria-label="前往本站主页"
-                  >
-                    <span>本站</span>
-                    <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                      <polyline points="15 3 21 3 21 9" />
-                      <line x1="10" y1="14" x2="21" y2="3" />
-                    </svg>
-                  </a>
-                {:else}
-                  <a
-                    href={site.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="btn-regular py-1 px-2.5 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all shrink-0 inline-flex items-center gap-1 no-underline"
-                    aria-label={`前往 ${site.owner || site.name} 的茶室`}
-                  >
-                    <span>前往</span>
-                    <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                      <polyline points="15 3 21 3 21 9" />
-                      <line x1="10" y1="14" x2="21" y2="3" />
-                    </svg>
-                  </a>
+                {#if site.desc}
+                  <span class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5 leading-snug">
+                    {site.desc}
+                  </span>
                 {/if}
-              {/if}
-            </div>
-
-            {#if site.desc}
-              <div
-                class="text-[0.6875rem] text-[var(--chat-meta-color)] bg-black/3 dark:bg-white/4 rounded-md px-2 py-1 leading-normal truncate"
-              >
-                “{site.desc}”
               </div>
-            {/if}
-          </div>
+            </a>
+          {:else}
+            <div class="rounded-xl bg-black/4 dark:bg-white/5 border border-black/5 dark:border-white/10 px-2.5 py-2 flex items-center gap-2.5 min-w-0">
+              <ChatAvatar
+                src={site.avatar}
+                name={site.owner || site.name}
+              />
+              <div class="min-w-0 flex-1 flex flex-col justify-center">
+                <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
+                  {site.name || site.owner}
+                </span>
+                {#if site.desc}
+                  <span class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5 leading-snug">
+                    {site.desc}
+                  </span>
+                {/if}
+              </div>
+            </div>
+          {/if}
         {/each}
       {/if}
     </div>

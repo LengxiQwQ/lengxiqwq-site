@@ -394,6 +394,7 @@ let showMobileMoreMenu = $state(false);
 let mobileMoreMenuWrapEl: HTMLDivElement | null = $state(null);
 let mobileMoreTrigger: HTMLButtonElement | null = $state(null);
 let chatHeaderWidth = $state(0);
+let chatHeaderStackHeight = $state(54);
 let mobileHeaderEndWidth = $state(0);
 let mobileRoomContentWidth = $state(0);
 let threadListWrapEl: HTMLDivElement | null = $state(null);
@@ -928,6 +929,7 @@ let windowBottomMarkerEl: HTMLDivElement | null = $state(null);
 function estimateRowHeight(msg: ChatMessageRecord): number {
 	if (msg.kind === "system") return 46;
 	let h = 76;
+	if (firstUnreadMsgUid === msg.msgUid) h += 34;
 	if (msg.replyTo) h += 44;
 	const hasMedia =
 		(msg.attachments && msg.attachments.length > 0) ||
@@ -3241,12 +3243,33 @@ function insertAtCursor(snippet: string): void {
 function insertNewlineAtCursor(): void {
 	if (!inputEl) return;
 	focusInput(false);
+
+	// 优先使用浏览器的原生换行命令，由排版引擎自动处理光标在末尾的换行渲染与折叠
+	if (document.execCommand("insertLineBreak")) {
+		syncInputState();
+		return;
+	}
+
+	// 降级：如果 execCommand 失败，则通过 Range 插入
 	const sel = window.getSelection();
 	if (!sel || sel.rangeCount === 0 || !inputEl.contains(sel.anchorNode)) return;
 	const range = sel.getRangeAt(0);
 	range.deleteContents();
+
 	const br = document.createElement("br");
 	range.insertNode(br);
+
+	// 关键防护：如果插入的 br 是容器末尾，HTML 规范会将孤立 br 折叠导致看不到换行
+	// 必须补充一个 trailing dummy br，并将光标定位于首个 br 之后
+	let next = br.nextSibling;
+	while (next && next.nodeType === Node.TEXT_NODE && next.nodeValue === "") {
+		next = next.nextSibling;
+	}
+	if (!next) {
+		const dummy = document.createElement("br");
+		br.after(dummy);
+	}
+
 	const rangeAfter = document.createRange();
 	rangeAfter.setStartAfter(br);
 	rangeAfter.collapse(true);
@@ -3666,6 +3689,7 @@ function removePendingImage(index: number) {
 
 <div
   class="flex flex-col h-full w-full min-h-0 relative"
+  style:--chat-header-stack-height={`${chatHeaderStackHeight || 54}px`}
   ondragenter={handleDragEnter}
   ondragover={handleDragOver}
   ondragleave={handleDragLeave}
@@ -3725,9 +3749,9 @@ function removePendingImage(index: number) {
     </div>
   {/if}
   {#snippet headerThreadList(reference?: HTMLElement | null)}
-    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="活跃线程列表">
+    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="活跃线程回复列表">
       <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
-        <span>活跃线程</span>
+        <span>活跃线程回复</span>
         <span>{mergedActiveThreads.length} 个</span>
       </div>
       <div class="my-0.5 border-t border-black/5 dark:border-white/10"></div>
@@ -3810,8 +3834,10 @@ function removePendingImage(index: number) {
     </div>
   {/snippet}
 
-  <!-- 顶栏 -->
-  <div class="chat-panel-header chat-window-header" bind:clientWidth={chatHeaderWidth}>
+  <!-- 顶部悬浮毛玻璃层（小标题栏 + 置顶横幅） -->
+  <div class="chat-header-stack" bind:clientHeight={chatHeaderStackHeight}>
+    <!-- 顶栏 -->
+    <div class="chat-panel-header chat-window-header" bind:clientWidth={chatHeaderWidth}>
     <div class="flex items-center gap-2 min-w-0 flex-1">
       <button
         type="button"
@@ -3978,7 +4004,7 @@ function removePendingImage(index: number) {
             type="button"
             class="chat-header-pill-btn"
             aria-expanded={showThreadListMenu}
-            aria-label="查看活跃线程"
+            aria-label="查看活跃线程回复"
             onclick={() => toggleHeaderList("threads")}
           >
             <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -3986,7 +4012,7 @@ function removePendingImage(index: number) {
               <path d="M8 9h8" />
               <path d="M8 13h5" />
             </svg>
-            <span class="font-bold text-[var(--primary)]">线程</span>
+            <span class="font-bold text-[var(--primary)]">线程回复</span>
             <span class="text-[11px] md:text-[10px] opacity-75 tabular-nums">{mergedActiveThreads.length}</span>
           </button>
 
@@ -4024,13 +4050,26 @@ function removePendingImage(index: number) {
           <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8 }} class="chat-mobile-more-menu" role="menu" aria-label="聊天室更多选项">
             {#if threadInMore}
               <button type="button" role="menuitem" class="chat-mobile-more-item" onclick={() => toggleHeaderList("threads", true)}>
-                <span>活跃线程</span>
+                <span class="flex items-center gap-2.5">
+                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                    <path d="M8 9h8" />
+                    <path d="M8 13h5" />
+                  </svg>
+                  <span>活跃线程回复</span>
+                </span>
                 <span class="chat-mobile-more-count">{mergedActiveThreads.length}</span>
               </button>
             {/if}
             {#if mentionsInMore}
               <button type="button" role="menuitem" class="chat-mobile-more-item" onclick={() => toggleHeaderList("mentions", true)}>
-                <span>被提及的消息</span>
+                <span class="flex items-center gap-2.5">
+                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M16 8v5a2 2 0 0 0 4 0v-1a8 8 0 1 0-3 6.25" />
+                  </svg>
+                  <span>被提及的消息</span>
+                </span>
                 <span class="chat-mobile-more-count">{mentionsToMe.length}</span>
               </button>
             {/if}
@@ -4038,23 +4077,45 @@ function removePendingImage(index: number) {
               <div class="mx-2 my-0.5 border-t border-[var(--skin-line)]"></div>
             {/if}
 
-            {#each [
-              { label: "网站外观设置", id: "display-settings-switch", panel: "display-setting" },
-              { label: "切换明暗模式", id: "scheme-switch", panel: "theme-mode-panel" },
-            ] as action (action.id)}
-              <button
-                type="button"
-                role="menuitem"
-                class="chat-mobile-more-item"
-                onclick={() => {
-                  showMobileMoreMenu = false;
-                  setTimeout(() => openSitePanel(action.id, action.panel, "chat-site-controls-trigger"), 0);
-                }}
-              >
-                <span>{action.label}</span>
-                <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
-              </button>
-            {/each}
+            <button
+              type="button"
+              role="menuitem"
+              class="chat-mobile-more-item"
+              onclick={() => {
+                showMobileMoreMenu = false;
+                setTimeout(() => openSitePanel("display-settings-switch", "display-setting", "chat-site-controls-trigger"), 0);
+              }}
+            >
+              <span class="flex items-center gap-2.5">
+                <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+                  <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+                  <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+                  <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+                  <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
+                </svg>
+                <span>网站外观设置</span>
+              </span>
+              <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
+            </button>
+
+            <button
+              type="button"
+              role="menuitem"
+              class="chat-mobile-more-item"
+              onclick={() => {
+                showMobileMoreMenu = false;
+                setTimeout(() => openSitePanel("scheme-switch", "theme-mode-panel", "chat-site-controls-trigger"), 0);
+              }}
+            >
+              <span class="flex items-center gap-2.5">
+                <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+                <span>切换明暗模式</span>
+              </span>
+              <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
+            </button>
 
             {#if isInterconnectRoom}
               <button
@@ -4068,7 +4129,13 @@ function removePendingImage(index: number) {
                 }}
               >
                 <span class="flex items-center gap-2.5">
-                  <span class="text-base leading-none w-4.5 text-center">🍵</span>
+                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+                    <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
+                    <line x1="6" y1="1" x2="6" y2="4" />
+                    <line x1="10" y1="1" x2="10" y2="4" />
+                    <line x1="14" y1="1" x2="14" y2="4" />
+                  </svg>
                   <span>互联茶室友站列表</span>
                 </span>
                 <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -4176,56 +4243,7 @@ function removePendingImage(index: number) {
     </div>
   </div>
 
-  <!-- 置顶消息横幅 (Pinned Messages) -->
-  {#if currentPinnedMsg}
-    <div class="chat-pinned-banner">
-      <button
-        type="button"
-        class="flex items-center gap-2 truncate flex-1 chat-pinned-btn text-left bg-transparent border-none p-0 text-[var(--skin-text)] cursor-pointer"
-        onclick={() => void jumpToMessage(currentPinnedMsg.msgUid)}
-      >
-        <span class="text-xs">📌</span>
-        <span class="font-semibold text-xs shrink-0">{currentPinnedMsg.name}:</span>
-        <span class="truncate text-xs text-[var(--chat-meta-color)]">
-          {currentPinnedMsg.content || (currentPinnedMsg.attachments?.length > 0 ? "[多媒体附件]" : "消息")}
-        </span>
-      </button>
-      <div class="flex items-center gap-1.5 shrink-0 ml-2">
-        {#if pinnedMessages.length > 1}
-          <span class="text-[0.625rem] text-[var(--chat-meta-color)] tabular-nums">
-            {activePinIndex + 1}/{pinnedMessages.length}
-          </span>
-          <ChatTooltip text="查看下一条置顶">
-            <button
-              type="button"
-              class="p-1 text-[var(--chat-meta-color)] hover:text-[var(--skin-accent)] hover:bg-black/5 dark:hover:bg-white/5 rounded transition-colors border-none bg-transparent cursor-pointer flex items-center justify-center"
-              aria-label="查看下一条置顶"
-              onclick={() => (activePinIndex = (activePinIndex + 1) % pinnedMessages.length)}
-            >
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="m9 18 6-6-6-6" />
-              </svg>
-            </button>
-          </ChatTooltip>
-        {/if}
-        {#if currentUser?.isAdmin}
-          <ChatTooltip text="取消置顶">
-            <button
-              type="button"
-              class="p-1 text-[var(--chat-meta-color)] hover:text-red-400 text-xs border-none bg-transparent cursor-pointer"
-              aria-label="取消置顶"
-              onclick={() => onPinMessage?.(currentPinnedMsg.msgUid, true)}
-            >
-              ✕
-            </button>
-          </ChatTooltip>
-        {/if}
-      </div>
-    </div>
-  {/if}
-
-  <!-- 消息展示流区域（含悬浮 切歌投票 / @你 / 未读定位 横幅） -->
-  <div class="relative flex-1 min-h-0 flex flex-col">
+  <!-- 移动端当前播放横条（置于顶栏下方、置顶消息上方） -->
     {#if musicState?.current && mobilePlaybackStatus}
       <div class="chat-mobile-only chat-mobile-player-layer">
         <MiniPlayerBar
@@ -4250,6 +4268,64 @@ function removePendingImage(index: number) {
         />
       </div>
     {/if}
+
+    <!-- 置顶消息横幅 (Pinned Messages，置于播放器下方) -->
+    {#if currentPinnedMsg}
+      <div class="chat-pinned-banner">
+        <button
+          type="button"
+          class="flex items-center gap-1.5 md:gap-2 truncate flex-1 chat-pinned-btn text-left bg-transparent border-none p-0 text-[var(--skin-text)] cursor-pointer min-w-0"
+          onclick={() => void jumpToMessage(currentPinnedMsg.msgUid)}
+        >
+          <svg class="w-3.5 h-3.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="12" y1="17" x2="12" y2="22" />
+            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+          </svg>
+          <span class="font-semibold text-xs shrink-0">{currentPinnedMsg.name}:</span>
+          <span class="truncate text-xs text-[var(--chat-meta-color)]">
+            {currentPinnedMsg.content || (currentPinnedMsg.attachments?.length > 0 ? "[多媒体附件]" : "消息")}
+          </span>
+        </button>
+        <div class="flex items-center gap-1 md:gap-1.5 shrink-0 ml-1.5 md:ml-2">
+          {#if pinnedMessages.length > 1}
+            <span class="text-[11px] md:text-xs text-[var(--chat-meta-color)] tabular-nums px-0.5 select-none">
+              {activePinIndex + 1}/{pinnedMessages.length}
+            </span>
+            <ChatTooltip text="查看下一条置顶">
+              <button
+                type="button"
+                class="chat-pinned-action-btn"
+                aria-label="查看下一条置顶"
+                onclick={() => (activePinIndex = (activePinIndex + 1) % pinnedMessages.length)}
+              >
+                <svg class="chat-pinned-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m9 18 6-6-6-6" />
+                </svg>
+              </button>
+            </ChatTooltip>
+          {/if}
+          {#if currentUser?.isAdmin}
+            <ChatTooltip text="取消置顶">
+              <button
+                type="button"
+                class="chat-pinned-action-btn is-close"
+                aria-label="取消置顶"
+                onclick={() => onPinMessage?.(currentPinnedMsg.msgUid, true)}
+              >
+                <svg class="chat-pinned-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M18 6 6 18" />
+                  <path d="m6 6 12 12" />
+                </svg>
+              </button>
+            </ChatTooltip>
+          {/if}
+        </div>
+      </div>
+    {/if}
+  </div>
+
+  <!-- 消息展示流区域（含悬浮 切歌投票 / @你 / 未读定位 横幅） -->
+  <div class="relative flex-1 min-h-0 flex flex-col">
     {#if skipVoteBanner || queueVoteBanners.length > 0 || activeAlertMessage || showUnreadJumpBar}
       <div class="chat-floating-alerts-stack">
         {#if skipVoteBanner}
@@ -4486,7 +4562,11 @@ function removePendingImage(index: number) {
       onscroll={handleMessageScroll}
       class="flex-1 custom-scrollbar min-h-0"
     >
-      <div bind:this={messageContentEl} class="chat-message-content min-h-full flex flex-col">
+      <div
+        bind:this={messageContentEl}
+        class="chat-message-content min-h-full flex flex-col"
+        style:padding-top={`${chatHeaderStackHeight || 54}px`}
+      >
         {#if hasMoreHistory}
           <div class="flex justify-center py-1.5" bind:this={topSentinelEl}>
             {#if isLoadingHistory}

@@ -1003,7 +1003,6 @@ function formatOfflineTime(ts?: number): string {
       title="旁观者记录"
       subtitle={`当前在线 ${observerCount} 人 · 历史记录 ${spectatorHistory.length} 条`}
       size="sm"
-      portalToChatPage={true}
       onClose={() => (showSpectatorModal = false)}
     >
       <div class="p-3 space-y-3 overflow-y-auto custom-scrollbar max-h-[65vh]">

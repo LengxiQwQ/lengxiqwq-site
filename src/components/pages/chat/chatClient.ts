@@ -185,6 +185,104 @@ export function formatClockSeconds(seconds: number): string {
 	return `${mins}:${secs < 10 ? "0" : ""}${secs}`;
 }
 
+const CHAT_WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+export function formatChatDividerDate(
+	ts: number,
+	nowMs: number = Date.now(),
+): string {
+	if (!ts || !Number.isFinite(ts)) return "";
+	const d = new Date(ts);
+	const now = new Date(nowMs);
+
+	const todayStart = new Date(
+		now.getFullYear(),
+		now.getMonth(),
+		now.getDate(),
+	).getTime();
+	const targetDayStart = new Date(
+		d.getFullYear(),
+		d.getMonth(),
+		d.getDate(),
+	).getTime();
+	const diffDays = Math.round((todayStart - targetDayStart) / 86_400_000);
+
+	const month = d.getMonth() + 1;
+	const day = d.getDate();
+	const weekday = CHAT_WEEKDAYS[d.getDay()] ?? "";
+
+	if (diffDays === 0) {
+		return `今天 ${month}月${day}日 ${weekday}`;
+	}
+	if (diffDays === 1) {
+		return `昨天 ${month}月${day}日 ${weekday}`;
+	}
+	if (diffDays === 2) {
+		return `前天 ${month}月${day}日 ${weekday}`;
+	}
+	if (d.getFullYear() === now.getFullYear()) {
+		return `${month}月${day}日 ${weekday}`;
+	}
+	return `${d.getFullYear()}年${month}月${day}日`;
+}
+
+export function formatChatMessageTime(
+	ts: number,
+	nowMs: number = Date.now(),
+): string {
+	if (!ts || !Number.isFinite(ts)) return "";
+	const d = new Date(ts);
+	const now = new Date(nowMs);
+
+	const todayStart = new Date(
+		now.getFullYear(),
+		now.getMonth(),
+		now.getDate(),
+	).getTime();
+	const targetDayStart = new Date(
+		d.getFullYear(),
+		d.getMonth(),
+		d.getDate(),
+	).getTime();
+	const diffDays = Math.round((todayStart - targetDayStart) / 86_400_000);
+
+	const hh = String(d.getHours()).padStart(2, "0");
+	const mm = String(d.getMinutes()).padStart(2, "0");
+	const timePart = `${hh}:${mm}`;
+
+	if (diffDays === 0) {
+		return `今天 ${timePart}`;
+	}
+	if (diffDays === 1) {
+		return `昨天 ${timePart}`;
+	}
+	if (diffDays === 2) {
+		return `前天 ${timePart}`;
+	}
+	if (d.getFullYear() === now.getFullYear()) {
+		const month = String(d.getMonth() + 1).padStart(2, "0");
+		const day = String(d.getDate()).padStart(2, "0");
+		return `${month}-${day} ${timePart}`;
+	}
+	const y = d.getFullYear();
+	const month = String(d.getMonth() + 1).padStart(2, "0");
+	const day = String(d.getDate()).padStart(2, "0");
+	return `${y}-${month}-${day} ${timePart}`;
+}
+
+export function formatChatFullDateTime(ts: number): string {
+	if (!ts || !Number.isFinite(ts)) return "";
+	const d = new Date(ts);
+	const y = d.getFullYear();
+	const m = String(d.getMonth() + 1).padStart(2, "0");
+	const day = String(d.getDate()).padStart(2, "0");
+	const hh = String(d.getHours()).padStart(2, "0");
+	const mm = String(d.getMinutes()).padStart(2, "0");
+	const ss = String(d.getSeconds()).padStart(2, "0");
+	const weekday = CHAT_WEEKDAYS[d.getDay()] ?? "";
+	return `${y}-${m}-${day} ${hh}:${mm}:${ss} (${weekday})`;
+}
+
 const VISITOR_ID_STORAGE_KEY = "lengxi_chat_visitor_id";
 
 export function getOrCreateVisitorId(): string {

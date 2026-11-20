@@ -582,12 +582,11 @@ export function updateNavbarTransparency(mode: WALLPAPER_MODE): void {
 	let blurAmount: number;
 
 	// 根据当前壁纸模式设置导航栏透明模式和模糊效果
-	if (mode === WALLPAPER_OVERLAY) {
-		// 全屏透明模式
-		transparentMode = "none";
-		blurAmount = 0;
-	} else if (mode === WALLPAPER_NONE) {
-		// 纯色背景模式
+	if (
+		document.documentElement.hasAttribute("data-chat-page") ||
+		mode === WALLPAPER_OVERLAY ||
+		mode === WALLPAPER_NONE
+	) {
 		transparentMode = "none";
 		blurAmount = 0;
 	} else if (mode === WALLPAPER_FULLSCREEN) {

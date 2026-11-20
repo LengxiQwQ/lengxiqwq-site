@@ -243,7 +243,6 @@ const modalSubtitle = $derived.by(() => {
   subtitle={modalSubtitle}
   size="sm"
   mobile="compact"
-  portalToChatPage={true}
   onClose={onClose}
 >
   <div class="chat-activity-modal-content">

@@ -807,7 +807,6 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
   size={matrixUserId || isExternalUser || isSpectator ? "md" : "lg"}
   fillHeightOnDesktop={!(matrixUserId || isExternalUser || isSpectator)}
   topPriority={true}
-  portalToChatPage={true}
   {lockedMinHeight}
   {onClose}
 >

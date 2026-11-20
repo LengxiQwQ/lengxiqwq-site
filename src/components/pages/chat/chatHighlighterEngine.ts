@@ -26,6 +26,17 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 
+// 轻量路径保护：修补官方 PowerShell 语法缺少路径匹配导致路径连字符被切碎的缺陷
+function safePowershell(api: Parameters<typeof powershell>[0]) {
+	const def = powershell(api);
+	def.contains.unshift({
+		className: "string",
+		begin:
+			/(?:https?:\/\/|[a-zA-Z]:[\\/]|(?:\.{1,2}|~)[\\/]|(?:[\w.-]+[\\/])+[\w.-]+|\b[\w.-]+\.(?:ps1|psm1|sh|py|js|ts|json|yml|yaml|md|txt|exe)\b)/,
+	});
+	return def;
+}
+
 // 注册语言
 hljs.registerLanguage("javascript", javascript);
 hljs.registerLanguage("typescript", typescript);
@@ -36,7 +47,7 @@ hljs.registerLanguage("scss", scss);
 hljs.registerLanguage("json", json);
 hljs.registerLanguage("python", python);
 hljs.registerLanguage("bash", bash);
-hljs.registerLanguage("powershell", powershell);
+hljs.registerLanguage("powershell", safePowershell);
 hljs.registerLanguage("sql", sql);
 hljs.registerLanguage("yaml", yaml);
 hljs.registerLanguage("markdown", markdown);
@@ -65,8 +76,11 @@ const ALIASES: Record<string, string> = {
 	sh: "bash",
 	shell: "bash",
 	zsh: "bash",
+	console: "bash",
+	terminal: "bash",
 	ps: "powershell",
 	ps1: "powershell",
+	pwsh: "powershell",
 	htm: "xml",
 	xhtml: "xml",
 	svg: "xml",

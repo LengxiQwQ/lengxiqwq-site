@@ -177,6 +177,9 @@ const {
 <!-- 移动端导航抽屉：渲染为 <body> 直系子元素，脱离导航栏的 transform 包含块才能铺满视口 -->
 <NavMenuPanel links={resolveNavMenuLinks()} />
 
+<!-- 聊天室弹窗和全屏遮罩共用一层，位于导航栏和内容容器之外。 -->
+<div id="chat-modal-layer"></div>
+
 <!--
     触屏设备上让代码块的复制按钮默认隐藏，点一下代码块才显形。
     expressive-code 没给 <pre> 加 tabindex，点击代码区不会产生焦点，

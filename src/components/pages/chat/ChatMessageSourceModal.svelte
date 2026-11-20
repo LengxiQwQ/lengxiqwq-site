@@ -228,7 +228,6 @@ async function handleCopyEventId() {
   subtitle={modalSubtitle}
   size="md"
   topPriority={true}
-  portalToChatPage={true}
   onClose={onClose}
 >
   <div class="chat-source-modal-body">

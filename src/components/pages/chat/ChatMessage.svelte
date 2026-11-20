@@ -8,6 +8,8 @@ import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessageActivityModal from "./ChatMessageActivityModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import {
+	formatChatFullDateTime,
+	formatChatMessageTime,
 	isExternalMatrixIdentity,
 	normalizeDotSpacing,
 	resolveExternalOrigin,
@@ -297,10 +299,12 @@ const isStickerAttachmentOnly = $derived.by(() => {
 
 const formattedTime = $derived.by(() => {
 	if (!message.createdAt) return "";
-	const d = new Date(message.createdAt);
-	const h = String(d.getHours()).padStart(2, "0");
-	const m = String(d.getMinutes()).padStart(2, "0");
-	return `${h}:${m}`;
+	return formatChatMessageTime(message.createdAt);
+});
+
+const fullDateTimeTooltip = $derived.by(() => {
+	if (!message.createdAt) return "";
+	return formatChatFullDateTime(message.createdAt);
 });
 
 const replyPreviewText = $derived.by(() => {
@@ -1615,7 +1619,10 @@ function handleBubbleClick(e: MouseEvent) {
           {#if message.isEdited}
             <span class="text-[11px] md:text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
           {/if}
-          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)]">
+          <span
+            class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] cursor-default"
+            title={fullDateTimeTooltip}
+          >
             {formattedTime}
           </span>
         </div>
@@ -1743,7 +1750,10 @@ function handleBubbleClick(e: MouseEvent) {
 
       {#if formattedTime}
         <div class="flex items-center gap-1 mt-1 px-1 select-none">
-          <span class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)]">
+          <span
+            class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] cursor-default"
+            title={fullDateTimeTooltip}
+          >
             {formattedTime}
           </span>
           {#if message.isEdited}

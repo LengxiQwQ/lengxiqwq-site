@@ -9,6 +9,78 @@ interface Props {
 
 const { code = "", lang = "" }: Props = $props();
 
+const LANGUAGE_DISPLAY_NAMES: Record<string, string> = {
+	powershell: "PowerShell",
+	pwsh: "PowerShell",
+	ps1: "PowerShell",
+	ps: "PowerShell",
+	typescript: "TypeScript",
+	ts: "TypeScript",
+	javascript: "JavaScript",
+	js: "JavaScript",
+	jsx: "JSX",
+	tsx: "TSX",
+	python: "Python",
+	py: "Python",
+	bash: "Bash",
+	sh: "Shell",
+	shell: "Shell",
+	zsh: "Zsh",
+	terminal: "Terminal",
+	console: "Console",
+	rust: "Rust",
+	rs: "Rust",
+	go: "Go",
+	golang: "Go",
+	c: "C",
+	cpp: "C++",
+	"c++": "C++",
+	csharp: "C#",
+	cs: "C#",
+	java: "Java",
+	html: "HTML",
+	xml: "XML",
+	svg: "SVG",
+	css: "CSS",
+	scss: "SCSS",
+	sass: "Sass",
+	less: "Less",
+	json: "JSON",
+	jsonc: "JSON",
+	yaml: "YAML",
+	yml: "YAML",
+	sql: "SQL",
+	markdown: "Markdown",
+	md: "Markdown",
+	diff: "Diff",
+	dockerfile: "Dockerfile",
+	docker: "Dockerfile",
+	ini: "INI",
+	toml: "TOML",
+	vue: "Vue",
+	svelte: "Svelte",
+	graphql: "GraphQL",
+	php: "PHP",
+	ruby: "Ruby",
+	rb: "Ruby",
+	swift: "Swift",
+	kotlin: "Kotlin",
+	kt: "Kotlin",
+	dart: "Dart",
+	lua: "Lua",
+	r: "R",
+};
+
+function formatLanguageName(rawLang: string): string {
+	const trimmed = rawLang.trim();
+	if (!trimmed) return "Code";
+	const lower = trimmed.toLowerCase();
+	if (LANGUAGE_DISPLAY_NAMES[lower]) {
+		return LANGUAGE_DISPLAY_NAMES[lower];
+	}
+	return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
 let copied = $state(false);
 let copyTimer: number | null = null;
 
@@ -16,7 +88,7 @@ let copyTimer: number | null = null;
 let highlightedHtml = $state(escapeHtml(code));
 let resolvedLang = $state(lang.trim());
 
-const displayLang = $derived((resolvedLang || lang || "code").toUpperCase());
+const displayLang = $derived(formatLanguageName(resolvedLang || lang));
 
 // 动态懒加载：仅当该代码块被挂载显示时，才会异步拉取 highlight.js 引擎分包
 $effect(() => {

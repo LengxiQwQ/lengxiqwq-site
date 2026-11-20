@@ -367,7 +367,6 @@ const threadSubtitle = $derived.by(() => {
   subtitle={threadSubtitle}
   size="md"
   fillHeightOnDesktop={true}
-  portalToChatPage={true}
   onClose={onClose}
 >
   <div class="chat-thread-modal-body">
