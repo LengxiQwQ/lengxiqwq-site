@@ -31,13 +31,10 @@ env:
   CONTENT_WORKING_COPY: .content-src
 
 jobs:
-  deploy:
-    name: Build and deploy
+  build:
+    name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     env:
       CI: true
       CONTENT_DIR: .content-src
@@ -119,6 +116,15 @@ jobs:
         with:
           path: dist/
 
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

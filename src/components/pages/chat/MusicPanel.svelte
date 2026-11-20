@@ -663,7 +663,8 @@ const currentHistoryHasMore = $derived(
 const historyVirtual = $derived.by(() => {
 	const list = activeHistoryEntries;
 	const len = list.length;
-	if (len <= VIRTUAL_MUSIC_THRESHOLD) {
+	const VIRTUAL_HISTORY_THRESHOLD = 200;
+	if (len <= VIRTUAL_HISTORY_THRESHOLD) {
 		return {
 			items: list,
 			start: 0,
@@ -780,7 +781,9 @@ $effect(() => {
 		const _sort = historySort;
 		const _filter = selectedRequesterKey;
 		const _room = roomId;
-		void loadHistoryPage(_tab, false);
+		untrack(() => {
+			void loadHistoryPage(_tab, false);
+		});
 	}
 });
 
