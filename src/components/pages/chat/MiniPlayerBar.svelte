@@ -54,7 +54,7 @@ $effect(() => {
 });
 
 const isBusy = $derived(
-	["loading", "preparing", "recovering"].includes(audioStatus),
+	isListening && ["loading", "preparing", "recovering"].includes(audioStatus),
 );
 const listenAction = $derived(
 	isBusy

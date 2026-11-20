@@ -1219,6 +1219,7 @@ function sampleRoomClock(socket: WebSocket | null, refresh = false) {
 			musicSyncVersion: 2,
 			musicListening:
 				isListeningIntent && mobilePlaybackStatus.audioStatus !== "blocked",
+			musicPlayUid: musicState?.current?.uid || "",
 		}),
 	);
 	window.setTimeout(() => {

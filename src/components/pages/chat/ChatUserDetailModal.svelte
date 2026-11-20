@@ -928,7 +928,6 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
     {@const recentMsgs = userMessages.slice(-5).reverse()}
     {@const canMentionExternal = Boolean(currentUser) && roomId === "interconnect"}
     {@const extFullId = matrixUserId || seed.userKey}
-    {@const extUsername = extFullId.includes(":") ? extFullId.split(":")[0].replace(/^@/, "") : ""}
 
     <div class="flex-1 overflow-y-auto custom-scrollbar p-3.5 sm:p-4 space-y-3 min-h-0">
       <!-- 1. 顶部身份卡片 -->
@@ -1081,14 +1080,6 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         </div>
 
         <div class="mt-2.5 pt-2 border-t border-[var(--chat-divider-color)]/60 text-[0.6875rem] text-[var(--chat-meta-color)] space-y-1">
-          {#if extUsername && !relayOriginInfo}
-            <div class="flex items-center justify-between gap-2">
-              <span class="shrink-0">Matrix 用户名:</span>
-              <span class="font-mono font-medium text-[var(--deep-text)] dark:text-white/90 truncate">
-                {extUsername}
-              </span>
-            </div>
-          {/if}
           <div class="flex items-center justify-between gap-2">
             <span class="shrink-0">{relayOriginInfo ? "代发节点:" : "Matrix 账号:"}</span>
             <a
@@ -1497,12 +1488,6 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
 
           {#if roomId === "interconnect" && localMatrixInfo}
             <div class="mt-2.5 pt-2 border-t border-[var(--chat-divider-color)]/60 text-[0.6875rem] text-[var(--chat-meta-color)] space-y-1">
-              <div class="flex items-center justify-between gap-2">
-                <span class="shrink-0">Matrix 用户名:</span>
-                <span class="font-mono font-medium text-[var(--deep-text)] dark:text-white/90 truncate">
-                  {localMatrixInfo.username}
-                </span>
-              </div>
               <div class="flex items-center justify-between gap-2">
                 <span class="shrink-0">Matrix 账号:</span>
                 {#if localMatrixInfo.matrixId}

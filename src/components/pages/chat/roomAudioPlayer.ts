@@ -157,6 +157,10 @@ export class RoomAudioPlayer {
 				external = "error";
 				break;
 		}
+		// If user has no listening intent, external status is cleanly idle to prevent UI spinning on page entry
+		if (!this.intent && external !== "error") {
+			external = "idle";
+		}
 		this.callbacks.status(external, this.intent);
 	}
 
@@ -236,8 +240,20 @@ export class RoomAudioPlayer {
 		);
 		this.trace("load-track", { uid: play.uid, phase: play.phase ?? "" });
 
-		// Immediately stop old audio on all devices synchronously
-		this.audio.pause();
+		// When user has no intent to listen, pause and stay idle (never spin UI)
+		if (!this.intent) {
+			this.audio.pause();
+			this.audio.muted = true;
+			this.audio.playbackRate = 1;
+			this.audio.src = this.activeSrc;
+			this.audio.load();
+			this.transition("IDLE");
+			return;
+		}
+
+		// When listening intent is active: Keep WebKit AudioSession alive during track switch!
+		// DO NOT invoke audio.pause() on iOS/Safari, which immediately revokes background playback permission.
+		this.audio.muted = true;
 		this.audio.playbackRate = 1;
 		this.audio.src = this.activeSrc;
 		this.audio.load();
@@ -253,17 +269,16 @@ export class RoomAudioPlayer {
 			// Schedule precision fire timer
 			const leadMs = Math.max(0, play.startedAt - now);
 			this.fireTimer = setTimeout(() => this.onFireTimeline(), leadMs);
-			// Do NOT play in background during scheduling! Stay clean at 0.00s and wait for timer.
 			this.audio.currentTime = 0;
 			this.audio.muted = true;
 			this.transition("SCHEDULED_WAIT");
-		} else if (this.intent) {
-			this.audio.muted = false;
-			this.audio.volume = this.volume;
-			this.realignTimeline(true);
+			// Keep decoding pipeline warm while muted so user gesture permission is preserved
 			this.invokeNativePlay();
 		} else {
-			this.audio.muted = true;
+			this.audio.muted = false;
+			this.audio.volume = this.volume;
+			this.invokeNativePlay();
+			this.realignTimeline(true);
 		}
 	}
 
@@ -302,11 +317,12 @@ export class RoomAudioPlayer {
 			this.audio.currentTime = 0;
 			this.audio.muted = true;
 			this.transition("SCHEDULED_WAIT");
+			this.invokeNativePlay();
 		} else {
 			this.audio.muted = false;
 			this.audio.volume = this.volume;
-			this.realignTimeline(true);
 			this.invokeNativePlay();
+			this.realignTimeline(true);
 		}
 	}
 
