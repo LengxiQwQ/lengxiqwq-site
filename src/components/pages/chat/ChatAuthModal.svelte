@@ -4,6 +4,7 @@ import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import {
 	buildWalineLoginUrl,
+	checkGuestRegistrationEmail,
 	normalizeServerUrl,
 	openWalineLoginPopup,
 	previewAvatarFromEmail,
@@ -146,6 +147,11 @@ async function handleGuestSubmit(e: SubmitEvent) {
 		guestError = "请填写有效邮箱";
 		return;
 	}
+	const deliverability = checkGuestRegistrationEmail(guestEmail.trim());
+	if (!deliverability.deliverable) {
+		guestError = deliverability.reason || "请填写有效真实邮箱";
+		return;
+	}
 
 	const attemptSeq = ++authAttemptSeq;
 	guestLoading = true;
@@ -183,6 +189,11 @@ async function handleGuestSubmit(e: SubmitEvent) {
 async function handleSplitGuestEnter() {
 	if (!guestBlockedCanSplit || splitGuestLoading) return;
 	guestError = "";
+	const deliverability = checkGuestRegistrationEmail(guestEmail.trim());
+	if (!deliverability.deliverable) {
+		guestError = deliverability.reason || "请填写有效真实邮箱";
+		return;
+	}
 	const attemptSeq = ++authAttemptSeq;
 	splitGuestLoading = true;
 	const res = await registerGuestSession(chatServerUrl, {

@@ -20,15 +20,15 @@ interface FriendLinkEntry {
 const HEALTH_FILE = path.resolve("src/constants/friends-health.json");
 const TIMEOUT_MS = 12_000;
 
-// 伪装浏览器请求头，避免被防爬策略误拦
+// 深度模拟桌面现代 Chrome 133 浏览器完整请求头（包含 Client Hints 与 Fetch Metadata），最大程度避免被 WAF 误杀拦截
 const BROWSER_HEADERS = {
 	"User-Agent":
-		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-	"Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+	"Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
 	Accept:
-		"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+		"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
 	"sec-ch-ua":
-		'"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+		'"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
 	"sec-ch-ua-mobile": "?0",
 	"sec-ch-ua-platform": '"Windows"',
 	"Sec-Fetch-Dest": "document",
@@ -36,12 +36,51 @@ const BROWSER_HEADERS = {
 	"Sec-Fetch-Site": "none",
 	"Sec-Fetch-User": "?1",
 	"Upgrade-Insecure-Requests": "1",
+	Priority: "u=0, i",
 	"Cache-Control": "max-age=0",
 };
 
+// 检查是否为私有、环回或云元数据地址（防 SSRF）
+function isPrivateOrLocalHost(hostname: string): boolean {
+	const lower = hostname.toLowerCase().trim();
+	if (
+		lower === "localhost" ||
+		lower.endsWith(".local") ||
+		lower.endsWith(".internal") ||
+		lower.endsWith(".localdomain")
+	) {
+		return true;
+	}
+	if (/^(127\.|10\.|192\.168\.|169\.254\.|0\.)/.test(lower)) return true;
+	if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(lower)) return true;
+	if (
+		lower === "::1" ||
+		lower === "[::1]" ||
+		lower.startsWith("fe80:") ||
+		lower.startsWith("[fe80:") ||
+		lower.startsWith("fc00:") ||
+		lower.startsWith("[fc00:") ||
+		lower.startsWith("fd00:") ||
+		lower.startsWith("[fd00:")
+	) {
+		return true;
+	}
+	return false;
+}
+
 // ---------- 探测函数 ----------
-async function checkUrl(url: string): Promise<{ ok: boolean; error?: string }> {
+async function checkUrlOnce(
+	url: string,
+): Promise<{ ok: boolean; error?: string }> {
 	try {
+		const parsedUrl = new URL(url);
+		if (isPrivateOrLocalHost(parsedUrl.hostname)) {
+			return {
+				ok: false,
+				error: `已拦截非公网或内网地址 (${parsedUrl.hostname})`,
+			};
+		}
+
 		const controller = new AbortController();
 		const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
 		const res = await fetch(url, {
@@ -54,7 +93,7 @@ async function checkUrl(url: string): Promise<{ ok: boolean; error?: string }> {
 			if ([403, 429, 503].includes(res.status)) {
 				try {
 					const jinaRes = await fetch(`https://r.jina.ai/${url}`, {
-						signal: AbortSignal.timeout(8000),
+						signal: AbortSignal.timeout(10_000),
 						headers: {
 							"User-Agent": BROWSER_HEADERS["User-Agent"],
 							Accept: "text/plain",
@@ -70,11 +109,20 @@ async function checkUrl(url: string): Promise<{ ok: boolean; error?: string }> {
 		return { ok: true };
 	} catch (err: unknown) {
 		const e = err as Error;
-		if (e.name === "AbortError") {
+		if (e.name === "AbortError" || e.name === "TimeoutError") {
 			return { ok: false, error: `超时 (>${TIMEOUT_MS / 1000}s)` };
 		}
 		return { ok: false, error: e.message || String(e) };
 	}
+}
+
+// 带 1 次自动退避重试（包容国内慢速主机与冷启动）
+async function checkUrl(url: string): Promise<{ ok: boolean; error?: string }> {
+	const first = await checkUrlOnce(url);
+	if (first.ok) return first;
+	// 若遇到超时或网络连接失败，等待 1.5 秒重试一次
+	await new Promise((r) => setTimeout(r, 1500));
+	return await checkUrlOnce(url);
 }
 
 // ---------- 主函数 ----------

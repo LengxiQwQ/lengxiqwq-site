@@ -16,7 +16,7 @@ jobs:
   audit-friends:
     name: 巡检友链双向性与健康度
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
       - name: 检出主仓库代码
@@ -50,8 +50,11 @@ jobs:
           CONTENT_DIR: .content-src
         run: pnpm content:sync
 
-      - name: 运行友链综合巡检脚本
+      - name: 运行友链双向反链巡检脚本
         run: npx tsx scripts/check-friends-reciprocal.ts
+
+      - name: 运行友链可访问性健康检查
+        run: npx tsx scripts/check-friends-health.ts
 
       - name: 生成 GitHub Actions 巡检摘要报告
         if: always()

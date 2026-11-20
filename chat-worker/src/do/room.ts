@@ -5,6 +5,7 @@ import {
 	isAdminEmail,
 	isIsolatedGuestUserKey,
 	isReservedGuestName,
+	isUndeliverableEmail,
 	resolveRoleBadge,
 	sanitizeAvatarUrl,
 	sanitizeBio,
@@ -4387,7 +4388,11 @@ export class RoomDO extends DurableObject<Env> {
 				)
 				.toArray()[0];
 
-			if (!row?.email?.includes("@") || row.notify_email === 0) {
+			if (
+				!row?.email ||
+				isUndeliverableEmail(row.email) ||
+				row.notify_email === 0
+			) {
 				continue;
 			}
 
@@ -4510,7 +4515,11 @@ export class RoomDO extends DurableObject<Env> {
 				)
 				.toArray()[0];
 
-			if (!member?.email?.includes("@") || member.notify_email === 0) {
+			if (
+				!member?.email ||
+				isUndeliverableEmail(member.email) ||
+				member.notify_email === 0
+			) {
 				this.ctx.storage.sql.exec(
 					"DELETE FROM pending_mention_emails WHERE target_user_key = ?",
 					targetKey,

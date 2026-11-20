@@ -15,6 +15,13 @@ import type {
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
 
+export {
+	checkEmailDeliverability,
+	checkGuestRegistrationEmail,
+	type EmailDeliverabilityResult,
+	isUndeliverableEmail,
+} from "../../../utils/email-validation";
+
 export const GUEST_TOKEN_STORAGE_KEY = "fireflyChatGuestToken";
 export const GUEST_EMAIL_STORAGE_KEY = "fireflyChatGuestMeta";
 export const WALINE_USER_META_KEY = "WALINE_USER_META";
@@ -728,6 +735,8 @@ export function readInitialCachedUser(): ChatSessionUser | null {
 					badgeType: isAdmin ? "host" : "accent",
 					isAdmin,
 					status: "",
+					email:
+						typeof walineData.email === "string" ? walineData.email.trim() : "",
 				};
 				return synthesizedUser;
 			}
@@ -750,12 +759,41 @@ export function readInitialCachedUser(): ChatSessionUser | null {
 				badgeType: "tag",
 				isAdmin: false,
 				status: "",
+				email: guestMeta.email || "",
 			};
 			return synthesizedGuest;
 		}
 	}
 
 	return null;
+}
+
+export function resolveCurrentUserEmail(user: ChatSessionUser | null): string {
+	if (user?.email && typeof user.email === "string" && user.email.trim()) {
+		return user.email.trim();
+	}
+	if (typeof localStorage === "undefined") return "";
+	if (user?.authType === "waline") {
+		try {
+			const rawWaline = localStorage.getItem("WALINE_USER");
+			if (rawWaline) {
+				const parsed = JSON.parse(rawWaline) as { email?: unknown };
+				if (typeof parsed.email === "string" && parsed.email.trim()) {
+					return parsed.email.trim();
+				}
+			}
+		} catch {
+			// Ignore
+		}
+		const commentMeta = readWalineCommentMeta();
+		if (commentMeta.email?.trim()) return commentMeta.email.trim();
+	}
+	if (user?.authType === "guest") {
+		const guestMeta = readStoredGuestMeta();
+		if (guestMeta.email?.trim()) return guestMeta.email.trim();
+	}
+	const fallbackMeta = readWalineCommentMeta();
+	return fallbackMeta.email?.trim() || "";
 }
 
 export function readStoredGuestMeta(): StoredGuestMeta {

@@ -10,7 +10,7 @@ import type {
 
 // ---------- 配置常量 ----------
 const AUDIT_FILE = path.resolve("src/constants/friends-audit.json");
-const TIMEOUT_MS = 7_000; // 优化至 6 秒，包容国内慢速主机和冷启动 API
+const TIMEOUT_MS = 10_000; // 提升至 10 秒，包容国内慢速个人小主机、DDNS 与冷启动 API
 const MAX_CONCURRENCY = 6; // 并发探测数
 
 // 匹配本站的核心关键词（包含站名、网址及各种常用称谓）
@@ -308,20 +308,49 @@ export interface FetchResult {
 	html?: string;
 }
 
-// 关键词匹配辅助函数（同时检测原始文本与 URL 解码后的文本）
-function matchKeywordsInContent(
+// 通用文本反混淆与解码器：涵盖 Unicode 字符转义 (\uXXXX)、URL 百分号编码 (%XX)、HTML 字符实体 (&#x...; / &#...;)
+export function decodeTextPayload(text: string): string {
+	let res = text;
+	try {
+		// 1. Unicode 转义反解码 (\uXXXX) - 兼容 Terser/Babel/Webpack 的 ascii_only 编译混淆
+		if (res.includes("\\u") || res.includes("\\U")) {
+			res = res.replace(/\\u([0-9a-fA-F]{4})/gi, (_, hex) =>
+				String.fromCharCode(Number.parseInt(hex, 16)),
+			);
+		}
+	} catch {}
+	try {
+		// 2. URL 百分号编码解码 (%XX)
+		if (res.includes("%")) {
+			res = decodeURIComponent(res);
+		}
+	} catch {}
+	try {
+		// 3. HTML 实体解码 (&#x...; 或 &#...;)
+		if (res.includes("&#")) {
+			res = res
+				.replace(/&#x([0-9a-fA-F]+);/gi, (_, hex) =>
+					String.fromCharCode(Number.parseInt(hex, 16)),
+				)
+				.replace(/&#([0-9]+);/gi, (_, dec) =>
+					String.fromCharCode(Number.parseInt(dec, 10)),
+				);
+		}
+	} catch {}
+	return res;
+}
+
+// 关键词匹配辅助函数（同时检测原始文本与多重反混淆解码后的文本）
+export function matchKeywordsInContent(
 	text: string,
 	keywords: string[],
 ): string | undefined {
 	const lower = text.toLowerCase();
-	let decoded = lower;
-	try {
-		decoded = decodeURIComponent(lower);
-	} catch {}
-	return keywords.find(
-		(kw) =>
-			lower.includes(kw.toLowerCase()) || decoded.includes(kw.toLowerCase()),
-	);
+	const decoded = decodeTextPayload(lower);
+	return keywords.find((kw) => {
+		const lowerKw = kw.toLowerCase();
+		return lower.includes(lowerKw) || decoded.includes(lowerKw);
+	});
 }
 
 export async function probeUrl(
@@ -473,12 +502,140 @@ export async function probeUrl(
 			};
 		}
 
-		// 6. 第二轮智能深度探测：处理 SPA 客户端渲染（动态 JSON/API）与分页友链
+		// 6. 第二轮智能深度探测：处理现代 SPA / SSR 渲染、内联 Hydration 状态、静态 Bundle 与分页友链
 		try {
 			const parsed = new URL(url);
 			const origin = parsed.origin;
 
-			// A. 探测动态友链 API 数据接口 (如 xnmoe.com 的 /api/links 或 fuhao574 的 /friends.json)
+			// A. 探测内联 JSON 数据脚本与 SSR Hydration 状态（如 Next.js __NEXT_DATA__, Nuxt __NUXT_DATA__, VitePress, SvelteKit 等，0 额外网络开销）
+			const inlineDataRegex =
+				/<script[^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi;
+			for (const jsonMatch of html.matchAll(inlineDataRegex)) {
+				const jsonContent = jsonMatch[1].trim();
+				if (jsonContent.length > 5) {
+					const matched = matchKeywordsInContent(jsonContent, keywords);
+					if (matched) {
+						return {
+							status: "found",
+							statusCode: 200,
+							html: jsonContent,
+							message: `在内联应用数据脚本 (<script type="application/json">) 成功匹配关键词: "${matched}"`,
+						};
+					}
+				}
+			}
+
+			// 探测页面内联 JS 全局状态挂载（如 window.__INITIAL_STATE__ 或 window.__DATA__）
+			const inlineGlobalDataRegex =
+				/window\.(?:__[a-zA-Z0-9_]+__|INITIAL_STATE|PAGE_DATA)\s*=\s*(\{[\s\S]*?\}|\[[\s\S]*?\]);/gi;
+			for (const globalMatch of html.matchAll(inlineGlobalDataRegex)) {
+				const globalContent = globalMatch[1].trim();
+				const matched = matchKeywordsInContent(globalContent, keywords);
+				if (matched) {
+					return {
+						status: "found",
+						statusCode: 200,
+						html: globalContent,
+						message: `在全局内联状态挂载 (window.__...__) 成功匹配关键词: "${matched}"`,
+					};
+				}
+			}
+
+			// B. 探测 SPA 前端脚本 Bundle（检测直接编译进静态 JS 中的友链数据）
+			const scriptUrls = new Set<string>();
+			// 支持常见 .js, .mjs, .cjs 扩展名，或带有 type="module" / rel="modulepreload" 的脚本
+			const scriptRegex =
+				/<(?:script|link)[^>]+(?:src|href)=["']([^"']+(?:\.(?:m?js|cjs)|_nuxt\/|_next\/|assets\/)[^"']*)["'][^>]*>/gi;
+			for (const scriptMatch of html.matchAll(scriptRegex)) {
+				try {
+					const fullUrl = new URL(scriptMatch[1], url).href;
+					if (fullUrl.startsWith(origin)) {
+						const pathname = new URL(fullUrl).pathname.toLowerCase();
+						// 排除底层基础库与通用分析脚本以节约耗时
+						if (
+							!pathname.includes("katex") &&
+							!pathname.includes("mathjax") &&
+							!pathname.includes("mermaid") &&
+							!pathname.includes("prism") &&
+							!pathname.includes("highlight") &&
+							!pathname.includes("analytics") &&
+							!pathname.includes("runtime-core") &&
+							!pathname.includes("rolldown-runtime") &&
+							!pathname.includes("vue.runtime") &&
+							!pathname.includes("react.production")
+						) {
+							scriptUrls.add(fullUrl);
+						}
+					}
+				} catch {}
+			}
+
+			// 优先检查可能包含应用业务代码或友链静态数据的脚本
+			const sortedScripts = Array.from(scriptUrls).sort((a, b) => {
+				const aKey = /friend|link|index|app|main|entry/i.test(a) ? -1 : 1;
+				const bKey = /friend|link|index|app|main|entry/i.test(b) ? -1 : 1;
+				return aKey - bKey;
+			});
+
+			// 最多探测前 5 个同源主脚本
+			let checkedScripts = 0;
+			for (const scriptUrl of sortedScripts) {
+				if (checkedScripts >= 5) break;
+				checkedScripts++;
+				try {
+					const scriptRes = await fetch(scriptUrl, {
+						signal: AbortSignal.timeout(4500),
+						headers: BROWSER_HEADERS,
+					});
+					if (scriptRes.ok) {
+						const scriptText = await scriptRes.text();
+						const scriptMatched = matchKeywordsInContent(scriptText, keywords);
+						if (scriptMatched) {
+							return {
+								status: "found",
+								statusCode: 200,
+								html: scriptText,
+								message: `在前端脚本 Bundle (${scriptUrl}) 成功匹配关键词: "${scriptMatched}"`,
+							};
+						}
+
+						// 若首层脚本（如入口 index.js）中没有直接包含关键词，但动态代码分割引用了包含 friend 或 link 的子 chunk
+						const subChunkMatches = scriptText.match(
+							/(?:assets|\/_nuxt|\/_next\/static\/chunks|\/static\/js)\/[a-zA-Z0-9_-]*(?:friend|link)[a-zA-Z0-9_-]*\.(?:m?js|cjs)/gi,
+						);
+						if (subChunkMatches) {
+							for (const subChunk of subChunkMatches.slice(0, 2)) {
+								try {
+									const subUrl = new URL(subChunk, origin).href;
+									if (!scriptUrls.has(subUrl)) {
+										const subRes = await fetch(subUrl, {
+											signal: AbortSignal.timeout(3500),
+											headers: BROWSER_HEADERS,
+										});
+										if (subRes.ok) {
+											const subText = await subRes.text();
+											const subMatched = matchKeywordsInContent(
+												subText,
+												keywords,
+											);
+											if (subMatched) {
+												return {
+													status: "found",
+													statusCode: 200,
+													html: subText,
+													message: `在前端子脚本 Bundle (${subUrl}) 成功匹配关键词: "${subMatched}"`,
+												};
+											}
+										}
+									}
+								} catch {}
+							}
+						}
+					}
+				} catch {}
+			}
+
+			// C. 探测动态友链 API 数据接口 (如 xnmoe.com 的 /api/links 或 fuhao574 的 /friends.json)
 			const dynamicApis = new Set<string>();
 
 			// 从 HTML 中抓取潜在的链接/友链 JSON、跨域 API 地址（如 benlao.top 的 data-blog-api）
@@ -624,7 +781,7 @@ export async function probeUrl(
 				} catch {}
 			}
 
-			// B. 探测分页友链（针对一页只放几个、需要翻到第 2、3 页的友链）
+			// D. 探测分页友链（针对一页只放几个、需要翻到第 2、3 页的友链）
 			const paginationUrls = new Set<string>();
 			const linkMatches = html.matchAll(
 				/<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi,
@@ -715,7 +872,8 @@ export async function probeWithRetry(
 	) {
 		return first;
 	}
-	await new Promise((r) => setTimeout(r, 1200));
+	// 若因网络抖动、偶发超时或冷启动错误，退避 1.5 秒后进行第 2 次重试
+	await new Promise((r) => setTimeout(r, 1500));
 	return await probeUrl(url, keywords);
 }
 

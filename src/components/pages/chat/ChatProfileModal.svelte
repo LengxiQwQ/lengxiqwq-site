@@ -1,7 +1,11 @@
 <script lang="ts">
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
-import { normalizeServerUrl } from "./chatClient";
+import {
+	checkEmailDeliverability,
+	normalizeServerUrl,
+	resolveCurrentUserEmail,
+} from "./chatClient";
 import {
 	CHAT_STATUS_PRESETS,
 	type ChatProfileDraft,
@@ -65,6 +69,18 @@ const isIsolatedGuest = $derived(
 	),
 );
 
+const userEmail = $derived.by(() => {
+	return resolveCurrentUserEmail(currentUser);
+});
+
+const emailDeliverability = $derived.by(() => {
+	return checkEmailDeliverability(userEmail);
+});
+
+const isEmailUndeliverable = $derived(!emailDeliverability.deliverable);
+
+const isNotifyDisabled = $derived(isIsolatedGuest || isEmailUndeliverable);
+
 $effect(() => {
 	if (open && currentUser) {
 		draftNickname = currentUser.name;
@@ -76,7 +92,7 @@ $effect(() => {
 		draftBio = currentUser.bio || "";
 		draftUrl = currentUser.url || "";
 		draftAvatar = currentUser.avatar || "";
-		draftNotifyEmail = isIsolatedGuest
+		draftNotifyEmail = isNotifyDisabled
 			? false
 			: currentUser.notifyEmail !== false;
 		initialAvatar = currentUser.avatar || "";
@@ -98,7 +114,7 @@ function handleSubmit(e: SubmitEvent) {
 		status: statusValue,
 		bio: draftBio.trim().slice(0, 80),
 		url: draftUrl.trim().slice(0, 200),
-		notifyEmail: isIsolatedGuest ? false : draftNotifyEmail,
+		notifyEmail: isNotifyDisabled ? false : draftNotifyEmail,
 	};
 	if (avatarEdited || draftAvatar.trim() !== initialAvatar) {
 		payload.avatar = draftAvatar.trim().slice(0, 400);
@@ -309,6 +325,10 @@ function handleSubmit(e: SubmitEvent) {
                   <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
                     {#if isIsolatedGuest}
                       独立临时身份未经邮箱所有权验证，已禁用离线邮件提醒，防止误发邮件
+                    {:else if isEmailUndeliverable}
+                      <span class="text-red-500 dark:text-red-400 font-medium inline-block">
+                        当前邮箱 {userEmail ? `(${userEmail})` : ""} 为不可送达地址（{emailDeliverability.reason || "无法送达"}），已禁用邮件提醒
+                      </span>
                     {:else}
                       不在线时有人 @ 或回复你，将发送摘要至邮箱账号
                     {/if}
@@ -317,16 +337,16 @@ function handleSubmit(e: SubmitEvent) {
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={isIsolatedGuest ? false : draftNotifyEmail}
+                  aria-checked={isNotifyDisabled ? false : draftNotifyEmail}
                   aria-label="切换离线 @ 邮件提醒"
-                  disabled={isIsolatedGuest}
-                  class="p-0 border-none bg-transparent shrink-0 {isIsolatedGuest ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}"
+                  disabled={isNotifyDisabled}
+                  class="p-0 border-none bg-transparent shrink-0 {isNotifyDisabled ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}"
                   onclick={() => {
-                    if (isIsolatedGuest) return;
+                    if (isNotifyDisabled) return;
                     draftNotifyEmail = !draftNotifyEmail;
                   }}
                 >
-                  <span class="chat-switch-track {!isIsolatedGuest && draftNotifyEmail ? 'checked' : ''}" aria-hidden="true">
+                  <span class="chat-switch-track {!isNotifyDisabled && draftNotifyEmail ? 'checked' : ''}" aria-hidden="true">
                     <span class="chat-switch-thumb"></span>
                   </span>
                 </button>

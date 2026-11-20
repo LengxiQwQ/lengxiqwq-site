@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { getMaxListeners, setMaxListeners } from "node:events";
 import test from "node:test";
 import { MusicClock } from "../../src/components/pages/chat/musicClock.ts";
 import {
@@ -659,5 +660,130 @@ test("3-track fallback pool enables 3 consecutive 0ms skips and awaits warm firs
 		assert.equal(warmCalls, 3);
 	} finally {
 		clearTimeout(m._prepareFallbackTimer);
+	}
+});
+
+test("20 listeners wait for the same deadline and resume in place after muting", async () => {
+	let now = 10000;
+	const windowLimit = getMaxListeners(window);
+	const documentLimit = getMaxListeners(document);
+	setMaxListeners(20, window, document);
+	const clients = Array.from({ length: 20 }, () => {
+		const audio = new FakeAudio();
+		const player = new RoomAudioPlayer(audio, {
+			now: () => now,
+			status() {},
+			ready() {},
+			error() {},
+			ended() {},
+			duration() {},
+		});
+		return { audio, player };
+	});
+	try {
+		for (const { player } of clients) {
+			player.listen();
+			player.setTrack({
+				uid: "new",
+				startedAt: 11200,
+				phase: "scheduled",
+				track: { streamUrl: "https://example.invalid/new" },
+			});
+		}
+		assert.ok(clients.every(({ audio }) => audio.plays === 0));
+		now = 11200;
+		for (const { audio } of clients) audio.dispatchEvent(new Event("canplay"));
+		await Promise.resolve();
+		for (const { audio, player } of clients) {
+			assert.equal(audio.plays, 1);
+			assert.equal(audio.muted, false);
+			assert.equal(audio.currentTime, 0);
+			player.stop();
+			assert.equal(audio.paused, false);
+			assert.equal(audio.muted, true);
+		}
+		now += 60000;
+		for (const { audio, player } of clients) {
+			audio.currentTime = 60;
+			player.listen();
+			assert.equal(audio.muted, false);
+			assert.equal(audio.plays, 1);
+			assert.equal(audio.loads, 1);
+		}
+	} finally {
+		for (const { player } of clients) player.destroy();
+		setMaxListeners(windowLimit, window);
+		setMaxListeners(documentLimit, document);
+	}
+});
+
+test("a prepared next song becomes the media source without another network load", async () => {
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async () =>
+		new Response(new Uint8Array(256), {
+			headers: { "content-length": "256", "content-type": "audio/mpeg" },
+		});
+	const audio = new FakeAudio();
+	const player = new RoomAudioPlayer(audio, {
+		now: () => 10000,
+		status() {},
+		ready() {},
+		error() {},
+		ended() {},
+		duration() {},
+	});
+	try {
+		player.setTrack({
+			uid: "one",
+			startedAt: 10000,
+			track: { streamUrl: "one" },
+		});
+		const next = { uid: "two", startedAt: 11000, track: { streamUrl: "two" } };
+		player.preloadNext(next);
+		await new Promise((resolve) => setImmediate(resolve));
+		player.setTrack(next);
+		assert.match(audio.src, /^blob:/);
+	} finally {
+		player.destroy();
+		globalThis.fetch = originalFetch;
+	}
+});
+
+test("a progressing mid-song download survives twenty seconds without resetting the source", () => {
+	const original = Object.getOwnPropertyDescriptor(globalThis, "performance");
+	let mono = 1000;
+	Object.defineProperty(globalThis, "performance", {
+		configurable: true,
+		value: { now: () => mono },
+	});
+	const audio = new FakeAudio();
+	audio.readyState = 1;
+	audio.play = () => new Promise(() => {});
+	let end = 0;
+	audio.buffered = { length: 1, start: () => 0, end: () => end };
+	const player = new RoomAudioPlayer(audio, {
+		now: () => mono + 50000,
+		status() {},
+		ready() {},
+		error() {},
+		ended() {},
+		duration() {},
+	});
+	try {
+		player.setTrack({
+			uid: "slow",
+			startedAt: 1000,
+			track: { streamUrl: "slow" },
+		});
+		player.listen();
+		for (let second = 1; second <= 20; second++) {
+			mono += 1000;
+			end++;
+			audio.dispatchEvent(new Event("progress"));
+		}
+		assert.equal(audio.loads, 1);
+	} finally {
+		player.destroy();
+		Object.defineProperty(globalThis, "performance", original);
 	}
 });

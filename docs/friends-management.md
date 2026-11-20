@@ -48,14 +48,26 @@ flowchart TD
    - **痛点**：许多博主使用 Cloudflare 并开启了 Bot Fight Mode。GitHub Actions 运行在微软 Azure 机房 IP 上，访问会被 Cloudflare 自动拦截返回 `HTTP 403 / 503` 或弹出挑战盾（但在真实用户的家用宽带浏览器中访问是正常的 200）。
    - **穿透方案**：当探测遇到 `403`、`429`、`503` 或特征极小的 Cloudflare 验证页面（`<title>Just a moment...</title>`）时，爬虫自动降级调用只读渲染代理（`https://r.jina.ai/${targetUrl}`）穿透防火墙获取已渲染正文。
 
-### 第三层：多重关键词与 URL 解码双向匹配
-- 爬虫不仅检测原始 HTML 文本，还会执行 `decodeURIComponent`，以兼容中文站名在 HTML 属性中被百分号编码转义的情况。
+### 第三层：多重关键词与全格式反混淆双向匹配
+- **通用文本反混淆器（`decodeTextPayload`）**：爬虫不仅比对原始文本，还会同步执行：
+  1. **Unicode 转义反解码（`\uXXXX`）**：专门应对现代前端打包器（如 Terser / Babel / Webpack 在 `ascii_only: true` 混淆模式）将汉字编码为十六进制转义符的场景（如将“冷汐的杂货铺”编码为 `\u51b7\u6c50\u7684\u6742\u8d27\u94fa`）；
+  2. **URL 百分号编码反解码（`%XX`）**：兼容中文或特殊字符在属性和超链接中被转义的情况；
+  3. **HTML 字符实体反解码（`&#x...;` / `&#...;`）**：兼容服务端直接转义输出的实体编码。
 - 匹配词库包括全系列本站标识：`lengxiqwq.com`、`冷汐的杂货铺`、`冷曦的小窝`、`lengxiqwq`、`lengxi`、`冷汐`、`冷曦`。
 
-### 第四层：现代博客动态 API 深度穿透
-面对单页应用（SPA）与客户端渲染站点，爬虫会自动进行二级动态 API 穿透：
+### 第四层：现代 SSR / SSG 内联 Hydration 数据与 SPA 前端 Bundle 深度穿透
+面对现代前端框架与静态站点生成器（VitePress、Vue 3 SPA、React、Next.js、Nuxt 3、SvelteKit 等），友链往往不直接以纯 HTML 形式呈现，爬虫执行二级前端穿透：
+1. **0 额外网络开销：内联 Hydration 数据脚本快速检索**：
+   - 自动扫描 HTML 内联的 `<script type="application/json">` 标签（如 Next.js 的 `__NEXT_DATA__`、Nuxt 3 的 `__NUXT_DATA__`）以及 `window.__INITIAL_STATE__` / `window.__DATA__` 全局挂载，秒级命中预取数据。
+2. **同源前端 JS Bundle 静态嗅探（针对打包内联友链）**：
+   - 从页面 `<script src="...">` 与 `<link rel="modulepreload">` 中提取同源脚本产物（全面支持 `.js`、`.mjs`、`.cjs`、`type="module"`）；
+   - 自动排除底层数学库（KaTeX/MathJax）、图表库、语法高亮与通用统计脚本；
+   - 优先探测 `index`、`app`、`friend`、`link` 等主模块，并自动向下追踪代码分割拆分的二级 `*friend*` / `*link*` chunk，极速穿透 SPA 打包产物。
+
+### 第五层：现代博客动态 API 深度穿透
+面对需要通过网络请求加载友链的纯客户端应用，爬虫会自动进行三级动态 API 穿透：
 1. **Mix Space / Shiro 主题专属嗅探**：
-   - 现代很多博主使用 Next.js + Mix Space 架构，其友链数据不存放在首屏 HTML，而存放在独立后端的子域名接口（例如 `https://mix-space.xxx.com/api/v2/links`）。
+   - 现代很多博主使用 Next.js + Mix Space 架构，其友链数据存放在独立后端的子域名接口（例如 `https://mix-space.xxx.com/api/v2/links`）。
    - 爬虫会自动从页面 HTML 中提取形如 `https://.../api/v2` 的跨域地址，并自动探测 `mix-space.${domain}/api/v2/links` 与 `api.${domain}/api/v2/links`。
 2. **常见博客系统 API 矩阵遍历**：
    - 自动探测 `/api/x/get_friends/?cat=0/1/2`（如雨雪冰屋等主题的多分类接口）；
@@ -63,10 +75,12 @@ flowchart TD
    - 探测 `/api/friends`、`/api/links`、`/friends.json`、`/youlian.json` 等数十种主流接口。
 3. **页面内脚本抓取**：自动正则提取页面 `<script>` 中的 `fetch(...)` 请求地址。
 
-### 第五层：分页友链探测
+### 第六层：分页友链探测
 - 针对一页只放少量友链、需要翻页的站点，爬虫自动识别包含 `page/2`、`下一页`、`Next` 等分页链接并深入抓取前 2 页。
 
-### 连通性辅助探测：
+### 慢速网络、冷启动与容错机制：
+- **基础超时放宽至 10 秒**：国内许多个人博客部署在家用宽带 NAS、DDNS、内网穿透或海外小主机，首次握手冷启动耗时较长，10 秒超时大幅降低假超时。
+- **自动退避重试**：当遭遇偶发网络超时或 502/504 错误时，系统自动等待 1.5 秒进行第 2 次重试。
 - **站点主页检测（`verifySiteReachable`）**：检测主页存活性，若遇 403 同样接入 Jina 降级穿透。
 - **头像链接检测（`verifyAvatarReachable`）**：对防盗链图片自动注入 `Referer: siteUrl` 进行重试；若头像位于自身域名下且遭遇机房 WAF 403 阻断，系统智能识别并包容。
 

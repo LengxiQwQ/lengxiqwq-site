@@ -202,6 +202,149 @@ export function sanitizeAvatarUrl(raw?: string): string {
 	}
 }
 
+// 已知保留/无 MX 记录的测试与占位域名（不区分大小写）
+const UNDELIVERABLE_EXACT_DOMAINS = new Set([
+	"example.com",
+	"example.org",
+	"example.net",
+	"example.edu",
+	"test.com",
+	"test.org",
+	"test.net",
+	"localhost",
+	"invalid",
+	"users.noreply.github.com",
+	"noreply.github.com",
+]);
+
+const RESERVED_TLD_SUFFIXES = [
+	".example",
+	".test",
+	".invalid",
+	".localhost",
+	".local",
+];
+
+export interface EmailDeliverabilityResult {
+	deliverable: boolean;
+	reason?: string;
+}
+
+export function checkEmailDeliverability(
+	email?: string | null,
+): EmailDeliverabilityResult {
+	if (!email || typeof email !== "string") {
+		return { deliverable: false, reason: "未填写邮箱地址" };
+	}
+
+	const trimmed = email.trim().toLowerCase();
+	if (!trimmed) {
+		return { deliverable: false, reason: "未填写邮箱地址" };
+	}
+
+	const basicEmailRegex =
+		/^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+	if (!basicEmailRegex.test(trimmed)) {
+		return {
+			deliverable: false,
+			reason: "邮箱格式不完整或缺少顶级域名（例如少了 .com）",
+		};
+	}
+
+	const parts = trimmed.split("@");
+	if (parts.length !== 2) {
+		return { deliverable: false, reason: "邮箱格式不正确" };
+	}
+
+	const domain = parts[1];
+
+	if (UNDELIVERABLE_EXACT_DOMAINS.has(domain)) {
+		if (domain.includes("noreply.github.com")) {
+			return {
+				deliverable: false,
+				reason: "GitHub 单向匿名替身邮箱，无法接收任何外来邮件",
+			};
+		}
+		return {
+			deliverable: false,
+			reason: "虚拟测试保留域名（无邮件服务器），无法送达",
+		};
+	}
+
+	for (const suffix of RESERVED_TLD_SUFFIXES) {
+		if (domain.endsWith(suffix)) {
+			return {
+				deliverable: false,
+				reason: "保留测试域名后缀，无法送达",
+			};
+		}
+	}
+
+	const tld = domain.split(".").pop() || "";
+	if (tld.length < 2 || !/^[a-z]+$/i.test(tld)) {
+		return {
+			deliverable: false,
+			reason: "邮箱顶级域名无效",
+		};
+	}
+
+	return { deliverable: true };
+}
+
+export function isUndeliverableEmail(email?: string | null): boolean {
+	return !checkEmailDeliverability(email).deliverable;
+}
+
+const DISPOSABLE_KEYWORDS = [
+	"mailinator",
+	"tempmail",
+	"10minutemail",
+	"guerrillamail",
+	"dispostable",
+];
+
+export function checkGuestRegistrationEmail(
+	email?: string | null,
+): EmailDeliverabilityResult {
+	const baseResult = checkEmailDeliverability(email);
+	if (!baseResult.deliverable) {
+		return baseResult;
+	}
+
+	const trimmed = (email || "").trim().toLowerCase();
+	const [localPart = "", domain = ""] = trimmed.split("@");
+
+	if (localPart.includes("example") || domain.includes("example")) {
+		return {
+			deliverable: false,
+			reason: "禁止使用包含 example 的虚拟测试占位邮箱注册",
+		};
+	}
+
+	const normalizedLocal = localPart.replace(/[-_.]/g, "");
+	const normalizedDomain = domain.replace(/[-_.]/g, "");
+	if (
+		normalizedLocal.includes("noreply") ||
+		normalizedDomain.includes("noreply")
+	) {
+		return {
+			deliverable: false,
+			reason: "禁止使用包含 noreply 的单向通知或替身邮箱注册",
+		};
+	}
+
+	for (const kw of DISPOSABLE_KEYWORDS) {
+		if (domain.includes(kw)) {
+			return {
+				deliverable: false,
+				reason: "禁止使用一次性临时邮箱注册",
+			};
+		}
+	}
+
+	return { deliverable: true };
+}
+
 export function resolveRoleBadge(
 	authType: "waline" | "guest",
 	isAdmin: boolean,
@@ -492,6 +635,15 @@ export async function issueGuestSession(
 		return { ok: false, error: "请输入有效的邮箱地址", status: 400 };
 	}
 
+	const regCheck = checkGuestRegistrationEmail(email);
+	if (!regCheck.deliverable) {
+		return {
+			ok: false,
+			error: regCheck.reason || "该邮箱为不可用或虚拟占位地址，禁止注册",
+			status: 400,
+		};
+	}
+
 	if (isAdminEmail(env, email)) {
 		return {
 			ok: false,
@@ -528,7 +680,9 @@ export async function issueGuestSession(
 		badge,
 		badgeType,
 		isAdmin: false,
-		...(isolated ? { isolated: true, notifyEmail: false } : {}),
+		...(isolated || isUndeliverableEmail(email)
+			? { notifyEmail: false, ...(isolated ? { isolated: true } : {}) }
+			: {}),
 	};
 
 	const exp = Math.floor(Date.now() / 1000) + GUEST_TOKEN_TTL_SEC;
@@ -616,7 +770,9 @@ export async function verifyGuestTokenWithEmail(
 				badge,
 				badgeType,
 				isAdmin: false,
-				...(isIsolated ? { isolated: true, notifyEmail: false } : {}),
+				...(isIsolated || isUndeliverableEmail(email)
+					? { notifyEmail: false, ...(isIsolated ? { isolated: true } : {}) }
+					: {}),
 			},
 			email,
 			...(isIsolated ? { isolated: true } : {}),

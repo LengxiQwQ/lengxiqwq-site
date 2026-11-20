@@ -1,0 +1,166 @@
+--- a/src/music/music-manager.mjs
++++ b/src/music/music-manager.mjs
+@@ -140,7 +140,7 @@
+       const elapsedMs = now - startedAt;
+ 
+       // 如果尚未超时（剩余至少 2 秒），尝试断点续播！
+-      if (elapsedMs >= 0 && elapsedMs < (durationSec - 2) * 1000) {
++      if (elapsedMs >= -1200 && elapsedMs < (durationSec - 2) * 1000) {
+         try {
+           const playable = await this.resolve(current.track);
+           if (playable) {
+@@ -151,7 +151,7 @@
+               requesterName: current.requesterName || '系统轮播',
+               requesterAvatar: current.requesterAvatar || '',
+               startedAt,
+-              phase: 'playing',
++              phase: elapsedMs < 0 ? 'scheduled' : 'playing',
+               durationSec,
+               isFallback: Boolean(current.isFallback),
+               requestUid: current.requestUid,
+@@ -331,13 +331,13 @@
+ 
+     // If nothing playing or currently playing fallback, play immediately!
+     if ((!this.current || this.current.isFallback) && this.queue.length === 0) {
+-      await Promise.resolve(this.onPrefetchTrack(playable.streamUrl, 'warm')).catch(() => {});
++      // playTrack starts the shared download alongside the client preparation window.
+       if ((!this.current || this.current.isFallback) && this.queue.length === 0) {
+         clearTimeout(this._advanceTimer);
+         this.playTrack(
+           playable,
+           { userKey: requesterKey, name: requesterName, avatar: requesterAvatar },
+-          false, Date.now(), uid
++          false, undefined, uid
+         );
+         this.markOutcome(uid, 'played');
+         this.onStateChanged();
+@@ -394,7 +394,7 @@
+ 
+   recheckReady() {}
+ 
+-  playTrack(track, requester, isFallback = false, startedAt = Date.now(), requestUid) {
++  playTrack(track, requester, isFallback = false, startedAt = Date.now() + 1200, requestUid) {
+     this.generation++;
+     this.fallbackGeneration++;
+     this.preparedFallback = null;
+@@ -410,7 +410,7 @@
+       requesterName: requester.name,
+       requesterAvatar: requester.avatar || '',
+       startedAt,
+-      phase: 'playing',
++      phase: startedAt > Date.now() ? 'scheduled' : 'playing',
+       durationSec: durationOf(track.durationSec) || 240,
+       isFallback,
+       requestUid,
+@@ -632,14 +632,14 @@
+       if (generation !== this.generation) return;
+       if (this.queue[0] !== next) continue;
+       if (playable) {
+-        await Promise.resolve(this.onPrefetchTrack(playable.streamUrl, 'warm')).catch(() => {});
++        // playTrack starts the shared download alongside the client preparation window.
+         if (generation !== this.generation) return;
+         if (this.queue[0] !== next) continue;
+         this.queue.shift();
+         this.preparedQueue = null;
+         const duration = durationOf(playable.durationSec) || 240;
+         const startedAt = next.startedAt && Date.now() - next.startedAt < (duration - 2) * 1000
+-          ? next.startedAt : Date.now();
++          ? next.startedAt : undefined;
+         this.playTrack(playable, {
+           userKey: next.requesterKey, name: next.requesterName, avatar: next.requesterAvatar
+         }, false, startedAt, next.uid);
+@@ -672,7 +672,7 @@
+     if (generation !== this.generation) return;
+     if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation);
+     if (playable) {
+-      await Promise.resolve(this.onPrefetchTrack(playable.streamUrl, 'warm')).catch(() => {});
++      // playTrack starts the shared download alongside the client preparation window.
+       if (generation !== this.generation) return;
+       if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation);
+       this.playTrack(playable, {
+@@ -800,7 +800,7 @@
+       this.onStateChanged();
+       return { ok: false, error: '歌曲暂时没有可用音源' };
+     }
+-    await Promise.resolve(this.onPrefetchTrack(playable.streamUrl, 'warm')).catch(() => {});
++    // playTrack starts the shared download alongside the client preparation window.
+     if (generation !== this.generation || this.current?.uid !== (currentUid ?? undefined)) {
+       return { ok: false, error: '播放状态已更新，请重试' };
+     }
+@@ -811,7 +811,7 @@
+     if (afterWarmIndex === 0) this.preparedQueue = null;
+     this.playTrack(playable, {
+       userKey: item.requesterKey, name: item.requesterName, avatar: item.requesterAvatar
+-    }, false, Date.now(), item.uid);
++    }, false, undefined, item.uid);
+     this.markOutcome(uid, 'played');
+     this.onStateChanged();
+     return { ok: true };
+--- a/src/music/qq-music.mjs
++++ b/src/music/qq-music.mjs
+@@ -246,14 +246,6 @@
+       read: data => data?.data
+     };
+ 
+-    // Secondary: vkeys quality=4 (192kbps M4A C600 on Tencent Singapore CDN ws.stream.qqmusic.qq.com, ~4.5MB, ~120ms)
+-    const vkeys192Source = {
+-      name: 'vkeys-192',
+-      timeoutMs: 2400,
+-      endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=4&mid=' + id,
+-      read: data => data?.data
+-    };
+-
+     // Tertiary: cyapi (fallback MP3 stream)
+     const cyapiSource = this.cyapiKey ? {
+       name: 'cyapi',
+@@ -263,15 +255,6 @@
+       read: data => data
+     } : null;
+ 
+-    // Quaternary: vkeys quality=8 (320kbps MP3 M800 backup)
+-    const vkeys320Source = {
+-      name: 'vkeys-320',
+-      timeoutMs: 2200,
+-      endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=8&mid=' + id,
+-      read: data => data?.data
+-    };
+-
+-    // 1. Launch primary vkeys-128 (MP3 M500) first; if it resolves within 650ms, return immediately.
+     const primaryPromise = this.trySource(cleanMid, vkeys128Source);
+     let hedgeTimer;
+     const earlyResult = await Promise.race([
+@@ -286,12 +269,12 @@
+       return earlyResult;
+     }
+ 
+-    // 2. If primary returned null (e.g. transient worker error) or exceeded 650ms, race vkeys-192 and cyapi.
++    // 2. If primary returned null (e.g. transient worker error) or exceeded 650ms, try the alternative 128 kbps source.
+     const candidates = [];
+     if (earlyResult === 'HEDGE_TIMEOUT') {
+       candidates.push(primaryPromise);
+     }
+-    candidates.push(this.trySource(cleanMid, vkeys192Source));
++
+     if (cyapiSource) {
+       candidates.push(this.trySource(cleanMid, cyapiSource));
+     }
+@@ -309,7 +292,7 @@
+       // All hedged sources returned null
+     }
+ 
+-    return this.trySource(cleanMid, vkeys320Source);
++    return null;
+   }
+ 
+   async getLyric(mid) {
+--- a/src/music/registry.mjs
++++ b/src/music/registry.mjs
+@@ -113,7 +113,7 @@
+     const base = origin.replace(/\/+$/, '');
+     if (!resolved.streamUrl || resolved.streamOrigin !== base) {
+       resolved.streamOrigin = base;
+-      resolved.streamUrl = signStreamProxyUrl(base, source.url, signSecret, 'https://y.qq.com/', source.mimeType, key);
++      resolved.streamUrl = signStreamProxyUrl(base, source.url, signSecret, 'https://y.qq.com/', source.mimeType, key + ':128');
+     }
+     return {
+       ...track,

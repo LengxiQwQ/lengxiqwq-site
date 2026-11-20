@@ -25,12 +25,14 @@ const INITIAL_SEEK_COOLDOWN_MS = 900;
 
 export function correctionForDrift(
 	drift: number,
-	_bufferedHeadroom: number = Number.POSITIVE_INFINITY,
+	bufferedHeadroom = 0,
 ): {
 	seek: boolean;
 	rate: number;
 } {
-	if (Math.abs(drift) >= PLAYBACK_DRIFT_SEEK_SEC) {
+	if (
+		Math.abs(drift) >= (bufferedHeadroom >= 2 ? 0.5 : PLAYBACK_DRIFT_SEEK_SEC)
+	) {
 		return { seek: true, rate: 1 };
 	}
 	return { seek: false, rate: 1 };
@@ -79,12 +81,20 @@ export class RoomAudioPlayer {
 	private destroyed = false;
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private preloadUrl = "";
+	private preparedBlob: Blob | null = null;
+	private preloadRetryAt = 0;
+	private objectUrl = "";
+	private awaitingStart = false;
+	private followMuted = false;
+	private bufferEnd = 0;
 	private preloadAbort: AbortController | null = null;
 	private desiredPreload: CurrentPlayback | null = null;
 	private listeners: [string, EventListener][] = [];
 
 	private resume = () => {
 		if (document.hidden || !this.intent || this.status === "blocked") return;
+		this.progressAt = performance.now();
+		if (this.waitingSince) this.waitingSince = this.progressAt;
 		if (this.status === "error") this.listen();
 		else this.check();
 	};
@@ -155,7 +165,17 @@ export class RoomAudioPlayer {
 			this.check();
 			return;
 		}
+		const prepared =
+			play?.track.streamUrl === this.preloadUrl && !play?.sourceRevision
+				? this.preparedBlob
+				: null;
+		this.preparedBlob = null;
+		this.preloadUrl = "";
 		this.cancelPreloadFetch();
+		if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
+		this.objectUrl = prepared ? URL.createObjectURL(prepared) : "";
+		this.awaitingStart = false;
+		this.bufferEnd = 0;
 		this.key = key;
 		this.epoch++;
 		this.starting = false;
@@ -182,13 +202,17 @@ export class RoomAudioPlayer {
 			this.emit("idle");
 			return;
 		}
-		this.activeSrc = this.buildStreamSrc(
-			play.track.streamUrl,
-			play.sourceRevision ?? 0,
-		);
+		this.activeSrc =
+			this.objectUrl ||
+			this.buildStreamSrc(play.track.streamUrl, play.sourceRevision ?? 0);
 		this.audio.src = this.activeSrc;
 		this.audio.load();
-		if (this.intent) this.start();
+		if ((this.intent || this.followMuted) && this.scheduled()) {
+			this.awaitingStart = true;
+			this.audio.muted = true;
+			this.emit(this.intent ? "preparing" : "idle");
+		} else if (this.intent) this.start();
+		else if (this.followMuted) this.startMuted();
 		else {
 			this.audio.muted = true;
 			this.emit("idle");
@@ -203,6 +227,12 @@ export class RoomAudioPlayer {
 	}
 
 	preloadNext(play: CurrentPlayback | null): void {
+		if (this.desiredPreload?.track.streamUrl !== play?.track.streamUrl) {
+			this.preloadRetryAt = 0;
+			this.cancelPreloadFetch();
+			this.preparedBlob = null;
+			this.preloadUrl = "";
+		}
 		this.desiredPreload = play;
 		if (!play) {
 			this.preloadUrl = "";
@@ -213,26 +243,25 @@ export class RoomAudioPlayer {
 	}
 
 	private maybeRunPreload(): void {
-		if (typeof fetch !== "function") return;
+		if (typeof fetch !== "function" || performance.now() < this.preloadRetryAt)
+			return;
 		const connection = (
 			navigator as Navigator & {
 				connection?: { saveData?: boolean; effectiveType?: string };
 			}
 		).connection;
 		if (
-			!this.intent ||
 			connection?.saveData ||
 			/^(slow-)?2g$/.test(connection?.effectiveType ?? "")
 		) {
 			return;
 		}
 		if (
-			this.status !== "playing" ||
+			(this.intent && this.status !== "playing") ||
 			!this.play ||
-			!this.initialAligned ||
+			(this.intent && !this.initialAligned) ||
 			this.starting ||
-			this.audio.seeking ||
-			this.audio.paused
+			this.audio.seeking
 		) {
 			return;
 		}
@@ -266,27 +295,56 @@ export class RoomAudioPlayer {
 
 		this.preloadUrl = url;
 		this.cancelPreloadFetch();
-		// Use a distinct "_pre" _cid suffix and drain the bounded 256KB slice cleanly:
-		// warms Cloudflare CDN edge + VPS RAM/disk cache without ever colliding with this.audio's cache entry!
+		// Keep one complete next song for direct use by the same media element.
 		const controller = new AbortController();
 		this.preloadAbort = controller;
-		const warmUrl = this.buildStreamSrc(url, 0, "pre");
-		void fetch(warmUrl, {
-			method: "GET",
-			headers: { Range: "bytes=0-262143" },
+		void fetch(this.buildStreamSrc(url, 0, "pre"), {
 			signal: controller.signal,
 		})
-			.then<unknown>((res) => (res.ok ? res.arrayBuffer() : res.body?.cancel()))
-			.catch(() => {})
-			.finally(() => {
-				if (this.preloadAbort === controller) {
-					this.preloadAbort = null;
+			.then(async (response) => {
+				const size = Number(response.headers.get("content-length"));
+				if (response.status !== 200 || !(size > 0 && size <= 8 * 1024 * 1024)) {
+					await response.body?.cancel();
+					return;
 				}
+				const blob = await response.blob();
+				if (this.preloadAbort === controller && blob.size === size)
+					this.preparedBlob = blob;
+			})
+			.catch(() => {
+				if (this.preloadAbort === controller) {
+					this.preloadUrl = "";
+					this.preloadRetryAt = performance.now() + 30000;
+				}
+			})
+			.finally(() => {
+				if (this.preloadAbort === controller) this.preloadAbort = null;
 			});
 	}
 
 	listen(): void {
 		this.intent = true;
+		this.followMuted = false;
+		if (
+			this.play &&
+			!this.starting &&
+			!this.retryAt &&
+			!this.audio.paused &&
+			!this.audio.ended &&
+			!this.audio.error &&
+			!this.audio.seeking &&
+			this.audio.readyState >= 3 &&
+			!this.scheduled() &&
+			Math.abs(this.audio.currentTime - this.expected()) <
+				INITIAL_ALIGN_THRESHOLD_SEC
+		) {
+			this.initialAligned = true;
+			this.audio.volume = this.volume;
+			this.audio.muted = false;
+			this.progressAt = performance.now();
+			this.emit("playing");
+			return;
+		}
 		this.lastSeek = Number.NEGATIVE_INFINITY;
 		this.initialAligned = false;
 		this.initialSeeks = 0;
@@ -311,16 +369,22 @@ export class RoomAudioPlayer {
 	}
 
 	stop(): void {
+		this.followMuted = !this.destroyed && (this.intent || this.followMuted);
 		this.intent = false;
 		this.epoch++;
 		this.starting = false;
 		this.retryAt = this.waitingSince = 0;
-		this.cancelPreloadFetch();
+		this.awaitingStart = this.followMuted && this.scheduled();
 		this.audio.muted = true;
 		this.audio.playbackRate = 1;
-		this.audio.pause();
-		this.preloadNext(null);
+		// Keep a running stream on the room timeline while locally muted.
 		this.emit("idle");
+	}
+
+	private startMuted(): void {
+		this.awaitingStart = false;
+		this.audio.muted = true;
+		void this.audio.play().catch(() => {});
 	}
 
 	private scheduled(): boolean {
@@ -387,8 +451,7 @@ export class RoomAudioPlayer {
 				this.initialSeeks === 0
 					? INITIAL_ALIGN_THRESHOLD_SEC
 					: PLAYBACK_DRIFT_SEEK_SEC;
-			const needsSeek =
-				Math.abs(drift) > threshold && target > INITIAL_ALIGN_THRESHOLD_SEC;
+			const needsSeek = Math.abs(drift) > threshold;
 			if (!needsSeek) {
 				if (
 					!this.starting &&
@@ -432,8 +495,16 @@ export class RoomAudioPlayer {
 			return;
 		}
 
-		// 2. Ongoing playback guard: only seek if drift exceeds 2.2s (e.g. after a major network stall)
-		if (Math.abs(drift) >= PLAYBACK_DRIFT_SEEK_SEC) {
+		// Correct smaller drift only if the destination is already buffered.
+		const ranges = this.audio.buffered;
+		let headroom = 0;
+		for (let i = 0; i < ranges.length; i++) {
+			if (ranges.start(i) <= target && target <= ranges.end(i)) {
+				headroom = ranges.end(i) - target;
+				break;
+			}
+		}
+		if (correctionForDrift(drift, headroom).seek) {
 			if (mono - this.lastSeek < SEEK_COOLDOWN_MS) return;
 			if (!this.isTargetSeekable(target)) return;
 			try {
@@ -447,6 +518,7 @@ export class RoomAudioPlayer {
 
 	private start(): void {
 		if (this.destroyed || !this.intent || !this.play || this.starting) return;
+		this.awaitingStart = false;
 		const epoch = this.epoch;
 		this.starting = true;
 		this.waitingSince = performance.now();
@@ -463,7 +535,8 @@ export class RoomAudioPlayer {
 			needsInitialSeek && (!this.initialAligned || this.audio.seeking)
 				? 0
 				: this.volume;
-		this.audio.muted = isScheduledFuture;
+		this.audio.muted =
+			isScheduledFuture || (needsInitialSeek && !this.initialAligned);
 		this.emit(
 			isScheduledFuture ? "preparing" : this.retries ? "recovering" : "loading",
 		);
@@ -472,6 +545,11 @@ export class RoomAudioPlayer {
 				() => {
 					if (epoch !== this.epoch || this.destroyed) return;
 					this.starting = false;
+					if (isScheduledFuture && this.scheduled()) {
+						this.audio.pause();
+						this.audio.currentTime = 0;
+						this.awaitingStart = true;
+					}
 					this.check();
 				},
 				(error: unknown) => {
@@ -519,6 +597,15 @@ export class RoomAudioPlayer {
 
 	private check(): void {
 		if (
+			this.followMuted &&
+			!this.intent &&
+			this.awaitingStart &&
+			!this.scheduled()
+		) {
+			this.startMuted();
+		}
+
+		if (
 			!this.play ||
 			!this.intent ||
 			this.destroyed ||
@@ -527,11 +614,18 @@ export class RoomAudioPlayer {
 		)
 			return;
 		const mono = performance.now();
+		if (this.awaitingStart && !this.scheduled()) {
+			this.start();
+			return;
+		}
 		if (this.retryAt) {
 			if (mono >= this.retryAt && navigator.onLine) {
 				this.retryAt = 0;
 				this.epoch++;
 				this.starting = false;
+				this.initialAligned = false;
+				this.initialSeeks = 0;
+				this.bufferEnd = 0;
 				this.activeSrc = this.buildStreamSrc(
 					this.play.track.streamUrl,
 					this.play.sourceRevision ?? 0,
@@ -584,6 +678,16 @@ export class RoomAudioPlayer {
 			this.lastProgress = audio.currentTime;
 			this.progressAt = mono;
 		}
+		const ranges = audio.buffered;
+		const end = ranges.length ? ranges.end(ranges.length - 1) : 0;
+		if (
+			end > this.bufferEnd &&
+			(audio.readyState < 3 || audio.seeking || this.starting)
+		) {
+			this.progressAt = mono;
+			if (this.waitingSince) this.waitingSince = mono;
+		}
+		this.bufferEnd = end;
 		const timeout =
 			!this.initialAligned || audio.readyState < 3 ? 4_500 : 9_000;
 		if (!this.scheduled() && !audio.ended && mono - this.progressAt > timeout)
@@ -598,6 +702,7 @@ export class RoomAudioPlayer {
 
 	private onEvent(event: string): void {
 		if (!this.play) return;
+		if (!this.intent && event === "progress") this.maybeRunPreload();
 		const attrSrc = this.audio.getAttribute("src") || "";
 		if (attrSrc !== this.activeSrc && attrSrc !== this.play.track.streamUrl) {
 			return;
@@ -632,6 +737,11 @@ export class RoomAudioPlayer {
 			!this.retryAt &&
 			this.audio.readyState < 3
 		) {
+			if (this.preloadAbort) {
+				this.cancelPreloadFetch();
+				this.preloadUrl = "";
+				this.preloadRetryAt = performance.now() + 30000;
+			}
 			this.waitingSince ||= performance.now();
 			this.emitIfChanged("loading");
 		}
@@ -665,6 +775,11 @@ export class RoomAudioPlayer {
 		this.destroyed = true;
 		this.cancelPreloadFetch();
 		this.stop();
+		this.audio.pause();
+		this.audio.removeAttribute("src");
+		this.audio.load();
+		if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
+		this.preparedBlob = null;
 		clearTimeout(this.timer);
 		for (const [event, listener] of this.listeners)
 			this.audio.removeEventListener(event, listener);

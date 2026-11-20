@@ -60,6 +60,7 @@ export interface ChatSessionUser {
 	bio?: string;
 	location?: string;
 	notifyEmail?: boolean;
+	email?: string;
 }
 
 export interface ChatProfileDraft {
