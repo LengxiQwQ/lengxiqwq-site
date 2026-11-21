@@ -1133,6 +1133,87 @@ export class MusicManager {
     return { ok: true };
   }
 
+  async playRotationTrack(target, actor, listeningCount = 0) {
+    if (!this.fallbackTracks.length && !this.rotationDeck.length) {
+      return { ok: false, error: '当前没有开启歌单轮播' };
+    }
+    const current = this.current;
+    const isFallback = Boolean(current?.isFallback);
+    const isOwner = actor?.userKey === current?.requesterKey;
+    const isAdmin = Boolean(actor?.isAdmin);
+    const canDirect = !current || isFallback || isOwner || isAdmin || listeningCount <= 2;
+    if (!canDirect) {
+      return { ok: false, error: '当前有其他成员点播的歌曲正在播放，暂不能直接切换轮播' };
+    }
+
+    const targetId = typeof target === 'string' ? target : (target?.id || target?.matchedTrack?.id || '');
+    const targetSourceId = typeof target === 'object' ? (target?.sourceTrackId || target?.sourceId || '') : '';
+
+    let candidate = this.rotationDeck.find(t => {
+      const tid = t?.matchedTrack?.id || t?.id;
+      const tsid = t?.matchedTrack?.sourceId || t?.sourceTrackId || t?.sourceId;
+      return (targetId && tid === targetId) || (targetSourceId && tsid === targetSourceId);
+    });
+
+    if (!candidate) {
+      candidate = this.fallbackTracks.find(t => {
+        const tid = t?.matchedTrack?.id || t?.id;
+        const tsid = t?.matchedTrack?.sourceId || t?.sourceTrackId || t?.sourceId;
+        return (targetId && tid === targetId) || (targetSourceId && tsid === targetSourceId);
+      });
+    }
+
+    if (!candidate && typeof target === 'object' && target?.title) {
+      candidate = target;
+    }
+
+    if (!candidate) {
+      return { ok: false, error: '未在轮播歌单中找到该曲目' };
+    }
+
+    const selectionStartedAt = Date.now();
+    clearTimeout(this._advanceTimer);
+    clearTimeout(this._refreshPreparedTimer);
+    clearTimeout(this._prepareFallbackTimer);
+
+    let resolved = null;
+    try {
+      const track = await withTimeout(
+        this.musicRegistry.resolvePlaylistTrack(candidate),
+        2500,
+        'resolvePlaylistTrack timeout'
+      );
+      const toResolve = track || (candidate?.id?.startsWith('qq:') ? candidate : null);
+      if (toResolve) {
+        resolved = await withTimeout(
+          this.resolve(toResolve),
+          2500,
+          'resolve timeout'
+        );
+      }
+    } catch (err) {
+      console.warn(`[Music:${this.roomId}] playRotationTrack failed:`, err.message);
+    }
+
+    if (!resolved) {
+      return { ok: false, error: '该歌曲暂时无法解析播放源' };
+    }
+
+    this.consumeRotationTrack(resolved);
+    this.lastPlayedFallbackId = resolved.id;
+    this.generation++;
+    this.fallbackGeneration++;
+    this.preparedFallback = null;
+
+    this.playTrack(resolved, {
+      userKey: 'system:fallback',
+      name: (this.fallbackPlaylistName || '歌单轮播') + ' (轮播)'
+    }, true, undefined, undefined, selectionStartedAt);
+
+    this.onStateChanged();
+    return { ok: true };
+  }
+
   reportDuration(playUid, value) {
     const play = this.current;
     const duration = durationOf(value);

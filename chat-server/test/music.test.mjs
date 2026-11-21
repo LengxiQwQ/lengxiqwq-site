@@ -265,3 +265,51 @@ test('shuffle rotation plays sequentially without pure-random duplication, reshu
   // 牌堆播完后，自动触发重新洗牌，牌堆补满为 3 首歌
   assert.equal(mgr.rotationDeck.length, 3);
 });
+
+test('playRotationTrack directly switches to chosen rotation track as fallback and removes it from deck', async t => {
+  const registry = {
+    resolvePlaylistTrack: async item => item,
+    resolvePlayable: async item => playable(item)
+  };
+  const mgr = await manager(t, registry, 'chat');
+  const tracks = [track('alpha'), track('beta'), track('gamma')];
+  mgr.setFallbackPlaylist('pl_test', tracks, 'TestPlaylist', { start: false });
+
+  // 初始启动轮播
+  await mgr.resume();
+  assert.equal(mgr.current.isFallback, true);
+  const currentId = mgr.current.track.sourceId;
+
+  // 挑一首不是当前正在播放的曲目进行直接播放
+  const targetSourceId = tracks.map(x => x.sourceId).find(id => id !== currentId);
+  const targetTrack = tracks.find(x => x.sourceId === targetSourceId);
+
+  const res = await mgr.playRotationTrack(targetTrack, actor, 1);
+  assert.equal(res.ok, true);
+  // 直接替换当前这首歌，立即播放这首歌，且依然是轮播
+  assert.equal(mgr.current.track.sourceId, targetSourceId);
+  assert.equal(mgr.current.isFallback, true);
+  assert.equal(mgr.current.requesterName, 'TestPlaylist (轮播)');
+  // 该曲目已从牌堆中移除
+  assert.ok(!mgr.rotationDeck.some(t => t.sourceId === targetSourceId));
+});
+
+test('normalizeMusicTrack robustly accepts QQ music tracks with missing provider or sourcePlatform alias', async () => {
+  const { normalizeMusicTrack } = await import('../src/music/music-input.mjs');
+  // 1. 没有 provider 但有 qq: id
+  const t1 = normalizeMusicTrack({ id: 'qq:0039MnYb0qxYhV', title: '晴天', artist: '周杰伦' });
+  assert.ok(t1);
+  assert.equal(t1.id, 'qq:0039MnYb0qxYhV');
+  assert.equal(t1.provider, 'qq');
+  assert.equal(t1.sourceId, '0039MnYb0qxYhV');
+
+  // 2. sourcePlatform 为 qqmusic，带 sourceTrackId
+  const t2 = normalizeMusicTrack({ sourcePlatform: 'qqmusic', sourceTrackId: '0039MnYb0qxYhV', title: '晴天', artist: '周杰伦' });
+  assert.ok(t2);
+  assert.equal(t2.id, 'qq:0039MnYb0qxYhV');
+  assert.equal(t2.provider, 'qq');
+
+  // 3. 非法来源返回 null
+  const t3 = normalizeMusicTrack({ id: 'netease:123456', provider: 'netease', title: 'Other' });
+  assert.equal(t3, null);
+});

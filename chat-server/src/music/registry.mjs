@@ -42,14 +42,13 @@ export class MusicRegistry {
     if (!item || typeof item !== 'object') return null;
     const existing = normalizeMusicTrack(item.matchedTrack);
     if (existing) return existing;
-    if (item._unmatchedAt && Date.now() - item._unmatchedAt < UNMATCHED_PLAYLIST_TTL_MS) {
-      return null;
-    }
-    if (item.sourcePlatform === 'qqmusic' && item.sourceTrackId) {
+    const sourceId = item.sourceTrackId || item.sourceId || (typeof item.id === 'string' && item.id.startsWith('qq:') ? item.id.replace(/^qq:/, '') : '');
+    const platform = item.sourcePlatform || item.provider;
+    if ((platform === 'qqmusic' || platform === 'qq' || (!platform && typeof item.id === 'string' && item.id.startsWith('qq:'))) && sourceId) {
       const direct = {
-        id: 'qq:' + item.sourceTrackId,
+        id: 'qq:' + sourceId,
         provider: 'qq',
-        sourceId: item.sourceTrackId,
+        sourceId,
         title: item.title,
         artist: item.artist,
         album: item.album || item.albumName || undefined,
@@ -58,6 +57,9 @@ export class MusicRegistry {
       };
       item.matchedTrack = direct;
       return direct;
+    }
+    if (item._unmatchedAt && Date.now() - item._unmatchedAt < UNMATCHED_PLAYLIST_TTL_MS) {
+      return null;
     }
     const cleanStr = (value) => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\s\-_·.,'"!?！？，。、()（）/&]+/g, '');
     const cleanTitle = cleanStr(item.title);

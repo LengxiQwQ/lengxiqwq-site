@@ -16,10 +16,11 @@ function coverUrl(value) {
 }
 
 export function normalizeMusicTrack(input) {
-  if (input?.provider !== 'qq') return null;
-  const sourceId = input.sourceId || (typeof input.id === 'string' && input.id.startsWith('qq:') ? input.id.slice(3) : '');
+  const provider = input?.provider || (typeof input?.id === 'string' && input.id.startsWith('qq:') ? 'qq' : input?.sourcePlatform === 'qqmusic' ? 'qq' : '');
+  if (provider !== 'qq') return null;
+  const sourceId = input.sourceId || (typeof input.id === 'string' && input.id.startsWith('qq:') ? input.id.slice(3) : '') || input.sourceTrackId || '';
   if (typeof sourceId !== 'string' || !/^[A-Za-z0-9]{1,32}$/.test(sourceId)) return null;
-  const durationSec = Number(input.durationSec);
+  const durationSec = Number(input.durationSec || input.duration);
   return {
     id: 'qq:' + sourceId,
     sourceId,
@@ -27,7 +28,7 @@ export function normalizeMusicTrack(input) {
     title: label(input.title, '未知曲目'),
     artist: label(input.artist, '未知歌手'),
     album: label(input.album) || undefined,
-    cover: coverUrl(input.cover),
+    cover: coverUrl(input.cover || input.pic),
     durationSec: Number.isFinite(durationSec) && durationSec > 0 && durationSec <= 86400 ? durationSec : 0
   };
 }

@@ -624,12 +624,32 @@ export function toEnqueueableTrack(
 	playlistId: string,
 ): ChatMusicTrack {
 	if (item.matchedTrack) {
+		const sourceId = item.matchedTrack.sourceId || (typeof item.matchedTrack.id === "string" ? item.matchedTrack.id.replace(/^qq:/, "") : "");
 		return {
 			...item.matchedTrack,
+			id: item.matchedTrack.id || (sourceId ? `qq:${sourceId}` : `ext:${playlistId}:${item.position}`),
+			provider: "qq",
+			sourceId,
 			playlistId,
 			position: item.position,
 			cover: item.matchedTrack.cover || item.cover,
 			durationSec: item.matchedTrack.durationSec || item.durationSec,
+		};
+	}
+	const isQQ = item.sourcePlatform === "qqmusic" && item.sourceTrackId;
+	if (isQQ) {
+		return {
+			id: `qq:${item.sourceTrackId}`,
+			provider: "qq",
+			sourceId: item.sourceTrackId,
+			sourcePlatform: "qqmusic",
+			playlistId,
+			position: item.position,
+			title: item.title,
+			artist: item.artist,
+			album: item.album || undefined,
+			cover: item.cover,
+			durationSec: item.durationSec,
 		};
 	}
 	return {

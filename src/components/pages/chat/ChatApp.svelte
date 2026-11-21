@@ -54,6 +54,7 @@ import type {
 	ConnectionState,
 	ImageAttachment,
 	PlaylistSummary,
+	RotationQueueItem,
 	RoomMusicState,
 } from "./chatTypes";
 import { recordMusicEvent } from "./musicTrace";
@@ -1028,6 +1029,28 @@ function handlePlayQueued(uid: string) {
 		type: "music:play_queued",
 		uid,
 		playUid: musicState?.current?.uid,
+	});
+}
+
+function handlePlayRotationTrack(track: RotationQueueItem) {
+	if (!currentUser) {
+		showAuthModal = true;
+		return;
+	}
+	recordMusicEvent("command-play_rotation", track.id);
+	sendPacket({
+		type: "music:play_rotation",
+		trackId: track.id,
+		track: {
+			id: track.id,
+			sourcePlatform: track.sourcePlatform,
+			sourceTrackId: track.sourceTrackId,
+			title: track.title,
+			artist: track.artist,
+			album: track.album,
+			durationSec: track.durationSec,
+			pic: track.pic,
+		},
 	});
 }
 
@@ -3233,6 +3256,7 @@ onMount(() => {
           onSkipTrack={handleSkipTrack}
           onVoteSkip={handleVoteSkip}
           onPlayQueued={handlePlayQueued}
+        onPlayRotationTrack={handlePlayRotationTrack}
           onLoadHistory={handleLoadHistory}
           onMarkRead={handleMarkRead}
           onClearTargetMessage={() => {
@@ -3393,6 +3417,7 @@ onMount(() => {
           sendPacket({ type: "music:remove", uid });
         }}
         onPlayQueued={handlePlayQueued}
+        onPlayRotationTrack={handlePlayRotationTrack}
         isSkippingTrack={isSkippingTrack}
         onSkipTrack={handleSkipTrack}
         onVoteSkip={handleVoteSkip}
