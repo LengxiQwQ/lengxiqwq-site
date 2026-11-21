@@ -1025,11 +1025,15 @@ function handlePlayQueued(uid: string) {
 		return;
 	}
 	recordMusicEvent("command-play_queued", musicState?.current?.uid);
-	sendPacket({
-		type: "music:play_queued",
-		uid,
-		playUid: musicState?.current?.uid,
-	});
+	if (
+		sendPacket({
+			type: "music:play_queued",
+			uid,
+			playUid: musicState?.current?.uid,
+		})
+	) {
+		startSkipPending();
+	}
 }
 
 function handlePlayRotationTrack(track: RotationQueueItem) {
@@ -1038,20 +1042,24 @@ function handlePlayRotationTrack(track: RotationQueueItem) {
 		return;
 	}
 	recordMusicEvent("command-play_rotation", track.id);
-	sendPacket({
-		type: "music:play_rotation",
-		trackId: track.id,
-		track: {
-			id: track.id,
-			sourcePlatform: track.sourcePlatform,
-			sourceTrackId: track.sourceTrackId,
-			title: track.title,
-			artist: track.artist,
-			album: track.album,
-			durationSec: track.durationSec,
-			pic: track.pic,
-		},
-	});
+	if (
+		sendPacket({
+			type: "music:play_rotation",
+			trackId: track.id,
+			track: {
+				id: track.id,
+				sourcePlatform: track.sourcePlatform,
+				sourceTrackId: track.sourceTrackId,
+				title: track.title,
+				artist: track.artist,
+				album: track.album,
+				durationSec: track.durationSec,
+				pic: track.pic,
+			},
+		})
+	) {
+		startSkipPending();
+	}
 }
 
 function placeGlobalToast(node: HTMLDivElement) {

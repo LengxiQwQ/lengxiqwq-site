@@ -407,6 +407,61 @@ let playlistsError = $state("");
 let selectedPlaylist = $state<PlaylistDetail | null>(null);
 let isLoadingPlaylistDetail = $state(false);
 let enqueuingTrackIds = $state(new Set<string>());
+let switchingRotationTrackId = $state<string | null>(null);
+let switchingQueueUid = $state<string | null>(null);
+let switchingRotationTimer: number | null = null;
+let switchingQueueTimer: number | null = null;
+let lastHandledPlayUid = $state<string | undefined>(undefined);
+
+function clearSwitchingRotation() {
+	switchingRotationTrackId = null;
+	if (switchingRotationTimer !== null) {
+		window.clearTimeout(switchingRotationTimer);
+		switchingRotationTimer = null;
+	}
+}
+
+function clearSwitchingQueue() {
+	switchingQueueUid = null;
+	if (switchingQueueTimer !== null) {
+		window.clearTimeout(switchingQueueTimer);
+		switchingQueueTimer = null;
+	}
+}
+
+function handlePlayRotationTrackAction(item: RotationQueueItem) {
+	if (!currentUser) {
+		onRequestAuth?.();
+		return;
+	}
+	if (switchingRotationTrackId || isSkippingTrack) return;
+	switchingRotationTrackId = item.id;
+	if (switchingRotationTimer !== null) {
+		window.clearTimeout(switchingRotationTimer);
+	}
+	switchingRotationTimer = window.setTimeout(() => {
+		switchingRotationTrackId = null;
+		switchingRotationTimer = null;
+	}, 5000);
+	onPlayRotationTrack?.(item);
+}
+
+function handlePlayQueuedAction(uid: string) {
+	if (!currentUser) {
+		onRequestAuth?.();
+		return;
+	}
+	if (switchingQueueUid || isSkippingTrack) return;
+	switchingQueueUid = uid;
+	if (switchingQueueTimer !== null) {
+		window.clearTimeout(switchingQueueTimer);
+	}
+	switchingQueueTimer = window.setTimeout(() => {
+		switchingQueueUid = null;
+		switchingQueueTimer = null;
+	}, 5000);
+	onPlayQueued(uid);
+}
 let isRandomizing = $state(false);
 let playlistTrackFilter = $state("");
 let debouncedPlaylistFilter = $state("");
@@ -1150,6 +1205,38 @@ $effect(() => {
 		}
 		if (changed) {
 			enqueuingTrackIds = new Set(enqueuingTrackIds);
+		}
+	}
+});
+
+$effect(() => {
+	const currentUid = currentPlay?.uid;
+	if (lastHandledPlayUid === undefined) {
+		lastHandledPlayUid = currentUid;
+		return;
+	}
+	if (currentUid !== lastHandledPlayUid) {
+		lastHandledPlayUid = currentUid;
+		clearSwitchingRotation();
+		clearSwitchingQueue();
+	}
+});
+
+$effect(() => {
+	if (switchingQueueUid && !queue.some((item) => item.uid === switchingQueueUid)) {
+		clearSwitchingQueue();
+	}
+});
+
+$effect(() => {
+	const activeTrack = currentPlay?.track;
+	if (switchingRotationTrackId && activeTrack) {
+		const isMatched =
+			activeTrack.id === switchingRotationTrackId ||
+			activeTrack.id === `qq:${switchingRotationTrackId}` ||
+			switchingRotationTrackId === `qq:${activeTrack.id}`;
+		if (isMatched) {
+			clearSwitchingRotation();
 		}
 	}
 });
@@ -2826,6 +2913,14 @@ onMount(() => {
 		if (playlistFilterTimer !== null) {
 			window.clearTimeout(playlistFilterTimer);
 		}
+		if (switchingRotationTimer !== null) {
+			window.clearTimeout(switchingRotationTimer);
+			switchingRotationTimer = null;
+		}
+		if (switchingQueueTimer !== null) {
+			window.clearTimeout(switchingQueueTimer);
+			switchingQueueTimer = null;
+		}
 		if (playlistScrollRaf !== null) {
 			window.cancelAnimationFrame(playlistScrollRaf);
 		}
@@ -3121,16 +3216,25 @@ $effect(() => {
             </span>
           </span>
         {:else}
+          {@const isSwitching = switchingRotationTrackId === item.id}
           <button
             type="button"
             class="chat-queue-play-btn"
-            title={`播放 ${item.title}`}
-            aria-label={`播放 ${item.title}`}
-            onclick={() => onPlayRotationTrack?.(item)}
+            title={isSwitching ? `正在切到 ${item.title}...` : `播放 ${item.title}`}
+            aria-label={isSwitching ? `正在切到 ${item.title}...` : `播放 ${item.title}`}
+            disabled={isSwitching || isSkippingTrack}
+            onclick={() => handlePlayRotationTrackAction(item)}
           >
-            <svg class="w-3.5 h-3.5 fill-current ml-0.5" viewBox="0 0 24 24" aria-hidden="true">
-              <polygon points="5 3 19 12 5 21 5 3" />
-            </svg>
+            {#if isSwitching}
+              <svg class="w-3.5 h-3.5 shrink-0 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+              </svg>
+            {:else}
+              <svg class="w-3.5 h-3.5 fill-current ml-0.5" viewBox="0 0 24 24" aria-hidden="true">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+            {/if}
           </button>
         {/if}
 
@@ -3400,20 +3504,29 @@ $effect(() => {
     {@const voted = Boolean(currentUser && votes.includes(currentUser.userKey))}
     {@const direct = !currentPlay || canDirectSkip}
     {@const action = direct ? "切到" : voted ? "取消投票切到" : "投票切到"}
+    {@const isSwitching = switchingQueueUid === item.uid}
     <button
       type="button"
-      class="chat-queue-play-btn {voted ? 'is-voted' : ''} {!direct && votes.length > 0 ? 'has-votes' : ''}"
-      aria-label={`${action} ${item.track.title}${!direct ? `，${votes.length}/2 票` : ""}`}
-      title={`${action} ${item.track.title}${!direct ? `（${votes.length}/2）` : ""}`}
+      class="chat-queue-play-btn {voted ? 'is-voted' : ''} {!direct && votes.length > 0 && !isSwitching ? 'has-votes' : ''}"
+      aria-label={isSwitching ? `正在切到 ${item.track.title}...` : `${action} ${item.track.title}${!direct ? `，${votes.length}/2 票` : ""}`}
+      title={isSwitching ? `正在切到 ${item.track.title}...` : `${action} ${item.track.title}${!direct ? `（${votes.length}/2）` : ""}`}
       aria-pressed={!direct ? voted : undefined}
-      onclick={() => onPlayQueued(item.uid)}
+      disabled={isSwitching || isSkippingTrack}
+      onclick={() => handlePlayQueuedAction(item.uid)}
     >
-      {#if !direct && votes.length > 0}
-        {#key votes.length}<span class="chat-queue-vote-count" aria-hidden="true">{votes.length}/2</span>{/key}
+      {#if isSwitching}
+        <svg class="w-3.5 h-3.5 shrink-0 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+          <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+        </svg>
+      {:else}
+        {#if !direct && votes.length > 0}
+          {#key votes.length}<span class="chat-queue-vote-count" aria-hidden="true">{votes.length}/2</span>{/key}
+        {/if}
+        <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="m7.07 18.62 8.43-5.95c.56-.39.56-1.24 0-1.64L7.07 5.08c-.65-.46-1.57 0-1.57.8v11.94c0 .8.92 1.26 1.57.8zM17 6c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1s-1-.45-1-1V7c0-.55.45-1 1-1z" />
+        </svg>
       {/if}
-      <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="m7.07 18.62 8.43-5.95c.56-.39.56-1.24 0-1.64L7.07 5.08c-.65-.46-1.57 0-1.57.8v11.94c0 .8.92 1.26 1.57.8zM17 6c.55 0 1 .45 1 1v10c0 .55-.45 1-1 1s-1-.45-1-1V7c0-.55.45-1 1-1z" />
-      </svg>
     </button>
   {/snippet}
 

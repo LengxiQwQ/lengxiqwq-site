@@ -2119,6 +2119,11 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	background: color-mix(in oklch, var(--primary) 22%, transparent);
 }
 .chat-queue-play-btn:active { transform: scale(0.92); }
+.chat-queue-play-btn:disabled {
+	opacity: 0.75;
+	cursor: wait !important;
+	transform: none;
+}
 .chat-queue-play-btn:focus-visible {
 	outline: none !important;
 	box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 70%, transparent) !important;
