@@ -14,31 +14,106 @@ observer_gateway=bd12bd1d9b76b6a65ec4d64b72abed1c07fb550d6f724d4dcda07ce3362911b
 explicit_fallback_gateway=2d8a5c8ca9f3d89ccad9177e1f80581da6f0bd1f705eacab613952e0af4528fe
 matrix_gateway=15e80a6902cf8d0f7ffcdd8b95782d2fc426f024821f95af52c9fafa23ebe5a1
 matrix_fallback_gateway=723462d37191c4c6e0c6cbd2bb0b4576cb2d9d93d8676979cea2627059eca209
+rotation_base_gateway=ed8b414868611caec5d34e1cf6821e4a96df82fc4062c1363d9d15118762bc48
+rotation_gateway=d2d25a820a2d36c655d583823768efad297eae3c245cc9cdd11ddb1de169fd7c
+request_gateway=f704a7e1bd1812efa0e8b9756f28c051b55804a1330b8e96e8e9418a50f678fd
+random_gateway=4d35b8670c6e5619521ffff2a7831316c79657cd97a651662820d715e4a4d675
+multi_source_gateway=09a2f43ac96ad5cdcb5bbb5ab3f6fd17bfa6233ebdcb5ecd5548a62aa5674583
+multi_source_legacy_gateway=3c76fc1c1355b1118bfdd1fb2371c455a0d40f1548178835af68ac8699c39c97
+live_recording_base=cc219eb14a15bce3f7178a07557e0cda1286047c0441709c05b60ea4c29b1060
+live_recording_gateway=c364ebcf7dc5d413021376901fc0249ed85478bed21adda8446c90321753be92
+recording_gateway=d27a45164810fddb9657a53ea68af29bf07cc85a7d99e7056b256ad95daac9ae
 exec 9>/opt/chat-server-music-deploy.lock
 flock -n 9
 
 actual_gateway=$(sha256sum "$install_dir/server.mjs" | awk '{print $1}')
-if [[ "$actual_gateway" != "$original_gateway" && "$actual_gateway" != "$integrated_gateway" && "$actual_gateway" != "$observer_gateway" && "$actual_gateway" != "$explicit_fallback_gateway" && "$actual_gateway" != "$matrix_gateway" && "$actual_gateway" != "$matrix_fallback_gateway" ]]; then
+modern_gateway=false
+case "$actual_gateway" in
+  "$multi_source_legacy_gateway"|"$live_recording_base"|"$live_recording_gateway"|"$recording_gateway")
+    modern_gateway=true ;;
+esac
+if [[ "$modern_gateway" == false && "$actual_gateway" != "$original_gateway" && "$actual_gateway" != "$integrated_gateway" && "$actual_gateway" != "$observer_gateway" && "$actual_gateway" != "$explicit_fallback_gateway" && "$actual_gateway" != "$matrix_gateway" && "$actual_gateway" != "$matrix_fallback_gateway" && "$actual_gateway" != "$rotation_base_gateway" && "$actual_gateway" != "$rotation_gateway" && "$actual_gateway" != "$request_gateway" && "$actual_gateway" != "$random_gateway" && "$actual_gateway" != "$multi_source_gateway" && "$actual_gateway" != "$multi_source_legacy_gateway" ]]; then
   echo "Gateway version changed. Rebase the integration patch before deployment." >&2
   exit 1
 fi
 
+if [[ "$actual_gateway" == "$rotation_base_gateway" ]]; then
+  (
+    cd "$install_dir/src/music"
+    sha256sum --check --status <<'EOF'
+6afbf2442db5e05fa703024bd80871669d581fd30a42c5493cce3793623a046b  music-manager.mjs
+97346773ad19b911e0a4f7f53b78f8802775f229a45df9ed699c1df0abe07fc3  qq-music.mjs
+f1877f5704b189d4844cd68da9a44cf907dbca393424b566950650398940f528  registry.mjs
+EOF
+  ) || { echo "Live music modules changed. Rebase the rotation release before deployment." >&2; exit 1; }
+fi
+
 candidate=$(mktemp -d /tmp/chat-music-candidate.XXXXXXXX)
+trap 'rm -rf -- "$candidate"' EXIT
 cp -p "$install_dir/server.mjs" "$candidate/server.mjs"
 cp -a "$release_dir/src" "$candidate/src"
+if [[ "$modern_gateway" == true || "$actual_gateway" == "$rotation_base_gateway" || "$actual_gateway" == "$rotation_gateway" || "$actual_gateway" == "$request_gateway" || "$actual_gateway" == "$random_gateway" || "$actual_gateway" == "$multi_source_gateway" || "$actual_gateway" == "$multi_source_legacy_gateway" ]]; then
+  # Use the live audio pipeline and replace only the modules changed by this release.
+  music_files=(music-manager.mjs qq-music.mjs registry.mjs audio-source.mjs music-input.mjs catalog-providers.mjs provider-routing.mjs youtube-candidates.mjs)
+  cp -a "$install_dir/src/music/." "$candidate/src/music/"
+  for name in "${music_files[@]}"; do
+    cp -p "$release_dir/src/music/$name" "$candidate/src/music/$name"
+  done
+else
+  music_files=()
+  for file in "$candidate"/src/music/*.mjs; do music_files+=("$(basename "$file")"); done
+fi
 (
   cd "$candidate"
-  if [[ "$actual_gateway" == "$original_gateway" ]]; then
-    git apply --check "$release_dir/gateway-music.patch"
-    git apply "$release_dir/gateway-music.patch"
+  if [[ "$modern_gateway" == false ]]; then
+    if [[ "$actual_gateway" == "$original_gateway" ]]; then
+      git apply --check "$release_dir/gateway-music.patch"
+      git apply "$release_dir/gateway-music.patch"
+    fi
+    if [[ "$actual_gateway" == "$original_gateway" || "$actual_gateway" == "$integrated_gateway" ]]; then
+      git apply --check "$release_dir/observer-id.patch"
+      git apply "$release_dir/observer-id.patch"
+    fi
+    if [[ "$actual_gateway" != "$explicit_fallback_gateway" && "$actual_gateway" != "$matrix_fallback_gateway" && "$actual_gateway" != "$rotation_base_gateway" && "$actual_gateway" != "$rotation_gateway" && "$actual_gateway" != "$request_gateway" && "$actual_gateway" != "$random_gateway" && "$actual_gateway" != "$multi_source_gateway" && "$actual_gateway" != "$multi_source_legacy_gateway" ]]; then
+      git apply --check "$release_dir/explicit-fallback.patch"
+      git apply "$release_dir/explicit-fallback.patch"
+    fi
+    if [[ "$actual_gateway" != "$rotation_gateway" && "$actual_gateway" != "$request_gateway" && "$actual_gateway" != "$random_gateway" && "$actual_gateway" != "$multi_source_gateway" && "$actual_gateway" != "$multi_source_legacy_gateway" ]]; then
+      git apply --check "$release_dir/rotation-fallback.patch"
+      git apply "$release_dir/rotation-fallback.patch"
+      if [[ "$actual_gateway" == "$rotation_base_gateway" ]]; then
+        [[ $(sha256sum server.mjs | awk '{print $1}') == "$rotation_gateway" ]]
+      fi
+    fi
+    if [[ "$actual_gateway" != "$request_gateway" && "$actual_gateway" != "$random_gateway" && "$actual_gateway" != "$multi_source_gateway" && "$actual_gateway" != "$multi_source_legacy_gateway" ]]; then
+      git apply --check "$release_dir/request-fallback.patch"
+      git apply "$release_dir/request-fallback.patch"
+      if [[ "$actual_gateway" == "$rotation_base_gateway" || "$actual_gateway" == "$rotation_gateway" ]]; then
+        [[ $(sha256sum server.mjs | awk '{print $1}') == "$request_gateway" ]]
+      fi
+    fi
+    if [[ "$actual_gateway" != "$random_gateway" && "$actual_gateway" != "$multi_source_gateway" && "$actual_gateway" != "$multi_source_legacy_gateway" ]]; then
+      git apply --check "$release_dir/random-request.patch"
+      git apply "$release_dir/random-request.patch"
+      [[ $(sha256sum server.mjs | awk '{print $1}') == "$random_gateway" ]]
+    fi
+    if [[ "$actual_gateway" != "$multi_source_gateway" && "$actual_gateway" != "$multi_source_legacy_gateway" ]]; then
+      git apply --check "$release_dir/multi-source.patch"
+      git apply "$release_dir/multi-source.patch"
+      [[ $(sha256sum server.mjs | awk '{print $1}') == "$multi_source_gateway" ]]
+    fi
+    if [[ "$actual_gateway" != "$multi_source_legacy_gateway" ]]; then
+      git apply --check "$release_dir/multi-source-legacy.patch"
+      git apply "$release_dir/multi-source-legacy.patch"
+      [[ $(sha256sum server.mjs | awk '{print $1}') == "$multi_source_legacy_gateway" ]]
+    fi
   fi
-  if [[ "$actual_gateway" == "$original_gateway" || "$actual_gateway" == "$integrated_gateway" ]]; then
-    git apply --check "$release_dir/observer-id.patch"
-    git apply "$release_dir/observer-id.patch"
-  fi
-  if [[ "$actual_gateway" != "$explicit_fallback_gateway" && "$actual_gateway" != "$matrix_fallback_gateway" ]]; then
-    git apply --check "$release_dir/explicit-fallback.patch"
-    git apply "$release_dir/explicit-fallback.patch"
+  if [[ "$actual_gateway" != "$live_recording_gateway" && "$actual_gateway" != "$recording_gateway" ]]; then
+    git apply --check "$release_dir/recording-match.patch"
+    git apply "$release_dir/recording-match.patch"
+    expected_recording_gateway=$recording_gateway
+    if [[ "$actual_gateway" == "$live_recording_base" ]]; then expected_recording_gateway=$live_recording_gateway; fi
+    [[ $(sha256sum server.mjs | awk '{print $1}') == "$expected_recording_gateway" ]]
   fi
   node --check server.mjs
   for file in src/music/*.mjs; do node --check "$file"; done
@@ -46,7 +121,6 @@ cp -a "$release_dir/src" "$candidate/src"
 node --test "$release_dir/test/music.test.mjs"
 if [[ "$1" == "--check" ]]; then
   echo "Candidate checked. No running files changed."
-  rm "$candidate/server.mjs"
   exit 0
 fi
 
@@ -62,8 +136,7 @@ rollback() {
   local status=$?
   trap - ERR INT TERM
   cp -p "$backup/server.mjs" "$install_dir/server.mjs"
-  for file in "$candidate"/src/music/*.mjs; do
-    name=$(basename "$file")
+  for name in "${music_files[@]}"; do
     if [[ -f "$backup/music/$name" ]]; then
       cp -p "$backup/music/$name" "$install_dir/src/music/$name"
     else
@@ -75,8 +148,8 @@ rollback() {
   exit "$((status == 0 ? 1 : status))"
 }
 trap rollback ERR INT TERM
-for file in "$candidate"/src/music/*.mjs; do
-  install -m 644 "$file" "$install_dir/src/music/$(basename "$file")"
+for name in "${music_files[@]}"; do
+  install -m 644 "$candidate/src/music/$name" "$install_dir/src/music/$name"
 done
 # The gateway contains local production configuration. Retain its existing mode.
 mv "$candidate/server.mjs" "$install_dir/server.mjs"

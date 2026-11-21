@@ -16,6 +16,7 @@ interface ChatFloatingOptions {
 	gap?: number;
 	hover?: "tooltip" | "card";
 	forceOpen?: boolean;
+	fitViewport?: boolean;
 	onReferenceHidden?: () => void;
 }
 
@@ -87,7 +88,11 @@ export function positionChatFloating(
 		const messageViewport = reference.closest("[data-chat-message-scroll]");
 		// A message menu must fit above the composer even though the document viewport extends below it.
 		const boundary = messageViewport ?? "clippingAncestors";
-		const boundaries = { boundary, altBoundary: true, padding: 6 } as const;
+		const boundaries = {
+			boundary: options.fitViewport ? [] : boundary,
+			altBoundary: !options.fitViewport,
+			padding: 6,
+		} as const;
 		let request = 0;
 		refreshPosition = () => {
 			const current = ++request;

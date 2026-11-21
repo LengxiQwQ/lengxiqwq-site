@@ -17,4 +17,5 @@ export interface ChatMusicTrack {
 	lrcUrl?: string;
 	durationSec?: number;
 	quality?: string;
+	rotationReplacement?: { title: string; artist: string };
 }

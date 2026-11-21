@@ -43,6 +43,8 @@ export const CHAT_STATUS_PRESETS = [
 
 export type ChatStatusPreset = (typeof CHAT_STATUS_PRESETS)[number];
 
+export type ChatDesktopNotificationMode = "all" | "mention" | "off";
+
 export interface ChatSessionUser {
 	userKey: string;
 	authType: "waline" | "guest";
@@ -423,6 +425,7 @@ export interface CurrentPlayback {
 
 export interface RotationQueueItem {
 	id: string;
+	entryId?: string;
 	sourcePlatform?: string;
 	sourceTrackId?: string;
 	title: string;
@@ -432,6 +435,23 @@ export interface RotationQueueItem {
 	pic?: string;
 	sourcePlaylistTitle?: string;
 	sourcePlaylistId?: string;
+}
+
+export interface RotationOffer {
+	token: string;
+	expiresAt: number;
+	choices: {
+		track: ChatMusicTrack;
+		relation: "same_artist_version" | "same_title" | "same_artist_other";
+	}[];
+}
+
+export interface RotationAction {
+	entryId: string;
+	pending?: boolean;
+	code?: string;
+	message?: string;
+	offer?: RotationOffer;
 }
 
 export interface RoomMusicState {
@@ -537,6 +557,7 @@ export interface PlaylistTrackItem {
 	position: number;
 	sourcePlatform: string;
 	sourceTrackId: string;
+	isrc?: string;
 	title: string;
 	artist: string;
 	album: string;
@@ -570,6 +591,7 @@ export interface PlaylistsResponse {
 export interface PlaylistImportTrackInput {
 	sourcePlatform: string;
 	sourceTrackId: string;
+	isrc?: string;
 	title: string;
 	artist: string;
 	album: string;

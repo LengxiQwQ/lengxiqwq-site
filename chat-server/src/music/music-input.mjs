@@ -15,22 +15,37 @@ function coverUrl(value) {
   }
 }
 
+export function normalizeIsrc(value) {
+  const code = typeof value === 'string' ? value.toUpperCase().replace(/[\s-]/g, '') : '';
+  return /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/.test(code) ? code : undefined;
+}
+
 export function normalizeMusicTrack(input) {
-  const provider = input?.provider || (typeof input?.id === 'string' && input.id.startsWith('qq:') ? 'qq' : input?.sourcePlatform === 'qqmusic' ? 'qq' : '');
-  if (provider !== 'qq') return null;
-  const sourceId = input.sourceId || (typeof input.id === 'string' && input.id.startsWith('qq:') ? input.id.slice(3) : '') || input.sourceTrackId || '';
-  if (typeof sourceId !== 'string' || !/^[A-Za-z0-9]{1,32}$/.test(sourceId)) return null;
+  const idParts = typeof input?.id === 'string' ? input.id.split(':', 2) : [];
+  const platform = input?.provider || input?.sourcePlatform || idParts[0];
+  const provider = platform === 'qqmusic' ? 'qq' : platform;
+  const sourceId = input?.sourceId || input?.sourceTrackId || (idParts[0] === provider ? idParts[1] : '');
+  if (!isMusicSourceId(provider, sourceId)) return null;
+  const canonicalId = provider === 'kugou' ? sourceId.toUpperCase() : sourceId;
   const durationSec = Number(input.durationSec || input.duration);
   return {
-    id: 'qq:' + sourceId,
-    sourceId,
-    provider: 'qq',
+    id: provider + ':' + canonicalId,
+    sourceId: canonicalId,
+    provider,
     title: label(input.title, '未知曲目'),
     artist: label(input.artist, '未知歌手'),
     album: label(input.album) || undefined,
     cover: coverUrl(input.cover || input.pic),
     durationSec: Number.isFinite(durationSec) && durationSec > 0 && durationSec <= 86400 ? durationSec : 0
   };
+}
+
+export function isMusicSourceId(provider, sourceId) {
+  if (typeof sourceId !== 'string') return false;
+  if (provider === 'qq') return /^[A-Za-z0-9]{1,32}$/.test(sourceId);
+  if (provider === 'netease') return /^[1-9]\d{0,17}$/.test(sourceId);
+  if (provider === 'kugou') return /^[a-f0-9]{32}$/i.test(sourceId);
+  return false;
 }
 
 export async function readPlaylistJson(req) {

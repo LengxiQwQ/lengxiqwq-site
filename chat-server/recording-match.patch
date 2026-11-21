@@ -1,0 +1,26 @@
+diff --git a/server.mjs b/server.mjs
+--- a/server.mjs
++++ b/server.mjs
+@@ -17,5 +17,5 @@
+ import { handleStreamProxyRequest, maintainAudioCache, prefetchAudio } from './src/music/stream-cache.mjs';
+ import { MusicManager } from './src/music/music-manager.mjs';
+-import { normalizeMusicTrack, readPlaylistJson } from './src/music/music-input.mjs';
++import { normalizeIsrc, normalizeMusicTrack, readPlaylistJson } from './src/music/music-input.mjs';
+ import { escapeHtml, inferMimeType, normalizeSiteBadge, stripSiteSuffix, normalizeDotSpacing, createMatrixPersistence, buildMentionedHtml, KNOWN_MATRIX_RELAY_SENDERS, resolveMatrixRelayMeta } from './src/matrix/matrix-utils.mjs';
+ import { restoreRelayNames } from './src/matrix/restore-relay-names.mjs';
+@@ -3491,6 +3491,7 @@
+           artist: t.artist || '未知歌手',
+           album: t.album || '',
+           cover: t.cover || t.coverUrl || body.coverUrl || '',
+           durationSec: Number(t.durationSec) || 0,
++          isrc: normalizeIsrc(t.isrc),
+           sourceUrl: t.sourceUrl || '',
+           matchedTrack: normalizeMusicTrack(t.matchedTrack)
+@@ -3601,6 +3602,7 @@
+           artist: t.artist || '未知歌手',
+           album: t.album || '',
+           cover: t.cover || t.coverUrl || plPayload.coverUrl || target.coverUrl,
+           durationSec: Number(t.durationSec) || 0,
++          isrc: normalizeIsrc(t.isrc),
+           sourceUrl: t.sourceUrl || '',
+           matchedTrack: normalizeMusicTrack(t.matchedTrack)

@@ -112,7 +112,7 @@ const skipTooltipText = $derived.by(() => {
   <button
     type="button"
     class="chat-mini-player-info flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-1 -m-1 rounded-xl hover:bg-black/4 dark:hover:bg-white/6 active:bg-black/6 dark:active:bg-white/10 transition-colors cursor-pointer group"
-    aria-label={`查看 ${currentPlay.track.title} 歌词与播放详情`}
+    aria-label={"查看 " + currentPlay.track.title + " 歌词与播放详情" + (currentPlay.track.rotationReplacement ? "，替代 " + currentPlay.track.rotationReplacement.title : "")}
     title="点击打开大播放器与完整歌词"
     onclick={onOpenLyrics}
   >
@@ -145,6 +145,9 @@ const skipTooltipText = $derived.by(() => {
           <span class="truncate shrink min-w-0 text-[var(--chat-meta-color)]">
             &nbsp;-&nbsp;{currentPlay.track.artist}
           </span>
+          {#if currentPlay.track.rotationReplacement}
+            <span class="ml-1 shrink-0 text-[var(--chat-meta-color)]" title={'替代《' + currentPlay.track.rotationReplacement.title + '》'}>替代播放</span>
+          {/if}
         </div>
         <span class="shrink-0 text-[var(--chat-meta-color)]/85 text-right tabular-nums">
           {formattedStatusOrTime}

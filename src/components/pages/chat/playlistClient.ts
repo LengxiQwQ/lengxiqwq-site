@@ -22,6 +22,7 @@ interface RawPlaylistOutTrack {
 	artist?: unknown;
 	album?: unknown;
 	id?: unknown;
+	isrc?: unknown;
 	durationMs?: unknown;
 	sourceUrl?: unknown;
 	coverUrl?: unknown;
@@ -79,6 +80,7 @@ export type PlaylistOutResolveResult =
 	  };
 
 const PLATFORM_LABELS: Record<string, string> = {
+	qq: "QQ 音乐",
 	qqmusic: "QQ 音乐",
 	netease: "网易云音乐",
 	kugou: "酷狗音乐",
@@ -175,6 +177,7 @@ function normalizePlaylistOutPlaylist(
 			return {
 				sourcePlatform: platform,
 				sourceTrackId,
+				isrc: typeof item.isrc === "string" ? item.isrc : undefined,
 				title: trackTitle,
 				artist,
 				album,
@@ -623,26 +626,14 @@ export function toEnqueueableTrack(
 	item: PlaylistTrackItem,
 	playlistId: string,
 ): ChatMusicTrack {
-	if (item.matchedTrack) {
-		const sourceId = item.matchedTrack.sourceId || (typeof item.matchedTrack.id === "string" ? item.matchedTrack.id.replace(/^qq:/, "") : "");
+	const platform = item.sourcePlatform === "qqmusic" ? "qq" : item.sourcePlatform;
+	if (item.sourceTrackId && (platform === "qq" || platform === "netease" || platform === "kugou")) {
+		const sourceId = platform === "kugou" ? item.sourceTrackId.toUpperCase() : item.sourceTrackId;
 		return {
-			...item.matchedTrack,
-			id: item.matchedTrack.id || (sourceId ? `qq:${sourceId}` : `ext:${playlistId}:${item.position}`),
-			provider: "qq",
+			id: `${platform}:${sourceId}`,
+			provider: platform,
 			sourceId,
-			playlistId,
-			position: item.position,
-			cover: item.matchedTrack.cover || item.cover,
-			durationSec: item.matchedTrack.durationSec || item.durationSec,
-		};
-	}
-	const isQQ = item.sourcePlatform === "qqmusic" && item.sourceTrackId;
-	if (isQQ) {
-		return {
-			id: `qq:${item.sourceTrackId}`,
-			provider: "qq",
-			sourceId: item.sourceTrackId,
-			sourcePlatform: "qqmusic",
+			sourcePlatform: item.sourcePlatform,
 			playlistId,
 			position: item.position,
 			title: item.title,
@@ -650,6 +641,17 @@ export function toEnqueueableTrack(
 			album: item.album || undefined,
 			cover: item.cover,
 			durationSec: item.durationSec,
+		};
+	}
+	if (item.matchedTrack?.id) {
+		return {
+			...item.matchedTrack,
+			playlistId,
+			position: item.position,
+			title: item.title,
+			artist: item.artist,
+			cover: item.matchedTrack.cover || item.cover,
+			durationSec: item.durationSec || item.matchedTrack.durationSec,
 		};
 	}
 	return {

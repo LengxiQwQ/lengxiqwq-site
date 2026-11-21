@@ -1,0 +1,85 @@
+diff --git a/server.mjs b/server.mjs
+--- a/server.mjs
++++ b/server.mjs
+@@ -4408,6 +4408,7 @@
+           return;
+         }
+         getMusicManager(ws.currentRoom).rotationOffers.delete(ws);
++        getMusicManager(ws.currentRoom).requestOffers.delete(ws);
+         ws.musicRoomRevision = (ws.musicRoomRevision || 0) + 1;
+         ws.currentRoom = packet.roomId;
+         if (ws.spectatorSession && !ws.spectatorSession.roomsVisited.includes(packet.roomId)) {
+@@ -4704,12 +4705,15 @@
+         const actor = ws.user;
+         const requestId = typeof packet.requestId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(packet.requestId)
+           ? packet.requestId : null;
++        const revision = ws.musicRoomRevision;
++        const active = () => ws.readyState === 1 && ws.currentRoom === requestedRoom &&
++          ws.musicRoomRevision === revision && ws.user?.userKey === actor?.userKey;
+         const reply = result => {
+-          if (ws.readyState !== 1) return;
++          if (!active()) return;
+           if (requestId) ws.send(JSON.stringify({
+             type: 'music:request_result', roomId: requestedRoom, requestId,
+             ok: result.ok, error: result.error, code: result.code,
+-            position: result.position, playImmediately: result.playImmediately
++            position: result.position, playImmediately: result.playImmediately, offer: result.offer
+           }));
+           else if (!result.ok) ws.send(JSON.stringify({ type: 'error', code: result.code, message: result.error }));
+         };
+@@ -4724,29 +4728,45 @@
+         ws.pendingSongRequest = true;
+         try {
+           const input = packet.track;
+-          let track;
++          let item;
+           if (input?.playlistId || input?.provider === 'external') {
+             const list = input?.playlistId === 'pl_collective_favorites'
+               ? publicRotationPlaylist('pl_collective_favorites')
+               : (typeof input?.playlistId === 'string' && Object.hasOwn(playlistDetailsStore, input.playlistId)
+                   ? playlistDetailsStore[input.playlistId] : null);
+-            const item = (list && (list.id === 'pl_collective_favorites' || visiblePlaylist(list, actor)))
++            item = (list && (list.id === 'pl_collective_favorites' || visiblePlaylist(list, actor)))
+               ? (Number.isSafeInteger(input.position)
+                   ? list.tracks?.find(song => song.position === input.position)
+                   : list.tracks?.find(song => (song.matchedTrack?.id && song.matchedTrack.id === input.id) || (song.id && song.id === input.id) || (song.sourceTrackId && song.sourceTrackId === input.sourceId)))
+               : null;
+-            if (item) track = normalizeMusicTrack(await musicRegistry.resolvePlaylistTrack(item));
+           }
+-          if (!track) {
+-            track = normalizeMusicTrack(input);
++          const manager = getMusicManager(requestedRoom);
++          let track;
++          let result;
++          if (packet.allowAlternatives === true && requestId) {
++            const original = item || (!input?.playlistId ? normalizeMusicTrack(input) : null);
++            if (packet.offerId !== undefined &&
++                (typeof packet.offerId !== 'string' || packet.offerId.length !== 36 ||
++                 typeof packet.choiceId !== 'string' || packet.choiceId.length > 100)) {
++              reply({ ok: false, code: 'OFFER_EXPIRED', error: '可播版本已过期，请重新查找' });
++              return;
++            }
++            result = await manager.enqueueWithAlternatives(original, actor, {
++              owner: ws, active, offerId: packet.offerId, choiceId: packet.choiceId
++            });
++          } else {
++            track = item && normalizeMusicTrack(await musicRegistry.resolvePlaylistTrack(item));
++            track ||= normalizeMusicTrack(input);
++            if (!track) {
++              reply({ ok: false, error: '未找到可信的可播放版本' });
++              return;
++            }
++            if (!active()) return;
++            result = await manager.enqueueTrack(track, actor);
+           }
+-          if (!track) {
+-            reply({ ok: false, error: '未找到可信的可播放版本' });
+-            return;
+-          }
+-          const result = await getMusicManager(requestedRoom).enqueueTrack(track, actor);
+           reply(result);
+           if (!result.ok) return;
++          track = result.track || track;
+           // Broadcast song request notification to the active room
+           const sysMsg = {
+             id: Date.now(),

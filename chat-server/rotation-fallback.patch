@@ -1,0 +1,62 @@
+diff --git a/server.mjs b/server.mjs
+--- a/server.mjs
++++ b/server.mjs
+@@ -1062,5 +1062,6 @@
+     for (const track of pl.tracks || []) {
+-      const qqId = track.matchedTrack?.sourceId || (track.sourcePlatform === 'qqmusic' && track.sourceTrackId) || track.sourceId || (track.id && track.id.replace(/^qq:/, ''));
+-      const key = qqId ? JSON.stringify(['qq', qqId]) :
+-        JSON.stringify([track.sourcePlatform || track.provider || 'qq', track.sourceTrackId || track.sourceId || track.id, track.title, track.artist]);
++      const platform = track.sourcePlatform || track.provider || 'qq';
++      const sourceId = track.sourceTrackId || track.sourceId || track.id?.replace(/^qq:/, '');
++      const key = sourceId ? JSON.stringify([platform === 'qqmusic' ? 'qq' : platform, sourceId]) :
++        JSON.stringify([platform, track.title, track.artist, track.album, track.durationSec]);
+       if (!tracks.has(key)) {
+@@ -4409,3 +4410,5 @@
++        getMusicManager(ws.currentRoom).rotationOffers.delete(ws);
++        ws.musicRoomRevision = (ws.musicRoomRevision || 0) + 1;
+         ws.currentRoom = packet.roomId;
+         if (ws.spectatorSession && !ws.spectatorSession.roomsVisited.includes(packet.roomId)) {
+           ws.spectatorSession.roomsVisited.push(packet.roomId);
+@@ -4780,3 +4783,42 @@
++      if ((packet.type === 'music:play_rotation' || packet.type === 'music:confirm_rotation') &&
++          typeof packet.requestId === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(packet.requestId)) {
++        const room = ws.currentRoom;
++        const revision = ws.musicRoomRevision;
++        const actor = ws.user;
++        const active = () => ws.readyState === 1 && ws.currentRoom === room &&
++          ws.musicRoomRevision === revision && ws.user?.userKey === actor?.userKey;
++        const reply = result => {
++          if (active()) ws.send(JSON.stringify({
++            type: 'music:rotation_result', roomId: room, requestId: packet.requestId, ...result
++          }));
++        };
++        if (!actor) {
++          reply({ ok: false, code: 'AUTH_REQUIRED', error: '请先登录' });
++          return;
++        }
++        const confirming = packet.type === 'music:confirm_rotation';
++        const validChoice = typeof packet.offerId === 'string' && packet.offerId.length === 36 &&
++          typeof packet.choiceId === 'string' && packet.choiceId.length <= 100;
++        const validEntry = typeof packet.entryId === 'string' && packet.entryId.length <= 100;
++        if (confirming ? !validChoice : !validEntry) {
++          reply({ ok: false, code: 'ROTATION_CHANGED', error: '轮播列表已更新，请重新选择曲目' });
++          return;
++        }
++        const manager = getMusicManager(room);
++        const result = await manager.playRotationTrack(packet.entryId, actor, 0, {
++          owner: ws,
++          active,
++          getAudience: () => getRoomMusicAudience(room).listeningCount,
++          allowAlternatives: true,
++          hasExpectedPlay: true,
++          playUid: packet.playUid,
++          offerId: confirming ? packet.offerId : undefined,
++          choiceId: confirming ? packet.choiceId : undefined
++        });
++        reply(result);
++        return;
++      }
++
+       if (typeof packet.type === 'string' && packet.type.startsWith('music:')) {
+         const targetMgr = getMusicManager(ws.currentRoom);
+         const actor = ws.user;

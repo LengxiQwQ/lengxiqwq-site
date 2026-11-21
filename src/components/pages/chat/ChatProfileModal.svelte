@@ -1,4 +1,5 @@
 <script lang="ts">
+import Icon from "@/components/common/Icon.svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import {
@@ -8,6 +9,7 @@ import {
 } from "./chatClient";
 import {
 	CHAT_STATUS_PRESETS,
+	type ChatDesktopNotificationMode,
 	type ChatProfileDraft,
 	type ChatSessionUser,
 	type ChatStatusPreset,
@@ -17,6 +19,9 @@ interface Props {
 	open: boolean;
 	currentUser: ChatSessionUser | null;
 	walineServerUrl?: string;
+	desktopNotificationMode?: ChatDesktopNotificationMode;
+	desktopNotificationPermission?: NotificationPermission;
+	onChangeDesktopNotificationMode?: (mode: ChatDesktopNotificationMode) => void;
 	onSave: (draft: ChatProfileDraft) => void;
 	onClose: () => void;
 	onLogout?: () => void;
@@ -26,6 +31,9 @@ const {
 	open,
 	currentUser = null,
 	walineServerUrl = "",
+	desktopNotificationMode = "off",
+	desktopNotificationPermission = "default" as NotificationPermission,
+	onChangeDesktopNotificationMode,
 	onSave,
 	onClose,
 	onLogout,
@@ -80,6 +88,15 @@ const emailDeliverability = $derived.by(() => {
 const isEmailUndeliverable = $derived(!emailDeliverability.deliverable);
 
 const isNotifyDisabled = $derived(isIsolatedGuest || isEmailUndeliverable);
+
+const isNotificationSupported = $derived(
+	typeof window !== "undefined" && "Notification" in window,
+);
+
+function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
+	if (!isNotificationSupported) return;
+	onChangeDesktopNotificationMode?.(mode);
+}
 
 $effect(() => {
 	if (open && currentUser) {
@@ -350,6 +367,72 @@ function handleSubmit(e: SubmitEvent) {
                     <span class="chat-switch-thumb"></span>
                   </span>
                 </button>
+              </div>
+
+              <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-3 mt-2.5 space-y-2.5">
+                <div class="flex items-start justify-between gap-2">
+                  <div class="min-w-0">
+                    <div class="text-xs font-medium text-(--btn-content) flex items-center gap-1.5">
+                      <span>桌面通知</span>
+                      {#if desktopNotificationPermission === "denied"}
+                        <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20">
+                          权限受阻
+                        </span>
+                      {/if}
+                    </div>
+                    <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
+                      {#if !isNotificationSupported}
+                        当前浏览器环境不支持桌面系统通知
+                      {:else if desktopNotificationPermission === "denied"}
+                        <span class="text-red-500 dark:text-red-400 font-medium inline-block">
+                          通知已被浏览器拦截，请在地址栏网站权限中允许通知后开启
+                        </span>
+                      {:else if desktopNotificationMode === "off"}
+                        处于后台或离开当前房间时，接收桌面系统级横幅通知
+                      {:else if desktopNotificationMode === "mention"}
+                        仅在有人 @ 你、@全体成员 或回复你的消息时弹出桌面通知
+                      {:else}
+                        接收聊天室内所有新发言的桌面通知（较活跃时可能会频繁弹窗）
+                      {/if}
+                    </div>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10">
+                  <button
+                    type="button"
+                    class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
+                      {desktopNotificationMode === 'off'
+                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
+                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                    onclick={() => handleSelectNotificationMode("off")}
+                  >
+                    <Icon icon="mingcute:notification-off-line" class="w-3.5 h-3.5" />
+                    <span>关闭</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
+                      {desktopNotificationMode === 'mention'
+                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
+                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                    onclick={() => handleSelectNotificationMode("mention")}
+                  >
+                    <Icon icon="mingcute:notification-newdot-line" class="w-3.5 h-3.5" />
+                    <span>仅提及</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
+                      {desktopNotificationMode === 'all'
+                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
+                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                    onclick={() => handleSelectNotificationMode("all")}
+                  >
+                    <Icon icon="mingcute:bell-ringing-line" class="w-3.5 h-3.5" />
+                    <span>全部消息</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>

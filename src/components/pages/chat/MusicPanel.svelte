@@ -55,6 +55,7 @@ import type {
 	PlaylistSummary,
 	PlaylistTrackItem,
 	QueueEntry,
+	RotationAction,
 	RotationQueueItem,
 	RoomMusicState,
 	RoomRotation,
@@ -104,10 +105,15 @@ interface Props {
 		keyword: string,
 		options?: { signal?: AbortSignal; page?: number },
 	) => Promise<{ tracks: ChatMusicTrack[]; hasMore: boolean; page: number }>;
-	onEnqueueTrack: (track: ChatMusicTrack) => Promise<boolean>;
+	onEnqueueTrack: (track: ChatMusicTrack, anchor?: HTMLElement) => Promise<boolean>;
+	onRandomEnqueue: (playlistId: string) => Promise<boolean>;
+	isRandomizing: boolean;
 	onRemoveQueue: (uid: string) => void;
+	onRemoveRotationTrack?: (track: RotationQueueItem) => void;
 	onPlayQueued: (uid: string) => void;
-	onPlayRotationTrack?: (track: RotationQueueItem) => void;
+	onPlayRotationTrack?: (track: RotationQueueItem, anchor?: HTMLElement) => void;
+	onOpenRotationOffer?: () => void;
+	rotationAction?: RotationAction | null;
 	isSkippingTrack?: boolean;
 	onSkipTrack: () => void;
 	onVoteSkip: () => void;
@@ -118,6 +124,7 @@ interface Props {
 	onRequestWalineAuth?: () => void;
 	walineLoginWaiting?: boolean;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
+	fallbackSearch?: { query: string; seq: number };
 	externalPlaylistRequest?: {
 		playlistId: string;
 		seq: number;
@@ -165,9 +172,14 @@ const {
 	initialListening = false,
 	onSearchOnline,
 	onEnqueueTrack,
+	onRandomEnqueue,
+	isRandomizing,
 	onRemoveQueue,
+	onRemoveRotationTrack,
 	onPlayQueued,
 	onPlayRotationTrack,
+	onOpenRotationOffer,
+	rotationAction = null,
 	isSkippingTrack = false,
 	onSkipTrack,
 	onVoteSkip,
@@ -178,6 +190,7 @@ const {
 	onRequestWalineAuth,
 	walineLoginWaiting = false,
 	onOpenUserProfile,
+	fallbackSearch,
 	externalPlaylistRequest,
 	onPlaybackStatusChange,
 	onNotify,
@@ -407,19 +420,9 @@ let playlistsError = $state("");
 let selectedPlaylist = $state<PlaylistDetail | null>(null);
 let isLoadingPlaylistDetail = $state(false);
 let enqueuingTrackIds = $state(new Set<string>());
-let switchingRotationTrackId = $state<string | null>(null);
 let switchingQueueUid = $state<string | null>(null);
-let switchingRotationTimer: number | null = null;
 let switchingQueueTimer: number | null = null;
-let lastHandledPlayUid = $state<string | undefined>(undefined);
-
-function clearSwitchingRotation() {
-	switchingRotationTrackId = null;
-	if (switchingRotationTimer !== null) {
-		window.clearTimeout(switchingRotationTimer);
-		switchingRotationTimer = null;
-	}
-}
+let lastHandledPlayUid: string | undefined = undefined;
 
 function clearSwitchingQueue() {
 	switchingQueueUid = null;
@@ -427,23 +430,6 @@ function clearSwitchingQueue() {
 		window.clearTimeout(switchingQueueTimer);
 		switchingQueueTimer = null;
 	}
-}
-
-function handlePlayRotationTrackAction(item: RotationQueueItem) {
-	if (!currentUser) {
-		onRequestAuth?.();
-		return;
-	}
-	if (switchingRotationTrackId || isSkippingTrack) return;
-	switchingRotationTrackId = item.id;
-	if (switchingRotationTimer !== null) {
-		window.clearTimeout(switchingRotationTimer);
-	}
-	switchingRotationTimer = window.setTimeout(() => {
-		switchingRotationTrackId = null;
-		switchingRotationTimer = null;
-	}, 5000);
-	onPlayRotationTrack?.(item);
 }
 
 function handlePlayQueuedAction(uid: string) {
@@ -462,7 +448,6 @@ function handlePlayQueuedAction(uid: string) {
 	}, 5000);
 	onPlayQueued(uid);
 }
-let isRandomizing = $state(false);
 let playlistTrackFilter = $state("");
 let debouncedPlaylistFilter = $state("");
 let playlistFilterTimer: number | null = null;
@@ -1217,7 +1202,6 @@ $effect(() => {
 	}
 	if (currentUid !== lastHandledPlayUid) {
 		lastHandledPlayUid = currentUid;
-		clearSwitchingRotation();
 		clearSwitchingQueue();
 	}
 });
@@ -1225,19 +1209,6 @@ $effect(() => {
 $effect(() => {
 	if (switchingQueueUid && !queue.some((item) => item.uid === switchingQueueUid)) {
 		clearSwitchingQueue();
-	}
-});
-
-$effect(() => {
-	const activeTrack = currentPlay?.track;
-	if (switchingRotationTrackId && activeTrack) {
-		const isMatched =
-			activeTrack.id === switchingRotationTrackId ||
-			activeTrack.id === `qq:${switchingRotationTrackId}` ||
-			switchingRotationTrackId === `qq:${activeTrack.id}`;
-		if (isMatched) {
-			clearSwitchingRotation();
-		}
 	}
 });
 
@@ -1326,6 +1297,14 @@ function canRemoveEntry(entry: QueueEntry): boolean {
 	return currentUser.isAdmin || entry.requesterKey === currentUser.userKey;
 }
 
+function handleRemoveRotationTrackAction(item: RotationQueueItem) {
+	if (!currentUser) {
+		onRequestAuth?.();
+		return;
+	}
+	onRemoveRotationTrack?.(item);
+}
+
 function canToggleCatalogTrack(song: ChatMusicTrack): boolean {
 	if (!currentUser) return true; // Clicking prompts auth modal via parent
 	if (currentUser.isAdmin) return true;
@@ -1334,30 +1313,8 @@ function canToggleCatalogTrack(song: ChatMusicTrack): boolean {
 }
 
 function switchMusicTab(tab: MusicTab) {
-	if (!currentUser && tab !== "player") {
-		onRequestAuth?.();
-		return;
-	}
 	activeTab = tab;
 }
-
-$effect(() => {
-	if (!currentUser && activeTab !== "player") {
-		activeTab = "player";
-		searchQuery = "";
-		submittedSearchQuery = "";
-		searchResults = [];
-		searchError = "";
-		isSearching = false;
-		searchAbortController?.abort();
-		searchAbortController = null;
-		selectedRequesterKey = "";
-		showRequesterFilter = false;
-		selectedPlaylist = null;
-		playlistTrackFilter = "";
-		confirmDeletePlaylistId = "";
-	}
-});
 
 const isWalineLoggedIn = $derived(
 	Boolean(currentUser && currentUser.authType === "waline" && walineToken),
@@ -2072,26 +2029,18 @@ async function handleDeletePlaylist(playlist: PlaylistSummary): Promise<void> {
 	}
 }
 
-function handleRandomPlayFromPlaylist(detail: PlaylistDetail): void {
+async function handleRandomPlayFromPlaylist(detail: PlaylistDetail): Promise<void> {
 	if (!currentUser) {
 		onRequestAuth?.();
 		return;
 	}
 	if (isRandomizing) return;
-	const candidates = detail.tracks.filter((item) => {
-		const track = toEnqueueableTrack(item, detail.id);
-		return !isTrackCurrent(track) && !isTrackQueued(track);
-	});
-	if (candidates.length === 0) {
-		onNotify?.("歌单内暂无可点播的曲目");
-		return;
+	try {
+		await onRandomEnqueue(detail.id);
+	} catch (error) {
+		console.warn("Unable to request a random song", error);
+		onNotify?.("随机点歌请求未能发出，请重试");
 	}
-	const chosen = candidates[Math.floor(Math.random() * candidates.length)];
-	if (!chosen) return;
-	isRandomizing = true;
-	void requestTrack(toEnqueueableTrack(chosen, detail.id)).finally(() => {
-		isRandomizing = false;
-	});
 }
 
 function normalizeMatchTitle(raw: string): string {
@@ -2686,6 +2635,16 @@ function clearSearch() {
 	searchError = "";
 }
 
+let lastFallbackSearchSeq = 0;
+
+$effect(() => {
+	if (!fallbackSearch || fallbackSearch.seq === lastFallbackSearchSeq) return;
+	lastFallbackSearchSeq = fallbackSearch.seq;
+	searchQuery = fallbackSearch.query;
+	switchMusicTab("search");
+	void runSearch(fallbackSearch.query);
+});
+
 function submitSearch(bypassCache = false) {
 	const q = searchQuery.trim();
 	if (!q) {
@@ -2819,12 +2778,12 @@ function markPendingAutoUnmuteIfImmediate(songId: string): void {
 	}
 }
 
-async function requestTrack(song: ChatMusicTrack) {
+async function requestTrack(song: ChatMusicTrack, anchor?: HTMLElement) {
 	if (enqueuingTrackIds.has(song.id)) return;
 	enqueuingTrackIds = new Set([...enqueuingTrackIds, song.id]);
 	markPendingAutoUnmuteIfImmediate(song.id);
 	try {
-		const accepted = await onEnqueueTrack(song);
+		const accepted = await onEnqueueTrack(song, anchor);
 		if (!accepted && pendingAutoUnmuteTrackId === song.id) pendingAutoUnmuteTrackId = "";
 	} finally {
 		const next = new Set(enqueuingTrackIds);
@@ -2833,13 +2792,13 @@ async function requestTrack(song: ChatMusicTrack) {
 	}
 }
 
-function handleToggleQueueTrack(song: ChatMusicTrack) {
+function handleToggleQueueTrack(song: ChatMusicTrack, anchor?: HTMLElement) {
 	if (isTrackCurrent(song)) return;
 	const existing = findQueuedEntryForSong(song);
 	if (existing) {
 		if (canRemoveEntry(existing)) onRemoveQueue(existing.uid);
 	} else {
-		void requestTrack(song);
+		void requestTrack(song, anchor);
 	}
 }
 
@@ -2913,10 +2872,6 @@ onMount(() => {
 		if (playlistFilterTimer !== null) {
 			window.clearTimeout(playlistFilterTimer);
 		}
-		if (switchingRotationTimer !== null) {
-			window.clearTimeout(switchingRotationTimer);
-			switchingRotationTimer = null;
-		}
 		if (switchingQueueTimer !== null) {
 			window.clearTimeout(switchingQueueTimer);
 			switchingQueueTimer = null;
@@ -2935,6 +2890,10 @@ onMount(() => {
 
 export function toggleListenControl(): void {
 	toggleListen();
+}
+
+export function startListeningControl(): void {
+	if (!isListening) startOrResumeAudio();
 }
 
 export function openPlayerTab(): void {
@@ -3156,19 +3115,14 @@ $effect(() => {
       provider: "qq",
       sourceId: item.sourceTrackId || item.id.replace(/^qq:/, ""),
       sourcePlatform: (item.sourcePlatform as any) || "qqmusic",
-      sourceTrackId: item.sourceTrackId || item.id.replace(/^qq:/, ""),
       title: item.title,
       artist: item.artist,
       album: item.album || "",
       durationSec: item.durationSec || 0,
-      pic: item.pic || "",
+      cover: item.pic || "",
     }}
-    {@const isCurrent = isTrackCurrent(toTrack)}
-    {@const isQueued = isTrackQueued(toTrack)}
-    {@const isFav = isTrackFavorited(toTrack)}
-    {@const trackLookupKey = toTrack.id || getTrackTitleArtistKey(toTrack.title, toTrack.artist)}
-    {@const isToggling = trackLookupKey ? favoriteTogglingTrackIds.has(trackLookupKey) : false}
-    {@const hasSparkle = trackLookupKey ? favSparkleTrackIds.has(trackLookupKey) : false}
+    {@const action = rotationAction?.entryId === (item.entryId ?? item.id) ? rotationAction : undefined}
+    {@const isCurrent = item.entryId ? currentPlay?.track.id === item.id : isTrackCurrent(toTrack)}
     <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.pic}
@@ -3207,7 +3161,6 @@ $effect(() => {
           <span
             class="chat-queue-play-btn bg-(--primary)/12 text-[var(--chat-accent-text)]"
             aria-label="播放中"
-            title="正在播放"
           >
             <span class="chat-eq-bars" aria-hidden="true">
               <span class="chat-eq-bar"></span>
@@ -3216,14 +3169,13 @@ $effect(() => {
             </span>
           </span>
         {:else}
-          {@const isSwitching = switchingRotationTrackId === item.id}
+          {@const isSwitching = Boolean(action?.pending)}
           <button
             type="button"
             class="chat-queue-play-btn"
-            title={isSwitching ? `正在切到 ${item.title}...` : `播放 ${item.title}`}
             aria-label={isSwitching ? `正在切到 ${item.title}...` : `播放 ${item.title}`}
-            disabled={isSwitching || isSkippingTrack}
-            onclick={() => handlePlayRotationTrackAction(item)}
+            disabled={Boolean(rotationAction?.pending) || isSkippingTrack}
+            onclick={(event) => onPlayRotationTrack?.(item, event.currentTarget.parentElement ?? event.currentTarget)}
           >
             {#if isSwitching}
               <svg class="w-3.5 h-3.5 shrink-0 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -3238,46 +3190,44 @@ $effect(() => {
           </button>
         {/if}
 
-        <!-- 收藏按钮（无 custom tooltip） -->
-        <div class="relative inline-flex items-center justify-center shrink-0">
-          <button
-            type="button"
-            aria-busy={isToggling}
-            class="chat-queue-icon-btn chat-queue-row-action border-none bg-transparent transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed {isFav ? 'text-amber-400 hover:text-amber-500' : 'text-[var(--chat-meta-color)] hover:text-amber-400'}"
-            aria-label={isFav ? `取消收藏 ${item.title}` : `收藏 ${item.title}`}
-            onclick={(e) => {
-              e.stopPropagation();
-              void handleToggleFavoriteTrack(toTrack);
-            }}
-          >
-            <svg
-              class="chat-favorite-star w-3.5 h-3.5 transition-transform duration-150 {hasSparkle ? 'is-sparkling' : ''} {isFav ? 'chat-fav-star-glow' : ''}"
-              data-favorited={isFav}
-              viewBox="0 0 24 24"
-              fill={isFav ? "currentColor" : "none"}
-              stroke="currentColor"
-              stroke-width={isFav ? "1" : "1.8"}
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
-            </svg>
-          </button>
-          {#if hasSparkle}
-            <span class="chat-fav-sparkle-burst" aria-hidden="true">
-              <span class="chat-fav-sparkle s-1">★</span>
-              <span class="chat-fav-sparkle s-2">✦</span>
-              <span class="chat-fav-sparkle s-3">★</span>
-              <span class="chat-fav-sparkle s-4">✦</span>
-              <span class="chat-fav-sparkle s-5">★</span>
-              <span class="chat-fav-sparkle s-6">✦</span>
-            </span>
-          {/if}
-        </div>
+        <!-- 移除按钮：这轮不播 -->
+        <button
+          type="button"
+          class="chat-queue-icon-btn chat-queue-row-action"
+          onclick={() => handleRemoveRotationTrackAction(item)}
+          aria-label={`移除 ${item.title}`}
+        >
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
       </div>
     </div>
-  {/snippet}
+
+    {#if action && !action.pending}
+      <div class="flex flex-wrap items-center gap-x-2 px-2 pb-1 text-xs text-[var(--chat-meta-color)]">
+        <span role="status">{action.offer ? "暂未找到原版本音源" : action.message}</span>
+        {#if action.offer}
+          <button type="button" class="btn-regular rounded-md px-2 py-1.5 font-medium text-[var(--chat-accent-text)]" onclick={() => onOpenRotationOffer?.()}>
+            查看可播版本
+          </button>
+        {:else if action.code === "SOURCE_TEMPORARY"}
+          <button type="button" class="btn-regular rounded-md px-2 py-1.5 font-medium text-[var(--chat-accent-text)]" onclick={(event) => onPlayRotationTrack?.(item, event.currentTarget.parentElement ?? event.currentTarget)}>
+            重试
+          </button>
+        {:else if action.code === "NO_SOURCE"}
+          <button type="button" class="btn-regular rounded-md px-2 py-1.5 font-medium text-[var(--chat-accent-text)]" onclick={() => {
+            switchMusicTab("search");
+            searchQuery = [item.title, item.artist].filter(Boolean).join(" ");
+            submitSearch();
+          }}>
+            搜索这首歌
+          </button>
+        {/if}
+      </div>
+    {/if}
+{/snippet}
 
   {#snippet trackRequestRow(
     song: ChatMusicTrack,
@@ -3456,7 +3406,7 @@ $effect(() => {
           type="button"
           class="chat-queue-icon-btn {countBadge ? 'w-10! h-10! md:w-9! md:h-9! flex-col gap-0.5' : 'w-9! h-9! md:w-7! md:h-7!'} rounded-xl! md:rounded-lg! shrink-0 aspect-square text-red-500/85 hover:text-red-500!"
           aria-label={`移除 ${song.title}`}
-          onclick={() => handleToggleQueueTrack(song)}
+          onclick={(event) => handleToggleQueueTrack(song, event.currentTarget.parentElement ?? event.currentTarget)}
         >
           <svg class="w-4 h-4 md:w-3.5 md:h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true">
             <line x1="5" y1="12" x2="19" y2="12" />
@@ -3485,7 +3435,7 @@ $effect(() => {
           type="button"
           class="chat-queue-icon-btn {countBadge ? 'w-10! h-10! md:w-9! md:h-9! flex-col gap-0.5' : 'w-9! h-9! md:w-7! md:h-7!'} rounded-xl! md:rounded-lg! shrink-0 aspect-square text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20!"
           aria-label={`点歌 ${song.title}`}
-          onclick={() => handleToggleQueueTrack(song)}
+          onclick={(event) => handleToggleQueueTrack(song, event.currentTarget.parentElement ?? event.currentTarget)}
         >
           <svg class="w-4 h-4 md:w-3.5 md:h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" aria-hidden="true">
             <line x1="12" y1="5" x2="12" y2="19" />
@@ -3509,7 +3459,6 @@ $effect(() => {
       type="button"
       class="chat-queue-play-btn {voted ? 'is-voted' : ''} {!direct && votes.length > 0 && !isSwitching ? 'has-votes' : ''}"
       aria-label={isSwitching ? `正在切到 ${item.track.title}...` : `${action} ${item.track.title}${!direct ? `，${votes.length}/2 票` : ""}`}
-      title={isSwitching ? `正在切到 ${item.track.title}...` : `${action} ${item.track.title}${!direct ? `（${votes.length}/2）` : ""}`}
       aria-pressed={!direct ? voted : undefined}
       disabled={isSwitching || isSkippingTrack}
       onclick={() => handlePlayQueuedAction(item.uid)}
@@ -3545,6 +3494,9 @@ $effect(() => {
         </div>
         <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate">
           {item.track.artist} ·
+          {#if item.track.rotationReplacement}
+            <span title={'替代《' + item.track.rotationReplacement.title + '》'}>替代《{item.track.rotationReplacement.title}》 · </span>
+          {/if}
           {#if item.requesterKey && onOpenUserProfile}
             <button
               type="button"
@@ -3613,9 +3565,12 @@ $effect(() => {
             {#if currentPlay}
               <div
                 class="text-[13px] xl:text-[12px] font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal select-text cursor-text"
-                title={getTrackArtistAndAlbum(currentPlay.track)}
+                title={[getTrackArtistAndAlbum(currentPlay.track), currentPlay.track.provider && formatPlatformLabel(currentPlay.track.provider)].filter(Boolean).join(" · ")}
               >
                 {getTrackArtistAndAlbum(currentPlay.track)}
+                {#if currentPlay.track.provider}
+                  · {formatPlatformLabel(currentPlay.track.provider)}
+                {/if}
               </div>
             {:else}
               <div
@@ -3623,6 +3578,12 @@ $effect(() => {
               >
                 {!musicState ? "正在连接电台..." : "暂无点播歌曲"}
               </div>
+            {/if}
+
+            {#if currentPlay?.track.rotationReplacement}
+              <p class="m-0 truncate text-xs text-[var(--chat-meta-color)]" title={currentPlay.track.rotationReplacement.title}>
+                替代《{currentPlay.track.rotationReplacement.title}》
+              </p>
             {/if}
 
             <!-- 第三排：点歌人（小头像 + 名称，点击打开个人资料） -->
@@ -4083,11 +4044,11 @@ $effect(() => {
                   <span class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
                     当前未开启歌单轮播或轮播池为空
                   </span>
-                  {#if canManageRotation}
+                  {#if isWalineLoggedIn}
                     <button
                       type="button"
                       class="mt-1 px-3 py-1 text-[12px] rounded-lg border border-[var(--primary)]/35 bg-[var(--primary)]/10 text-(--primary) hover:bg-[var(--primary)]/20 transition-all cursor-pointer font-medium"
-                      onclick={openRotationSettingsModal}
+                      onclick={openRotationSettings}
                     >
                       设置轮播歌单
                     </button>
@@ -4098,7 +4059,7 @@ $effect(() => {
                   class="flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scroll-autohide {queueScrolling ? 'is-scrolling' : ''} space-y-1"
                   onscroll={triggerQueueScroll}
                 >
-                  {#each rotationQueue as rItem (rItem.id)}
+                  {#each rotationQueue as rItem (rItem.entryId ?? rItem.id)}
                     {@render rotationTrackRow(rItem)}
                   {/each}
                 </div>
@@ -4310,12 +4271,12 @@ $effect(() => {
           {#if rotationQueue.length === 0}
             <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
               当前未开启歌单轮播或轮播池为空
-              {#if canManageRotation}
+              {#if isWalineLoggedIn}
                 <div class="mt-1.5">
                   <button
                     type="button"
                     class="px-3 py-1 text-[12px] rounded-lg border border-[var(--primary)]/35 bg-[var(--primary)]/10 text-(--primary) hover:bg-[var(--primary)]/20 transition-all cursor-pointer font-medium"
-                    onclick={openRotationSettingsModal}
+                    onclick={openRotationSettings}
                   >
                     设置轮播歌单
                   </button>
@@ -4324,7 +4285,7 @@ $effect(() => {
             </div>
           {:else}
             <div class="space-y-1">
-              {#each rotationQueue as rItem (rItem.id)}
+              {#each rotationQueue as rItem (rItem.entryId ?? rItem.id)}
                 {@render rotationTrackRow(rItem)}
               {/each}
             </div>
@@ -5404,6 +5365,9 @@ $effect(() => {
               entry.track.artist,
               entry.track.durationSec ? formatTime(entry.track.durationSec) : "",
               entry.lastRequesterName || "",
+              entry.track.rotationReplacement
+                ? "替代《" + entry.track.rotationReplacement.title + "》"
+                : "",
             ].filter(Boolean).join(" · ")}
             {@render trackRequestRow(
               entry.track,

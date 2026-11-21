@@ -1,8 +1,11 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { normalizeMusicTrack } from './music-input.mjs';
+import { musicTrackMatchKey } from './registry.mjs';
 
 export function stableTrack(track) {
-  const { streamUrl, proxyUrl, directUrl, lrcUrl, url, lrc, ...identity } = track;
+  const { streamUrl, proxyUrl, directUrl, lrcUrl, url, lrc, rotationEntryId, ...identity } = track;
   return identity;
 }
 
@@ -63,6 +66,11 @@ export class MusicManager {
     this._nextRotationLogId = 1;
     this.fallbackTracks = [];
     this.rotationDeck = [];
+    this.rotationEntryIds = new WeakMap();
+    this.rotationEntries = new Map();
+    this.rotationOffers = new WeakMap();
+    this.requestOffers = new WeakMap();
+    this.rotationRequests = new Set();
     this.lastPlayedFallbackId = null;
     this.fallbackPlaylistId = null;
     this.fallbackPlaylistName = '歌单轮播';
@@ -247,6 +255,21 @@ export class MusicManager {
     this.fallbackPlaylistId = playlistId;
     this.fallbackPlaylistName = playlistName;
     this.fallbackTracks = playlistId || all ? tracks : [];
+    this.rotationEntryIds = new WeakMap();
+    this.rotationEntries.clear();
+    this.rotationOffers = new WeakMap();
+    this.fallbackTracks.forEach((track, index) => {
+      const platform = track.sourcePlatform || track.provider || '';
+      const sourceId = track.sourceTrackId || track.sourceId || track.id;
+      const identity = sourceId ? [platform, sourceId] : [platform, track.title, track.artist, track.album];
+      const key = createHash('sha256')
+        .update(JSON.stringify([track.sourcePlaylistId || playlistId, ...identity]))
+        .digest('base64url');
+      const baseId = 'rotation:' + key;
+      const id = this.rotationEntries.has(baseId) ? baseId + ':' + index : baseId;
+      this.rotationEntryIds.set(track, id);
+      this.rotationEntries.set(id, track);
+    });
     this.fallbackGeneration++;
     this.reshuffleRotationDeck(true);
     this.preparedFallback = null;
@@ -285,11 +308,14 @@ export class MusicManager {
     }
     if (!this.rotationDeck.length) return [];
     return this.rotationDeck.slice(0, limit).map((track, index) => {
-      const sourceId = track.matchedTrack?.sourceId || track.sourceTrackId || track.sourceId || '';
-      const id = track.matchedTrack?.id || (sourceId ? `qq:${sourceId}` : track.id || `rotation:${index}`);
+      const sourceId = track.sourceTrackId || track.sourceId || '';
+      const platform = track.sourcePlatform || track.provider || 'qq';
+      const provider = platform === 'qqmusic' ? 'qq' : platform;
+      const id = track.id || (sourceId ? provider + ':' + sourceId : 'rotation:' + index);
       return {
         id,
-        sourcePlatform: track.sourcePlatform || track.provider || 'qq',
+        entryId: this.rotationEntryIds.get(track),
+        sourcePlatform: platform,
         sourceTrackId: sourceId,
         title: track.title || '未知曲目',
         artist: track.artist || '未知歌手',
@@ -310,13 +336,14 @@ export class MusicManager {
     const playId = playable?.id;
     const playSourceId = playable?.sourceId;
     const idx = this.rotationDeck.findIndex((t) => {
+      if (playable.rotationEntryId) return this.rotationEntryIds.get(t) === playable.rotationEntryId;
       const tid = t?.matchedTrack?.id || t?.id;
       const tsid = t?.matchedTrack?.sourceId || t?.sourceTrackId || t?.sourceId;
       return (playId && tid === playId) || (playSourceId && tsid === playSourceId);
     });
     if (idx !== -1) {
       this.rotationDeck.splice(idx, 1);
-    } else {
+    } else if (!playable.rotationEntryId) {
       this.rotationDeck.shift();
     }
     if (this.rotationDeck.length === 0 && this.fallbackTracks.length > 0) {
@@ -406,7 +433,122 @@ export class MusicManager {
     };
   }
 
-  async enqueueTrack(rawTrack, requester) {
+  preferredTrackKey(original, userKey) {
+    const sourceKey = userKey && musicTrackMatchKey(original);
+    if (!sourceKey) return null;
+    return 'music:preferred-track:' + createHash('sha256').update(JSON.stringify([userKey, sourceKey])).digest('hex');
+  }
+
+  getPreferredTrack(original, userKey) {
+    const key = this.preferredTrackKey(original, userKey);
+    if (!key) return null;
+    try {
+      return normalizeMusicTrack(this.chatDb?.getKv?.(key));
+    } catch (error) {
+      console.warn('[Music] preferred track read failed', error.message);
+      return null;
+    }
+  }
+
+  savePreferredTrack(original, userKey, track) {
+    const key = this.preferredTrackKey(original, userKey);
+    const identity = normalizeMusicTrack(track);
+    if (!key || !identity) return;
+    try {
+      this.chatDb?.setKv?.(key, identity);
+    } catch (error) {
+      console.warn('[Music] preferred track write failed', error.message);
+    }
+  }
+
+  async enqueueRandom(tracks, requester, active) {
+    const exclude = track => Boolean(track.id &&
+      (this.current?.track.id === track.id || this.queue.some(item => item.track.id === track.id)));
+    const candidates = tracks.filter(track => !exclude(track) && (!track.matchedTrack || !exclude(track.matchedTrack)));
+    const deadline = Date.now() + 12_000;
+    let temporaryFailure = false;
+    for (let attempt = 0; attempt < 3 && candidates.length; attempt++) {
+      if (!active()) return { ok: false, code: 'ROOM_CHANGED', error: '聊天室已切换，请重新点歌' };
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const index = Math.floor(Math.random() * candidates.length);
+      const [original] = candidates.splice(index, 1);
+      let result;
+      try {
+        result = await withTimeout(
+          this.resolveRotationSource(original, { alternatives: true, random: true, exclude, budgetMs: Math.min(remaining, 4800) }),
+          Math.min(remaining, 5000)
+        );
+      } catch {
+        temporaryFailure = true;
+        continue;
+      }
+      if (!active()) return { ok: false, code: 'ROOM_CHANGED', error: '聊天室已切换，请重新点歌' };
+      temporaryFailure ||= result.temporaryFailure === true;
+
+      const track = result.playable;
+      if (track && !exclude(track)) return this.enqueueTrack(track, requester, track);
+    }
+    return temporaryFailure
+      ? { ok: false, code: 'SOURCE_TEMPORARY', error: '曲库暂时没有响应，可以再抽一次' }
+      : { ok: false, code: 'NO_SOURCE', error: '这次没抽到可播曲目，可以再抽一次' };
+  }
+
+  async enqueueWithAlternatives(original, requester, { owner, active, offerId, choiceId }) {
+    const confirming = offerId !== undefined;
+    const offer = this.requestOffers.get(owner);
+    const choice = confirming && offer?.choices.find(option => option.track.id === choiceId);
+    if (confirming && (!offer || offer.token !== offerId || offer.expiresAt <= Date.now() || !choice)) {
+      return { ok: false, code: 'OFFER_EXPIRED', error: '可播版本已过期，请重新查找' };
+    }
+    if (!confirming) this.requestOffers.delete(owner);
+    const requested = confirming ? offer.original : original;
+    if (!requested) return { ok: false, code: 'TRACK_CHANGED', error: '找不到这条歌单曲目，请刷新歌单后重试' };
+
+    try {
+      const result = await withTimeout(
+        choice
+          ? this.resolve(choice.track, { fresh: true, rejectTransient: true }).then(playable => ({ playable }))
+          : this.resolveRotationSource(requested, {
+              alternatives: true, preferredTrack: this.getPreferredTrack(requested, requester.userKey)
+            }),
+        11_000
+      );
+      if (!active()) return { ok: false, code: 'ROOM_CHANGED', error: '聊天室已切换，请重新点歌' };
+      if (confirming && offer.expiresAt <= Date.now()) {
+        return { ok: false, code: 'OFFER_EXPIRED', error: '可播版本已过期，请重新查找' };
+      }
+      if (result.playable) {
+        this.requestOffers.delete(owner);
+        const playable = choice || result.usedPreference
+          ? { ...result.playable, rotationReplacement: { title: requested.title, artist: requested.artist } }
+          : result.playable;
+        const accepted = await this.enqueueTrack(playable, requester, playable);
+        if (accepted.ok && choice) this.savePreferredTrack(requested, requester.userKey, playable);
+        return accepted;
+      }
+      if (result.alternatives?.length) {
+        const token = randomUUID();
+        const expiresAt = Date.now() + 90_000;
+        const choices = result.alternatives;
+        this.requestOffers.set(owner, { token, expiresAt, original: requested, choices });
+        return { ok: false, code: 'ALTERNATIVES', offer: {
+          token, expiresAt,
+          choices: choices.map(({ track, relation }) => ({ track: stableTrack(track), relation }))
+        } };
+      }
+      if (!result.temporaryFailure) {
+        return { ok: false, code: 'NO_SOURCE', error: choice
+          ? '所选版本暂时无法播放，请重新查找'
+          : '这首歌暂时没有可播音源，也没有找到可播的替代版本' };
+      }
+    } catch (error) {
+      console.warn('[Music] request alternatives', this.roomId, error.message);
+    }
+    return { ok: false, code: 'SOURCE_TEMPORARY', error: '曲库暂时无法完成检查，请重试' };
+  }
+
+  async enqueueTrack(rawTrack, requester, verifiedSource) {
     const selectionStartedAt = Date.now();
     const requesterKey = requester.userKey;
     const requesterName = requester.name;
@@ -423,7 +565,7 @@ export class MusicManager {
     };
     const before = check();
     if (before) return { ok: false, error: before };
-    const playable = await this.resolve(rawTrack);
+    const playable = verifiedSource || await this.resolve(rawTrack);
     const after = check();
     if (after) return { ok: false, error: after };
     if (!playable) return { ok: false, error: '歌曲暂时没有可用音源' };
@@ -445,7 +587,7 @@ export class MusicManager {
       histEntry.requestCount += 1;
       histEntry.lastRequesterName = requesterName;
       histEntry.lastRequestedAt = now;
-      histEntry.track = { ...histEntry.track, ...track };
+      histEntry.track = track;
     }
 
     // Record into historyLogs & database
@@ -604,7 +746,7 @@ export class MusicManager {
       entry.lastRotatedAt = now;
       entry.lastPlaylistName = playlistName;
       entry.lastPlaylistId = playlistId;
-      entry.track = { ...entry.track, ...track };
+      entry.track = track;
     }
 
     const logEntry = {
@@ -805,80 +947,42 @@ export class MusicManager {
     };
   }
 
-  async resolveFallbackTrackPlayable(excludeIds = new Set()) {
-    if (this.fallbackTracks.length === 0) return null;
-    if (!this.rotationDeck.length) {
-      this.reshuffleRotationDeck();
+  async resolveRotationSource(candidate, { alternatives = false, exclude, budgetMs, preferredTrack, random } = {}) {
+    if (this.musicRegistry.resolveRotationTrack) {
+      return this.musicRegistry.resolveRotationTrack(candidate,
+        track => this.resolve(track, { rejectTransient: true }), { alternatives, exclude, budgetMs, preferredTrack, random });
     }
-    if (!this.rotationDeck.length) return null;
+    const matched = await this.musicRegistry.resolvePlaylistTrack(candidate);
+    const track = matched || (candidate.id?.startsWith('qq:') ? candidate : null);
+    return { playable: track && !exclude?.(track) ? await this.resolve(track) : null };
+  }
 
-    const currentId = this.current?.track?.id || '';
-    const currentSourceId = this.current?.track?.sourceId || '';
-    const maxAttempts = Math.min(this.rotationDeck.length, 12);
-    let attempts = 0;
-
-    while (this.rotationDeck.length > 0 && attempts < maxAttempts) {
-      attempts++;
-      const candidate = this.rotationDeck[0];
-      if (!candidate) {
-        this.rotationDeck.shift();
-        continue;
-      }
-
-      if (candidate._unmatchedAt && Date.now() - candidate._unmatchedAt < 30 * 60_000) {
-        this.rotationDeck.shift();
-        continue;
-      }
-
-      const itemSourceId = candidate.matchedTrack?.sourceId || candidate.sourceTrackId || candidate.sourceId || '';
-      const itemId = candidate.matchedTrack?.id || (itemSourceId ? `qq:${itemSourceId}` : candidate.id || '');
-
-      if (itemId && this.musicRegistry?.isKnownUnplayable?.(itemId)) {
-        this.rotationDeck.shift();
-        continue;
-      }
-
-      if (this.rotationDeck.length > 1 && ((itemSourceId && itemSourceId === currentSourceId) || (itemId && itemId === currentId))) {
-        this.rotationDeck.push(this.rotationDeck.shift());
-        continue;
-      }
-
-      if (this.rotationDeck.length > excludeIds.size + 1 && itemId && excludeIds.has(itemId)) {
-        this.rotationDeck.push(this.rotationDeck.shift());
-        continue;
-      }
-
+  async resolveFallbackTrackPlayable(excludeIds = new Set()) {
+    if (!this.fallbackTracks.length) return null;
+    if (!this.rotationDeck.length) this.reshuffleRotationDeck();
+    const deck = this.rotationDeck;
+    const generation = this.fallbackGeneration;
+    const exclude = track => deck.length > 1 &&
+      (track.id === this.current?.track?.id || excludeIds.has(track.id));
+    const deadline = Date.now() + 8000;
+    for (const candidate of deck.slice(0, 12)) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      let playable;
       try {
-        const track = await withTimeout(
-          this.musicRegistry.resolvePlaylistTrack(candidate),
-          1800,
-          'resolvePlaylistTrack timeout'
-        );
-        if (!track) {
-          this.rotationDeck.shift();
-          continue;
-        }
-        if (this.rotationDeck.length > 1 && (track.id === currentId || excludeIds.has(track.id))) {
-          this.rotationDeck.push(this.rotationDeck.shift());
-          continue;
-        }
-        if (this.musicRegistry?.isKnownUnplayable?.(track.id)) {
-          this.rotationDeck.shift();
-          continue;
-        }
-        const playable = await withTimeout(
-          this.resolve(track),
-          2000,
-          'resolve timeout'
-        );
-        if (playable) {
-          return playable;
-        }
-        this.rotationDeck.shift();
-      } catch (err) {
-        console.warn(`[Music:${this.roomId}] Error resolving fallback track:`, err.message);
-        this.rotationDeck.shift();
+        ({ playable } = await withTimeout(
+          this.resolveRotationSource(candidate, { exclude }), Math.min(remaining, 3000)
+        ));
+      } catch (error) {
+        console.warn('[Music] rotation source', this.roomId, error.message);
       }
+      if (deck !== this.rotationDeck || generation !== this.fallbackGeneration) return null;
+      const index = deck.indexOf(candidate);
+      if (index < 0) continue;
+      if (playable) return { ...playable, rotationEntryId: this.rotationEntryIds.get(candidate) };
+      deck.splice(index, 1);
+      // Keep the current song at the end so a one-song (or all-duplicate) pool can repeat.
+      if (exclude(candidate)) deck.push(candidate);
     }
     return null;
   }
@@ -929,13 +1033,14 @@ export class MusicManager {
 
   async resolve(track, options) {
     this.pendingResolutions ??= new Map();
-    const key = JSON.stringify([track.id, Boolean(options?.fresh)]);
+    const key = JSON.stringify([track.id, Boolean(options?.fresh), Boolean(options?.rejectTransient)]);
     const running = this.pendingResolutions.get(key);
     if (running) return running;
     const pending = Promise.resolve().then(() =>
       this.musicRegistry.resolvePlayable(track, this.serverOrigin, this.signSecret, options)
     ).catch(error => {
       console.warn('[Music] resolve', this.roomId, track.id, error.message);
+      if (options?.rejectTransient) throw error;
       return null;
     }).finally(() => this.pendingResolutions.delete(key));
     this.pendingResolutions.set(key, pending);
@@ -1063,6 +1168,26 @@ export class MusicManager {
     return { ok: true, skipped: false, votes: this.current.skipVotes.length, threshold };
   }
 
+  removeRotation(target, actor) {
+    if (!actor?.userKey) return { ok: false, error: '请先登录' };
+    if (!this.rotationDeck.length) return { ok: false, error: '轮播队列为空' };
+    const entryId = typeof target === 'object' ? target?.entryId : target;
+    const trackId = typeof target === 'object' ? target?.trackId || target?.id : target;
+    const entry = this.rotationEntries.get(entryId) || this.findRotationEntry(trackId);
+    const index = this.rotationDeck.indexOf(entry);
+    if (index < 0) return { ok: false, error: '曲目不在当前轮播队列中' };
+    const [removed] = this.rotationDeck.splice(index, 1);
+    if (index === 0) {
+      this.preparedFallback = null;
+      clearTimeout(this._prepareFallbackTimer);
+      this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 300);
+    }
+    if (!this.rotationDeck.length && this.fallbackTracks.length) this.reshuffleRotationDeck();
+    this.savePlayback();
+    this.onStateChanged();
+    return { ok: true, track: removed };
+  }
+
   removeQueue(uid, actor) {
     const idx = this.queue.findIndex((q) => q.uid === uid);
     if (idx < 0) return { ok: false, error: '排队曲目不存在' };
@@ -1133,85 +1258,123 @@ export class MusicManager {
     return { ok: true };
   }
 
-  async playRotationTrack(target, actor, listeningCount = 0) {
-    if (!this.fallbackTracks.length && !this.rotationDeck.length) {
-      return { ok: false, error: '当前没有开启歌单轮播' };
-    }
+  rotationPermission(actor, listeningCount) {
     const current = this.current;
-    const isFallback = Boolean(current?.isFallback);
-    const isOwner = actor?.userKey === current?.requesterKey;
-    const isAdmin = Boolean(actor?.isAdmin);
-    const canDirect = !current || isFallback || isOwner || isAdmin || listeningCount <= 2;
-    if (!canDirect) {
-      return { ok: false, error: '当前有其他成员点播的歌曲正在播放，暂不能直接切换轮播' };
+    return !current || current.isFallback || actor?.userKey === current.requesterKey ||
+      actor?.isAdmin || listeningCount <= 2;
+  }
+
+  findRotationEntry(target) {
+    const id = typeof target === 'string' ? target : target?.entryId || target?.id;
+    if (typeof id !== 'string' || !id) return null;
+    if (id.startsWith('rotation:')) return this.rotationEntries.get(id);
+    // Accept IDs from clients loaded before the deployment.
+    const matches = this.fallbackTracks.filter(track =>
+      track.id === id || track.matchedTrack?.id === id ||
+      id === 'qq:' + (track.matchedTrack?.sourceId || track.sourceTrackId || track.sourceId || '')
+    );
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  rotationFailure(code, error) {
+    return { ok: false, code, error };
+  }
+
+  async playRotationTrack(target, actor, listeningCount = 0, context = {}) {
+    const owner = context.owner || actor;
+    const getAudience = context.getAudience || (() => listeningCount);
+    const active = context.active || (() => true);
+    if (this.rotationRequests.has(actor.userKey) || this.rotationRequests.size >= 12) {
+      return this.rotationFailure('BUSY', '上一项切播请求仍在处理，请稍后重试');
     }
-
-    const targetId = typeof target === 'string' ? target : (target?.id || target?.matchedTrack?.id || '');
-    const targetSourceId = typeof target === 'object' ? (target?.sourceTrackId || target?.sourceId || '') : '';
-
-    let candidate = this.rotationDeck.find(t => {
-      const tid = t?.matchedTrack?.id || t?.id;
-      const tsid = t?.matchedTrack?.sourceId || t?.sourceTrackId || t?.sourceId;
-      return (targetId && tid === targetId) || (targetSourceId && tsid === targetSourceId);
-    });
-
-    if (!candidate) {
-      candidate = this.fallbackTracks.find(t => {
-        const tid = t?.matchedTrack?.id || t?.id;
-        const tsid = t?.matchedTrack?.sourceId || t?.sourceTrackId || t?.sourceId;
-        return (targetId && tid === targetId) || (targetSourceId && tsid === targetSourceId);
-      });
+    if (context.hasExpectedPlay && (context.playUid || '') !== (this.current?.uid || '')) {
+      return this.rotationFailure('PLAYBACK_CHANGED', '房间播放已变化，请重新选择');
     }
-
-    if (!candidate && typeof target === 'object' && target?.title) {
-      candidate = target;
-    }
-
-    if (!candidate) {
-      return { ok: false, error: '未在轮播歌单中找到该曲目' };
+    if (!this.rotationPermission(actor, getAudience())) {
+      return this.rotationFailure('FORBIDDEN', '当前有其他成员点播的歌曲正在播放，暂不能直接切换轮播');
     }
 
     const selectionStartedAt = Date.now();
-    clearTimeout(this._advanceTimer);
-    clearTimeout(this._refreshPreparedTimer);
-    clearTimeout(this._prepareFallbackTimer);
-
-    let resolved = null;
-    try {
-      const track = await withTimeout(
-        this.musicRegistry.resolvePlaylistTrack(candidate),
-        2500,
-        'resolvePlaylistTrack timeout'
-      );
-      const toResolve = track || (candidate?.id?.startsWith('qq:') ? candidate : null);
-      if (toResolve) {
-        resolved = await withTimeout(
-          this.resolve(toResolve),
-          2500,
-          'resolve timeout'
-        );
+    const confirming = context.offerId !== undefined;
+    let offer;
+    let requested;
+    let selected;
+    if (confirming) {
+      offer = this.rotationOffers.get(owner);
+      selected = offer?.choices.find(option => option.track.id === context.choiceId);
+      if (!offer || offer.token !== context.offerId || offer.expiresAt <= Date.now() || !selected) {
+        return this.rotationFailure('OFFER_EXPIRED', '可播版本已过期，请重新查找');
       }
-    } catch (err) {
-      console.warn(`[Music:${this.roomId}] playRotationTrack failed:`, err.message);
+      requested = offer.requested;
+    } else {
+      this.rotationOffers.delete(owner);
+      requested = this.findRotationEntry(target);
     }
-
-    if (!resolved) {
-      return { ok: false, error: '该歌曲暂时无法解析播放源' };
+    if (!requested) {
+      return this.rotationFailure('ROTATION_CHANGED', '轮播列表已更新，请重新选择曲目');
     }
+    const entryId = this.rotationEntryIds.get(requested);
+    const snapshot = { current: this.current, queue: this.queue[0], pool: this.rotationEntryIds };
+    const stillCurrent = () => active() && snapshot.current === this.current &&
+      snapshot.queue === this.queue[0] && snapshot.pool === this.rotationEntryIds &&
+      this.rotationPermission(actor, getAudience()) &&
+      (!offer || (offer.snapshot.current === this.current && offer.snapshot.queue === this.queue[0] &&
+        offer.snapshot.pool === this.rotationEntryIds && offer.expiresAt > Date.now()));
+    const changed = () => this.rotationFailure('PLAYBACK_CHANGED', '房间播放或轮播列表已变化，请重新选择');
+    if (!stillCurrent()) return changed();
 
-    this.consumeRotationTrack(resolved);
-    this.lastPlayedFallbackId = resolved.id;
-    this.generation++;
-    this.fallbackGeneration++;
-    this.preparedFallback = null;
-
-    this.playTrack(resolved, {
-      userKey: 'system:fallback',
-      name: (this.fallbackPlaylistName || '歌单轮播') + ' (轮播)'
-    }, true, undefined, undefined, selectionStartedAt);
-
-    this.onStateChanged();
-    return { ok: true };
+    this.rotationRequests.add(actor.userKey);
+    try {
+      const result = await withTimeout(
+        selected
+          ? this.resolve(selected.track, { fresh: true, rejectTransient: true }).then(playable => ({ playable }))
+          : this.resolveRotationSource(requested, {
+              alternatives: Boolean(context.allowAlternatives),
+              preferredTrack: this.getPreferredTrack(requested, actor.userKey)
+            }),
+        11_000
+      );
+      if (!stillCurrent()) return changed();
+      if (result.playable) {
+        this.rotationOffers.delete(owner);
+        const track = selected || result.usedPreference
+          ? { ...result.playable, rotationReplacement: { title: requested.title, artist: requested.artist } }
+          : result.playable;
+        this.consumeRotationTrack({ ...track, rotationEntryId: entryId });
+        this.lastPlayedFallbackId = track.id;
+        this.playTrack(track, {
+          userKey: 'system:fallback',
+          name: (this.fallbackPlaylistName || '歌单轮播') + ' (轮播)'
+        }, true, undefined, undefined, selectionStartedAt);
+        if (selected) this.savePreferredTrack(requested, actor.userKey, track);
+        this.onStateChanged();
+        return { ok: true, playUid: this.current.uid };
+      }
+      if (result.alternatives?.length) {
+        const token = randomUUID();
+        const expiresAt = Date.now() + 90_000;
+        this.rotationOffers.set(owner, {
+          token, expiresAt, choices: result.alternatives, requested, snapshot
+        });
+        return {
+          ok: false,
+          code: 'ALTERNATIVES',
+          offer: {
+            token, expiresAt,
+            choices: result.alternatives.map(({ track, relation }) => ({ track: stableTrack(track), relation }))
+          }
+        };
+      }
+      if (result.temporaryFailure) {
+        return this.rotationFailure('SOURCE_TEMPORARY', '曲库暂时无法完成检查，请重试');
+      }
+      return this.rotationFailure('NO_SOURCE', selected ? '这个版本的音源已不可用，请重新查找' : '这首歌暂无可用音源');
+    } catch (error) {
+      console.warn('[Music] manual rotation source', this.roomId, error.message);
+      return this.rotationFailure('SOURCE_TEMPORARY', '曲库暂时无法完成检查，请重试');
+    } finally {
+      this.rotationRequests.delete(actor.userKey);
+    }
   }
 
   reportDuration(playUid, value) {
@@ -1249,7 +1412,7 @@ export class MusicManager {
       // A client timeout is not evidence that the shared source is broken.
       const healthy = await this.musicRegistry.isHealthy(play.track, this.signSecret).catch(() => false);
       if (stale() || healthy) return;
-      const playable = await this.resolve(play.track, { fresh: true });
+      const playable = await this.resolve(play.track, { fresh: true, rejectTransient: play.isFallback });
       if (stale()) return;
       play.recoveryCount = (play.recoveryCount || 0) + 1;
       if (playable) {
@@ -1257,7 +1420,11 @@ export class MusicManager {
         play.track = playable;
         play.sourceRevision++;
         this.onStateChanged();
+      } else if (play.isFallback) {
+        await this.advanceNext();
       }
+    } catch (error) {
+      console.warn('[Music] rotation recovery', this.roomId, error.message);
     } finally {
       if (this.recovering === play) this.recovering = null;
     }

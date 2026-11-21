@@ -1,0 +1,48 @@
+diff --git a/server.mjs b/server.mjs
+--- a/server.mjs
++++ b/server.mjs
+@@ -4713,7 +4713,10 @@
+           if (requestId) ws.send(JSON.stringify({
+             type: 'music:request_result', roomId: requestedRoom, requestId,
+             ok: result.ok, error: result.error, code: result.code,
+-            position: result.position, playImmediately: result.playImmediately, offer: result.offer
++            position: result.position, playImmediately: result.playImmediately, offer: result.offer,
++            randomTrack: result.ok && packet.randomPlaylistId && result.track ? {
++              title: result.track.title, artist: result.track.artist, replacement: result.track.rotationReplacement
++            } : undefined
+           }));
+           else if (!result.ok) ws.send(JSON.stringify({ type: 'error', code: result.code, message: result.error }));
+         };
+@@ -4729,11 +4732,12 @@
+         try {
+           const input = packet.track;
+           let item;
++          const playlistId = packet.randomPlaylistId ?? input?.playlistId;
++          const list = playlistId === 'pl_collective_favorites'
++            ? publicRotationPlaylist(playlistId)
++            : (typeof playlistId === 'string' && Object.hasOwn(playlistDetailsStore, playlistId)
++                ? playlistDetailsStore[playlistId] : null);
+           if (input?.playlistId || input?.provider === 'external') {
+-            const list = input?.playlistId === 'pl_collective_favorites'
+-              ? publicRotationPlaylist('pl_collective_favorites')
+-              : (typeof input?.playlistId === 'string' && Object.hasOwn(playlistDetailsStore, input.playlistId)
+-                  ? playlistDetailsStore[input.playlistId] : null);
+             item = (list && (list.id === 'pl_collective_favorites' || visiblePlaylist(list, actor)))
+               ? (Number.isSafeInteger(input.position)
+                   ? list.tracks?.find(song => song.position === input.position)
+@@ -4743,7 +4747,14 @@
+           const manager = getMusicManager(requestedRoom);
+           let track;
+           let result;
+-          if (packet.allowAlternatives === true && requestId) {
++          if (packet.randomPlaylistId !== undefined) {
++            if (!requestId || typeof packet.randomPlaylistId !== 'string' || !list ||
++                (list.id !== 'pl_collective_favorites' && !visiblePlaylist(list, actor))) {
++              reply({ ok: false, code: 'TRACK_CHANGED', error: '找不到这个歌单，请刷新后再试' });
++              return;
++            }
++            result = await manager.enqueueRandom(list.tracks || [], actor, active);
++          } else if (packet.allowAlternatives === true && requestId) {
+             const original = item || (!input?.playlistId ? normalizeMusicTrack(input) : null);
+             if (packet.offerId !== undefined &&
+                 (typeof packet.offerId !== 'string' || packet.offerId.length !== 36 ||

@@ -1,0 +1,87 @@
+diff --git a/server.mjs b/server.mjs
+--- a/server.mjs
++++ b/server.mjs
+@@ -9,7 +9,9 @@ import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, createReadStream, createWriteStream, statSync, unlinkSync } from 'node:fs';
+ import { join } from 'node:path';
+ import { WebSocketServer, WebSocket } from 'ws';
+ 
+ import { QQMusicProvider } from './src/music/qq-music.mjs';
++import { KugouMusicProvider, NeteaseMusicProvider } from './src/music/catalog-providers.mjs';
++import { YoutubeCandidates } from './src/music/youtube-candidates.mjs';
+ import { MusicRegistry } from './src/music/registry.mjs';
+ import { verifyStreamProxyToken } from './src/music/stream-signer.mjs';
+ import { handleStreamProxyRequest, maintainAudioCache, prefetchAudio } from './src/music/stream-cache.mjs';
+@@ -947,6 +949,10 @@
+ 
+ // Music System Initialization (Independent Multi-Room Engines)
+ const musicProvider = new QQMusicProvider(CYAPI_KEY);
+-const musicRegistry = new MusicRegistry([musicProvider]);
++const musicProviders = [musicProvider];
++if (process.env.CHAT_MUSIC_ENABLE_NETEASE !== '0') musicProviders.push(new NeteaseMusicProvider());
++if (process.env.CHAT_MUSIC_ENABLE_KUGOU === '1') musicProviders.push(new KugouMusicProvider());
++const musicRegistry = new MusicRegistry(musicProviders, { matchStore: chatDb });
++const youtubeCandidates = new YoutubeCandidates(process.env.YOUTUBE_DATA_API_KEY);
+ 
+ function getOnlineUserKeys(roomId = null) {
+@@ -1130,6 +1136,25 @@ for (const roomId of MUSIC_ROOMS) {
+   });
+ }
+ 
++let matchingPublicPlaylists = false;
++async function preMatchPublicPlaylists() {
++  if (matchingPublicPlaylists || process.env.CHAT_MUSIC_PREMATCH === '0') return;
++  matchingPublicPlaylists = true;
++  try {
++    const playlists = Object.values(playlistDetailsStore)
++      .filter(playlist => playlist.isPublic && playlist.tracks?.length)
++      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
++    await musicRegistry.preMatchPlaylists(playlists,
++      track => musicRegistry.resolvePlayable(track, SERVER_ORIGIN, STREAM_SIGN_SECRET));
++  } catch (error) {
++    console.warn('[Music] playlist pre-match:', error.message);
++  } finally {
++    matchingPublicPlaylists = false;
++  }
++}
++setTimeout(preMatchPublicPlaylists, 90_000).unref();
++setInterval(preMatchPublicPlaylists, 30 * 60_000).unref();
++
+ function gracefulShutdown(signal) {
+   console.log(`[Server] Received ${signal}, saving music states before exit...`);
+   try {
+@@ -3746,3 +3771,21 @@
++  if (url.pathname === '/api/music/youtube-candidates' && req.method === 'GET') {
++    const q = (url.searchParams.get('q') || '').trim();
++    const reply = (status, body) => {
++      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
++      res.end(JSON.stringify(body));
++    };
++    if (!youtubeCandidates.enabled) return reply(404, { ok: false });
++    if (!q || q.length > 120) return reply(400, { ok: false });
++    const caller = await resolveHttpCaller(req);
++    if (!caller?.userKey) return reply(401, { ok: false });
++    try {
++      const videos = await youtubeCandidates.search(q, caller.userKey);
++      return reply(200, { ok: true, videos });
++    } catch (error) {
++      return reply(error.statusCode === 429 ? 429 : 502, { ok: false });
++    }
++  }
++
+   // Music Favorite Toggle: POST /api/music/favorite/toggle
+   if (url.pathname === '/api/music/favorite/toggle' && req.method === 'POST') {
+     try {
+@@ -4350,5 +4393,6 @@
+   ws.send(JSON.stringify({
+     type: 'room:init',
++    youtubeCandidatesEnabled: youtubeCandidates.enabled,
+     roomId,
+     interconnected: roomId === 'interconnect',
+     self: ws.user,
+@@ -4447,5 +4491,6 @@
+         ws.send(JSON.stringify({
+           type: 'room:init',
++          youtubeCandidatesEnabled: youtubeCandidates.enabled,
+           roomId: ws.currentRoom,
+           interconnected: ws.currentRoom === 'interconnect',
+           self: ws.user,

@@ -1,4 +1,4 @@
-import { probeAudio } from './audio-source.mjs';
+import { isAllowedStreamTarget, probeAudio } from './audio-source.mjs';
 
 const QQ_HEADERS = {
   'User-Agent':
@@ -9,6 +9,27 @@ const QQ_HEADERS = {
 function buildAlbumCoverUrl(albumMid) {
   if (!albumMid) return '';
   return `https://y.gtimg.cn/music/photo_new/T002R300x300M000${encodeURIComponent(albumMid)}.jpg`;
+}
+
+function readArtistCredit(singer) {
+  const name = typeof singer?.name === 'string' ? singer.name.trim().slice(0, 240) : '';
+  if (!name) return null;
+  const mid = typeof singer.mid === 'string' ? singer.mid.trim() : '';
+  const id = /^[A-Za-z0-9]{1,32}$/.test(mid) && mid !== '0'
+    ? 'mid:' + mid
+    : Number.isSafeInteger(singer.id) && singer.id > 0 ? 'id:' + singer.id : '';
+  const alias = typeof singer.transname === 'string' ? singer.transname.trim().slice(0, 240) : '';
+  return { name, ...(id && { id }), ...(id && alias && alias !== name && { alias }) };
+}
+
+function extractCoverUrl(raw) {
+  if (typeof raw === 'string' && raw.startsWith('http')) return raw;
+  if (raw && typeof raw === 'object') {
+    for (const key of ['medium', 'large', 'small']) {
+      if (typeof raw[key] === 'string' && raw[key].startsWith('http')) return raw[key];
+    }
+  }
+  return undefined;
 }
 
 function decodeBase64Utf8(b64) {
@@ -123,12 +144,10 @@ export class QQMusicProvider {
         const trackId = `qq:${mid}`;
         if (!mid || !title || seenIds.has(trackId)) continue;
         seenIds.add(trackId);
-        const singers = Array.isArray(item.singer)
-          ? item.singer
-              .map((s) => s.name?.trim())
-              .filter(Boolean)
-              .join(' / ')
-          : '';
+        const artistCredits = Array.isArray(item.singer)
+          ? item.singer.map(readArtistCredit).filter(Boolean)
+          : [];
+        const artistNames = artistCredits.map(credit => credit.name);
         const albumMid = (item.albummid || '').trim();
         const albumName = (item.albumname || '').trim();
         const durationSec =
@@ -141,7 +160,9 @@ export class QQMusicProvider {
           provider: this.id,
           sourceId: mid,
           title,
-          artist: singers || '未知歌手',
+          artist: artistNames.join(' / ') || '未知歌手',
+          artistNames,
+          ...(artistCredits.length && { artistCredits }),
           album: albumName || undefined,
           cover: buildAlbumCoverUrl(albumMid),
           durationSec
@@ -193,46 +214,102 @@ export class QQMusicProvider {
     }
   }
 
-  async resolveStream(mid) {
-    const id = encodeURIComponent(mid);
-    const sources = [
-      ...(this.cyapiKey ? [{
-        name: 'cyapi',
-        endpoint: 'https://cyapi.top/API/qq_music.php?type=json&quality=128&mid=' + id +
-          '&apikey=' + encodeURIComponent(this.cyapiKey),
-        read: data => data
-      }] : []),
-      {
-        name: 'vkeys',
-        endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=1&mid=' + id,
-        read: data => data.data
+  async trySource(mid, source) {
+    try {
+      const response = await fetch(source.endpoint, {
+        headers: QQ_HEADERS,
+        signal: AbortSignal.timeout(source.timeoutMs || 5000)
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        if (response.status === 404) return null;
+        throw new Error('resolver HTTP ' + response.status);
       }
-    ];
-
-    for (const source of sources) {
-      try {
-        const response = await fetch(source.endpoint, {
-          headers: QQ_HEADERS,
-          signal: AbortSignal.timeout(4500)
-        });
-        if (!response.ok) {
-          await response.body?.cancel();
-          throw new Error('resolver HTTP ' + response.status);
-        }
-        const data = source.read(await response.json());
-        if (typeof data?.url !== 'string') throw new Error('no audio URL');
-        const mimeType = await probeAudio(data.url);
-        return {
-          url: data.url,
-          mimeType,
-          cover: data.cover || data.pic,
-          durationSec: Number(data.interval) || undefined,
-          providerChannel: source.name
-        };
-      } catch (error) {
+      const data = source.read(await response.json());
+      if (data == null) throw new Error('missing resolver payload');
+      if (typeof data.url !== 'string' || !data.url.trim()) return null;
+      if (!isAllowedStreamTarget(data.url)) throw new Error('untrusted audio host');
+      const mimeType = await probeAudio(data.url);
+      const durationVal = Number(data.interval || data.duration);
+      return {
+        url: data.url,
+        mimeType,
+        cover: extractCoverUrl(data.cover || data.pic),
+        durationSec: Number.isFinite(durationVal) && durationVal > 0 ? Math.round(durationVal) : undefined,
+        providerChannel: source.name
+      };
+    } catch (error) {
+      if (mid && mid !== '0') {
         console.warn('[MusicSource]', source.name, mid, error.message);
       }
+      throw error;
     }
+  }
+
+  async resolveStream(mid) {
+    const cleanMid = (mid || '').trim();
+    if (!cleanMid || cleanMid === '0') return null;
+    const id = encodeURIComponent(cleanMid);
+
+    // Prefer the 128 kbps QQ Music stream from vkeys.
+    const vkeys128Source = {
+      name: 'vkeys-128',
+      timeoutMs: 2400,
+      endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=6&mid=' + id,
+      read: data => data?.data
+    };
+
+    // Keep the existing secondary supplier for the same QQ Music track.
+    const cyapiSource = this.cyapiKey ? {
+      name: 'cyapi',
+      timeoutMs: 3200,
+      endpoint: 'https://cyapi.top/API/qq_music.php?type=json&quality=128&mid=' + id +
+        '&apikey=' + encodeURIComponent(this.cyapiKey),
+      read: data => data
+    } : null;
+
+    let temporaryFailure = false;
+    const attempt = source => this.trySource(cleanMid, source).catch(() => {
+      temporaryFailure = true;
+      return null;
+    });
+    const primaryPromise = attempt(vkeys128Source);
+    let hedgeTimer;
+    const earlyResult = await Promise.race([
+      primaryPromise,
+      new Promise(resolve => {
+        hedgeTimer = setTimeout(() => resolve('HEDGE_TIMEOUT'), 650);
+      })
+    ]);
+    clearTimeout(hedgeTimer);
+
+    if (earlyResult && earlyResult !== 'HEDGE_TIMEOUT') {
+      return earlyResult;
+    }
+
+    // If the preferred supplier is slow or unavailable, race the remaining sources.
+    const candidates = [];
+    if (earlyResult === 'HEDGE_TIMEOUT') {
+      candidates.push(primaryPromise);
+    }
+
+    if (cyapiSource) {
+      candidates.push(attempt(cyapiSource));
+    }
+
+    try {
+      const winner = await Promise.any(
+        candidates.map(async p => {
+          const res = await p;
+          if (!res) throw new Error('null source');
+          return res;
+        })
+      );
+      if (winner) return winner;
+    } catch {
+      if (temporaryFailure) throw new Error('Music source temporarily unavailable');
+    }
+
     return null;
   }
 

@@ -15,6 +15,7 @@ import {
 	resolveExternalOrigin,
 } from "./chatClient";
 import type {
+	ChatDesktopNotificationMode,
 	ChatMentionCandidate,
 	ChatOnlineMember,
 	ChatSessionUser,
@@ -38,6 +39,7 @@ interface Props {
 	isWindowFocused?: boolean;
 	interconnectSites?: InterconnectSite[];
 	desktopNotificationEnabled?: boolean;
+	desktopNotificationMode?: ChatDesktopNotificationMode;
 	desktopNotificationPermission?: NotificationPermission;
 	roomUnreadCounts?: Record<string, number>;
 	roomAvatars?: Record<string, string>;
@@ -65,6 +67,7 @@ const {
 	isWindowFocused = true,
 	interconnectSites = [],
 	desktopNotificationEnabled = false,
+	desktopNotificationMode = "off",
 	desktopNotificationPermission = "default" as NotificationPermission,
 	roomUnreadCounts = {},
 	roomAvatars = {},
@@ -109,27 +112,42 @@ const isCurrentInterconnect = $derived(INTERCONNECT_ROOM_IDS.has(currentRoom));
 
 let failedRoomAvatars = $state<Record<string, boolean>>({});
 
+const effectiveNotificationMode = $derived.by<ChatDesktopNotificationMode>(
+	() => {
+		if (desktopNotificationMode) return desktopNotificationMode;
+		return desktopNotificationEnabled ? "all" : "off";
+	},
+);
+
 const isNotificationActive = $derived(
 	Boolean(
-		desktopNotificationEnabled && desktopNotificationPermission === "granted",
+		effectiveNotificationMode !== "off" &&
+			desktopNotificationPermission === "granted",
 	),
 );
 
 const notificationTooltip = $derived.by(() => {
 	if (desktopNotificationPermission === "denied") {
-		return "通知已禁用";
+		return "桌面通知已被浏览器拦截（点击查看提示）";
 	}
-	if (isNotificationActive) {
-		return "关闭通知";
+	if (effectiveNotificationMode === "all") {
+		return "桌面通知：全部消息（点击切为关闭）";
 	}
-	return "开启通知";
+	if (effectiveNotificationMode === "mention") {
+		return "桌面通知：仅提及与回复（点击切为全部消息）";
+	}
+	return "桌面通知：已关闭（点击开启）";
 });
 
-const notificationIcon = $derived(
-	isNotificationActive
-		? "material-symbols:notifications-outline-rounded"
-		: "material-symbols:notifications-off-outline-rounded",
-);
+const notificationIcon = $derived.by(() => {
+	if (effectiveNotificationMode === "all") {
+		return "mingcute:bell-ringing-line";
+	}
+	if (effectiveNotificationMode === "mention") {
+		return "mingcute:notification-newdot-line";
+	}
+	return "mingcute:notification-off-line";
+});
 
 function isExternalMember(member: {
 	source?: string;

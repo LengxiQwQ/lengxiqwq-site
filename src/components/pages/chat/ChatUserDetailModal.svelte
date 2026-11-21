@@ -43,7 +43,7 @@ interface Props {
 	onClose: () => void;
 	onMention: (name: string, userKey?: string) => void;
 	onEditSelf: () => void;
-	onEnqueueTrack?: (track: ChatMusicTrack) => void;
+	onEnqueueTrack?: (track: ChatMusicTrack, anchor?: HTMLElement) => void;
 	onOpenPlaylist?: (
 		playlistId: string,
 		summary?: Partial<PlaylistSummary>,
@@ -1879,8 +1879,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                     <button
                       type="button"
                       class="chat-queue-toggle-btn text-[11px]! px-2.5! py-1! shrink-0"
-                      onclick={() => {
-                        onEnqueueTrack(item.track);
+                      onclick={(event) => {
+                        onEnqueueTrack(item.track, event.currentTarget);
                       }}
                     >
                       + 点歌
@@ -1951,8 +1951,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                     <button
                       type="button"
                       class="chat-queue-toggle-btn text-[11px]! px-2.5! py-1! shrink-0"
-                      onclick={() => {
-                        onEnqueueTrack(item.track);
+                      onclick={(event) => {
+                        onEnqueueTrack(item.track, event.currentTarget);
                       }}
                     >
                       + 点歌

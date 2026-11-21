@@ -7,20 +7,114 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { MusicManager } from '../src/music/music-manager.mjs';
+import { ChatDatabase } from '../src/db/database.mjs';
 import { MusicRegistry } from '../src/music/registry.mjs';
 import { QQMusicProvider } from '../src/music/qq-music.mjs';
+import { NeteaseMusicProvider } from '../src/music/catalog-providers.mjs';
+import { lookupPreferredProviders } from '../src/music/provider-routing.mjs';
+import { YoutubeCandidates } from '../src/music/youtube-candidates.mjs';
 
 const origin = 'https://example.test';
 const track = id => ({ id: 'qq:' + id, provider: 'qq', sourceId: id, title: id, durationSec: 180 });
 const actor = { userKey: 'member', name: 'Member' };
 const playable = item => ({ ...item, streamUrl: origin + '/audio/' + item.sourceId });
 
-async function manager(t, registry, roomId = 'chat', dataDir) {
+test('a missed primary starts both alternatives before either alternative returns', async () => {
+  const starts = [];
+  const pending = new Map();
+  const lookup = lookupPreferredProviders(['qq', 'kugou', 'netease'], id => {
+    starts.push(id);
+    if (id === 'qq') return {};
+    return new Promise(resolve => pending.set(id, resolve));
+  }, 1000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(starts, ['qq', 'kugou', 'netease']);
+  pending.get('netease')({ playable: track('lower') });
+  pending.get('kugou')({ playable: track('higher') });
+  assert.equal((await lookup).playable.sourceId, 'higher');
+});
+
+test('a slow primary allows the alternatives to run without holding the whole request open', async () => {
+  let signal;
+  const found = await lookupPreferredProviders(['qq', 'netease'], (id, lookupSignal) => {
+    signal = lookupSignal;
+    return id === 'qq' ? new Promise(() => {}) : { playable: track('ready') };
+  }, 1600);
+  assert.equal(found.playable.sourceId, 'ready');
+  assert.equal(signal.aborted, true);
+});
+
+test('NetEase native tracks start with their own ID and a fast hit skips other catalogs', async () => {
+  let searched = 0;
+  const provider = id => ({ id, async search() { searched++; return { tracks: [] }; } });
+  const registry = new MusicRegistry([provider('qq'), provider('netease')]);
+  const source = { sourcePlatform: 'netease', sourceTrackId: '1234', title: 'Original', artist: 'Artist', durationSec: 180 };
+  const found = await registry.resolveRotationTrack(source, async item => playable(item), { alternatives: true });
+  assert.equal(found.playable.id, 'netease:1234');
+  assert.equal(searched, 0);
+});
+
+test('only verified matches survive process restart and the background worker reuses them', async () => {
+  const saved = new Map();
+  const store = { getKv: key => saved.get(key), setKv: (key, value) => saved.set(key, value) };
+  const candidate = { ...track('match'), title: 'Original', artist: 'Artist' };
+  const source = { sourcePlatform: 'spotify', sourceTrackId: 'spotify-id', title: 'Original', artist: 'Artist', durationSec: 180 };
+  let searches = 0;
+  const provider = { id: 'qq', async search() { searches++; return { tracks: [candidate] }; } };
+  const first = new MusicRegistry([provider], { matchStore: store });
+  assert.equal(await first.preMatchPlaylists([{ tracks: [source, source] }], async item => playable(item)), 1);
+  const next = new MusicRegistry([provider], { matchStore: store });
+  assert.equal(await next.preMatchPlaylists([{ tracks: [source] }], async item => playable(item)), 0);
+  assert.equal((await next.resolveRotationTrack(source, async item => playable(item))).playable.id, candidate.id);
+  assert.equal(searches, 1);
+  assert.ok([...saved.values()].every(record => !record.track?.streamUrl));
+});
+
+test('NetEase checks that the original CDN file supports seeking and rejects unavailable redirects', async t => {
+  const provider = new NeteaseMusicProvider();
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (input, options) => {
+    const url = new URL(input);
+    calls.push(url.hostname);
+    if (url.hostname === 'music.163.com') {
+      return new Response(null, { status: 302, headers: { location: url.searchParams.get('id') === '123.mp3'
+        ? 'http://m701.music.126.net/sound.mp3' : 'https://music.163.com/404' } });
+    }
+    assert.equal(url.protocol, 'https:');
+    assert.equal(options.headers.Range, 'bytes=0-4095');
+    return new Response('ID3fixture-audio', { status: 206, headers: { 'Content-Range': 'bytes 0-16/8000' } });
+  });
+  assert.equal((await provider.resolveStream('123')).mimeType, 'audio/mpeg');
+  assert.equal(await provider.resolveStream('124'), null);
+  assert.deepEqual(calls, ['music.163.com', 'm701.music.126.net', 'music.163.com']);
+});
+
+test('manual YouTube candidates share a bounded search and only return official video IDs', async t => {
+  const service = new YoutubeCandidates('fixture');
+  let calls = 0;
+  const candidate = { id: 'AbCdEfGhI_1', title: 'Track', channel: 'Artist' };
+  t.mock.method(globalThis, 'fetch', async input => {
+    calls++;
+    const url = new URL(input);
+    assert.equal(url.origin, 'https://www.googleapis.com');
+    assert.equal(url.searchParams.get('type'), 'video');
+    return Response.json({ items: [
+      { id: { videoId: candidate.id }, snippet: { title: candidate.title, channelTitle: candidate.channel } },
+      { id: { videoId: '?redirect' }, snippet: { title: 'Malformed ID' } }
+    ] });
+  });
+  const results = await Promise.all([service.search('Song Artist', 'first'), service.search('song artist', 'second')]);
+  assert.deepEqual(results, [[candidate], [candidate]]);
+  assert.equal(calls, 1);
+  await assert.rejects(service.search('Different query', 'first'), { statusCode: 429 });
+});
+
+async function manager(t, registry, roomId = 'chat', dataDir, chatDb) {
   if (!dataDir) {
     dataDir = await mkdtemp(join(tmpdir(), 'music-test-'));
     t.after(() => rm(dataDir, { recursive: true, force: true }));
   }
-  const mgr = new MusicManager({ roomId, dataDir, musicRegistry: registry, serverOrigin: origin });
+  const mgr = new MusicManager({ roomId, dataDir, musicRegistry: registry, serverOrigin: origin, chatDb });
   t.after(() => {
     for (const timer of [mgr._advanceTimer, mgr._prepareFallbackTimer, mgr._refreshPreparedTimer, mgr._saveTimer]) clearTimeout(timer);
   });
@@ -94,21 +188,39 @@ test('supplier fallback validates the actual media and search pagination uses th
   t.mock.method(globalThis, 'fetch', async value => {
     const url = new URL(value);
     switch (url.hostname) {
-      case 'cyapi.top': return Response.json({ url: 'https://isure6.stream.qqmusic.qq.com/bad' });
-      case 'api.vkeys.cn': return Response.json({ data: { url: 'https://ws.stream.qqmusic.qq.com/good' } });
+      case 'cyapi.top':
+      case 'api.vkeys.cn': {
+        const id = url.searchParams.get('mid');
+        if (id === 'missing') return Response.json({}, { status: 404 });
+        if (id === 'temporary') return Response.json({}, { status: 503 });
+        return url.hostname === 'api.vkeys.cn'
+          ? Response.json({ data: { url: 'https://isure6.stream.qqmusic.qq.com/bad' } })
+          : Response.json({ url: 'https://ws.stream.qqmusic.qq.com/good' });
+      }
       case 'isure6.stream.qqmusic.qq.com': return Response.json({}, { status: 404 });
       case 'ws.stream.qqmusic.qq.com': return new Response(Buffer.from('ID3abcdefghijk'), {
         status: 206, headers: { 'Content-Range': 'bytes 0-13/100', 'Content-Type': 'application/octet-stream' }
       });
       case 'c.y.qq.com': return Response.json({ code: 0, data: { song: {
-        totalnum: 90, list: [{ songmid: 'demo', songname: 'Demo' }, { songmid: 'demo', songname: 'Demo' }]
+        totalnum: 90,
+        list: [{
+          songmid: 'demo', songname: 'Demo',
+          singer: [
+            { name: 'Dazbee', mid: 'fixtureartist', transname: ' ダズビー ' },
+            null,
+            { name: 'Guest', id: 51, transname: 'Guest' },
+            { name: 'No identity', transname: 'Unverified alias' }
+          ]
+        }, { songmid: 'demo', songname: 'Demo' }]
       } } });
       default: throw new Error('unexpected test host');
     }
   });
   const provider = new QQMusicProvider('fixture');
   const result = await provider.resolveStream('id');
-  assert.equal(result.providerChannel, 'vkeys');
+  assert.equal(result.providerChannel, 'cyapi');
+  assert.equal(await provider.resolveStream('missing'), null);
+  await assert.rejects(provider.resolveStream('temporary'), /temporarily unavailable/);
   assert.equal(result.mimeType, 'audio/mpeg');
   const resolved = await new MusicRegistry([provider]).resolvePlayable(track('id'), origin, 'fixture');
   assert.equal(resolved.streamUrl, 'https://ws.stream.qqmusic.qq.com/good');
@@ -116,6 +228,12 @@ test('supplier fallback validates the actual media and search pagination uses th
   const page = await provider.search('Demo', 30, 2);
   assert.equal(page.tracks.length, 1);
   assert.equal(page.hasMore, true);
+  assert.deepEqual(page.tracks[0].artistNames, ['Dazbee', 'Guest', 'No identity']);
+  assert.deepEqual(page.tracks[0].artistCredits, [
+    { id: 'mid:fixtureartist', name: 'Dazbee', alias: 'ダズビー' },
+    { id: 'id:51', name: 'Guest' },
+    { name: 'No identity' }
+  ]);
 });
 
 test('cached proxy supports prefix, suffix, clamping, HEAD and invalid range', async t => {
@@ -309,7 +427,426 @@ test('normalizeMusicTrack robustly accepts QQ music tracks with missing provider
   assert.equal(t2.id, 'qq:0039MnYb0qxYhV');
   assert.equal(t2.provider, 'qq');
 
-  // 3. 非法来源返回 null
-  const t3 = normalizeMusicTrack({ id: 'netease:123456', provider: 'netease', title: 'Other' });
-  assert.equal(t3, null);
+  assert.equal(normalizeMusicTrack({ id: 'netease:123456', title: 'Other' }).provider, 'netease');
+  assert.equal(normalizeMusicTrack({ id: 'netease:invalid', title: 'Other' }), null);
+  assert.equal(normalizeMusicTrack({ id: 'youtube:123456', title: 'Other' }), null);
+});
+
+
+function rotationRegistry(results, unavailable = new Set(), findSongs = async () => ({ tracks: results })) {
+  const registry = new MusicRegistry([{ id: 'qq', search: findSongs }]);
+  registry.resolvePlayable = async item => unavailable.has(item.sourceId) ? null : playable(item);
+  return registry;
+}
+
+const recording = (id, attributes = {}) => ({
+  ...track(id), title: 'Morning', artist: 'Band', album: 'Debut', ...attributes
+});
+
+test('rotation tries another matching recording after the original and first match lose their sources', async t => {
+  const firstMatch = recording('match1');
+  const secondMatch = recording('match2');
+  const live = recording('live', { title: 'Morning (Live)' });
+  const registry = rotationRegistry([live, firstMatch, secondMatch], new Set(['original', 'match1']));
+  const mgr = await manager(t, registry);
+  const original = recording('original');
+  const unrelated = recording('unrelated', { title: 'Afternoon' });
+  mgr.setFallbackPlaylist('test', [original, unrelated], 'Test', { start: false });
+  const item = mgr.getRotationQueue().find(entry => entry.id === original.id);
+
+  const result = await mgr.playRotationTrack(item.entryId, actor, 1, { allowAlternatives: true });
+  assert.equal(result.ok, true);
+  assert.equal(mgr.current.track.id, secondMatch.id);
+  assert.equal(mgr.current.track.rotationReplacement, undefined);
+  assert.deepEqual(mgr.rotationDeck, [unrelated]);
+});
+
+test('alternative offers are private, require explicit confirmation and consume the exact external playlist entry', async t => {
+  const original = { ...recording('123'), provider: 'netease', sourcePlatform: 'netease', id: 'ext:123' };
+  const other = recording('123', { title: 'Afternoon' });
+  const live = recording('live', { title: 'Morning (Live)' });
+  const cover = recording('cover', { artist: 'Another band' });
+  const unrelated = recording('unrelated', { title: 'Evening', artist: 'Other band' });
+  const noStream = recording('nostream', { title: 'Morning (Acoustic)' });
+  const registry = rotationRegistry([noStream, live, cover, unrelated, other], new Set(['nostream']));
+  const mgr = await manager(t, registry);
+  mgr.setFallbackPlaylist('test', [original, other], 'Test', { start: false });
+  mgr.playTrack(playable(track('current')), actor, true);
+  const existingPlay = mgr.current;
+  const existingTimer = mgr._advanceTimer;
+  const [item, otherItem] = ['Morning', 'Afternoon'].map(title => mgr.getRotationQueue().find(row => row.title === title));
+  assert.notEqual(item.entryId, otherItem.entryId);
+  const connection = {};
+  const context = { owner: connection, allowAlternatives: true, hasExpectedPlay: true, playUid: existingPlay.uid };
+
+  const result = await mgr.playRotationTrack(item.entryId, actor, 1, context);
+  assert.equal(result.code, 'ALTERNATIVES');
+  assert.equal(mgr.current, existingPlay);
+  assert.equal(mgr._advanceTimer, existingTimer);
+  assert.equal(mgr.rotationDeck.length, 2);
+  assert.deepEqual(result.offer.choices.map(option => [option.track.id, option.relation]), [
+    [live.id, 'same_artist_version'], [cover.id, 'same_title'], [other.id, 'same_artist_other']
+  ]);
+  assert.ok(result.offer.choices.every(option => !option.track.streamUrl));
+  const confirm = { ...context, offerId: result.offer.token, choiceId: live.id };
+  assert.equal((await mgr.playRotationTrack(undefined, actor, 1, { ...confirm, owner: {} })).code, 'OFFER_EXPIRED');
+  assert.equal((await mgr.playRotationTrack(undefined, actor, 1, { ...confirm, choiceId: 'qq:forged' })).code, 'OFFER_EXPIRED');
+  assert.equal((await mgr.playRotationTrack(undefined, actor, 1, confirm)).ok, true);
+  assert.equal(mgr.current.track.id, live.id);
+  assert.deepEqual(mgr.current.track.rotationReplacement, { title: original.title, artist: original.artist });
+  assert.equal(mgr.rotationLogs.at(-1).track.id, live.id);
+  assert.deepEqual(mgr.rotationDeck, [other]);
+  assert.equal((await mgr.playRotationTrack(undefined, actor, 1, confirm)).code, 'PLAYBACK_CHANGED');
+});
+
+test('an unavailable manual cut preserves playback and automatic rotation skips the missing original', async t => {
+  const missing = recording('missing');
+  const next = recording('next', { title: 'Next' });
+  const mgr = await manager(t, rotationRegistry([], new Set(['missing'])));
+  mgr.setFallbackPlaylist('test', [missing, next], 'Test', { start: false });
+  mgr.rotationDeck = [missing, next];
+  mgr.playTrack(playable(track('playing')), actor, true);
+  const timer = mgr._advanceTimer;
+  const result = await mgr.playRotationTrack(mgr.getRotationQueue()[0].entryId, actor, 1);
+  assert.equal(result.code, 'NO_SOURCE');
+  assert.equal(mgr._advanceTimer, timer);
+  assert.equal(mgr.current.track.sourceId, 'playing');
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.sourceId, 'next');
+});
+
+test('a delayed rotation lookup cannot overwrite new playback or cross a room change', async t => {
+  let release;
+  let active = true;
+  const initial = recording('target');
+  const registry = rotationRegistry([]);
+  registry.resolvePlayable = async item => item.id === initial.id
+    ? new Promise(resolve => { release = () => resolve(playable(item)); })
+    : playable(item);
+  const mgr = await manager(t, registry);
+  mgr.setFallbackPlaylist('test', [initial], 'Test', { start: false });
+  const [item] = mgr.getRotationQueue();
+  const pending = mgr.playRotationTrack(item.entryId, actor, 1, { active: () => active });
+  assert.equal((await mgr.playRotationTrack(item.entryId, actor, 1)).code, 'BUSY');
+  active = false;
+  await mgr.enqueueTrack(track('pointed'), actor);
+  release();
+  registry.resolvePlayable = async item => playable(item);
+  assert.equal((await pending).code, 'PLAYBACK_CHANGED');
+  assert.equal(mgr.current.track.sourceId, 'pointed');
+  mgr.setFallbackPlaylist('test', [{ ...initial }], 'Test', { start: false });
+  assert.equal(mgr.getRotationQueue()[0].entryId, item.entryId);
+  mgr.setFallbackPlaylist(null, [], '', { start: false });
+  assert.equal((await mgr.playRotationTrack(item.entryId, actor, 1)).code, 'ROTATION_CHANGED');
+});
+
+test('temporary supplier failures are distinct from missing sources and can be retried', async t => {
+  let broken = true;
+  const original = recording('original');
+  const registry = rotationRegistry([], new Set(), async () => { throw new Error('temporary search failure'); });
+  registry.resolvePlayable = async item => {
+    if (broken) throw new Error('temporary source failure');
+    return playable(item);
+  };
+  const mgr = await manager(t, registry);
+  mgr.setFallbackPlaylist('test', [original], 'Test', { start: false });
+  const [item] = mgr.getRotationQueue();
+  assert.equal((await mgr.playRotationTrack(item.entryId, actor, 1)).code, 'SOURCE_TEMPORARY');
+  broken = false;
+  assert.equal((await mgr.playRotationTrack(item.entryId, actor, 1)).ok, true);
+});
+
+
+test('all point requests share private alternatives and enqueue only the confirmed recording', async t => {
+  const original = { title: 'Morning', artist: 'Band', sourcePlatform: 'netease', sourceTrackId: 'original' };
+  const cover = recording('cover', { title: 'Morning (Live)' });
+  const mgr = await manager(t, rotationRegistry([cover]));
+  const listener = { ...actor, userKey: 'another' };
+  const owner = {};
+  const other = {};
+  const active = () => true;
+  await mgr.enqueueTrack(recording('current', { title: 'An earlier request' }), listener);
+  const existing = mgr.current;
+  const proposed = await mgr.enqueueWithAlternatives(original, actor, { owner, active });
+  assert.equal(proposed.code, 'ALTERNATIVES');
+  assert.deepEqual(proposed.offer.choices.map(option => option.track.id), [cover.id]);
+  assert.equal(mgr.queue.length, 0);
+  assert.equal(mgr.current, existing);
+  const confirmation = { owner, active, offerId: proposed.offer.token, choiceId: cover.id };
+  assert.equal((await mgr.enqueueWithAlternatives(null, actor, { ...confirmation, owner: other })).code, 'OFFER_EXPIRED');
+  assert.equal((await mgr.enqueueWithAlternatives(null, actor, { ...confirmation, active: () => false })).code, 'ROOM_CHANGED');
+  const accepted = await mgr.enqueueWithAlternatives(null, actor, confirmation);
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.position, 1);
+  assert.equal(mgr.queue[0].track.id, cover.id);
+  assert.equal(mgr.queue[0].track.rotationReplacement.title, original.title);
+  assert.equal((await mgr.enqueueWithAlternatives(null, actor, confirmation)).code, 'OFFER_EXPIRED');
+  assert.equal(mgr.queue.length, 1);
+});
+
+test('pointing at a native catalog song with a broken source offers alternatives too', async t => {
+  const original = recording('original');
+  const alternate = recording('alternate', { title: 'Morning (Acoustic)' });
+  const mgr = await manager(t, rotationRegistry([alternate], new Set(['original'])));
+  const owner = {};
+  const active = () => true;
+  const reply = await mgr.enqueueWithAlternatives(original, actor, { owner, active });
+  assert.equal(reply.code, 'ALTERNATIVES');
+  assert.equal(mgr.current, null);
+  const accepted = await mgr.enqueueWithAlternatives(null, actor, {
+    owner, active, offerId: reply.offer.token, choiceId: alternate.id
+  });
+  assert.equal(accepted.playImmediately, true);
+  assert.equal(mgr.current.track.id, alternate.id);
+});
+
+
+test('cross-platform matching normalizes title punctuation and credits and tolerates different or missing albums', async () => {
+  const original = { title: '“Ｍorning” （Ｆｅａｔ．Ｂ）', artist: 'A', album: 'Original', durationSec: 180 };
+  const compilation = recording('collection', {
+    title: 'Morning', artist: 'B / A', artistNames: ['B', 'A'], album: 'Collection', durationSec: 185
+  });
+  const noAlbum = { ...compilation, album: undefined, artistNames: undefined, artist: 'B，A' };
+  for (const found of [compilation, noAlbum]) {
+    const queries = [];
+    const registry = rotationRegistry([found], new Set(), async query => {
+      queries.push(query);
+      return { tracks: [found] };
+    });
+    const result = await registry.resolveRotationTrack(original, playable, { alternatives: true });
+    assert.equal(result.playable?.id, found.id);
+    assert.deepEqual(queries, ['Morning A B']);
+  }
+});
+
+test('equivalent version labels match regardless of punctuation and feature credit placement', async () => {
+  const original = { title: 'Morning（Live） feat. B', artist: 'A', durationSec: 180 };
+  const alternate = recording('live', { title: 'Morning – Live Version', artist: 'B、A' });
+  const result = await rotationRegistry([alternate]).resolveRotationTrack(original, playable, { alternatives: true });
+  assert.equal(result.playable?.id, alternate.id);
+});
+
+test('a missing remaster label does not block the clear original-lyrics recording', async () => {
+  const artist = "Guns N' Roses";
+  const original = { title: "Don't Cry (Original) [2022 Remaster]", artist, album: 'Use Your Illusion I', durationSec: 284 };
+  const exact = recording('qq44', { title: "Don't Cry (Original)", artist, album: 'Use Your Illusion (Super Deluxe) [Explicit]', durationSec: 284 });
+  const albumRelease = recording('qq45', { ...exact, id: 'qq:qq45', sourceId: 'qq45',
+    title: "Don't Cry (Original Version)", album: 'Use Your Illusion I (Explicit)', durationSec: 283 });
+  const candidates = [
+    { ...exact, id: 'qq:long', durationSec: 292 },
+    { ...exact, id: 'qq:otherlyrics', title: "Don't Cry (Alternate Lyrics|2022 Remaster)", durationSec: 284 },
+    { ...exact, id: 'qq:live', album: 'Live at the Ritz' },
+    exact, albumRelease
+  ];
+  for (const options of [{ alternatives: true }, { alternatives: true, random: true }, {}]) {
+    const result = await rotationRegistry(candidates).resolveRotationTrack(original, playable, options);
+    assert.equal(result.playable?.id, exact.id);
+  }
+  const wrongLyricsOnly = await rotationRegistry([candidates[1]]).resolveRotationTrack(original, playable, { alternatives: true });
+  assert.equal(wrongLyricsOnly.playable, undefined);
+  assert.equal(wrongLyricsOnly.alternatives[0].track.id, 'qq:otherlyrics');
+});
+
+test('same-album metadata tolerates a small duration difference for a studio recording', async () => {
+  const original = { title: 'Morning', artist: 'Band', album: 'Debut', durationSec: 180 };
+  const alternate = recording('alternate', { album: 'Debut (Deluxe Edition)', durationSec: 186 });
+  assert.equal((await rotationRegistry([alternate]).resolveRotationTrack(original, playable)).playable?.id, alternate.id);
+});
+
+test('missing data, different recordings and versions still need confirmation', async t => {
+  const original = { title: 'Morning', artist: 'Band', album: 'Debut', durationSec: 180 };
+  const scenarios = [
+    ['too far apart even on the same album', {}, { durationSec: 188 }],
+    ['no album support for six seconds of difference', {}, { durationSec: 186, album: 'Collection' }],
+    ['missing duration even with matched album', {}, { durationSec: 0 }],
+    ['live recording', {}, { title: 'Morning — Live' }],
+    ['re-recording', {}, { title: 'Morning (Re-recorded)' }],
+    ['different ISRCs', { isrc: 'AAABC2300011' }, { isrc: 'AAABC2300022' }],
+    ['same ISRC but conflicting versions', { isrc: 'AAABC2300011' }, { isrc: 'AAABC2300011', title: 'Morning (Live)' }],
+    ['solo vs a duet', {}, { artist: 'Band / Partner' }]
+  ];
+  for (const [name, source, match] of scenarios) {
+    await t.test(name, async () => {
+      const alternate = recording('alternate', match);
+      const registry = rotationRegistry([alternate]);
+      const result = await registry.resolveRotationTrack({ ...original, ...source }, playable, { alternatives: true });
+      assert.equal(result.playable, undefined);
+      assert.equal(result.alternatives[0].track.id, alternate.id);
+    });
+  }
+});
+
+test('an unambiguous ISRC allows a missing duration while the search still checks available audio', async () => {
+  const isrc = 'AAABC2300011';
+  const original = { title: 'Morning', artist: 'Band', isrc };
+  const alternate = recording('alt', { isrc: 'AA-ABC-23-00011', durationSec: 0, album: undefined });
+  const result = await rotationRegistry([alternate]).resolveRotationTrack(original, playable, { alternatives: true });
+  assert.equal(result.playable?.id, alternate.id);
+});
+
+test('ambiguous close recordings wait for confirmation and the original album ranks first', async () => {
+  const original = { title: 'Morning', artist: 'Band', album: 'Debut', durationSec: 180 };
+  const collection = recording('collection', { album: 'Collection' });
+  const sameAlbum = recording('debut', { durationSec: 184 });
+  const registry = rotationRegistry([], new Set(), async query => ({
+    tracks: query.includes('Band') ? [collection, sameAlbum] : [sameAlbum]
+  }));
+  const result = await registry.resolveRotationTrack(original, playable, { alternatives: true });
+  assert.equal(result.playable, undefined);
+  assert.deepEqual(result.alternatives.map(option => option.track.id), [sameAlbum.id, collection.id]);
+  const automatic = await rotationRegistry([collection, sameAlbum]).resolveRotationTrack(original, playable);
+  assert.equal(automatic.playable, undefined);
+  const random = await rotationRegistry([collection, sameAlbum]).resolveRotationTrack(original, playable, { alternatives: true, random: true });
+  assert.equal(random.playable, undefined);
+});
+
+
+test('random requests use the best available recording of the same version and skip Live', async t => {
+  const original = { title: 'Morning', artist: 'Band', durationSec: 180, album: 'Debut', sourcePlatform: 'netease', sourceTrackId: 'original' };
+  const collection = recording('collection', { album: 'Collection' });
+  const studio = recording('studio');
+  const live = recording('live', { title: 'Morning (Live)' });
+  const mgr = await manager(t, rotationRegistry([collection, live, studio]));
+  const result = await mgr.enqueueRandom([original], actor, () => true);
+  assert.equal(result.ok, true);
+  assert.equal(result.track.id, studio.id);
+  assert.equal(result.offer, undefined);
+  assert.equal(mgr.historyLogs.length, 1);
+
+  const noStudio = await manager(t, rotationRegistry([live]));
+  assert.equal((await noStudio.enqueueRandom([original], actor, () => true)).code, 'NO_SOURCE');
+  assert.equal(noStudio.current, null);
+  const originalLive = { ...original, title: 'Morning (Live)' };
+  assert.equal((await noStudio.enqueueRandom([originalLive], actor, () => true)).track.id, live.id);
+});
+
+test('random requests draw again within the playlist and ignore unrelated substitutes', async t => {
+  t.mock.method(Math, 'random', () => 0);
+  const original = { title: 'Missing', artist: 'Band', sourcePlatform: 'netease', sourceTrackId: 'original' };
+  const unrelated = recording('other', { title: 'Night' });
+  const next = recording('next', { title: 'Day' });
+  const mgr = await manager(t, rotationRegistry([unrelated]));
+  const result = await mgr.enqueueRandom([original, next], actor, () => true);
+  assert.equal(result.track.id, next.id);
+  assert.equal(mgr.historyLogs.length, 1);
+  assert.equal((await mgr.enqueueRandom([next, original], actor, () => true)).code, 'NO_SOURCE');
+  assert.equal((await mgr.enqueueRandom([unrelated], actor, () => false)).code, 'ROOM_CHANGED');
+});
+
+
+const dazbeeCredit = { id: 'mid:dazbee', name: 'Dazbee', alias: 'ダズビー' };
+const heroine = (id, attributes = {}) => recording(id, {
+  title: 'ヒロイン', artist: 'Dazbee', artistNames: ['Dazbee'], durationSec: 297,
+  artistCredits: [dazbeeCredit], ...attributes
+});
+const importedHeroine = { title: 'ヒロイン', artist: 'ダズビー', durationSec: 297 };
+
+test('verified QQ artist aliases match across languages in requests and unattended rotation', async () => {
+  const correct = heroine('dazbeetrack');
+  const differentSinger = heroine('anothertrack', {
+    artist: 'back number', artistNames: ['back number'], artistCredits: [{ id: 'mid:backnumber', name: 'back number' }]
+  });
+  const registry = rotationRegistry([differentSinger, correct]);
+  assert.equal((await registry.resolveRotationTrack(importedHeroine, playable, { alternatives: true })).playable?.id, correct.id);
+  assert.equal((await registry.resolveRotationTrack(importedHeroine, playable)).playable?.id, correct.id);
+});
+
+test('an alias on another QQ recording may identify the same credited artist ID', async () => {
+  const other = heroine('knowncredit', { title: 'Other song' });
+  const matching = heroine('target', { artistCredits: [{ id: dazbeeCredit.id, name: dazbeeCredit.name }] });
+  assert.equal((await rotationRegistry([other, matching]).resolveRotationTrack(importedHeroine, playable)).playable?.id, matching.id);
+});
+
+test('aliases preserve complete collaboration rosters and version distinctions', async () => {
+  const guest = { id: 'mid:guest', name: 'Guest', alias: '客演' };
+  const duet = heroine('duet', { artist: 'Dazbee / Guest', artistNames: ['Dazbee', 'Guest'], artistCredits: [dazbeeCredit, guest] });
+  const registry = rotationRegistry([duet]);
+  assert.equal((await registry.resolveRotationTrack({ ...importedHeroine, artist: '客演 / ダズビー' }, playable)).playable?.id, duet.id);
+  assert.equal((await registry.resolveRotationTrack(importedHeroine, playable, { alternatives: true })).playable, undefined);
+  const live = heroine('livealias', { title: 'ヒロイン (Live)' });
+  const offered = await rotationRegistry([live]).resolveRotationTrack(importedHeroine, playable, { alternatives: true });
+  assert.equal(offered.playable, undefined);
+  assert.equal(offered.alternatives[0].relation, 'same_artist_version');
+});
+
+test('ambiguous and unverified QQ names stay in the manual choice flow', async () => {
+  const verified = heroine('known');
+  const conflicting = heroine('conflict', {
+    title: 'Another song', artist: 'Someone else', artistNames: ['Someone else'],
+    artistCredits: [{ id: 'mid:someoneelse', name: 'Someone else', alias: 'ダズビー' }]
+  });
+  const disputed = await rotationRegistry([verified, conflicting]).resolveRotationTrack(importedHeroine, playable, { alternatives: true });
+  assert.equal(disputed.playable, undefined);
+  assert.equal(disputed.alternatives[0].relation, 'same_title');
+  const unchecked = heroine('unverified', { artistCredits: [{ name: 'Dazbee', alias: 'ダズビー' }] });
+  const lookup = await rotationRegistry([unchecked]).resolveRotationTrack(importedHeroine, playable, { alternatives: true });
+  assert.equal(lookup.playable, undefined);
+  assert.equal(lookup.alternatives[0].relation, 'same_title');
+  const stored = await rotationRegistry([]).resolveRotationTrack({ ...importedHeroine, matchedTrack: verified }, playable, { alternatives: true });
+  assert.equal(stored.playable, undefined);
+});
+
+
+test('a verified match avoids further searches and an unavailable cached source is replaced', async () => {
+  const original = { title: 'Morning', artist: 'Band', album: 'Debut', durationSec: 180, sourcePlatform: 'applemusic', sourceTrackId: 'stable1' };
+  const first = recording('first');
+  const second = recording('second');
+  const searches = [];
+  let current = first;
+  const registry = rotationRegistry([], new Set(), async query => {
+    searches.push(query);
+    return { tracks: [current] };
+  });
+  const resolve = async candidate => candidate.id === current.id ? playable(candidate) : null;
+  assert.equal((await registry.resolveRotationTrack(original, resolve, { alternatives: true })).playable?.id, first.id);
+  assert.equal((await registry.resolveRotationTrack({ ...original }, resolve, { alternatives: true })).playable?.id, first.id);
+  assert.deepEqual(searches, ['Morning Band']);
+  current = second;
+  assert.equal((await registry.resolveRotationTrack(original, resolve, { alternatives: true })).playable?.id, second.id);
+  assert.deepEqual(searches, ['Morning Band', 'Morning Band']);
+});
+
+test('manual version choice survives a new manager and stays private to the chooser', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'music-preference-'));
+  const db = new ChatDatabase(join(dir,'chat.sqlite'));
+  const original = { title: 'Morning', artist: 'Band', durationSec: 180, sourcePlatform: 'applemusic', sourceTrackId: 'stable1' };
+  const live = recording('live', { title: 'Morning (Live)' });
+  let queries = 0;
+  let sourceWorks = true;
+  const registry = rotationRegistry([], new Set(), async () => { queries++; return { tracks: [live] }; });
+  registry.resolvePlayable = async item => sourceWorks ? playable(item) : null;
+  const first = await manager(t, registry, 'chat', dir, db);
+  const owner = {};
+  const active = () => true;
+  const firstResult = await first.enqueueWithAlternatives(original, actor, { owner, active });
+  assert.equal(firstResult.code, 'ALTERNATIVES');
+  assert.equal((await first.enqueueWithAlternatives(null, actor, { owner, active, offerId: firstResult.offer.token, choiceId: live.id })).ok, true);
+  const key = first.preferredTrackKey(original, actor.userKey);
+  const preference = db.getKv(key);
+  assert.equal(preference.id, live.id);
+  assert.equal(preference.streamUrl, undefined);
+
+  const later = await manager(t, registry, 'interconnect', dir, db);
+  const previousQueries = queries;
+  const repeat = await later.enqueueWithAlternatives(original, actor, { owner: {}, active });
+  assert.equal(repeat.track.id, live.id);
+  assert.equal(repeat.track.rotationReplacement.title, original.title);
+  assert.equal(queries, previousQueries);
+  const other = await later.enqueueWithAlternatives(original, { ...actor, userKey:'another' }, { owner: {}, active });
+  assert.equal(other.code, 'ALTERNATIVES');
+
+  sourceWorks = false;
+  const freshRequest = await later.enqueueWithAlternatives(original, actor, { owner: {}, active });
+  assert.equal(freshRequest.code, 'NO_SOURCE');
+  assert.ok(queries > previousQueries);
+  t.after(async () => { db.close(); await rm(dir, { recursive: true, force: true }); });
+});
+
+test('explicitly live album metadata keeps plain-title audio out of studio auto-match', async () => {
+  const original = { title: 'Morning', artist: 'Band', durationSec: 180, album: 'Debut' };
+  const mislabeledByTitle = recording('albumlive', { album: 'Live at the Arena' });
+  const registry = rotationRegistry([mislabeledByTitle]);
+  const result = await registry.resolveRotationTrack(original, playable, { alternatives: true });
+  assert.equal(result.playable, undefined);
+  assert.equal(result.alternatives[0].track.id, mislabeledByTitle.id);
 });

@@ -7,20 +7,25 @@ const HEADERS = {
 export function isAllowedStreamTarget(value) {
   try {
     const url = new URL(value);
-    const host = url.hostname;
+    const host = url.hostname.toLowerCase();
     return ['http:', 'https:'].includes(url.protocol) && !url.port &&
       !url.username && !url.password &&
       (host.endsWith('.stream.qqmusic.qq.com') || host.endsWith('.music.tc.qq.com') ||
-        host.endsWith('.music.qq.com') || host.endsWith('.music.gtimg.com'));
+        host.endsWith('.music.qq.com') || host.endsWith('.music.gtimg.com') ||
+        /^m\d+c?\.music\.126\.net$/.test(host) ||
+        /^webfs(?:\.[a-z0-9-]+)?\.kugou\.com$/.test(host));
   } catch {
     return false;
   }
 }
 
 export async function fetchAudio(url, { range, signal } = {}) {
-  const headers = range ? { ...HEADERS, Range: range } : HEADERS;
   for (let redirects = 0; redirects <= 3; redirects++) {
     if (!isAllowedStreamTarget(url)) throw new Error('untrusted audio host');
+    const host = new URL(url).hostname;
+    const referer = host.endsWith('.126.net') ? 'https://music.163.com/'
+      : host.endsWith('.kugou.com') ? 'https://www.kugou.com/' : HEADERS.Referer;
+    const headers = { ...HEADERS, Referer: referer, ...(range && { Range: range }) };
     const response = await fetch(url, { headers, signal, redirect: 'manual' });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
     const location = response.headers.get('location');
@@ -32,6 +37,7 @@ export async function fetchAudio(url, { range, signal } = {}) {
 }
 
 export function identifyAudio(bytes) {
+  if (bytes.length < 4) return null;
   if (bytes.subarray(0, 3).toString() === 'ID3') return 'audio/mpeg';
   if (bytes.subarray(4, 8).toString() === 'ftyp') return 'audio/mp4';
   if (bytes.subarray(0, 4).toString() === 'fLaC') return 'audio/flac';
@@ -42,12 +48,12 @@ export function identifyAudio(bytes) {
   return null;
 }
 
-export async function probeAudio(url) {
+export async function probeAudio(url, { signal, requireRange = false } = {}) {
   const response = await fetchAudio(url, {
     range: 'bytes=0-4095',
-    signal: AbortSignal.timeout(4000)
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(2200)]) : AbortSignal.timeout(2200)
   });
-  if (!response.ok || !response.body ||
+  if (!response.ok || !response.body || (requireRange && response.status !== 206) ||
       (response.status === 206 && !/^bytes 0-\d+\/\d+$/.test(response.headers.get('content-range') || ''))) {
     await response.body?.cancel();
     throw new Error(`audio probe HTTP ${response.status}`);

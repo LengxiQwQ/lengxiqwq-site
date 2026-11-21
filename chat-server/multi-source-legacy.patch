@@ -1,0 +1,28 @@
+diff --git a/server.mjs b/server.mjs
+--- a/server.mjs
++++ b/server.mjs
+@@ -4811,13 +4811,19 @@
+               owner: ws, active, offerId: packet.offerId, choiceId: packet.choiceId
+             });
+           } else {
+-            track = item && normalizeMusicTrack(await musicRegistry.resolvePlaylistTrack(item));
+-            track ||= normalizeMusicTrack(input);
++            const resolution = item
++              ? await manager.resolveRotationSource(item, { alternatives: true, budgetMs: 4800 })
++              : null;
++            if (!active()) return;
++            track = resolution ? resolution.playable : normalizeMusicTrack(input);
+             if (!track) {
+-              reply({ ok: false, error: '未找到可信的可播放版本' });
++              const temporary = resolution?.temporaryFailure;
++              reply({
++                ok: false, code: temporary ? 'SOURCE_TEMPORARY' : 'NO_SOURCE',
++                error: temporary ? '曲库暂时无法完成检查，请重试' : '未找到可播放的版本'
++              });
+               return;
+             }
+-            if (!active()) return;
+-            result = await manager.enqueueTrack(track, actor);
++            result = await manager.enqueueTrack(track, actor, resolution?.playable);
+           }
+           reply(result);

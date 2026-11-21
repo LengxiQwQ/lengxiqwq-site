@@ -18,6 +18,7 @@ import type {
 	FetchMusicHistoryParams,
 	FetchMusicHistoryResponse,
 	RoomMusicState,
+	RotationOffer,
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
 
@@ -43,6 +44,7 @@ export interface StoredGuestMeta {
 
 export interface RoomInitPacket {
 	type: "room:init";
+	youtubeCandidatesEnabled?: boolean;
 	interconnected?: boolean;
 	roomId: string;
 	self: ChatSessionUser | null;
@@ -172,6 +174,15 @@ export type ServerPacket =
 	  }
 	| ({ type: "music:state"; roomId: string } & RoomMusicState)
 	| {
+			type: "music:rotation_result";
+			roomId: string;
+			requestId: string;
+			ok: boolean;
+			code?: string;
+			error?: string;
+			offer?: RotationOffer;
+	  }
+	| {
 			type: "music:request_result";
 			roomId: string;
 			requestId: string;
@@ -180,6 +191,8 @@ export type ServerPacket =
 			code?: string;
 			position?: number;
 			playImmediately?: boolean;
+			offer?: RotationOffer;
+			randomTrack?: { title: string; artist: string; replacement?: { title: string } };
 	  }
 	| { type: "playlist:updated" | "playlists:updated"; roomId: string }
 	| {

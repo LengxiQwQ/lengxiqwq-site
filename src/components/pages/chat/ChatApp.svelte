@@ -3,6 +3,7 @@ import { onMount, tick } from "svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatWindow from "./ChatWindow.svelte";
 import ChatModal from "./ChatModal.svelte";
+import { positionChatFloating } from "./chatFloating";
 import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
 import {
 	type ChatAppearanceSettings,
@@ -26,6 +27,7 @@ import {
 	clearWalineAuth,
 	consumeUrlWalineToken,
 	GUEST_TOKEN_STORAGE_KEY,
+	formatClockSeconds,
 	isMentionedForUser,
 	normalizeServerUrl,
 	openWalineLoginPopup,
@@ -42,6 +44,7 @@ import {
 import type {
 	ChatActiveThreadItem,
 	ChatCustomBadge,
+	ChatDesktopNotificationMode,
 	ChatMentionCandidate,
 	ChatMentionEntity,
 	ChatMessageRecord,
@@ -54,12 +57,15 @@ import type {
 	ConnectionState,
 	ImageAttachment,
 	PlaylistSummary,
+	RotationAction,
+	RotationOffer,
 	RotationQueueItem,
 	RoomMusicState,
 } from "./chatTypes";
 import { recordMusicEvent } from "./musicTrace";
 import { MusicClock } from "./musicClock";
 import type { ChatMusicTrack } from "./musicTypes";
+import { formatPlatformLabel } from "./playlistClient";
 import RoomPanel from "./RoomPanel.svelte";
 import type { AudioStatus } from "./roomAudioPlayer";
 import {
@@ -258,9 +264,19 @@ const songRequests = new Map<
 	string,
 	{
 		room: string;
+		track?: ChatMusicTrack;
+		anchor?: HTMLElement;
+		randomPlaylistId?: string;
+		fromOffer: boolean;
 		finish: (ok: boolean) => void;
 	}
 >();
+let pendingRandomRequestId = $state<string | null>(null);
+
+function clearPendingSongRequests() {
+	for (const pending of songRequests.values()) pending.finish(false);
+}
+
 let isSkippingTrack = $state(false);
 let skipPendingTimer: number | null = null;
 let clockOffsetMs = $state(0);
@@ -284,8 +300,10 @@ let totalChatterCount = $state(0);
 let playlistRefreshSeq = $state(0);
 let musicPanelRef: {
 	toggleListenControl?: () => void;
+	startListeningControl?: () => void;
 	openPlayerTab?: () => void;
 } | null = $state(null);
+let pendingSongListen = $state<{ room: string; playUid: string } | null>(null);
 let mobilePlaybackStatus = $state<{
 	isListening: boolean;
 	audioStatus?: AudioStatus;
@@ -317,9 +335,11 @@ let lastListenPacket = "";
 let memoryVolume = $state(initialMusicVolume);
 let hasAppMounted = false;
 
+const NOTIFICATION_MODE_STORAGE_KEY = "fireflyChatDesktopNotificationMode";
 const NOTIFICATION_STORAGE_KEY = "fireflyChatDesktopNotification";
-let desktopNotificationEnabled = $state(false);
+let desktopNotificationMode = $state<ChatDesktopNotificationMode>("off");
 let desktopNotificationPermission = $state<NotificationPermission>("default");
+const desktopNotificationEnabled = $derived(desktopNotificationMode !== "off");
 let roomUnreadUids = $state<Record<string, string[]>>({});
 const roomUnreadCounts = $derived.by<Record<string, number>>(() => {
 	const counts: Record<string, number> = {};
@@ -794,7 +814,21 @@ $effect(() => {
 		pendingOpenPlayerTab = false;
 		musicPanelRef.openPlayerTab?.();
 	}
+});
 
+$effect(() => {
+	if (!pendingSongListen) return;
+	const { room, playUid } = pendingSongListen;
+	if (room !== currentRoom || musicState?.current?.uid !== playUid) {
+		pendingSongListen = null;
+	} else if (musicPanelRef) {
+		pendingSongListen = null;
+		void tick().then(() => {
+			if (room === currentRoom && musicState?.current?.uid === playUid) {
+				musicPanelRef?.startListeningControl?.();
+			}
+		});
+	}
 });
 
 let ChatAuthModalComp = $state<
@@ -1036,30 +1070,250 @@ function handlePlayQueued(uid: string) {
 	}
 }
 
-function handlePlayRotationTrack(track: RotationQueueItem) {
+let rotationAction = $state<RotationAction | null>(null);
+let rotationOrigin = $state<RotationQueueItem | null>(null);
+let rotationOfferOpen = $state(false);
+let songOfferOrigin = $state<ChatMusicTrack | null>(null);
+let fallbackSearch = $state<{ query: string; seq: number } | undefined>(undefined);
+let fallbackSearchSeq = 0;
+let youtubeCandidatesEnabled = $state(false);
+let youtubeCandidates = $state<{ id: string; title: string; channel: string }[]>([]);
+let youtubeStatus = $state("");
+let youtubeRequest: AbortController | null = null;
+let versionAnchor = $state.raw<HTMLElement | undefined>(undefined);
+let versionPopover: HTMLElement | undefined = $state.raw(undefined);
+let rotationRequestId = "";
+let rotationRequestTimer: number | undefined;
+let rotationOfferTimer: number | undefined;
+let rotationOfferPlayUid = "";
+
+$effect(() => {
+	if (rotationAction?.offer && !musicState?.rotationQueue?.some(item =>
+		(item.entryId ?? item.id) === rotationAction?.entryId
+	)) {
+		rotationOfferOpen = true;
+	}
+});
+
+const versionLabels: [RegExp, string][] = [
+	[/^(?:live\b|现场|現場|演唱会|演唱會)/iu, "现场版"],
+	[/^(?:acoustic\b|不插电|不插電)/iu, "不插电版"],
+	[/^(?:instrumental\b|karaoke\b|伴奏)/iu, "伴奏版"],
+	[/^(?:re-?record(?:ed)?\b|重录|重錄)/iu, "重录版"],
+	[/^(?:remaster(?:ed)?\b|重制|重製)/iu, "重制版"],
+	[/^(?:cover\b|翻唱)/iu, "翻唱版"],
+	[/^(?:remix\b|混音)/iu, "混音版"],
+];
+
+function describeVersionDifference(
+	original: RotationQueueItem,
+	track: ChatMusicTrack,
+	relation: RotationOffer["choices"][number]["relation"],
+): string {
+	if (relation === "same_artist_other") return "同歌手的另一首歌";
+	const ending = track.title
+		.normalize("NFKC")
+		.match(/(?:\(([^()]+)\)|\[([^\[\]]+)\]|【([^【】]+)】|\s[-–—]\s+([^\n]+))$/u);
+	const version = (ending?.[1] ?? ending?.[2] ?? ending?.[3] ?? ending?.[4] ?? "").trim()
+		.replace(/^(?:19|20)\d{2}\s+/u, "");
+	const versionLabel = versionLabels.find(([pattern]) => pattern.test(version))?.[1];
+	if (relation === "same_title") {
+		return versionLabel ? versionLabel + " · 歌手署名不同" : "歌手署名不同";
+	}
+	if (versionLabel) return versionLabel;
+	if (original.album && track.album && original.album !== track.album) return "收录专辑不同";
+	return "录音版本待确认";
+}
+
+function describeVersionDuration(original: number | undefined, duration: number | undefined): string {
+	if (!duration || duration <= 0 || !Number.isFinite(duration)) return "";
+	const time = formatClockSeconds(duration);
+	if (!original || original <= 0 || !Number.isFinite(original)) return time;
+	const difference = Math.round(duration - original);
+	if (!difference) return time;
+	return time + " · " + (difference > 0 ? "长 " : "短 ") + Math.abs(difference) + " 秒";
+}
+
+function clearRotationRequest() {
+	window.clearTimeout(rotationRequestTimer);
+	rotationRequestTimer = undefined;
+	rotationRequestId = "";
+}
+
+function closeRotationOffer() {
+	if (rotationAction?.pending) return;
+	const anchor = versionAnchor;
+	if (versionPopover?.contains(document.activeElement) && anchor?.isConnected) {
+		const button = anchor.matches("button") ? anchor : anchor.querySelector<HTMLElement>("button:not([disabled])");
+		button?.focus({ preventScroll: true });
+	}
+	clearRotationAction();
+}
+
+function clearRotationAction() {
+	clearRotationRequest();
+	window.clearTimeout(rotationOfferTimer);
+	rotationOfferTimer = undefined;
+	rotationAction = null;
+	rotationOrigin = null;
+	songOfferOrigin = null;
+	rotationOfferOpen = false;
+	versionAnchor = undefined;
+	rotationOfferPlayUid = "";
+	youtubeRequest?.abort();
+	youtubeRequest = null;
+	youtubeCandidates = [];
+	youtubeStatus = "";
+}
+
+function sendRotationRequest(track: RotationQueueItem, choiceId?: string) {
 	if (!currentUser) {
 		showAuthModal = true;
 		return;
 	}
-	recordMusicEvent("command-play_rotation", track.id);
-	if (
-		sendPacket({
-			type: "music:play_rotation",
-			trackId: track.id,
-			track: {
-				id: track.id,
-				sourcePlatform: track.sourcePlatform,
-				sourceTrackId: track.sourceTrackId,
-				title: track.title,
-				artist: track.artist,
-				album: track.album,
-				durationSec: track.durationSec,
-				pic: track.pic,
-			},
-		})
-	) {
-		startSkipPending();
+	if (rotationRequestId) return;
+	const entryId = track.entryId ?? track.id;
+	const offer = choiceId ? rotationAction?.offer : undefined;
+	if (choiceId && !offer) return;
+	const requestId = crypto.randomUUID();
+	const playUid = musicState?.current?.uid ?? "";
+	const command = offer
+		? { type: "music:confirm_rotation", offerId: offer.token, choiceId }
+		: {
+				type: "music:play_rotation",
+				entryId: track.entryId,
+				trackId: track.id,
+				track: {
+					id: track.id,
+					title: track.title,
+					artist: track.artist,
+					album: track.album,
+					durationSec: track.durationSec,
+					pic: track.pic,
+					source: track.sourcePlatform,
+					sourceTrackId: track.sourceTrackId,
+					sourceId: track.sourceTrackId,
+				},
+			};
+	const sent = sendPacket({
+		...command,
+		requestId,
+		playUid,
+	});
+	if (!sent) {
+		rotationAction = { entryId, offer, code: "SOURCE_TEMPORARY", message: "连接暂时不可用，请重试" };
+		return;
 	}
+	recordMusicEvent(choiceId ? "command-confirm_rotation" : "command-play_rotation", track.id);
+	rotationOrigin = track;
+	if (!choiceId) rotationOfferPlayUid = playUid;
+	rotationAction = { entryId, offer, pending: true };
+	rotationRequestId = requestId;
+	rotationRequestTimer = window.setTimeout(() => {
+		clearRotationRequest();
+		rotationAction = { entryId, offer, code: "SOURCE_TEMPORARY", message: "未收到切播结果，请检查当前播放后重试" };
+	}, track.entryId ? 13_000 : 6000);
+}
+
+function handlePlayRotationTrack(track: RotationQueueItem, anchor?: HTMLElement) {
+	if (!rotationRequestId) versionAnchor = anchor;
+	sendRotationRequest(track);
+}
+
+function showVersionOffer(offer: RotationOffer) {
+	const entryId = rotationAction?.entryId;
+	if (!entryId) return;
+	rotationOfferOpen = true;
+	void tick().then(() => {
+		if (rotationAction?.offer?.token !== offer.token) return;
+		const focused = document.activeElement;
+		if (focused === document.body || versionAnchor?.contains(focused)) {
+			versionPopover?.querySelector<HTMLElement>("[data-version-choice]")?.focus({ preventScroll: true });
+		}
+	});
+	window.clearTimeout(rotationOfferTimer);
+	rotationOfferTimer = window.setTimeout(() => {
+		if (rotationAction?.offer?.token !== offer.token || rotationAction.pending) return;
+		rotationAction = { entryId, code: "OFFER_EXPIRED", message: "可播版本已过期，请重新查找" };
+	}, Math.max(0, offer.expiresAt - serverNow()));
+}
+
+function submitVersionOffer(choiceId?: string) {
+	if (rotationAction?.pending) return;
+	if (!songOfferOrigin) {
+		if (rotationOrigin) sendRotationRequest(rotationOrigin, choiceId);
+		return;
+	}
+	const origin = songOfferOrigin;
+	const offer = choiceId ? rotationAction?.offer : undefined;
+	if (choiceId && !offer) return;
+	if (!currentUser) {
+		clearRotationAction();
+		openAuthModal();
+		return;
+	}
+	rotationAction = { entryId: origin.id, offer, pending: true };
+	void sendSongRequest(origin, { anchor: versionAnchor, fromOffer: true, offerId: offer?.token, choiceId });
+}
+
+function searchForAnotherVersion() {
+	if (!rotationOrigin || rotationAction?.pending) return;
+	const query = [rotationOrigin.title, rotationOrigin.artist].filter(Boolean).join(" ");
+	clearRotationAction();
+	showUserDetailModal = false;
+	fallbackSearch = { query, seq: ++fallbackSearchSeq };
+	mobileDrawer = "music";
+	closeSplitRoom();
+	ensureMusicPanelLoaded();
+}
+
+function youtubeSearchUrl(track: RotationQueueItem): string {
+	const query = [track.title, track.artist].filter(Boolean).join(" ");
+	return "https://www.youtube.com/results?" + new URLSearchParams({ search_query: query });
+}
+
+async function findYoutubeCandidates(track: RotationQueueItem | null) {
+	if (!track || !currentAuth || youtubeRequest) return;
+	const request = new AbortController();
+	youtubeRequest = request;
+	youtubeStatus = "正在搜索 YouTube…";
+	youtubeCandidates = [];
+	try {
+		const params = new URLSearchParams({ q: [track.title, track.artist].filter(Boolean).join(" ").slice(0, 120) });
+		const response = await fetch(`${normalizedChatServer}/api/music/youtube-candidates?${params}`, {
+			headers: { Authorization: `Bearer ${currentAuth.token}`, "x-auth-kind": currentAuth.kind },
+			signal: AbortSignal.any([request.signal, AbortSignal.timeout(5000)]),
+		});
+		if (!response.ok) throw new Error("YouTube search failed");
+		const result = await response.json() as { videos?: typeof youtubeCandidates };
+		if (request.signal.aborted) return;
+		youtubeCandidates = Array.isArray(result.videos) ? result.videos.filter(video => /^[A-Za-z0-9_-]{11}$/.test(video.id)) : [];
+		youtubeStatus = youtubeCandidates.length ? "" : "暂未查到视频，可以到 YouTube 继续搜索";
+	} catch {
+		if (!request.signal.aborted) youtubeStatus = "暂时无法获取视频，可以到 YouTube 继续搜索";
+	} finally {
+		if (youtubeRequest === request) youtubeRequest = null;
+	}
+}
+
+function openRotationOffer() {
+	if (!rotationAction?.offer || rotationAction.pending) return;
+	rotationOfferOpen = true;
+}
+
+function handleVersionPopoverKeys(event: KeyboardEvent) {
+	if (event.key !== "Escape" || rotationAction?.pending || !(event.target instanceof Node)) return;
+	if (!versionPopover?.contains(event.target) && !versionAnchor?.contains(event.target)) return;
+	closeRotationOffer();
+}
+
+function placeVersionPopover(node: HTMLDivElement, anchor?: HTMLElement) {
+	function place(reference?: HTMLElement) {
+		const layer = reference?.closest('[role="dialog"]') ?? document.getElementById("chat-modal-layer");
+		if (layer && node.parentElement !== layer) layer.appendChild(node);
+	}
+	place(anchor);
+	return { update: place, destroy: () => node.remove() };
 }
 
 function placeGlobalToast(node: HTMLDivElement) {
@@ -1085,53 +1339,72 @@ function showNotice(msg: string, tone?: "default" | "error") {
 	}, 3600);
 }
 
-async function handleToggleDesktopNotification() {
+async function setDesktopNotificationMode(
+	mode: ChatDesktopNotificationMode,
+): Promise<boolean> {
 	if (typeof window === "undefined" || !("Notification" in window)) {
 		showNotice("当前浏览器不支持桌面系统通知");
-		return;
+		desktopNotificationMode = "off";
+		return false;
 	}
 
 	desktopNotificationPermission = Notification.permission;
+
+	if (mode === "off") {
+		desktopNotificationMode = "off";
+		try {
+			localStorage.setItem(NOTIFICATION_MODE_STORAGE_KEY, "off");
+			localStorage.setItem(NOTIFICATION_STORAGE_KEY, "false");
+		} catch {}
+		showNotice("已关闭桌面通知");
+		return true;
+	}
 
 	if (Notification.permission === "denied") {
 		showNotice(
 			"系统通知权限已被浏览器拒绝，请在浏览器地址栏的网站设置中允许通知权限",
 		);
-		return;
+		desktopNotificationMode = "off";
+		return false;
 	}
 
 	if (Notification.permission === "default") {
 		try {
 			const perm = await Notification.requestPermission();
 			desktopNotificationPermission = perm;
-			if (perm === "granted") {
-				desktopNotificationEnabled = true;
-				try {
-					localStorage.setItem(NOTIFICATION_STORAGE_KEY, "true");
-				} catch {}
-				showNotice("已开启聊天室桌面通知");
-			} else {
-				desktopNotificationEnabled = false;
+			if (perm !== "granted") {
+				desktopNotificationMode = "off";
 				showNotice("未授予通知权限，可在浏览器设置中随时开启");
+				return false;
 			}
 		} catch {
 			showNotice("请求通知权限失败");
+			desktopNotificationMode = "off";
+			return false;
 		}
-		return;
 	}
 
-	if (desktopNotificationEnabled) {
-		desktopNotificationEnabled = false;
-		try {
-			localStorage.setItem(NOTIFICATION_STORAGE_KEY, "false");
-		} catch {}
-		showNotice("已关闭系统桌面通知");
+	desktopNotificationMode = mode;
+	try {
+		localStorage.setItem(NOTIFICATION_MODE_STORAGE_KEY, mode);
+		localStorage.setItem(NOTIFICATION_STORAGE_KEY, "true");
+	} catch {}
+
+	if (mode === "mention") {
+		showNotice("桌面通知：已设为 仅 @ 与回复");
 	} else {
-		desktopNotificationEnabled = true;
-		try {
-			localStorage.setItem(NOTIFICATION_STORAGE_KEY, "true");
-		} catch {}
-		showNotice("已开启系统桌面通知");
+		showNotice("桌面通知：已设为 所有消息");
+	}
+	return true;
+}
+
+async function handleToggleDesktopNotification() {
+	if (desktopNotificationMode === "off") {
+		await setDesktopNotificationMode("mention");
+	} else if (desktopNotificationMode === "mention") {
+		await setDesktopNotificationMode("all");
+	} else {
+		await setDesktopNotificationMode("off");
 	}
 }
 
@@ -1139,7 +1412,7 @@ function triggerDesktopNotification(
 	roomId: string,
 	message: ChatMessageRecord,
 ) {
-	if (!desktopNotificationEnabled) return;
+	if (desktopNotificationMode === "off") return;
 	if (typeof window === "undefined" || !("Notification" in window)) return;
 	if (Notification.permission !== "granted") return;
 
@@ -1151,10 +1424,30 @@ function triggerDesktopNotification(
 		return;
 	}
 
+	const isMentioned = isMentionedForUser(message, currentUser);
+	const isReplyToMe = Boolean(
+		currentUser &&
+			message.replyTo &&
+			message.replyTo.userKey === currentUser.userKey,
+	);
+
+	if (desktopNotificationMode === "mention" && !isMentioned && !isReplyToMe) {
+		return;
+	}
+
 	const roomMeta = rooms.find((r) => r.id === roomId);
 	const roomTitle = roomMeta?.name ? `#${roomMeta.name}` : `#${roomId}`;
 	const senderName = message.name || "未知用户";
-	const title = `${roomTitle} · ${senderName}`;
+
+	let titleNotice = "";
+	if (isMentioned && isReplyToMe) {
+		titleNotice = " [@与回复]";
+	} else if (isMentioned) {
+		titleNotice = " [有人@你]";
+	} else if (isReplyToMe) {
+		titleNotice = " [回复了你]";
+	}
+	const title = `${roomTitle} · ${senderName}${titleNotice}`;
 
 	let body = (message.content || "")
 		.replace(/!\[([^\]]*)\]\([^)]*\)/g, "[图片]")
@@ -1260,6 +1553,8 @@ function handleNetworkOffline() {
 	ws = null;
 	closePendingSocket();
 	clearSkipPending();
+	clearRotationAction();
+	clearPendingSongRequests();
 	socket?.close(1000, "offline");
 }
 
@@ -1349,6 +1644,7 @@ function connectRoom(roomId: string) {
 
 		switch (packet.type) {
 			case "room:init": {
+				youtubeCandidatesEnabled = packet.youtubeCandidatesEnabled === true;
 				currentUser = packet.self;
 				if (packet.self) {
 					persistStoredChatUser(packet.self);
@@ -1959,13 +2255,81 @@ function connectRoom(roomId: string) {
 				const pending = songRequests.get(packet.requestId);
 				if (!pending || pending.room !== packet.roomId) break;
 				pending.finish(packet.ok);
-				if (packet.roomId === currentRoom) {
-					if (packet.code === "AUTH_REQUIRED") openAuthModal();
-					else if (!packet.ok)
-						showNotice(packet.error || "点歌失败，请重试", "error");
-					else if (!packet.playImmediately && packet.position)
+				if (packet.roomId !== currentRoom) break;
+				if (packet.code === "AUTH_REQUIRED") {
+					if (pending.fromOffer) clearRotationAction();
+					openAuthModal();
+					break;
+				}
+				if (pending.randomPlaylistId) {
+					if (packet.ok) {
+						const status = packet.playImmediately ? "正在播放" : "已加入待播";
+						const song = packet.randomTrack;
+						showNotice(song
+							? `随机抽到《${song.title}》${song.artist ? " · " + song.artist : ""}，${status}${song.replacement ? "（替代《" + song.replacement.title + "》）" : ""}`
+							: `随机点歌成功，${status}`);
+						if (packet.playImmediately) listenAfterSongRequest(packet.roomId);
+					} else {
+						showNotice(packet.error ?? "这次没抽到可播曲目，可以再抽一次", "error");
+					}
+					break;
+				}
+				if (!pending.track) break;
+				if (packet.offer) {
+					clearRotationAction();
+					versionAnchor = pending.anchor;
+					songOfferOrigin = pending.track;
+					rotationOrigin = pending.track;
+					rotationAction = { entryId: pending.track.id, offer: packet.offer };
+					showVersionOffer(packet.offer);
+				} else if (!packet.ok) {
+					const message = packet.error || "点歌失败，请重试";
+					if (packet.code === "NO_SOURCE") {
+						clearRotationAction();
+						versionAnchor = pending.anchor;
+						songOfferOrigin = pending.track;
+						rotationOrigin = pending.track;
+						rotationAction = { entryId: pending.track.id, code: packet.code, message };
+						rotationOfferOpen = true;
+					} else if (pending.fromOffer && songOfferOrigin) {
+						rotationAction = {
+							entryId: pending.track.id,
+							code: packet.code,
+							offer: packet.code === "SOURCE_TEMPORARY" ? rotationAction?.offer : undefined,
+							message,
+						};
+					} else {
+						showNotice(message, "error");
+					}
+				} else {
+					if (pending.fromOffer) clearRotationAction();
+					if (packet.playImmediately) listenAfterSongRequest(packet.roomId);
+					if (!packet.playImmediately && packet.position)
 						showNotice(`已加入待播队列，第 ${packet.position} 首`);
 				}
+				break;
+			}
+			case "music:rotation_result": {
+				if (packet.roomId !== currentRoom || packet.requestId !== rotationRequestId || !rotationAction) break;
+				clearRotationRequest();
+				if (packet.ok) {
+					clearRotationAction();
+					break;
+				}
+				if (packet.code === "AUTH_REQUIRED") openAuthModal();
+				const previousOffer = rotationAction.offer;
+				const offer = packet.offer ?? (packet.code === "SOURCE_TEMPORARY" ? previousOffer : undefined);
+				rotationAction = {
+					entryId: rotationAction.entryId,
+					code: packet.code,
+					message: packet.error ?? (offer ? undefined : "切播失败，请重试"),
+					offer,
+				};
+				if (packet.offer) showVersionOffer(packet.offer);
+				else if (packet.code === "NO_SOURCE") rotationOfferOpen = true;
+				if (!rotationOfferOpen && !offer && !musicState?.rotationQueue?.some(item =>
+					(item.entryId ?? item.id) === rotationAction?.entryId
+				)) showNotice(packet.error ?? "轮播列表已更新", "error");
 				break;
 			}
 			case "music:state": {
@@ -1980,8 +2344,25 @@ function connectRoom(roomId: string) {
 					) {
 						clearSkipPending();
 					}
+					if (!songOfferOrigin && rotationAction?.offer && !rotationAction.pending && nextUid !== rotationOfferPlayUid) {
+						rotationAction = { entryId: rotationAction.entryId, code: "PLAYBACK_CHANGED", message: "房间播放已变化，请重新查找" };
+					}
+					if (
+						rotationAction?.pending &&
+						rotationOrigin &&
+						nextUid !== prevUid &&
+						packet.current?.track.id === rotationOrigin.id
+					) {
+						clearRotationAction();
+					}
 					if (nextUid && nextUid !== prevUid) {
-						recordMusicEvent("broadcast", nextUid, { previous: prevUid, serverSent: packet.serverTime, deadline: packet.current!.startedAt, selectionStartedAt: packet.current!.selectionStartedAt ?? 0, clock: Math.round(serverNow()) });
+						recordMusicEvent("broadcast", nextUid, {
+							previous: prevUid,
+							serverSent: packet.serverTime,
+							deadline: packet.current?.startedAt ?? 0,
+							selectionStartedAt: packet.current?.selectionStartedAt ?? 0,
+							clock: Math.round(serverNow()),
+						});
 					}
 					musicClock.seed(packet.serverTime);
 					if (!hasClockSample) clockOffsetMs = packet.serverTime - Date.now();
@@ -2009,6 +2390,10 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "error": {
+				if (rotationAction?.pending) {
+					clearRotationRequest();
+					rotationAction = { entryId: rotationAction.entryId, message: packet.message };
+				}
 				clearSkipPending();
 				if (packet.code === "AUTH_REQUIRED") {
 					showAuthModal = true;
@@ -2057,6 +2442,8 @@ function connectRoom(roomId: string) {
 		closePendingSocket();
 		ws = null;
 		clearSkipPending();
+		clearRotationAction();
+		clearPendingSongRequests();
 		connectionState = "reconnecting";
 		const delay = Math.min(10000, 1000 * 2 ** Math.min(4, reconnectAttempt));
 		reconnectAttempt += 1;
@@ -2094,6 +2481,8 @@ function handleRoomSelect(roomId: string) {
 		return;
 	}
 	cacheRoomMessages(currentRoom, messages);
+	clearPendingSongRequests();
+	fallbackSearch = undefined;
 	isRoomReady = false;
 	currentRoom = roomId;
 	persistStoredRoom(roomId);
@@ -2122,6 +2511,7 @@ function handleRoomSelect(roomId: string) {
 	musicState = null;
 	musicAudience = { onlineCount: 0, listeningCount: 0 };
 	clearSkipPending();
+	clearRotationAction();
 	reconnectAttempt = 0;
 	if (ws && ws.readyState === WebSocket.OPEN) {
 		ws.send(JSON.stringify({ type: "room:switch", roomId }));
@@ -2535,7 +2925,32 @@ async function handleSearchOnline(
 	return searchOnlineMusic(normalizedChatServer, keyword, options);
 }
 
-async function handleEnqueueTrack(track: ChatMusicTrack): Promise<boolean> {
+function listenAfterSongRequest(room: string) {
+	const current = musicState?.current;
+	if (!current || room !== currentRoom || current.requesterKey !== currentUser?.userKey) return;
+	pendingSongListen = { room, playUid: current.uid };
+	ensureMusicPanelLoaded();
+}
+
+function handleEnqueueTrack(track: ChatMusicTrack, anchor?: HTMLElement): Promise<boolean> {
+	return sendSongRequest(track, { anchor });
+}
+
+function handleRandomEnqueue(playlistId: string): Promise<boolean> {
+	if (pendingRandomRequestId) return Promise.resolve(false);
+	return sendSongRequest(undefined, { randomPlaylistId: playlistId });
+}
+
+async function sendSongRequest(
+	track: ChatMusicTrack | undefined,
+	{ anchor, fromOffer = false, offerId, choiceId, randomPlaylistId }: {
+		anchor?: HTMLElement;
+		fromOffer?: boolean;
+		offerId?: string;
+		choiceId?: string;
+		randomPlaylistId?: string;
+	},
+): Promise<boolean> {
 	if (!currentUser) {
 		openAuthModal();
 		return false;
@@ -2543,35 +2958,50 @@ async function handleEnqueueTrack(track: ChatMusicTrack): Promise<boolean> {
 	const room = currentRoom;
 	const requestId = crypto.randomUUID();
 	return new Promise<boolean>((resolve) => {
+		const reportUnsent = (message: string) => {
+			if (room !== currentRoom) return;
+			if (fromOffer && songOfferOrigin && track) rotationAction = { entryId: track.id, message };
+			else showNotice(message, "error");
+		};
 		const timer = window.setTimeout(() => {
 			finish(false);
-			if (room === currentRoom) showNotice("点歌未收到回应，请先查看待播队列");
-		}, 30_000);
+			reportUnsent("点歌未收到回应，请先查看待播队列");
+		}, 15_000);
 		const finish = (ok: boolean) => {
 			window.clearTimeout(timer);
 			songRequests.delete(requestId);
+			if (pendingRandomRequestId === requestId) pendingRandomRequestId = null;
 			resolve(ok);
 		};
-		songRequests.set(requestId, { room, finish });
-		if (
-			!sendPacket({
-				type: "music:enqueue",
-				requestId,
-				track: {
-					id: track.id,
-					provider: track.provider,
-					sourceId: track.sourceId,
-					playlistId: track.playlistId,
-					position: track.position,
-					title: track.title,
-					artist: track.artist,
-					album: track.album,
-					cover: track.cover,
-					durationSec: track.durationSec ?? 0,
-				},
-			})
-		)
-			finish(false);
+		songRequests.set(requestId, { room, track, anchor, randomPlaylistId, fromOffer, finish });
+		if (randomPlaylistId) pendingRandomRequestId = requestId;
+		const packet = {
+			type: "music:enqueue",
+			requestId,
+			allowAlternatives: true,
+			offerId,
+			choiceId,
+			randomPlaylistId,
+			track: track && {
+				id: track.id,
+				provider: track.provider,
+				sourceId: track.sourceId,
+				playlistId: track.playlistId,
+				position: track.position,
+				title: track.title,
+				artist: track.artist,
+				album: track.album,
+				cover: track.cover,
+				durationSec: track.durationSec ?? 0,
+			},
+		};
+		try {
+			if (sendPacket(packet)) return;
+		} catch (error) {
+			console.warn("Unable to send song request", error);
+		}
+		finish(false);
+		reportUnsent("连接暂时不可用，请重试");
 	});
 }
 
@@ -2593,7 +3023,7 @@ async function refreshGlobalPresence() {
 		if (cacheKey === lastPresenceRaw) return;
 		const data = JSON.parse(rawText) as {
 			members: ChatOnlineMember[];
-			observers?: ChatObserverItem[];
+			observers?: ChatOnlineMember[];
 			totalCount: number;
 		};
 		if (
@@ -2738,13 +3168,17 @@ onMount(() => {
 
 	if (typeof window !== "undefined" && "Notification" in window) {
 		desktopNotificationPermission = Notification.permission;
-		const storedPref = localStorage.getItem(NOTIFICATION_STORAGE_KEY);
-		if (storedPref === "true" && Notification.permission === "granted") {
-			desktopNotificationEnabled = true;
-		} else if (storedPref === "false") {
-			desktopNotificationEnabled = false;
-		} else if (Notification.permission === "granted") {
-			desktopNotificationEnabled = true;
+		const storedMode = localStorage.getItem(NOTIFICATION_MODE_STORAGE_KEY);
+		if (storedMode === "all" || storedMode === "mention" || storedMode === "off") {
+			desktopNotificationMode =
+				Notification.permission === "granted" ? storedMode : "off";
+		} else {
+			const storedPref = localStorage.getItem(NOTIFICATION_STORAGE_KEY);
+			if (storedPref === "true" && Notification.permission === "granted") {
+				desktopNotificationMode = "mention";
+			} else {
+				desktopNotificationMode = "off";
+			}
 		}
 	}
 
@@ -3095,7 +3529,7 @@ onMount(() => {
 			window.clearTimeout(secondaryStartupTimer);
 			secondaryStartupTimer = null;
 		}
-		for (const pending of songRequests.values()) pending.finish(false);
+		clearPendingSongRequests();
 		window.clearInterval(presenceTimer);
 		window.clearInterval(memberTimer);
 		window.clearInterval(playlistTimer);
@@ -3121,6 +3555,7 @@ onMount(() => {
 		clearReconnectTimer();
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 		if (skipPendingTimer !== null) window.clearTimeout(skipPendingTimer);
+		clearRotationAction();
 		closePendingSocket();
 		if (ws) {
 			try {
@@ -3133,6 +3568,8 @@ onMount(() => {
 	};
 });
 </script>
+
+<svelte:window onkeydown={handleVersionPopoverKeys} />
 
 <div class="flex flex-col h-full w-full min-h-0">
   <div
@@ -3201,6 +3638,7 @@ onMount(() => {
         isWindowFocused={isEffectiveFocused}
         interconnectSites={interconnectSites}
         desktopNotificationEnabled={desktopNotificationEnabled}
+        desktopNotificationMode={desktopNotificationMode}
         desktopNotificationPermission={desktopNotificationPermission}
         roomUnreadCounts={roomUnreadCounts}
         roomAvatars={roomAvatars}
@@ -3264,7 +3702,6 @@ onMount(() => {
           onSkipTrack={handleSkipTrack}
           onVoteSkip={handleVoteSkip}
           onPlayQueued={handlePlayQueued}
-        onPlayRotationTrack={handlePlayRotationTrack}
           onLoadHistory={handleLoadHistory}
           onMarkRead={handleMarkRead}
           onClearTargetMessage={() => {
@@ -3387,6 +3824,7 @@ onMount(() => {
         walineToken={walineToken}
         playlistRefreshSeq={playlistRefreshSeq}
         externalPlaylistRequest={externalPlaylistRequest}
+        {fallbackSearch}
         fallbackTracks={musicTracks}
         musicState={musicState}
         currentUser={currentUser}
@@ -3399,6 +3837,8 @@ onMount(() => {
         initialListening={isListeningIntent}
         onSearchOnline={handleSearchOnline}
         onEnqueueTrack={handleEnqueueTrack}
+        onRandomEnqueue={handleRandomEnqueue}
+        isRandomizing={pendingRandomRequestId !== null}
         onNotify={showNotice}
         onOpenUserProfile={handleOpenUserProfile}
         onPlaybackStatusChange={(status) => {
@@ -3424,8 +3864,22 @@ onMount(() => {
           }
           sendPacket({ type: "music:remove", uid });
         }}
+        onRemoveRotationTrack={(track) => {
+          if (!currentUser) {
+            showAuthModal = true;
+            return;
+          }
+          sendPacket({
+            type: "music:remove_rotation",
+            entryId: track.entryId,
+            trackId: track.id,
+          });
+          showNotice(`已跳过这轮播放《${track.title}》`);
+        }}
         onPlayQueued={handlePlayQueued}
         onPlayRotationTrack={handlePlayRotationTrack}
+        onOpenRotationOffer={openRotationOffer}
+        {rotationAction}
         isSkippingTrack={isSkippingTrack}
         onSkipTrack={handleSkipTrack}
         onVoteSkip={handleVoteSkip}
@@ -3472,12 +3926,144 @@ onMount(() => {
     </ChatModal>
   {/if}
 
-  <!-- 个人资料独立编辑弹窗 -->
+  {#snippet versionCover(url: string | undefined)}
+    <span class="chat-version-cover" aria-hidden="true">
+      <svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 17.5V6l11-2v11.5" />
+        <ellipse cx="6.5" cy="17.5" rx="2.5" ry="2" />
+        <ellipse cx="17.5" cy="15.5" rx="2.5" ry="2" />
+      </svg>
+      {#if url}
+        {#key url}
+          <img src={url} alt="" decoding="async" onerror={(event) => { event.currentTarget.hidden = true; }} />
+        {/key}
+      {/if}
+    </span>
+  {/snippet}
+
+  {#if rotationOfferOpen && rotationOrigin}
+    <div
+      bind:this={versionPopover}
+      use:placeVersionPopover={versionAnchor}
+      use:positionChatFloating={{
+        reference: versionAnchor,
+        placement: "top-end",
+        gap: 8,
+        fitViewport: true,
+        onReferenceHidden: () => { versionAnchor = undefined; },
+      }}
+      data-chat-floating={versionAnchor?.isConnected ? "" : undefined}
+      role="region"
+      aria-label="可播版本"
+      class="chat-version-popover"
+      class:chat-version-popover--unanchored={!versionAnchor?.isConnected}
+      aria-busy={rotationAction?.pending ?? false}
+    >
+      <div class="chat-version-row chat-version-original">
+        {@render versionCover("cover" in rotationOrigin && typeof rotationOrigin.cover === "string"
+          ? rotationOrigin.cover
+          : rotationOrigin.pic)}
+        <div class="min-w-0">
+          <p class="chat-version-identity" title={rotationOrigin.title + " · " + rotationOrigin.artist}>
+            <strong>{rotationOrigin.title}</strong>
+            <span>{rotationOrigin.artist}</span>
+          </p>
+          <p class="chat-version-detail">
+            <span>原选曲目</span>
+            {#if rotationOrigin.durationSec}
+              <span class="chat-version-duration">{formatClockSeconds(rotationOrigin.durationSec)}</span>
+            {/if}
+          </p>
+        </div>
+        <button type="button" class="chat-queue-icon-btn shrink-0" aria-label="关闭版本选择" disabled={rotationAction?.pending} onclick={closeRotationOffer}>
+          <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      {#if rotationAction?.offer}
+        <div class="divide-y divide-[var(--chat-divider-color)] border-t border-[var(--chat-divider-color)]">
+          {#each rotationAction.offer.choices as { track, relation } (track.id)}
+            {@const difference = describeVersionDifference(rotationOrigin, track, relation)}
+            {@const duration = describeVersionDuration(rotationOrigin.durationSec, track.durationSec)}
+            <div class="chat-version-row">
+              {@render versionCover(track.cover)}
+              <div class="min-w-0">
+                <p class="chat-version-identity" title={track.title + " · " + track.artist}>
+                  <strong>{track.title}</strong>
+                  <span>{track.artist}</span>
+                </p>
+                <p class="chat-version-detail">
+                  <span title={difference}>{difference}</span>
+                  {#if track.provider}
+                    <span>{formatPlatformLabel(track.provider)}</span>
+                  {/if}
+                  {#if duration}
+                    <span class="chat-version-duration">{duration}</span>
+                  {/if}
+                </p>
+              </div>
+              <button
+                type="button"
+                data-version-choice
+                class="btn-regular chat-version-play text-xs font-semibold text-[var(--chat-accent-text)] disabled:opacity-45"
+                aria-label={(songOfferOrigin ? "点播 " : "切播 ") + track.title + " · " + track.artist}
+                disabled={rotationAction.pending}
+                onclick={() => submitVersionOffer(track.id)}
+              >{songOfferOrigin ? "点播" : "切播"}</button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      {#if rotationAction?.pending || rotationAction?.message}
+        <p class="m-0 px-3 py-2 text-xs text-[var(--chat-meta-color)]" role="status">
+          {rotationAction.pending ? "正在处理…" : rotationAction.message}
+        </p>
+      {/if}
+      {#if !rotationAction?.offer && !rotationAction?.pending}
+        <div class="px-3 pb-2.5">
+          {#if rotationAction?.code === "NO_SOURCE"}
+            <button type="button" class="btn-regular rounded-lg px-2.5 py-2 text-xs font-semibold text-[var(--chat-accent-text)]" onclick={searchForAnotherVersion}>搜索其他版本</button>
+          {:else}
+            <button type="button" class="btn-regular rounded-lg px-2.5 py-2 text-xs font-semibold text-[var(--chat-accent-text)]" onclick={() => submitVersionOffer()}>重新查找</button>
+          {/if}
+        </div>
+      {/if}
+      {#if !rotationAction?.pending && (rotationAction?.offer || rotationAction?.code === "NO_SOURCE")}
+        <div class="border-t border-[var(--chat-divider-color)] px-3 py-1.5">
+          {#if youtubeCandidatesEnabled && currentUser && !youtubeCandidates.length}
+            <button type="button" disabled={youtubeStatus === "正在搜索 YouTube…"} onclick={() => findYoutubeCandidates(rotationOrigin)}
+              class="btn-regular rounded-md px-2 py-1.5 text-xs font-semibold text-[var(--chat-accent-text)]">查看 YouTube 候选</button>
+          {/if}
+          <a href={youtubeSearchUrl(rotationOrigin)} target="_blank" rel="noopener noreferrer"
+            class="inline-block rounded-md px-2 py-1.5 text-xs font-semibold text-[var(--chat-accent-text)]"
+          >在 YouTube 搜索</a>
+          {#if youtubeStatus}
+            <p class="my-1 text-xs text-[var(--chat-meta-color)]" role="status">{youtubeStatus}</p>
+          {/if}
+          {#each youtubeCandidates as video (video.id)}
+            <a class="flex items-center gap-2 rounded-md py-1 text-xs text-[var(--chat-accent-text)]" target="_blank" rel="noopener noreferrer"
+              href={"https://www.youtube.com/watch?v=" + video.id}>
+              {@render versionCover("https://i.ytimg.com/vi/" + video.id + "/default.jpg")}
+              <span class="min-w-0">
+                <strong class="block truncate">{video.title}</strong>
+                <span class="block truncate">{video.channel} · YouTube</span>
+              </span>
+            </a>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if ChatProfileModalComp}
     <ChatProfileModalComp
       open={showProfileModal}
       currentUser={currentUser}
       walineServerUrl={walineServerUrl}
+      desktopNotificationMode={desktopNotificationMode}
+      desktopNotificationPermission={desktopNotificationPermission}
+      onChangeDesktopNotificationMode={setDesktopNotificationMode}
       onSave={handleUpdateProfile}
       onClose={() => (showProfileModal = false)}
       onLogout={handleLogout}
