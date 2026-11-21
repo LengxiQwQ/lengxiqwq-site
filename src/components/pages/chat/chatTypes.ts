@@ -237,6 +237,8 @@ export interface ImageAttachment {
 	name?: string;
 	duration?: number;
 	size?: number;
+	width?: number;
+	height?: number;
 	isSticker?: boolean;
 }
 
@@ -337,6 +339,7 @@ export interface ChatMessageRecord {
 	isAdmin: boolean;
 	content: string;
 	attachments: ImageAttachment[];
+	inlineImageDimensions?: Record<string, { width: number; height: number }>;
 	mentionKeys?: string[];
 	mentionEntities?: ChatMentionEntity[];
 	replyTo?: ChatReplyRef | null;

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onMount, tick } from "svelte";
+import { flushSync, onMount, tick } from "svelte";
 import { KAOMOJI_PRESETS } from "@/constants/kaomoji";
 import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar, {
@@ -36,7 +36,14 @@ import {
 	trimChatDraft,
 	writeChatComposer,
 } from "./chatMentions";
+import {
+	chatImageLayout,
+	type ChatImageDimensions,
+	type ChatImageResizeDetail,
+	getChatImageDimensions,
+} from "./chatImageLayout";
 import { setChatLightboxSourceProvider } from "./chatLightbox";
+import { getChatMarkdownLayout, getChatMessageAttachments } from "./chatMarkdown";
 import { closeChatActionSheet, fadeChatSheetBackdrop } from "./chatSheetMotion";
 import type {
 	ChatActiveThreadItem,
@@ -916,7 +923,8 @@ const measuredMsgHeights = new Map<string, number>();
 let virtualEnabled = $state(false);
 let windowStart = $state(0);
 let windowEnd = $state(0);
-let lastMeasuredWidth = 0;
+let estimatedImageWidth = $state(224);
+let rootFontSize = $state(16);
 let isShiftingWindow = false;
 let scrollEndTimer: number | null = null;
 let isActivelyScrolling = false;
@@ -926,17 +934,47 @@ let prevVisibleCount = 0;
 let windowTopMarkerEl: HTMLDivElement | null = $state(null);
 let windowBottomMarkerEl: HTMLDivElement | null = $state(null);
 
+function estimateImageHeight(
+	url: string,
+	metadata?: Partial<ChatImageDimensions>,
+): number {
+	const { ratio, intrinsicWidth, maxWidthRem } = chatImageLayout(
+		getChatImageDimensions(url, metadata),
+	);
+	const width = Math.min(
+		intrinsicWidth,
+		maxWidthRem * rootFontSize,
+		estimatedImageWidth,
+	);
+	return width / ratio + 2;
+}
+
 function estimateRowHeight(msg: ChatMessageRecord): number {
 	if (msg.kind === "system") return 46;
 	let h = 76;
 	if (firstUnreadMsgUid === msg.msgUid) h += 34;
 	if (msg.replyTo) h += 44;
-	const hasMedia =
-		(msg.attachments && msg.attachments.length > 0) ||
-		msg.content.includes("![");
-	if (hasMedia) h += 180;
-	else if (msg.content.length > 160) h += 84;
-	else if (msg.content.length > 70) h += 40;
+	const { imageUrls, textLength } = getChatMarkdownLayout(
+		msg.content,
+		stickerMap,
+	);
+	if (textLength > 160) h += 84;
+	else if (textLength > 70) h += 40;
+	for (const url of imageUrls) {
+		h += estimateImageHeight(url, msg.inlineImageDimensions?.[url]);
+		h += 0.5 * rootFontSize; // Markdown preview margins
+	}
+	const attachments = getChatMessageAttachments(msg, stickerMap);
+	for (const att of attachments) {
+		if (att.type === "image" && !att.isSticker) h += estimateImageHeight(att.url, att);
+		else if (att.type === "image") h += 120;
+		else if (att.type === "video") h += 180;
+		else h += 44;
+	}
+	if (attachments.length > 0) {
+		const gaps = attachments.length - 1 + Number(Boolean(msg.replyTo || msg.content.trim()));
+		h += gaps * 0.5 * rootFontSize;
+	}
 	if (msg.poll) h += 140;
 	if (msg.reactions && Object.keys(msg.reactions).length > 0) h += 32;
 	if (msg.threadSummary && msg.threadSummary.count > 0) h += 38;
@@ -1061,6 +1099,7 @@ function handleScrollSettled() {
 	}
 	isActivelyScrolling = false;
 	commitScrollDeviation();
+	if (followsLayoutAtBottom) snapScrollToBottom();
 	lastEdgeCheckScrollTop = -1;
 	checkVirtualWindowEdges(false);
 	maybeTriggerAutoLoadOlderHistory(true);
@@ -1103,6 +1142,19 @@ function findVisibleViewportAnchor(
 	return best ? { uid: best.uid, contentTop: best.contentTop } : null;
 }
 
+function compensateLayoutDrift(drift: number) {
+	if (!messageContainer || Math.abs(drift) <= 0.5) return;
+	if (isActivelyScrolling || isUserTouching) {
+		// Defer scrollTop writes until touch and momentum scrolling have settled.
+		applyStageTransform(scrollDeviation - drift);
+		scheduleScrollSettled();
+		return;
+	}
+	const pendingOffset = scrollDeviation;
+	if (pendingOffset !== 0) applyStageTransform(0);
+	setScrollTopProgrammatically(messageContainer.scrollTop - pendingOffset + drift);
+}
+
 async function shiftWindowWithAnchor(
 	nextStart: number,
 	nextEnd: number,
@@ -1141,20 +1193,7 @@ async function shiftWindowWithAnchor(
 					el.getBoundingClientRect().top -
 					cRect.top +
 					messageContainer.scrollTop;
-				const drift = nextContentTop - anchor.contentTop;
-				if (Math.abs(drift) > 0.5) {
-					if (isActivelyScrolling || isUserTouching) {
-						// 滚动/触摸进行中绝不写 scrollTop（不打断 180Hz/iOS 惯性合成器），改用 GPU transform 暂存漂移
-						applyStageTransform(scrollDeviation - drift);
-						scheduleScrollSettled();
-					} else {
-						const pendingOffset = scrollDeviation;
-						if (pendingOffset !== 0) applyStageTransform(0);
-						setScrollTopProgrammatically(
-							messageContainer.scrollTop - pendingOffset + drift,
-						);
-					}
-				}
+				compensateLayoutDrift(nextContentTop - anchor.contentTop);
 			}
 		}
 	} finally {
@@ -2331,30 +2370,30 @@ onMount(() => {
 	};
 	window.addEventListener("chat-music-notices-change", handleMusicNoticesSync);
 	setChatLightboxSourceProvider(collectChatImageSources);
-	if (messageContainer && messageContainer.clientWidth > 0) {
-		lastMeasuredWidth = Math.round(messageContainer.clientWidth);
-	}
 
+	const updateImageConstraints = () => {
+		if (!messageContentEl?.clientWidth) return;
+		const style = getComputedStyle(messageContentEl);
+		const bubbleWidth = messageContentEl.clientWidth *
+			(parseFloat(style.getPropertyValue("--chat-message-bubble-max-width")) / 100);
+		const padding = parseFloat(style.getPropertyValue("--chat-message-bubble-padding-x"));
+		const maxImageWidth = Math.max(1, bubbleWidth - 2 * padding - 2);
+		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+		if (maxImageWidth === estimatedImageWidth && rem === rootFontSize) return;
+		measuredMsgHeights.clear();
+		estimatedImageWidth = maxImageWidth;
+		rootFontSize = rem;
+		measureMountedRows();
+	};
+	updateImageConstraints();
 	void scrollToBottom();
 
 	const followBottomAfterLayout = () => {
-		const curWidth = messageContainer
-			? Math.round(messageContainer.clientWidth)
-			: 0;
-		if (
-			curWidth > 0 &&
-			lastMeasuredWidth > 0 &&
-			Math.abs(curWidth - lastMeasuredWidth) > 8
-		) {
-			measuredMsgHeights.clear();
-			measureMountedRows();
-		}
-		if (curWidth > 0) {
-			lastMeasuredWidth = curWidth;
-		}
+		updateImageConstraints();
 		if (
 			followsLayoutAtBottom &&
 			!isUserTouching &&
+			!isActivelyScrolling &&
 			!isSmoothScrolling &&
 			!isShiftingWindow
 		) {
@@ -2373,8 +2412,36 @@ onMount(() => {
 		resizeObserver?.observe(messageContentEl);
 	}
 
+	const handleImageResize = (event: Event) => {
+		const { apply } = (event as CustomEvent<ChatImageResizeDetail>).detail;
+		const row = (event.target as HTMLElement).closest<HTMLElement>("[data-vrow-uid]");
+		if (!row?.dataset.vrowUid || !messageContainer) return;
+
+		event.preventDefault();
+		const container = messageContainer;
+		// Window changes already capture their own anchor across the Svelte update.
+		const anchor = virtualEnabled && !isShiftingWindow && !followsLayoutAtBottom
+			? findVisibleViewportAnchor(renderedWindow.start, renderedWindow.end)
+			: null;
+		flushSync(apply);
+		recordRowHeight(row.dataset.vrowUid, row.getBoundingClientRect().height);
+		if (anchor) {
+			const el = container.querySelector<HTMLElement>(
+				`[data-vrow-uid="${CSS.escape(anchor.uid)}"]`,
+			);
+			if (el) {
+				const top = el.getBoundingClientRect().top - container.getBoundingClientRect().top
+					+ container.scrollTop;
+				compensateLayoutDrift(top - anchor.contentTop);
+			}
+		}
+		followBottomAfterLayout();
+	};
+	messageContainer?.addEventListener("chat-image-resize", handleImageResize);
+
 	const handleMediaLoad = (e: Event) => {
 		const target = e.target as HTMLElement | null;
+		if (target?.classList.contains("chat-msg-image")) return;
 		if (target && (target.tagName === "IMG" || target.tagName === "VIDEO")) {
 			const row = target.closest<HTMLElement>("[data-vrow-uid]");
 			if (row?.dataset.vrowUid) {
@@ -2508,6 +2575,7 @@ onMount(() => {
 		window.removeEventListener("drop", preventWindowDrag);
 		resizeObserver?.disconnect();
 		messageContainer?.removeEventListener("load", handleMediaLoad, true);
+		messageContainer?.removeEventListener("chat-image-resize", handleImageResize);
 		messageContainer?.removeEventListener(
 			"pointerdown",
 			handleContainerPointerDown,
@@ -2729,6 +2797,13 @@ $effect(() => {
 						const cRect = messageContainer.getBoundingClientRect();
 						const nextOffset = anchorEl.getBoundingClientRect().top - cRect.top;
 						let drift = nextOffset - anchor.anchorOffsetInViewport;
+						if (isActivelyScrolling || isUserTouching) {
+							// Compare content coordinates so movement since the request stays intact.
+							compensateLayoutDrift(
+								drift + messageContainer.scrollTop - anchor.prevScrollTop - scrollDeviation,
+							);
+							return;
+						}
 						if (
 							anchor.manualClick &&
 							anchor.prevScrollTop <= 40 &&
@@ -2753,6 +2828,10 @@ $effect(() => {
 					} else {
 						const newScrollHeight = messageContainer.scrollHeight;
 						const delta = newScrollHeight - anchor.prevScrollHeight;
+						if (isActivelyScrolling || isUserTouching) {
+							compensateLayoutDrift(delta);
+							return;
+						}
 						const targetTop =
 							anchor.manualClick && anchor.prevScrollTop <= 40 && delta > 120
 								? Math.max(0, anchor.prevScrollTop + delta - 120)
@@ -3547,8 +3626,8 @@ async function processImageFiles(files: FileList | File[]) {
 	isUploadingImage = true;
 	try {
 		for (const file of list.slice(0, remaining)) {
-			const url = await uploadChatImage(file, walineServerUrl);
-			pendingImages = [...pendingImages, { type: "image", url }];
+			const image = await uploadChatImage(file, walineServerUrl);
+			pendingImages = [...pendingImages, { type: "image", ...image }];
 		}
 	} catch (err) {
 		uploadError = err instanceof Error ? err.message : "图片上传失败";

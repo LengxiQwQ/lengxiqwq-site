@@ -4,6 +4,7 @@ let activeGlobalVoiceStop: (() => void) | null = null;
 
 <script lang="ts">
 import ChatAvatar from "./ChatAvatar.svelte";
+import ChatImagePreview from "./ChatImagePreview.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessageActivityModal from "./ChatMessageActivityModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
@@ -16,12 +17,8 @@ import {
 	sanitizeChatUrl,
 } from "./chatClient";
 import type { InterconnectSite } from "./chatConfig";
-import {
-	getCachedChatImageDims,
-	openChatImageLightbox,
-	rememberChatImageDims,
-} from "./chatLightbox";
 import { positionChatFloating } from "./chatFloating";
+import { getChatMessageAttachments } from "./chatMarkdown";
 import type {
 	ChatMessageRecord,
 	ChatReadReceipt,
@@ -32,7 +29,6 @@ import LottieSticker from "./LottieSticker.svelte";
 import {
 	formatChatReplyPreview,
 	formatStickerAttachmentAlt,
-	isChatInlineSticker,
 	parseChatSegments,
 	type StickerItem,
 } from "./stickerLoader";
@@ -369,31 +365,7 @@ const effectiveSenderUrl = $derived.by(() => {
 	return sanitizeChatUrl(externalOrigin?.site?.url, false);
 });
 
-const safeAttachments = $derived.by(() => {
-	const raw = message.attachments || [];
-	const content = message.content || "";
-	const hasMdImg = /!\[[^\]]*\]\((https?:\/\/[^)]+)\)/i.test(content);
-	return raw
-		.map((att) => ({ ...att, url: sanitizeChatUrl(att.url, true) }))
-		.filter((att) => {
-			if (!att.url) return false;
-			// 1. 如果正文中已经包含了该附件的 URL，去重过滤
-			if (content.includes(att.url)) {
-				return false;
-			}
-			// 2. 如果正文已经包含 Markdown 图片语法，且当前附件是贴纸/表情，或者正文非空且当前附件是内嵌表情，去重过滤
-			if (
-				(hasMdImg &&
-					(att.isSticker ||
-						isChatInlineSticker(att.url, att.name, stickerMap))) ||
-				(content.trim().length > 0 &&
-					isChatInlineSticker(att.url, att.name, stickerMap))
-			) {
-				return false;
-			}
-			return true;
-		});
-});
+const safeAttachments = $derived(getChatMessageAttachments(message, stickerMap));
 
 const roleBadge = $derived.by(() => {
 	if (isExternal) return null;
@@ -1227,29 +1199,7 @@ function handleBubbleClick(e: MouseEvent) {
             />
           </div>
         {:else if att.type === "image"}
-          {@const cachedDims = getCachedChatImageDims(att.url)}
-          <a
-            href={att.url}
-            data-chat-image={att.url}
-            class="flex w-fit max-w-full overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
-            onclick={(e) => {
-              e.preventDefault();
-              void openChatImageLightbox(att.url, e.currentTarget);
-            }}
-          >
-            <img
-              src={att.url}
-              loading="lazy"
-              alt="聊天图片"
-              decoding="async"
-              width={cachedDims?.w}
-              height={cachedDims?.h}
-              style:--chat-image-width={cachedDims ? `${cachedDims.w}px` : undefined}
-              style:--chat-image-ratio={cachedDims ? cachedDims.w / cachedDims.h : undefined}
-              onload={(e) => rememberChatImageDims(att.url, e.currentTarget)}
-              class="chat-msg-image"
-            />
-          </a>
+          <ChatImagePreview src={att.url} alt="聊天图片" metadata={att} />
         {:else if att.type === "audio"}
           <div class="chat-voice-msg">
             <button
@@ -1594,6 +1544,7 @@ function handleBubbleClick(e: MouseEvent) {
                 {/if}
                 <ChatMarkdownContent
                   content={message.content}
+                  imageDimensions={message.inlineImageDimensions}
                   stickerMap={stickerMap}
                   mentionEntities={message.mentionEntities}
                   currentUserKey={currentUserKey}
@@ -1729,6 +1680,7 @@ function handleBubbleClick(e: MouseEvent) {
                 {/if}
                 <ChatMarkdownContent
                   content={message.content}
+                  imageDimensions={message.inlineImageDimensions}
                   stickerMap={stickerMap}
                   mentionEntities={message.mentionEntities}
                   currentUserKey={currentUserKey}

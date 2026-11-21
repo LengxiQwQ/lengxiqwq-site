@@ -1,4 +1,8 @@
 import type { InterconnectSite } from "@/types/chatConfig";
+import {
+	type ChatImageDimensions,
+	validateChatImageDimensions,
+} from "./chatImageLayout";
 import type {
 	ChatActiveThreadItem,
 	ChatCustomBadge,
@@ -1176,25 +1180,32 @@ export async function fetchMusicHistory(
 	}
 }
 
-async function compressChatImageIfNeeded(file: File): Promise<File> {
+async function prepareChatImage(file: File): Promise<{
+	file: File;
+	size?: ChatImageDimensions;
+}> {
 	const isGif =
 		file.type === "image/gif" || file.name.toLowerCase().endsWith(".gif");
-	if (isGif) return file;
 
 	const isPng =
 		file.type === "image/png" || file.name.toLowerCase().endsWith(".png");
 	const isJpg = file.type === "image/jpeg" || /\.(jpe?g)$/i.test(file.name);
 
-	if (!isPng && !isJpg) return file;
-	if (isPng && file.size <= 300 * 1024) return file;
+	const shouldCompress = !isGif && (isJpg || (isPng && file.size > 300 * 1024));
 
-	return new Promise<File>((resolve) => {
+	return new Promise((resolve) => {
 		const objectUrl = URL.createObjectURL(file);
 		const img = new Image();
 		img.onload = () => {
 			URL.revokeObjectURL(objectUrl);
 			const width = img.naturalWidth || img.width;
 			const height = img.naturalHeight || img.height;
+			const size = validateChatImageDimensions(width, height);
+			const original = { file, size };
+			if (!shouldCompress || !size) {
+				resolve(original);
+				return;
+			}
 			const isLandscape = width >= height;
 			const maxW = isLandscape ? 2560 : 1440;
 			const maxH = isLandscape ? 1440 : 2560;
@@ -1206,12 +1217,12 @@ async function compressChatImageIfNeeded(file: File): Promise<File> {
 			if (width > maxW || height > maxH) {
 				needResize = true;
 				const scale = Math.min(maxW / width, maxH / height);
-				targetWidth = Math.round(width * scale);
-				targetHeight = Math.round(height * scale);
+				targetWidth = Math.max(1, Math.round(width * scale));
+				targetHeight = Math.max(1, Math.round(height * scale));
 			}
 
 			if (isJpg && !needResize && file.size <= 1024 * 1024) {
-				resolve(file);
+				resolve(original);
 				return;
 			}
 
@@ -1220,7 +1231,7 @@ async function compressChatImageIfNeeded(file: File): Promise<File> {
 			canvas.height = targetHeight;
 			const ctx = canvas.getContext("2d");
 			if (!ctx) {
-				resolve(file);
+				resolve(original);
 				return;
 			}
 
@@ -1231,11 +1242,14 @@ async function compressChatImageIfNeeded(file: File): Promise<File> {
 			canvas.toBlob(
 				(blob) => {
 					if (!blob) {
-						resolve(file);
+						resolve(original);
 						return;
 					}
 					const baseName = file.name.replace(/\.[^/.]+$/, "") || "chat-img";
-					resolve(new File([blob], `${baseName}.jpg`, { type: "image/jpeg" }));
+					resolve({
+						file: new File([blob], `${baseName}.jpg`, { type: "image/jpeg" }),
+						size: { width: targetWidth, height: targetHeight },
+					});
 				},
 				"image/jpeg",
 				0.82,
@@ -1243,7 +1257,7 @@ async function compressChatImageIfNeeded(file: File): Promise<File> {
 		};
 		img.onerror = () => {
 			URL.revokeObjectURL(objectUrl);
-			resolve(file);
+			resolve({ file });
 		};
 		img.src = objectUrl;
 	});
@@ -1252,7 +1266,7 @@ async function compressChatImageIfNeeded(file: File): Promise<File> {
 export async function uploadChatImage(
 	file: File,
 	walineServerUrl: string,
-): Promise<string> {
+): Promise<{ url: string; width?: number; height?: number }> {
 	const base = normalizeServerUrl(walineServerUrl);
 	if (!base) {
 		throw new Error("未配置图片上传服务");
@@ -1268,7 +1282,7 @@ export async function uploadChatImage(
 		throw new Error("仅支持 JPG / PNG / WebP / GIF / AVIF 图片");
 	}
 
-	const processed = await compressChatImageIfNeeded(file);
+	const { file: processed, size } = await prepareChatImage(file);
 	if (processed.size > 5 * 1024 * 1024) {
 		throw new Error("图片压缩后仍超过 5MB 限制");
 	}
@@ -1295,7 +1309,7 @@ export async function uploadChatImage(
 	if (!resp.ok || data.errno !== 0 || !data.data?.url) {
 		throw new Error(data.errmsg || "图片上传失败");
 	}
-	return data.data.url;
+	return { url: data.data.url, ...size };
 }
 
 export async function uploadChatMedia(

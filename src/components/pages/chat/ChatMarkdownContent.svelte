@@ -1,11 +1,8 @@
 <script lang="ts">
 import type { Token, Tokens } from "marked";
 import ChatCodeBlock from "./ChatCodeBlock.svelte";
-import {
-	getCachedChatImageDims,
-	openChatImageLightbox,
-	rememberChatImageDims,
-} from "./chatLightbox";
+import ChatImagePreview from "./ChatImagePreview.svelte";
+import type { ChatImageDimensions } from "./chatImageLayout";
 import {
 	type ChatMarkdownAst,
 	isSafeImageUrl,
@@ -24,6 +21,7 @@ import {
 
 interface Props {
 	content: string;
+	imageDimensions?: Record<string, ChatImageDimensions>;
 	stickerMap: Map<string, StickerItem>;
 	mentionEntities?: ChatMentionEntity[];
 	mentionKeys?: string[];
@@ -34,6 +32,7 @@ interface Props {
 
 const {
 	content = "",
+	imageDimensions,
 	stickerMap,
 	mentionEntities = [],
 	mentionKeys = [],
@@ -109,29 +108,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
             class="chat-sticker chat-sticker--{cat} chat-sticker--inline select-none"
           />
         {:else}
-          {@const cachedDims = getCachedChatImageDims(safeSrc)}
-          <a
-            href={safeSrc}
-            data-chat-image={safeSrc}
-            class="inline-flex max-w-full align-top my-1 overflow-hidden rounded-lg border border-black/10 dark:border-white/10 cursor-zoom-in"
-            onclick={(e) => {
-              e.preventDefault();
-              void openChatImageLightbox(safeSrc, e.currentTarget);
-            }}
-          >
-            <img
-              src={safeSrc}
-              alt={imgTok.text || "图片"}
-              loading="lazy"
-              decoding="async"
-              width={cachedDims?.w}
-              height={cachedDims?.h}
-              style:--chat-image-width={cachedDims ? `${cachedDims.w}px` : undefined}
-              style:--chat-image-ratio={cachedDims ? cachedDims.w / cachedDims.h : undefined}
-              onload={(e) => rememberChatImageDims(safeSrc, e.currentTarget)}
-              class="chat-msg-image"
-            />
-          </a>
+          <ChatImagePreview src={safeSrc} alt={imgTok.text || "图片"} metadata={imageDimensions?.[safeSrc]} inline />
         {/if}
       {:else}
         {imgTok.raw}

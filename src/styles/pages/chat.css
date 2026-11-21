@@ -448,6 +448,10 @@ html[data-chat-page][data-chat-density="compact"] :is(#chat-page, #chat-modal-la
 	border-radius: 15px !important;
 }
 
+html[data-chat-page][data-chat-density="compact"] #chat-page .chat-message-content {
+	--chat-message-bubble-padding-x: 11px;
+}
+
 html[data-chat-page][data-chat-density="compact"] #chat-page [data-chat-message-scroll] {
 	padding: 10px min(28px, 3vw) 19px;
 }
@@ -551,6 +555,8 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 }
 
 .chat-message-content {
+	--chat-message-bubble-max-width: 68%;
+	--chat-message-bubble-padding-x: 14px;
 	justify-content: safe flex-end;
 }
 
@@ -566,7 +572,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 }
 
 [data-msg-uid] > div:last-child {
-	max-width: 68% !important;
+	max-width: var(--chat-message-bubble-max-width, 68%) !important;
 	width: fit-content;
 }
 
@@ -579,7 +585,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 
 .chat-bubble {
 	position: relative;
-	padding: 10px 14px !important;
+	padding: 10px var(--chat-message-bubble-padding-x, 14px) !important;
 	border: 0 !important;
 	border-radius: 18px !important;
 	box-shadow: 0 1px 2px color-mix(in oklab, var(--skin-text) 8%, transparent);
@@ -2475,8 +2481,12 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 		padding: 12px 12px 22px;
 	}
 
+	.chat-message-content {
+		--chat-message-bubble-max-width: 82%;
+	}
+
 	[data-msg-uid] > div:last-child {
-		max-width: 82% !important;
+		max-width: var(--chat-message-bubble-max-width, 82%) !important;
 	}
 
 	[data-msg-uid] > button:first-child .chat-avatar {
@@ -2485,7 +2495,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	}
 
 	.chat-bubble {
-		padding: 10px 14px !important;
+		padding: 10px var(--chat-message-bubble-padding-x, 14px) !important;
 		border-radius: 18px !important;
 	}
 
@@ -3305,9 +3315,8 @@ div.chat-sticker-large svg {
 }
 
 .chat-msg-image {
-	--chat-preview-ratio: var(--chat-image-ratio, 1.333333);
 	display: block;
-	width: min(var(--chat-image-width, 10rem), 14rem, calc(11rem * var(--chat-preview-ratio)));
+	width: var(--chat-preview-width);
 	max-width: 100%;
 	height: auto;
 	aspect-ratio: var(--chat-preview-ratio);

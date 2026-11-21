@@ -11,35 +11,6 @@ let swupCleanupBound = false;
 let openSeq = 0;
 let customSourceProvider: (() => ChatLightboxImageItem[]) | null = null;
 
-export interface ChatImageDims {
-	w: number;
-	h: number;
-}
-
-const MAX_IMAGE_DIM_CACHE = 500;
-const chatImageDimCache = new Map<string, ChatImageDims>();
-
-export function getCachedChatImageDims(url: string): ChatImageDims | undefined {
-	return chatImageDimCache.get(url);
-}
-
-export function rememberChatImageDims(
-	url: string,
-	img: HTMLImageElement | null,
-): void {
-	if (!url || !img) return;
-	const w = img.naturalWidth;
-	const h = img.naturalHeight;
-	if (w <= 0 || h <= 0) return;
-	const prev = chatImageDimCache.get(url);
-	if (prev && prev.w === w && prev.h === h) return;
-	if (chatImageDimCache.size >= MAX_IMAGE_DIM_CACHE && !prev) {
-		const oldest = chatImageDimCache.keys().next().value;
-		if (oldest !== undefined) chatImageDimCache.delete(oldest);
-	}
-	chatImageDimCache.set(url, { w, h });
-}
-
 /**
  * Register a memory-backed image provider (used by virtualized ChatWindow
  * so off-screen chat images remain navigable in the lightbox).

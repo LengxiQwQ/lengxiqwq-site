@@ -1,0 +1,65 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -388,6 +388,9 @@
+   }, 1000);
+ }
+ 
++import { imageDimensions, withHistoryImageDimensions } from './src/chat-image-dimensions.mjs';
++
++const historyImageDimensions = loadJsonSafe('chat_image_dimensions.json', {}) || {};
+ const messagesStore = {
+   chat: loadJsonSafe('messages_chat.json', []),
+   interconnect: loadJsonSafe('messages_interconnect.json', [])
+@@ -595,6 +598,7 @@
+     if (!safeUrl) continue;
+     out.push({
+       type: allowedTypes.has(item.type) ? item.type : 'file',
++      ...(item.type === 'image' && !item.isSticker ? imageDimensions(item.width, item.height) : {}),
+       url: safeUrl,
+       ...(typeof item.name === 'string' && item.name.trim() ? { name: item.name.trim().slice(0, 160) } : {}),
+       ...(typeof item.duration === 'number' && Number.isFinite(item.duration) && item.duration >= 0 ? { duration: item.duration } : {}),
+@@ -4216,9 +4220,10 @@
+   const hidden = new Set(records.filter((message) => message.isRecalled ||
+     message.status === 'recalled' || message.status === 'deleted').map((message) => message.msgUid));
+   return records.filter((message) => !hidden.has(message.msgUid)).map((message) => {
+-    if (!hidden.has(message.replyTo?.msgUid)) return message;
++    const withDimensions = withHistoryImageDimensions(message, historyImageDimensions);
++    if (!hidden.has(message.replyTo?.msgUid)) return withDimensions;
+     return {
+-      ...message,
++      ...withDimensions,
+       replyTo: { ...message.replyTo, content: '', hasImage: false, isRecalled: true }
+     };
+   });
+@@ -5709,6 +5714,7 @@
+           size: att.size || 0,
+           duration: att.duration || 0,
+           isSticker: Boolean(att.isSticker),
++          ...(attType === 'image' && !att.isSticker ? imageDimensions(att.width, att.height) : {}),
+           mimetype: inferMimeType(att.url || attName, attType)
+         });
+         const safeName = escapeHtml(attName);
+@@ -5958,6 +5964,10 @@
+         mimetype: att.mimetype || inferMimeType(att.url || att.name, att.type),
+         ...(att.size > 0 ? { size: att.size } : {})
+       };
++      if (att.type === 'image' && !att.isSticker && att.width && att.height) {
++        info.w = att.width;
++        info.h = att.height;
++      }
+       if (att.type === 'audio' && att.duration > 0) {
+         info.duration = Math.round(att.duration * 1000);
+       }
+@@ -6202,7 +6212,11 @@
+       imgUrl = mxcToHttp(imgUrl);
+     }
+     if (imgUrl) {
+-      attachments.push({ type: 'image', url: imgUrl });
++      attachments.push({
++        type: 'image',
++        url: imgUrl,
++        ...imageDimensions(ev.content?.info?.w, ev.content?.info?.h)
++      });
+     }
+     if (!rawBody || rawBody === 'image.png' || /\.(jpg|jpeg|png|webp|gif|avif)$/i.test(rawBody)) {
+       rawBody = '';

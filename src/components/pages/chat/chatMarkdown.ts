@@ -1,9 +1,15 @@
 import { marked, type Token } from "marked";
+import { sanitizeChatUrl } from "./chatClient";
 import { mentionRanges } from "./chatMentions";
-import type { ChatMentionEntity } from "./chatTypes";
+import type {
+	ChatMentionEntity,
+	ChatMessageRecord,
+	ImageAttachment,
+} from "./chatTypes";
 import {
 	buildStickerTokenRegex,
 	type ChatContentSegment,
+	isChatInlineSticker,
 	resolveExternalOrLocalSticker,
 	type StickerItem,
 } from "./stickerLoader";
@@ -15,6 +21,17 @@ export interface ChatMarkdownAst {
 }
 
 const CODE_SPLIT_RE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`)/g;
+const MAX_CACHED_IMAGE_LAYOUTS = 1000;
+
+interface ChatMarkdownLayout {
+	imageUrls: string[];
+	textLength: number;
+}
+
+const cachedImageLayouts = new WeakMap<
+	Map<string, StickerItem>,
+	Map<string, ChatMarkdownLayout>
+>();
 
 export function isSafeLinkUrl(raw?: string): string {
 	const trimmed = (raw || "").trim();
@@ -52,6 +69,70 @@ export function isSafeImageUrl(raw?: string): string {
 		// Invalid URL
 	}
 	return "";
+}
+
+export function getChatMessageAttachments(
+	message: Pick<ChatMessageRecord, "attachments" | "content">,
+	stickerMap: Map<string, StickerItem>,
+): ImageAttachment[] {
+	const raw = message.attachments ?? [];
+	const content = message.content ?? "";
+	const hasMdImg = /!\[[^\]]*\]\((https?:\/\/[^)]+)\)/i.test(content);
+	return raw
+		.map((att) => ({ ...att, url: sanitizeChatUrl(att.url, true) }))
+		.filter((att) => {
+			if (!att.url) return false;
+			// 1. 如果正文中已经包含了该附件的 URL，去重过滤
+			if (content.includes(att.url)) {
+				return false;
+			}
+			// 2. 如果正文已经包含 Markdown 图片语法，且当前附件是贴纸/表情，或者正文非空且当前附件是内嵌表情，去重过滤
+			if (
+				(hasMdImg &&
+					(att.isSticker ||
+						isChatInlineSticker(att.url, att.name, stickerMap))) ||
+				(content.trim().length > 0 &&
+					isChatInlineSticker(att.url, att.name, stickerMap))
+			) {
+				return false;
+			}
+			return true;
+		});
+}
+
+export function getChatMarkdownLayout(
+	content: string,
+	stickerMap: Map<string, StickerItem>,
+): ChatMarkdownLayout {
+	if (!content.includes("!["))
+		return { imageUrls: [], textLength: content.length };
+	let layouts = cachedImageLayouts.get(stickerMap);
+	if (!layouts) {
+		layouts = new Map();
+		cachedImageLayouts.set(stickerMap, layouts);
+	}
+	const cached = layouts.get(content);
+	if (cached) return cached;
+	const imageUrls: string[] = [];
+	let textLength = content.length;
+	marked.walkTokens(
+		marked.lexer(content, { gfm: true, breaks: true }),
+		(token) => {
+			if (token.type !== "image") return;
+			const url = isSafeImageUrl(token.href);
+			if (!url) return;
+			textLength -= token.raw.length;
+			if (isChatInlineSticker(url, token.text, stickerMap)) return;
+			imageUrls.push(url);
+		},
+	);
+	const layout = { imageUrls, textLength: Math.max(0, textLength) };
+	if (layouts.size >= MAX_CACHED_IMAGE_LAYOUTS) {
+		const oldest = layouts.keys().next().value;
+		if (oldest !== undefined) layouts.delete(oldest);
+	}
+	layouts.set(content, layout);
+	return layout;
 }
 
 export function parseChatMarkdown(
