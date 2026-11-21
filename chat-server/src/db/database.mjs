@@ -219,7 +219,7 @@ export class ChatDatabase {
       );
     `);
 
-    // 10. 全站音乐收藏表（茶室星愿与个人收藏，基于 Playlist Out 标准数据）
+    // 10. 全站音乐收藏表（每个成员的收藏汇入茶室星愿）
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS music_favorites (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -728,46 +728,29 @@ export class ChatDatabase {
 
     this.upsertTrackMeta(normalized);
 
-    // 检查是否存在匹配的收藏（先精确匹配 trackId，若无则跨音源按 title + artist 匹配同一首歌）
-    let existing = this.stmtCheckFavorite.get(trackId, userKey);
-    let matchedTrackId = trackId;
-    if (!existing && normalized.title && normalized.artist) {
-      const match = this.db.prepare(`
-        SELECT f.track_id FROM music_favorites f
-        JOIN music_tracks t ON f.track_id = t.id
-        WHERE f.user_key = ? AND LOWER(TRIM(t.title)) = LOWER(TRIM(?)) AND LOWER(TRIM(t.artist)) = LOWER(TRIM(?))
-      `).get(userKey, normalized.title, normalized.artist);
-      if (match) {
-        existing = match;
-        matchedTrackId = match.track_id;
-      }
-    }
-
-    let favorited = false;
-    if (existing) {
-      this.stmtDeleteFavorite.run(matchedTrackId, userKey);
-      if (matchedTrackId !== trackId) {
-        this.stmtDeleteFavorite.run(trackId, userKey);
-      }
-      favorited = false;
+    // 优先复用共享收藏中已有的同曲 ID，让不同来源的收藏汇入同一首歌。
+    const matches = normalized.title && normalized.artist ? this.db.prepare(`
+      SELECT f.track_id, f.user_key FROM music_favorites f
+      JOIN music_tracks t ON f.track_id = t.id
+      WHERE LOWER(TRIM(t.title)) = LOWER(TRIM(?)) AND LOWER(TRIM(t.artist)) = LOWER(TRIM(?))
+      ORDER BY f.created_at ASC, f.id ASC
+    `).all(normalized.title, normalized.artist) : [];
+    const ownIds = new Set(matches.filter((row) => row.user_key === userKey).map((row) => row.track_id));
+    if (this.stmtCheckFavorite.get(trackId, userKey)) ownIds.add(trackId);
+    const favorited = ownIds.size === 0;
+    if (favorited) {
+      const sharedId = matches[0]?.track_id || trackId;
+      this.stmtInsertFavorite.run(sharedId, userKey, userName || '', userAvatar || '', now, trackJson);
     } else {
-      this.stmtInsertFavorite.run(trackId, userKey, userName || '', userAvatar || '', now, trackJson);
-      favorited = true;
+      for (const id of ownIds) this.stmtDeleteFavorite.run(id, userKey);
     }
-
-    const rows = this.stmtGetFavoriteUsersForTrack.all(trackId);
-    const favoritedUsers = rows.map((r) => ({
-      userKey: r.user_key,
-      userName: r.user_name,
-      userAvatar: r.user_avatar,
-      createdAt: r.created_at,
-    }));
+    const status = this.getFavoriteTrackStatus(trackId, userKey);
 
     return {
       ok: true,
       favorited,
-      favCount: favoritedUsers.length,
-      favoritedUsers,
+      favCount: status.favCount,
+      favoritedUsers: status.favoritedUsers,
       track: normalized,
     };
   }
@@ -780,7 +763,16 @@ export class ChatDatabase {
 
   getFavoriteTrackStatus(trackId, userKey = '') {
     if (!trackId) return { isFavorited: false, favCount: 0, favoritedUsers: [] };
-    const rows = this.stmtGetFavoriteUsersForTrack.all(trackId);
+    const rows = this.db.prepare(`
+      SELECT f.user_key, f.user_name, f.user_avatar, MAX(f.created_at) AS created_at
+      FROM music_favorites f JOIN music_tracks t ON t.id = f.track_id
+      WHERE f.track_id = ? OR EXISTS (
+        SELECT 1 FROM music_tracks target WHERE target.id = ?
+          AND LOWER(TRIM(target.title)) = LOWER(TRIM(t.title))
+          AND LOWER(TRIM(target.artist)) = LOWER(TRIM(t.artist))
+      )
+      GROUP BY f.user_key
+    `).all(trackId, trackId);
     const favoritedUsers = rows.map((r) => ({
       userKey: r.user_key,
       userName: r.user_name,
@@ -809,58 +801,42 @@ export class ChatDatabase {
 
   getCollectiveFavorites({ filterUserKey = null, sort = 'recent', offset = 0, limit = 100 } = {}) {
     offset = Math.max(0, Number.parseInt(offset, 10) || 0);
-    limit = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 100));
+    limit = Math.min(1000, Math.max(1, Number.parseInt(limit, 10) || 100));
 
-    let countSql = 'SELECT COUNT(DISTINCT track_id) AS total FROM music_favorites';
-    const countParams = [];
-    if (filterUserKey) {
-      countSql += ' WHERE user_key = ?';
-      countParams.push(filterUserKey);
-    }
-    const totalRow = this.db.prepare(countSql).get(...countParams);
-    const total = Number(totalRow?.total) || 0;
-
-    let sql = `
-      SELECT 
-        track_id,
-        track_json,
-        COUNT(*) as fav_count,
-        MAX(created_at) as last_favorited_at,
-        json_group_array(
-          json_object(
-            'userKey', user_key,
-            'userName', user_name,
-            'userAvatar', user_avatar,
-            'createdAt', created_at
-          )
-        ) as favorited_users_json
-      FROM music_favorites
+    // 同歌跨来源的历史记录也在查询时聚合，不改写已有收藏数据。
+    const grouped = `
+      WITH keyed AS (
+        SELECT f.*, CASE WHEN TRIM(t.title) != '' AND TRIM(t.artist) != ''
+          THEN LOWER(TRIM(t.title)) || char(31) || LOWER(TRIM(t.artist))
+          ELSE f.track_id END AS song_key
+        FROM music_favorites f JOIN music_tracks t ON t.id = f.track_id
+      ), unique_users AS (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY song_key, user_key ORDER BY created_at DESC, id DESC) AS rn
+        FROM keyed
+      ), grouped AS (
+        SELECT song_key, track_json, COUNT(*) AS fav_count,
+          MAX(created_at) AS last_favorited_at,
+          json_group_array(json_object('userKey', user_key, 'userName', user_name,
+            'userAvatar', user_avatar, 'createdAt', created_at)) AS favorited_users_json,
+          MAX(CASE WHEN user_key = ? THEN 1 ELSE 0 END) AS selected_user
+        FROM unique_users WHERE rn = 1 GROUP BY song_key
+      )
     `;
-    const params = [];
+    const filter = filterUserKey ? ' WHERE selected_user = 1' : '';
+    const totalRow = this.db.prepare(`${grouped} SELECT COUNT(*) AS total FROM grouped${filter}`).get(filterUserKey || '');
+    const total = Number(totalRow?.total) || 0;
+    const order = sort === 'count' || sort === 'hot'
+      ? 'fav_count DESC, last_favorited_at DESC, song_key ASC'
+      : 'last_favorited_at DESC, fav_count DESC, song_key ASC';
+    const rows = this.db.prepare(`${grouped} SELECT * FROM grouped${filter} ORDER BY ${order} LIMIT ? OFFSET ?`)
+      .all(filterUserKey || '', limit, offset);
 
-    if (filterUserKey) {
-      sql += ' GROUP BY track_id HAVING SUM(CASE WHEN user_key = ? THEN 1 ELSE 0 END) > 0 ';
-      params.push(filterUserKey);
-    } else {
-      sql += ' GROUP BY track_id ';
-    }
-
-    if (sort === 'count' || sort === 'hot') {
-      sql += ' ORDER BY fav_count DESC, last_favorited_at DESC ';
-    } else {
-      sql += ' ORDER BY last_favorited_at DESC, fav_count DESC ';
-    }
-
-    sql += ' LIMIT ? OFFSET ? ';
-    params.push(limit, offset);
-
-    const rows = this.db.prepare(sql).all(...params);
     const items = rows.map((r) => {
       let track = {};
       try {
         track = JSON.parse(r.track_json);
       } catch {
-        track = { id: r.track_id };
+        track = {};
       }
       let favoritedUsers = [];
       try {
@@ -887,9 +863,12 @@ export class ChatDatabase {
 
   getCollectiveFavoriters() {
     const sql = `
-      SELECT user_key as userKey, user_name as userName, user_avatar as userAvatar, COUNT(*) as trackCount, MAX(created_at) as lastFavTime
-      FROM music_favorites
-      GROUP BY user_key
+      SELECT f.user_key as userKey, f.user_name as userName, f.user_avatar as userAvatar,
+        COUNT(DISTINCT CASE WHEN TRIM(t.title) != '' AND TRIM(t.artist) != ''
+          THEN LOWER(TRIM(t.title)) || char(31) || LOWER(TRIM(t.artist))
+          ELSE f.track_id END) as trackCount, MAX(f.created_at) as lastFavTime
+      FROM music_favorites f JOIN music_tracks t ON t.id = f.track_id
+      GROUP BY f.user_key
       ORDER BY trackCount DESC, lastFavTime DESC
     `;
     const rows = this.db.prepare(sql).all();

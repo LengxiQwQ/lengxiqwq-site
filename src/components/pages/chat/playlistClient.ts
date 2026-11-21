@@ -464,6 +464,42 @@ export async function fetchPlaylistDetail(
 	if (!resp.ok || !json?.ok || !json.playlist) {
 		throw new Error(json?.error || "加载歌单详情失败");
 	}
+	if (playlistId === "pl_collective_favorites" && json.playlist.tracks.length < json.playlist.trackCount) {
+		const tracks: PlaylistTrackItem[] = [];
+		let total = json.playlist.trackCount;
+		while (tracks.length < total) {
+			const page = await fetchCollectiveFavorites({
+				chatServerUrl,
+				filterUser,
+				offset: tracks.length,
+				limit: 200,
+			});
+			if (!page.ok || (page.items.length === 0 && tracks.length < page.total)) {
+				throw new Error(page.error || "加载共享收藏失败，请重试");
+			}
+			total = page.total;
+			for (const track of page.items) {
+				tracks.push({
+					position: tracks.length + 1,
+					sourcePlatform: track.sourcePlatform || track.provider || "qqmusic",
+					sourceTrackId: track.sourceId || track.id,
+					title: track.title,
+					artist: track.artist,
+					album: track.album || "",
+					cover: track.cover || "",
+					durationSec: track.durationSec || 0,
+					sourceUrl: track.url || "",
+					matchedTrack: track,
+					favCount: track.favCount,
+					lastFavoritedAt: track.lastFavoritedAt,
+					favoritedUsers: track.favoritedUsers,
+				});
+			}
+			if (page.items.length === 0) break;
+		}
+		json.playlist.tracks = tracks;
+		json.playlist.trackCount = total;
+	}
 	return json.playlist;
 }
 
@@ -748,7 +784,10 @@ export async function fetchCollectiveFavorites(params: {
 	const json = (await resp
 		.json()
 		.catch(() => null)) as CollectiveFavoritesResponse | null;
-	return json ?? { ok: false, total: 0, offset: 0, limit: 100, items: [] };
+	if (!resp.ok || !json?.ok) {
+		throw new Error(json?.error || "加载共享收藏失败");
+	}
+	return json;
 }
 
 /**

@@ -211,4 +211,38 @@ describe('ChatDatabase SQLite 核心测试', () => {
     assert.equal(adminRes.ok, true);
     assert.equal(db.getFavoriteTrackStatus('qq:001favorite').favCount, 0);
   });
+
+  test('不同来源的收藏汇入共享歌单，取消时保留其他成员的收藏', () => {
+    const first = { id: 'qq:shared-test', title: '共享测试曲', artist: '测试歌手' };
+    const alternate = { id: 'netease:shared-test', title: '共享测试曲', artist: '测试歌手' };
+    db.toggleFavorite({ track: first, userKey: 'user:shared-a' });
+    const added = db.toggleFavorite({ track: alternate, userKey: 'user:shared-b' });
+    assert.equal(added.favCount, 2);
+    let list = db.getCollectiveFavorites({ filterUserKey: 'user:shared-b' });
+    assert.equal(list.total, 1);
+    assert.equal(list.items[0].favCount, 2);
+    const removed = db.toggleFavorite({ track: alternate, userKey: 'user:shared-a' });
+    assert.equal(removed.favorited, false);
+    assert.equal(removed.favCount, 1);
+    list = db.getCollectiveFavorites({ filterUserKey: 'user:shared-b' });
+    assert.equal(list.total, 1);
+    assert.equal(list.items[0].favoritedUsers[0].userKey, 'user:shared-b');
+    db.toggleFavorite({ track: first, userKey: 'user:shared-b' });
+    assert.equal(db.getCollectiveFavorites({ filterUserKey: 'user:shared-b' }).total, 0);
+  });
+
+  test('历史跨来源重复收藏在共享歌单中聚合', () => {
+    const first = { id: 'qq:legacy-test', title: '旧收藏测试曲', artist: '测试歌手' };
+    const alternate = { id: 'netease:legacy-test', title: first.title, artist: first.artist };
+    db.toggleFavorite({ track: first, userKey: 'user:legacy-a' });
+    const stored = db.upsertTrackMeta(alternate);
+    db.stmtInsertFavorite.run(stored.id, 'user:legacy-b', '', '', Date.now(), JSON.stringify(stored));
+    const list = db.getCollectiveFavorites({ filterUserKey: 'user:legacy-a' });
+    assert.equal(list.total, 1);
+    assert.equal(list.items[0].favCount, 2);
+    assert.equal(db.getFavoriteTrackStatus(first.id).favCount, 2);
+    db.toggleFavorite({ track: alternate, userKey: 'user:legacy-a' });
+    assert.equal(db.getCollectiveFavorites({ filterUserKey: 'user:legacy-b' }).items[0].favCount, 1);
+    db.toggleFavorite({ track: first, userKey: 'user:legacy-b' });
+  });
 });

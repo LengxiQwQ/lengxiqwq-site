@@ -49,7 +49,6 @@ import type {
 	ChatOnlineMember,
 	ChatSessionUser,
 	ChatUserDetailSeed,
-	FavoriteUserItem,
 	MusicHistoryEntry,
 	PlaylistDetail,
 	PlaylistSummary,
@@ -66,14 +65,12 @@ import {
 	type AmbiguousResolveCandidate,
 	DEFAULT_PLAYLISTOUT_API_URL,
 	deleteSavedPlaylist,
-	fetchCollectiveFavorites,
 	fetchFavoriteTrackStatus,
 	fetchPlaylistByUrlFromPlaylistOut,
 	fetchPlaylistDetail,
 	fetchRoomPlaylists,
 	formatPlatformLabel,
 	refreshSavedPlaylist,
-	removeFavoriteTrack,
 	resolvePlaylistFromPlaylistOut,
 	saveImportedPlaylist,
 	saveRoomRotation,
@@ -558,7 +555,7 @@ async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTra
 		onNotify?.("请先登录账号或登记访客身份后再收藏歌曲~");
 		return;
 	}
-	const track = toEnqueueableTrack(rawTrack);
+	const track = "id" in rawTrack ? rawTrack : toEnqueueableTrack(rawTrack, selectedPlaylist?.id || "favorites");
 	const trackId = track.id || "";
 	const taKey = getTrackTitleArtistKey(track.title, track.artist);
 	const lookupKey = trackId || taKey;
@@ -596,10 +593,10 @@ async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTra
 			const nextSparkles = new Set(favSparkleTrackIds);
 			if (trackId) nextSparkles.add(trackId);
 			if (taKey) nextSparkles.add(taKey);
-			if (currentPlay?.track && isTrackFavorited(currentPlay.track)) {
+			if (currentPlay?.track && (currentPlay.track.id === track.id || getTrackTitleArtistKey(currentPlay.track.title, currentPlay.track.artist) === taKey)) {
 				nextSparkles.add("__current_play__");
 				isCurrentFavorited = true;
-				currentFavCount += 1;
+				currentFavCount = res.favCount;
 				isFavAnimating = true;
 			}
 			favSparkleTrackIds = nextSparkles;
@@ -624,16 +621,22 @@ async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTra
 			nextSparkles.delete("__current_play__");
 			favSparkleTrackIds = nextSparkles;
 
-			if (currentPlay?.track && !nextIds.has(currentPlay.track.id) && !nextTAs.has(getTrackTitleArtistKey(currentPlay.track.title, currentPlay.track.artist))) {
+			if (currentPlay?.track && (currentPlay.track.id === track.id || getTrackTitleArtistKey(currentPlay.track.title, currentPlay.track.artist) === taKey)) {
 				isCurrentFavorited = false;
-				currentFavCount = Math.max(0, currentFavCount - 1);
+				currentFavCount = res.favCount;
 				isFavAnimating = false;
 			}
 		}
 
 		userFavoritedTrackIds = nextIds;
 		userFavoritedTitleArtists = nextTAs;
+		const keys = await fetchUserFavoriteKeys({ chatServerUrl, token, authKind, userKey: currentUser?.userKey }).catch(() => null);
+		if (keys?.ok) {
+			userFavoritedTrackIds = new Set(keys.trackIds || []);
+			userFavoritedTitleArtists = new Set(keys.titleArtists || []);
+		}
 
+		invalidatePlaylistCaches();
 		if (selectedPlaylist?.id === "pl_collective_favorites") {
 			void openPlaylistDetail("pl_collective_favorites", true, undefined, collectiveFilterUserKey);
 		}
@@ -653,31 +656,6 @@ async function toggleFavoriteCurrentTrack(): Promise<void> {
 		await handleToggleFavoriteTrack(currentPlay.track);
 	} finally {
 		isFavToggling = false;
-	}
-}
-
-async function handleRemoveTrackFromFavorites(item: PlaylistTrackItem): Promise<void> {
-	if (!chatServerUrl) return;
-	const trackId = item.matchedTrack?.id || item.sourceTrackId || `qq:${item.sourceTrackId}`;
-	const token = walineToken || (currentUser?.authType === "guest" ? readStoredGuestToken() : "");
-	const isMyFav = Boolean(currentUser?.userKey && item.favoritedUsers?.some((u) => u.userKey === currentUser?.userKey));
-	try {
-		await removeFavoriteTrack({
-			chatServerUrl,
-			token,
-			authKind: currentUser?.authType === "guest" ? "guest" : "waline",
-			trackId,
-			targetUserKey: currentUser?.isAdmin && !isMyFav ? undefined : currentUser?.userKey,
-			userKey: currentUser?.userKey,
-		});
-		onNotify?.("已移出收藏");
-		void openPlaylistDetail("pl_collective_favorites", true, undefined, collectiveFilterUserKey);
-		if (currentPlay?.track?.id === trackId) {
-			isCurrentFavorited = false;
-			currentFavCount = Math.max(0, currentFavCount - 1);
-		}
-	} catch (err) {
-		onNotify?.(err instanceof Error ? err.message : "移出收藏失败");
 	}
 }
 
@@ -1506,6 +1484,8 @@ function syncDetailFlags(detail: PlaylistDetail): PlaylistDetail {
 	};
 }
 
+let playlistDetailRequestSeq = 0;
+
 async function openPlaylistDetail(
 	playlistId: string,
 	force = false,
@@ -1513,6 +1493,7 @@ async function openPlaylistDetail(
 	filterUser?: string,
 ): Promise<void> {
 	if (!chatServerUrl) return;
+	const requestSeq = ++playlistDetailRequestSeq;
 	cancelPlaylistDetailPrefetch();
 	const authSeg = isWalineLoggedIn ? walineToken : "";
 	const detailKey = `${roomId}|${authSeg}|${playlistId}|${filterUser || ""}`;
@@ -1566,18 +1547,18 @@ async function openPlaylistDetail(
 	// 3. 后台异步拉取曲目清单与最新数据
 	try {
 		const detail = await getOrFetchPlaylistDetail(playlistId, authSeg, force, filterUser);
-		if (selectedPlaylist?.id === playlistId) {
+		if (requestSeq === playlistDetailRequestSeq && selectedPlaylist?.id === playlistId) {
 			selectedPlaylist = syncDetailFlags(detail);
 			playlistsError = "";
 		}
 	} catch (err) {
-		if (selectedPlaylist?.id === playlistId) {
+		if (requestSeq === playlistDetailRequestSeq && selectedPlaylist?.id === playlistId) {
 			const msg = err instanceof Error ? err.message : "加载歌单详情失败";
 			playlistsError = msg;
 			onNotify?.(msg);
 		}
 	} finally {
-		if (selectedPlaylist?.id === playlistId) {
+		if (requestSeq === playlistDetailRequestSeq && selectedPlaylist?.id === playlistId) {
 			isLoadingPlaylistDetail = false;
 		}
 	}
@@ -2872,9 +2853,7 @@ $effect(() => {
   {#snippet trackRequestRow(
     song: ChatMusicTrack,
     subtitle: string,
-    countBadge?: string,
-    onRemoveFavorite?: () => void,
-    removeFavoriteTooltip?: string
+    countBadge?: string
   )}
     {@const isCurrent = isTrackCurrent(song)}
     {@const isQueued = isTrackQueued(song)}
@@ -2965,25 +2944,6 @@ $effect(() => {
           </span>
         {/if}
       </div>
-
-      {#if onRemoveFavorite}
-        <ChatTooltip text={removeFavoriteTooltip || "从歌单移除"}>
-          <button
-            type="button"
-            class="chat-queue-icon-btn {countBadge ? 'w-10! h-10! md:w-9! md:h-9!' : 'w-9! h-9! md:w-7! md:h-7!'} rounded-xl! md:rounded-lg! shrink-0 aspect-square text-red-500/80 hover:text-red-500! transition-colors"
-            aria-label={removeFavoriteTooltip || "从歌单移除"}
-            onclick={(e) => {
-              e.stopPropagation();
-              onRemoveFavorite();
-            }}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </ChatTooltip>
-      {/if}
 
       {#if isCurrent}
         <span
@@ -4403,8 +4363,8 @@ $effect(() => {
                               <ChatAvatar src={favoriter.userAvatar} name={favoriter.userName} size="2xs" />
                               <span class="truncate">{favoriter.userName}</span>
                             </span>
-                            {#if favoriter.favCount}
-                              <span class="text-[11px] opacity-70 tabular-nums shrink-0">{favoriter.favCount}首</span>
+							{#if favoriter.trackCount}
+							  <span class="text-[11px] opacity-70 tabular-nums shrink-0">{favoriter.trackCount}首</span>
                             {/if}
                           </button>
                         {/each}
@@ -4523,15 +4483,9 @@ $effect(() => {
                 {@const track = toEnqueueableTrack(item, selectedPlaylist.id)}
                 {@const isCollective = selectedPlaylist.id === "pl_collective_favorites"}
                 {@const subtitle = formatTrackSubtitle(item, isCollective)}
-                {@const isMyFav = Boolean(currentUser?.userKey && item.favoritedUsers?.some((u) => u.userKey === currentUser?.userKey))}
-                {@const canAdminRemove = isCollective && !isMyFav && Boolean(currentUser?.isAdmin)}
-                {@const removeTooltip = "移出全站收藏（站长管理）"}
                 {@render trackRequestRow(
                   track,
-                  subtitle,
-                  undefined,
-                  canAdminRemove ? () => handleRemoveTrackFromFavorites(item) : undefined,
-                  canAdminRemove ? removeTooltip : undefined
+                  subtitle
                 )}
               {/each}
             </div>
