@@ -3048,7 +3048,7 @@ $effect(() => {
   {#snippet collectiveCover()}
     <div class="w-full h-full bg-amber-100 flex items-center justify-center relative select-none">
       <svg class="w-5 h-5 text-amber-500 drop-shadow-[0_0_6px_rgba(245,158,11,0.65)] relative z-1" viewBox="0 0 24 24" fill="currentColor">
-        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" stroke="currentColor" stroke-width="0.5" stroke-linejoin="round" />
+        <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" stroke="currentColor" stroke-width="0.5" stroke-linejoin="round" />
       </svg>
     </div>
   {/snippet}
@@ -3131,7 +3131,7 @@ $effect(() => {
                 stroke-linejoin="round"
                 aria-hidden="true"
               >
-                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
               </svg>
             </button>
           </ChatTooltip>
@@ -3330,7 +3330,7 @@ $effect(() => {
               stroke-linejoin="round"
               aria-hidden="true"
             >
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+              <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
             </svg>
           </button>
         {#if hasSparkle}
@@ -3643,7 +3643,7 @@ $effect(() => {
                     stroke-linejoin="round"
                     aria-hidden="true"
                   >
-                    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                    <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
                   </svg>
                 </button>
                 {#if isFavAnimating && isCurrentFavorited}
@@ -4266,7 +4266,7 @@ $effect(() => {
                             stroke-linejoin="round"
                             aria-hidden="true"
                           >
-                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                            <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
                           </svg>
                         </button>
                       </ChatTooltip>
@@ -4754,7 +4754,7 @@ $effect(() => {
                         onclick={() => selectedPlaylist && handleTogglePlaylistFlag(selectedPlaylist, "isFeatured")}
                       >
                         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill={selectedPlaylist.isFeatured ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                          <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
                         </svg>
                       </button>
                       <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
