@@ -1124,7 +1124,7 @@ export async function fetchMusicHistory(
 	const base =
 		normalizeServerUrl(chatServerUrl) || "https://chat-server.lengxiqwq.com";
 	const roomId = params.roomId || "interconnect";
-	const type = params.type || "request";
+	const type = params.type || "all";
 	const sort = params.sort || "recent";
 	const offset = Math.max(0, params.offset ?? 0);
 	const limit = Math.min(100, Math.max(1, params.limit ?? 100));
@@ -1137,7 +1137,7 @@ export async function fetchMusicHistory(
 		offset: String(offset),
 		limit: String(limit),
 	});
-	if (requesterKey && type === "request") {
+	if (requesterKey && type !== "rotation") {
 		searchParams.set("requesterKey", requesterKey);
 	}
 

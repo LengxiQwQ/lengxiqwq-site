@@ -493,6 +493,10 @@ export const en: Translation = {
 	[Key.settingsTabAppearance]: "Appearance",
 	[Key.settingsTabWallpaper]: "Wallpaper",
 	[Key.settingsTabEffects]: "Effects",
+	[Key.settingsTabDeveloper]: "Developer",
+	[Key.exportMusicDiagnostics]: "Export playback diagnostics",
+	[Key.musicDiagnosticsHint]:
+		"Export chat playback events from this browser session.",
 
 	// Card Style
 	[Key.cardSettings]: "Card Style",

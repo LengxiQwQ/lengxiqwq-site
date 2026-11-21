@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 export function stableTrack(track) {
-  const { streamUrl, lrcUrl, url, lrc, ...identity } = track;
+  const { streamUrl, proxyUrl, directUrl, lrcUrl, url, lrc, ...identity } = track;
   return identity;
 }
 
@@ -25,11 +25,22 @@ function writeJsonAtomic(filePath, data) {
   }
 }
 
-const START_LEAD_MS = 1200;
+// Older snapshots may contain a scheduled start.
+const RESTORE_FUTURE_WINDOW_MS = 1400;
+const START_LEAD_MS = 500;
+
+function withTimeout(promise, ms, label = 'timeout') {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(label)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 const PREPARED_REUSE_TTL_MS = 25 * 60_000;
 
 export class MusicManager {
-  constructor({ roomId = 'chat', dataDir, musicRegistry, signSecret, serverOrigin, onStateChanged, onPrefetchTrack, onUnavailable, getListeners = () => [], chatDb = null }) {
+  constructor({ roomId = 'chat', dataDir, musicRegistry, signSecret, serverOrigin, onStateChanged, onUnavailable, getListeners = () => [], chatDb = null }) {
     this.roomId = roomId;
     this.dataDir = dataDir;
     this.chatDb = chatDb;
@@ -37,7 +48,6 @@ export class MusicManager {
     this.signSecret = signSecret;
     this.serverOrigin = serverOrigin;
     this.onStateChanged = onStateChanged || (() => {});
-    this.onPrefetchTrack = onPrefetchTrack || (() => {});
     this.onUnavailable = onUnavailable;
     this.getListeners = getListeners;
     this.stateVersion = 0;
@@ -52,14 +62,14 @@ export class MusicManager {
     this.rotationLogs = []; // Array of MusicRotationLogEntry
     this._nextRotationLogId = 1;
     this.fallbackTracks = [];
+    this.rotationDeck = [];
+    this.lastPlayedFallbackId = null;
     this.fallbackPlaylistId = null;
     this.fallbackPlaylistName = '歌单轮播';
     this._nextLogId = 1;
     this._advanceTimer = null;
     this._refreshPreparedTimer = null;
     this.preparedFallback = null;
-    this.preparedFallbackPool = [];
-    this._fillingPool = null;
     this.preparedQueue = null;
     this._prepareFallbackTimer = null;
     this._actorLastErrorAt = new Map();
@@ -187,7 +197,7 @@ export class MusicManager {
       const elapsedMs = now - startedAt;
 
       // 如果尚未超时（剩余至少 2 秒），尝试断点续播！
-      if (elapsedMs >= -START_LEAD_MS && elapsedMs < (durationSec - 2) * 1000) {
+      if (elapsedMs >= -RESTORE_FUTURE_WINDOW_MS && elapsedMs < (durationSec - 2) * 1000) {
         try {
           const playable = await this.resolve(current.track);
           if (playable) {
@@ -207,7 +217,6 @@ export class MusicManager {
               skipVoteNames: Array.isArray(current.skipVoteNames) ? current.skipVoteNames : [],
               measuredDuration: Boolean(current.measuredDuration)
             };
-            this.onPrefetchTrack(playable.streamUrl, true);
             this.scheduleAdvance();
             clearTimeout(this._prepareFallbackTimer);
             this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 50);
@@ -239,13 +248,79 @@ export class MusicManager {
     this.fallbackPlaylistName = playlistName;
     this.fallbackTracks = playlistId || all ? tracks : [];
     this.fallbackGeneration++;
+    this.reshuffleRotationDeck(true);
     this.preparedFallback = null;
-    this.preparedFallbackPool = [];
     if (start && (!this.current || this.current.isFallback)) {
       this.generation++;
       void this.advanceNext();
     } else if (this.current && !this.queue.length) {
       void this.prepareNext();
+    }
+  }
+
+  reshuffleRotationDeck(isNewPool = false) {
+    if (!this.fallbackTracks.length) {
+      this.rotationDeck = [];
+      return;
+    }
+    const deck = [...this.fallbackTracks];
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    const lastId = this.lastPlayedFallbackId || this.current?.track?.id;
+    if (deck.length > 1 && lastId) {
+      const getTid = (t) => t?.matchedTrack?.id || t?.id || t?.sourceTrackId || '';
+      if (getTid(deck[0]) === lastId) {
+        const swapIdx = 1 + Math.floor(Math.random() * (deck.length - 1));
+        [deck[0], deck[swapIdx]] = [deck[swapIdx], deck[0]];
+      }
+    }
+    this.rotationDeck = deck;
+  }
+
+  getRotationQueue(limit = 30) {
+    if (!this.rotationDeck.length && this.fallbackTracks.length > 0) {
+      this.reshuffleRotationDeck();
+    }
+    if (!this.rotationDeck.length) return [];
+    return this.rotationDeck.slice(0, limit).map((track, index) => {
+      const sourceId = track.matchedTrack?.sourceId || track.sourceTrackId || track.sourceId || '';
+      const id = track.matchedTrack?.id || (sourceId ? `qq:${sourceId}` : track.id || `rotation:${index}`);
+      return {
+        id,
+        sourcePlatform: track.sourcePlatform || track.provider || 'qq',
+        sourceTrackId: sourceId,
+        title: track.title || '未知曲目',
+        artist: track.artist || '未知歌手',
+        album: track.album || '',
+        durationSec: track.durationSec || track.duration || 0,
+        pic: track.pic || track.cover || track.picUrl || '',
+        sourcePlaylistTitle: track.sourcePlaylistTitle || '',
+        sourcePlaylistId: track.sourcePlaylistId || '',
+      };
+    });
+  }
+
+  consumeRotationTrack(playable) {
+    if (!this.rotationDeck.length && this.fallbackTracks.length > 0) {
+      this.reshuffleRotationDeck();
+    }
+    if (!this.rotationDeck.length) return;
+    const playId = playable?.id;
+    const playSourceId = playable?.sourceId;
+    const idx = this.rotationDeck.findIndex((t) => {
+      const tid = t?.matchedTrack?.id || t?.id;
+      const tsid = t?.matchedTrack?.sourceId || t?.sourceTrackId || t?.sourceId;
+      return (playId && tid === playId) || (playSourceId && tsid === playSourceId);
+    });
+    if (idx !== -1) {
+      this.rotationDeck.splice(idx, 1);
+    } else {
+      this.rotationDeck.shift();
+    }
+    if (this.rotationDeck.length === 0 && this.fallbackTracks.length > 0) {
+      this.reshuffleRotationDeck();
     }
   }
 
@@ -292,18 +367,17 @@ export class MusicManager {
       (a, b) => b.lastRequestedAt - a.lastRequestedAt || b.requestCount - a.requestCount
     ).slice(0, 100);
 
+    const prepared = this.queue.length ? this.preparedQueue : this.preparedFallback;
     const logsList = this.historyLogs.slice(-80).reverse();
 
-    const prepared = this.queue.length ? this.preparedQueue : this.preparedFallback;
-    const next = prepared?.playable ? {
-      uid: String(prepared.key), track: prepared.playable, startedAt: 0,
-      durationSec: prepared.playable.durationSec || 0, requesterKey: '', requesterName: '',
-      isFallback: !this.queue.length, skipVotes: []
-    } : null;
     return {
       protocolVersion: 2,
+      next: prepared?.playable && prepared.key === (this.queue[0]?.uid ?? this.fallbackGeneration) ? {
+        uid: String(prepared.key), track: prepared.playable, startedAt: 0,
+        durationSec: prepared.playable.durationSec || 0, requesterKey: '', requesterName: '',
+        isFallback: !this.queue.length, skipVotes: []
+      } : null,
       stateVersion: ++this.stateVersion,
-      next,
       current: this.current && {
         ...this.current,
         phase: (this.current.phase === 'scheduled' || this.current.phase === 'preparing') &&
@@ -318,7 +392,12 @@ export class MusicManager {
       })),
       history: histList,
       historyLogs: logsList,
-      rotationTotal: this.rotationHistoryMap.size,
+      rotationTotal: this.fallbackTracks.length || this.rotationHistoryMap.size,
+      rotationQueue: this.getRotationQueue(30),
+      rotationDeckTotal: this.rotationDeck.length,
+      rotationPoolTotal: this.fallbackTracks.length,
+      fallbackPlaylistName: this.fallbackPlaylistName || '歌单轮播',
+      fallbackPlaylistId: this.fallbackPlaylistId,
       requesterOnline,
       voteCount,
       voteThreshold,
@@ -410,18 +489,15 @@ export class MusicManager {
 
     // If nothing playing or currently playing fallback, play immediately!
     if ((!this.current || this.current.isFallback) && this.queue.length === 0) {
-      // playTrack starts the shared download alongside the client preparation window.
-      if ((!this.current || this.current.isFallback) && this.queue.length === 0) {
-        clearTimeout(this._advanceTimer);
-        this.playTrack(
-          playable,
-          { userKey: requesterKey, name: requesterName, avatar: requesterAvatar },
-          false, undefined, uid, selectionStartedAt
-        );
-        this.markOutcome(uid, 'played');
-        this.onStateChanged();
-        return { ok: true, playImmediately: true, track: playable };
-      }
+      clearTimeout(this._advanceTimer);
+      this.playTrack(
+        playable,
+        { userKey: requesterKey, name: requesterName, avatar: requesterAvatar },
+        false, undefined, uid, selectionStartedAt
+      );
+      this.markOutcome(uid, 'played');
+      this.onStateChanged();
+      return { ok: true, playImmediately: true, track: playable };
     }
 
     // Otherwise add to queue
@@ -429,8 +505,6 @@ export class MusicManager {
     this.queue.push(queueItem);
     if (this.queue[0] === queueItem) {
       void this.prepareNext(playable);
-    } else if (this.queue[1] === queueItem) {
-      this.onPrefetchTrack(playable.streamUrl, false);
     }
     this.savePlayback();
     this.onStateChanged();
@@ -466,11 +540,8 @@ export class MusicManager {
     const remaining = Math.max(0, play.startedAt + play.durationSec * 1000 - Date.now());
     this._advanceTimer = setTimeout(() => {
       if (this.current !== play) return;
-      if (this.queue.length || this.fallbackTracks.length) void this.advanceNext();
-      else this._advanceTimer = setTimeout(() => {
-        if (this.current === play) void this.advanceNext();
-      }, Math.max(0, play.startedAt + play.durationSec * 1000 - Date.now()));
-    }, Math.max(0, remaining - START_LEAD_MS));
+      void this.advanceNext();
+    }, remaining);
     if (remaining > 30_000) {
       this._refreshPreparedTimer = setTimeout(() => {
         if (this.current === play) void this.prepareNext(undefined, true);
@@ -478,21 +549,10 @@ export class MusicManager {
     }
   }
 
-  ready() {
-    return true;
-  }
-
-  recheckReady() {}
-
   playTrack(track, requester, isFallback = false, startedAt = Date.now() + START_LEAD_MS, requestUid, selectionStartedAt) {
     this.generation++;
     this.fallbackGeneration++;
     this.preparedFallback = null;
-    if (Array.isArray(this.preparedFallbackPool)) {
-      this.preparedFallbackPool = this.preparedFallbackPool.filter(
-        item => item?.playable?.id && item.playable.id !== track.id
-      );
-    }
     this.current = {
       uid: 'play_' + Date.now() + '_' + Math.random().toString(36).slice(2, 9),
       track,
@@ -509,14 +569,6 @@ export class MusicManager {
       skipVotes: [],
       skipVoteNames: []
     };
-    const uid = this.current.uid;
-    const selectedAt = Date.now();
-    Promise.resolve(this.onPrefetchTrack(track.streamUrl, 'warm')).then(ready => {
-      console.info('[MusicHandoff]', JSON.stringify({
-        room: this.roomId, uid, selectionStartedAt, selectedAt, startedAt,
-        warmCheckAt: Date.now(), firstChunkReady: ready === true
-      }));
-    }).catch(() => {});
     this.savePlayback();
     this.scheduleAdvance();
 
@@ -524,7 +576,7 @@ export class MusicManager {
       this.recordRotation(track);
     }
 
-    // Warm the next track in the background so the next switch hits VPS cache immediately.
+    // Resolve only the next address ahead of the switch.
     clearTimeout(this._prepareFallbackTimer);
     this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 20);
   }
@@ -634,6 +686,60 @@ export class MusicManager {
       };
     }
 
+    if (type === 'all' && !requesterKey) {
+      const mergedMap = new Map();
+      for (const item of this.historyMap.values()) {
+        mergedMap.set(item.track.id, {
+          track: item.track,
+          requestCount: item.requestCount,
+          lastRequesterName: item.lastRequesterName || '',
+          firstRequestedAt: item.firstRequestedAt,
+          lastRequestedAt: item.lastRequestedAt,
+          isRotation: false
+        });
+      }
+      for (const item of this.rotationHistoryMap.values()) {
+        const existing = mergedMap.get(item.track.id);
+        const rotName = item.lastPlaylistName ? `${item.lastPlaylistName} (轮播)` : '歌单轮播';
+        if (existing) {
+          existing.requestCount += item.rotationCount;
+          if (item.firstRotatedAt && item.firstRotatedAt < existing.firstRequestedAt) {
+            existing.firstRequestedAt = item.firstRotatedAt;
+          }
+          if (item.lastRotatedAt && item.lastRotatedAt > existing.lastRequestedAt) {
+            existing.lastRequestedAt = item.lastRotatedAt;
+            existing.lastRequesterName = rotName;
+            existing.isRotation = true;
+          }
+        } else {
+          mergedMap.set(item.track.id, {
+            track: item.track,
+            requestCount: item.rotationCount,
+            lastRequesterName: rotName,
+            firstRequestedAt: item.firstRotatedAt,
+            lastRequestedAt: item.lastRotatedAt,
+            isRotation: true
+          });
+        }
+      }
+      const list = Array.from(mergedMap.values());
+      if (sort === 'count') {
+        list.sort((a, b) => b.requestCount - a.requestCount || b.lastRequestedAt - a.lastRequestedAt);
+      } else {
+        list.sort((a, b) => b.lastRequestedAt - a.lastRequestedAt || b.requestCount - a.requestCount);
+      }
+      const total = list.length;
+      return {
+        ok: true,
+        type: 'all',
+        total,
+        offset,
+        limit,
+        hasMore: offset + limit < total,
+        items: list.slice(offset, offset + limit)
+      };
+    }
+
     // type === 'request'
     if (requesterKey) {
       const targetMap = new Map();
@@ -701,94 +807,80 @@ export class MusicManager {
 
   async resolveFallbackTrackPlayable(excludeIds = new Set()) {
     if (this.fallbackTracks.length === 0) return null;
-    const tracks = this.fallbackTracks;
+    if (!this.rotationDeck.length) {
+      this.reshuffleRotationDeck();
+    }
+    if (!this.rotationDeck.length) return null;
+
     const currentId = this.current?.track?.id || '';
     const currentSourceId = this.current?.track?.sourceId || '';
+    const maxAttempts = Math.min(this.rotationDeck.length, 12);
+    let attempts = 0;
 
-    // Pick up to 8 distinct candidate indices, skipping known-unplayable and already-queued tracks
-    const candidateIndices = [];
-    const tried = new Set();
-    const maxAttempts = Math.min(tracks.length * 3, 24);
-    for (let i = 0; i < maxAttempts && candidateIndices.length < Math.min(8, tracks.length); i++) {
-      const idx = Math.floor(Math.random() * tracks.length);
-      if (tried.has(idx)) continue;
-      tried.add(idx);
-      const item = tracks[idx];
-      if (!item) continue;
-      if (item._unmatchedAt && Date.now() - item._unmatchedAt < 30 * 60_000) continue;
-      const itemSourceId = item.matchedTrack?.sourceId || item.sourceTrackId || '';
-      const itemId = item.matchedTrack?.id || (itemSourceId ? `qq:${itemSourceId}` : '');
-      if (itemId && this.musicRegistry?.isKnownUnplayable?.(itemId)) continue;
-      if (tracks.length > 1 && itemSourceId && (itemSourceId === currentSourceId || itemId === currentId)) {
+    while (this.rotationDeck.length > 0 && attempts < maxAttempts) {
+      attempts++;
+      const candidate = this.rotationDeck[0];
+      if (!candidate) {
+        this.rotationDeck.shift();
         continue;
       }
-      if (tracks.length > excludeIds.size + 1 && itemId && excludeIds.has(itemId)) {
+
+      if (candidate._unmatchedAt && Date.now() - candidate._unmatchedAt < 30 * 60_000) {
+        this.rotationDeck.shift();
         continue;
       }
-      candidateIndices.push(idx);
-    }
-    if (candidateIndices.length === 0 && tracks.length > 0) {
-      candidateIndices.push(Math.floor(Math.random() * tracks.length));
-    }
 
-    // Resolve sequentially (1 candidate at a time) so we never burst-throttle upstream APIs
-    for (const index of candidateIndices) {
-      const chosen = tracks[index];
-      if (!chosen) continue;
+      const itemSourceId = candidate.matchedTrack?.sourceId || candidate.sourceTrackId || candidate.sourceId || '';
+      const itemId = candidate.matchedTrack?.id || (itemSourceId ? `qq:${itemSourceId}` : candidate.id || '');
+
+      if (itemId && this.musicRegistry?.isKnownUnplayable?.(itemId)) {
+        this.rotationDeck.shift();
+        continue;
+      }
+
+      if (this.rotationDeck.length > 1 && ((itemSourceId && itemSourceId === currentSourceId) || (itemId && itemId === currentId))) {
+        this.rotationDeck.push(this.rotationDeck.shift());
+        continue;
+      }
+
+      if (this.rotationDeck.length > excludeIds.size + 1 && itemId && excludeIds.has(itemId)) {
+        this.rotationDeck.push(this.rotationDeck.shift());
+        continue;
+      }
+
       try {
-        const track = await this.musicRegistry.resolvePlaylistTrack(chosen);
-        if (!track) continue;
-        if (tracks.length > 1 && (track.id === currentId || excludeIds.has(track.id))) continue;
-        if (this.musicRegistry?.isKnownUnplayable?.(track.id)) continue;
-        const playable = await this.resolve(track);
-        if (playable) return playable;
+        const track = await withTimeout(
+          this.musicRegistry.resolvePlaylistTrack(candidate),
+          1800,
+          'resolvePlaylistTrack timeout'
+        );
+        if (!track) {
+          this.rotationDeck.shift();
+          continue;
+        }
+        if (this.rotationDeck.length > 1 && (track.id === currentId || excludeIds.has(track.id))) {
+          this.rotationDeck.push(this.rotationDeck.shift());
+          continue;
+        }
+        if (this.musicRegistry?.isKnownUnplayable?.(track.id)) {
+          this.rotationDeck.shift();
+          continue;
+        }
+        const playable = await withTimeout(
+          this.resolve(track),
+          2000,
+          'resolve timeout'
+        );
+        if (playable) {
+          return playable;
+        }
+        this.rotationDeck.shift();
       } catch (err) {
         console.warn(`[Music:${this.roomId}] Error resolving fallback track:`, err.message);
+        this.rotationDeck.shift();
       }
     }
     return null;
-  }
-
-  async fillFallbackPool() {
-    if (this._fillingPool) return this._fillingPool;
-    if (!this.current || this.queue.length > 0 || !this.fallbackTracks?.length) return;
-    if (!Array.isArray(this.preparedFallbackPool)) this.preparedFallbackPool = [];
-
-    const promise = (async () => {
-      let attempts = 0;
-      while (
-        attempts++ < 4 &&
-        this.current &&
-        this.queue.length === 0 &&
-        this.fallbackTracks.length > 0 &&
-        this.preparedFallbackPool.length < 2
-      ) {
-        const gen = this.fallbackGeneration;
-        const exclude = new Set();
-        if (this.current?.track?.id) exclude.add(this.current.track.id);
-        if (this.preparedFallback?.playable?.id) exclude.add(this.preparedFallback.playable.id);
-        for (const item of this.preparedFallbackPool) {
-          if (item?.playable?.id) exclude.add(item.playable.id);
-        }
-        const playable = await this.resolveFallbackTrackPlayable(exclude);
-        if (!playable || !this.current || this.queue.length > 0) break;
-        if (this.fallbackTracks.length === 0) break;
-        // Even if fallbackGeneration advanced while resolving, as long as the track is distinct, keep it!
-        if (playable.id === this.current?.track?.id) continue;
-        if (this.preparedFallback?.playable?.id === playable.id) continue;
-        if (this.preparedFallbackPool.some(item => item?.playable?.id === playable.id)) continue;
-        this.onPrefetchTrack(playable.streamUrl, false);
-        this.preparedFallbackPool.push({
-          key: this.fallbackGeneration || gen,
-          playable,
-          checkedAt: Date.now()
-        });
-      }
-    })().finally(() => {
-      if (this._fillingPool === promise) this._fillingPool = null;
-    });
-    this._fillingPool = promise;
-    return promise;
   }
 
   async prepareNext(resolved, refresh = false) {
@@ -801,34 +893,11 @@ export class MusicManager {
       if (!refresh || !previous.checkedAt) return;
       const usable = await this.usePrepared(previous);
       if (usable && this[slot] === previous) {
-        this.onPrefetchTrack(usable.streamUrl, false);
         return;
       }
     }
     if (queued ? this.queue[0] !== queued : (this.queue.length || this.fallbackGeneration !== key)) return;
     if (!queued && !this.fallbackTracks.length) return;
-
-    // Fast promote from pre-warmed fallback pool if available
-    if (!queued && !resolved && !refresh && Array.isArray(this.preparedFallbackPool)) {
-      while (this.preparedFallbackPool.length > 0) {
-        const pooled = this.preparedFallbackPool.shift();
-        const usable = await this.usePrepared(pooled);
-        if (usable && usable.id !== this.current?.track?.id) {
-          if (this.queue.length || this.fallbackGeneration !== key) return;
-          this.preparedFallback = {
-            key,
-            playable: usable,
-            checkedAt: pooled.checkedAt || Date.now()
-          };
-          this.onPrefetchTrack(usable.streamUrl, false);
-          if (this.advancing?.generation !== this.generation) {
-            this.onStateChanged();
-          }
-          void this.fillFallbackPool();
-          return;
-        }
-      }
-    }
 
     const record = { key };
     this[slot] = record;
@@ -843,19 +912,7 @@ export class MusicManager {
     }
     record.playable = playable;
     record.checkedAt = Date.now();
-    if (queued || !this.queue.length) {
-      this.onPrefetchTrack(playable.streamUrl, false);
-    }
-    if (this.queue[1]?.track) {
-      void this.resolve(this.queue[1].track).then(second => {
-        if (second?.streamUrl) this.onPrefetchTrack(second.streamUrl, false);
-      }).catch(() => {});
-    } else if (!queued) {
-      void this.fillFallbackPool();
-    }
-    if (this.advancing?.generation !== this.generation) {
-      this.onStateChanged();
-    }
+    if (this.advancing?.generation !== this.generation) this.onStateChanged();
   }
 
   async usePrepared(record) {
@@ -891,6 +948,7 @@ export class MusicManager {
     clearTimeout(this._advanceTimer);
     clearTimeout(this._refreshPreparedTimer);
     clearTimeout(this._prepareFallbackTimer);
+
     const promise = this.selectNext(generation).finally(() => {
       if (this.advancing?.promise === promise) this.advancing = null;
     });
@@ -906,10 +964,7 @@ export class MusicManager {
       if (generation !== this.generation) return;
       if (this.queue[0] !== next) continue;
       if (playable) {
-        // playTrack starts the shared download alongside the client preparation window.
-        if (generation !== this.generation) return;
-        if (this.queue[0] !== next) continue;
-        this.queue.shift();
+          this.queue.shift();
         this.preparedQueue = null;
         const duration = durationOf(playable.durationSec) || 240;
         const startedAt = next.startedAt && Date.now() - next.startedAt < (duration - 2) * 1000
@@ -935,20 +990,12 @@ export class MusicManager {
     this.preparedFallback = null;
     let known = await this.usePrepared(prepared);
     if (known && known.id === this.current?.track?.id) known = null;
-    while (!known && Array.isArray(this.preparedFallbackPool) && this.preparedFallbackPool.length > 0) {
-      const pooled = this.preparedFallbackPool.shift();
-      const candidate = await this.usePrepared(pooled);
-      if (candidate && candidate.id !== this.current?.track?.id) {
-        known = candidate;
-      }
-    }
     const playable = known || await this.resolveFallbackTrackPlayable();
     if (generation !== this.generation) return;
     if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt);
     if (playable) {
-      // playTrack starts the shared download alongside the client preparation window.
-      if (generation !== this.generation) return;
-      if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt);
+      this.consumeRotationTrack(playable);
+      this.lastPlayedFallbackId = playable.id;
       this.playTrack(playable, {
         userKey: 'system:fallback',
         name: (this.fallbackPlaylistName || '歌单轮播') + ' (轮播)'
@@ -1075,15 +1122,9 @@ export class MusicManager {
       this.onStateChanged();
       return { ok: false, error: '歌曲暂时没有可用音源' };
     }
-    // playTrack starts the shared download alongside the client preparation window.
-    if (generation !== this.generation || this.current?.uid !== (currentUid ?? undefined)) {
-      return { ok: false, error: '播放状态已更新，请重试' };
-    }
-    const afterWarmIndex = this.queue.indexOf(item);
-    if (afterWarmIndex < 0) return { ok: false, error: '排队曲目已变更' };
     this.queueVotes.clear();
-    this.queue.splice(afterWarmIndex, 1);
-    if (afterWarmIndex === 0) this.preparedQueue = null;
+    this.queue.splice(index, 1);
+    if (index === 0) this.preparedQueue = null;
     this.playTrack(playable, {
       userKey: item.requesterKey, name: item.requesterName, avatar: item.requesterAvatar
     }, false, undefined, item.uid, selectionStartedAt);
@@ -1134,7 +1175,6 @@ export class MusicManager {
         // Notify even for the same address: clients must actually reload that resource.
         play.track = playable;
         play.sourceRevision++;
-        this.onPrefetchTrack(playable.streamUrl, true);
         this.onStateChanged();
       }
     } finally {

@@ -58,6 +58,7 @@ import {
 } from "@utils/setting-utils";
 import { onMount } from "svelte";
 import Icon from "@/components/common/Icon.svelte";
+import { downloadMusicTrace } from "@/components/pages/chat/musicTrace";
 import {
 	applyChatAppearanceToDocument,
 	CHAT_PANEL_SLOTS,
@@ -111,7 +112,7 @@ type OverlaySliderItem = {
 	onValueChange: (value: number) => void;
 };
 
-type TabKey = "appearance" | "wallpaper" | "effects";
+type TabKey = "appearance" | "wallpaper" | "effects" | "developer";
 
 type WallpaperOption = {
 	id: string;
@@ -948,6 +949,7 @@ let visibleTabs = $derived.by(() => {
 			icon: "mdi:flower-poppy",
 			label: i18n(I18nKey.settingsTabEffects),
 		});
+	tabs.push({ key: "developer", icon: "material-symbols:build-outline", label: i18n(I18nKey.settingsTabDeveloper) });
 	return tabs;
 });
 
@@ -2672,6 +2674,16 @@ $effect(() => {
 			</div>
 		</div>
 		{/if}
+	{/if}
+
+	{#if activeTab === "developer"}
+		<div class="section-title">{i18n(I18nKey.settingsTabDeveloper)}</div>
+		<button type="button" class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all" onclick={downloadMusicTrace}>
+			<Icon icon="material-symbols:monitor-heart-outline" class="text-[1.25rem] shrink-0"></Icon>
+			<span class="text-sm flex-1">{i18n(I18nKey.exportMusicDiagnostics)}</span>
+			<Icon icon="material-symbols:download-rounded" class="text-[1.15rem] shrink-0"></Icon>
+		</button>
+		<p class="mt-2 px-1 text-xs text-gray-500 dark:text-gray-400">{i18n(I18nKey.musicDiagnosticsHint)}</p>
 	{/if}
 
 	<!-- Effects Tab: Sakura -->

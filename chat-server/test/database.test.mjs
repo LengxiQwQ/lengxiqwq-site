@@ -119,11 +119,18 @@ describe('ChatDatabase SQLite 核心测试', () => {
 
   test('MusicManager 联动 ChatDatabase 分页查询', () => {
     // 验证 getMusicHistoryPage 正确返回数据库中的数据
-    const res = db.getMusicHistoryPage({ roomId: 'chat', type: 'request', sort: 'recent' });
-    assert.ok(res.ok);
-    assert.equal(res.type, 'request');
-    assert.ok(res.total >= 1);
-    assert.ok(Array.isArray(res.items));
+    const resReq = db.getMusicHistoryPage({ roomId: 'chat', type: 'request', sort: 'recent' });
+    assert.ok(resReq.ok);
+    assert.equal(resReq.type, 'request');
+    assert.ok(resReq.total >= 1);
+    assert.ok(Array.isArray(resReq.items));
+
+    // 验证 type: 'all' 查询
+    const resAll = db.getMusicHistoryPage({ roomId: 'chat', type: 'all', sort: 'recent' });
+    assert.ok(resAll.ok);
+    assert.equal(resAll.type, 'all');
+    assert.ok(resAll.total >= 1);
+    assert.ok(Array.isArray(resAll.items));
   });
 
   test('全站音乐收藏与茶室星愿去重聚合', () => {

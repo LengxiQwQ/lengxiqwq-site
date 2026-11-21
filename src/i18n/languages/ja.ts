@@ -490,6 +490,10 @@ export const ja: Translation = {
 	[Key.settingsTabAppearance]: "外観",
 	[Key.settingsTabWallpaper]: "壁紙",
 	[Key.settingsTabEffects]: "エフェクト",
+	[Key.settingsTabDeveloper]: "開発ツール",
+	[Key.exportMusicDiagnostics]: "再生診断をエクスポート",
+	[Key.musicDiagnosticsHint]:
+		"このブラウザーセッションのチャット再生記録を書き出します。",
 
 	// カードスタイル
 	[Key.cardSettings]: "カードスタイル",

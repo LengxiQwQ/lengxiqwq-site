@@ -474,6 +474,9 @@ enum I18nKey {
 	settingsTabAppearance = "settingsTabAppearance",
 	settingsTabWallpaper = "settingsTabWallpaper",
 	settingsTabEffects = "settingsTabEffects",
+	settingsTabDeveloper = "settingsTabDeveloper",
+	exportMusicDiagnostics = "exportMusicDiagnostics",
+	musicDiagnosticsHint = "musicDiagnosticsHint",
 
 	// 卡片样式
 	cardSettings = "cardSettings",

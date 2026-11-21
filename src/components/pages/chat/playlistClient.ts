@@ -445,6 +445,7 @@ export async function fetchPlaylistDetail(
 	playlistId: string,
 	walineToken?: string,
 	filterUser?: string,
+	onPartial?: (detail: PlaylistDetail) => void,
 ): Promise<PlaylistDetail> {
 	const base = normalizeServerUrl(chatServerUrl);
 	const q = new URLSearchParams({
@@ -455,6 +456,7 @@ export async function fetchPlaylistDetail(
 	const resp = await fetch(`${base}/api/playlists/detail?${q.toString()}`, {
 		method: "GET",
 		headers: buildAuthHeaders(walineToken),
+		signal: AbortSignal.timeout(15_000),
 	});
 	const json = (await resp.json().catch(() => null)) as {
 		ok?: boolean;
@@ -465,6 +467,8 @@ export async function fetchPlaylistDetail(
 		throw new Error(json?.error || "加载歌单详情失败");
 	}
 	if (playlistId === "pl_collective_favorites" && json.playlist.tracks.length < json.playlist.trackCount) {
+		const playlist = json.playlist;
+		if (playlist.tracks.length > 0) onPartial?.({ ...playlist, tracks: [...playlist.tracks] });
 		const tracks: PlaylistTrackItem[] = [];
 		let total = json.playlist.trackCount;
 		while (tracks.length < total) {
@@ -495,6 +499,7 @@ export async function fetchPlaylistDetail(
 					favoritedUsers: track.favoritedUsers,
 				});
 			}
+			if (tracks.length > 0) onPartial?.({ ...playlist, trackCount: total, tracks: [...tracks] });
 			if (page.items.length === 0) break;
 		}
 		json.playlist.tracks = tracks;
@@ -780,6 +785,7 @@ export async function fetchCollectiveFavorites(params: {
 
 	const resp = await fetch(
 		`${base}/api/music/favorites/public?${q.toString()}`,
+		{ signal: AbortSignal.timeout(15_000) },
 	);
 	const json = (await resp
 		.json()

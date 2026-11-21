@@ -11,6 +11,7 @@ import {
 	type ChatContentSegment,
 	isChatInlineSticker,
 	resolveExternalOrLocalSticker,
+	resolveInlineStickerCategory,
 	type StickerItem,
 } from "./stickerLoader";
 
@@ -122,7 +123,10 @@ export function getChatMarkdownLayout(
 			const url = isSafeImageUrl(token.href);
 			if (!url) return;
 			textLength -= token.raw.length;
-			if (isChatInlineSticker(url, token.text, stickerMap)) return;
+			if (isChatInlineSticker(url, token.text, stickerMap)) {
+				const category = resolveInlineStickerCategory(url, token.text);
+				if (category === "qq" || category === "emoji") return;
+			}
 			imageUrls.push(url);
 		},
 	);

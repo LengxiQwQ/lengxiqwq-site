@@ -1,4 +1,5 @@
 <script lang="ts">
+import ChatModal from "./ChatModal.svelte";
 import { flushSync, onMount, tick } from "svelte";
 import { KAOMOJI_PRESETS } from "@/constants/kaomoji";
 import type { InterconnectSite } from "@/types/chatConfig";
@@ -5686,6 +5687,26 @@ function removePendingImage(index: number) {
         </div>
       </div>
     </dialog>
+  {/if}
+
+  {#if (activeThreadRootUid && !ChatThreadModalComp) || (sourceModalMessage && !ChatMessageSourceModalComp)}
+    <ChatModal
+      open={true}
+      title={sourceModalMessage && !ChatMessageSourceModalComp ? "查看消息源码" : "线程回复"}
+      onClose={() => {
+        if (sourceModalMessage && !ChatMessageSourceModalComp) {
+          sourceModalMessage = null;
+        } else {
+          activeThreadRootUid = "";
+          activeThreadInitialRoot = null;
+        }
+      }}
+    >
+      <div class="flex items-center justify-center gap-2 py-10 text-sm text-[var(--chat-meta-color)]" role="status">
+        <svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>正在加载...</span>
+      </div>
+    </ChatModal>
   {/if}
 
   {#if ChatThreadModalComp}

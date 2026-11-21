@@ -495,6 +495,10 @@ export const ru: Translation = {
 	[Key.settingsTabAppearance]: "Оформление",
 	[Key.settingsTabWallpaper]: "Обои",
 	[Key.settingsTabEffects]: "Эффекты",
+	[Key.settingsTabDeveloper]: "Разработка",
+	[Key.exportMusicDiagnostics]: "Экспорт диагностики",
+	[Key.musicDiagnosticsHint]:
+		"Экспорт событий воспроизведения чата за текущий сеанс браузера.",
 
 	// Стиль карточек
 	[Key.cardSettings]: "Стиль карточек",

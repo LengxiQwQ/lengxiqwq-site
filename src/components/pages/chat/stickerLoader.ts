@@ -408,11 +408,14 @@ export function formatStickerAttachmentAlt(rawName?: string): string {
 	if (stickerMatch) {
 		return stickerMatch[1].split("/").pop() || "贴纸";
 	}
+	if (/^mx-sticker:/i.test(text)) {
+		return text.replace(/^mx-sticker:/i, "").trim() || "贴纸";
+	}
 	return text;
 }
 
 const INLINE_STICKER_PATH_RE =
-	/(?:\/assets\/stickers\/|\/chat-api\/emoji\/|\/waline-emojis\/|\/stickers?\/|\/emojis?\/|qface|somoe\.xyz\/stickers)/i;
+	/(?:\/assets\/stickers\/(?:qq|bmoji)\/|\/chat-api\/emoji\/|\/waline-emojis\/|qface)/i;
 
 export function isChatInlineSticker(
 	url?: string,
@@ -430,7 +433,7 @@ export function isChatInlineSticker(
 		if (stickerMap) {
 			for (const item of stickerMap.values()) {
 				if (item.url && item.url === rawUrl) {
-					return true;
+					return item.category === "qq" || item.category === "emoji";
 				}
 			}
 		}
@@ -439,22 +442,18 @@ export function isChatInlineSticker(
 	if (rawAlt) {
 		const lowerAlt = rawAlt.toLowerCase();
 		if (
-			lowerAlt.startsWith("mx-sticker:") ||
 			lowerAlt.startsWith("emoji:") ||
-			lowerAlt.startsWith("sticker:") ||
+			lowerAlt.startsWith("qq:") ||
 			rawAlt.startsWith("表情：") ||
 			rawAlt.startsWith("表情:") ||
-			/^:[a-zA-Z0-9_.-]+:$/.test(rawAlt)
+			/^:(?:qq|bmoji)_[a-zA-Z0-9_.-]+:$/.test(rawAlt)
 		) {
-			return true;
-		}
-		if (Object.values(LOTTIE_LABELS).includes(rawAlt)) {
 			return true;
 		}
 		if (stickerMap) {
 			for (const item of stickerMap.values()) {
 				if (item.name && item.name === rawAlt) {
-					return true;
+					return item.category === "qq" || item.category === "emoji";
 				}
 			}
 		}

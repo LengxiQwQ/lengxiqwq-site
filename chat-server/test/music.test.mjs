@@ -38,9 +38,9 @@ test('late fallback cannot overwrite a user request', async t => {
   assert.equal(mgr.current.track.sourceId, 'request');
 });
 
-test('source failure advances only the affected room and persisted queue keeps identity', async t => {
+test('restoring playback keeps the queue and failed source recovery stays in its room', async t => {
   let fail = false;
-  const registry = { resolvePlayable: async (item, _origin, _secret, options) =>
+  const registry = { isHealthy: async () => false, resolvePlayable: async (item, _origin, _secret, options) =>
     fail && (item.sourceId === 'first' || item.sourceId === 'second') ? null :
       { ...playable(item), streamUrl: origin + '/audio/' + item.sourceId + (options?.fresh ? '?renewed' : '') }
   };
@@ -54,24 +54,21 @@ test('source failure advances only the affected room and persisted queue keeps i
   assert.deepEqual(stored.queue.map(item => item.track.sourceId), ['second', 'third']);
   assert.equal(stored.queue[0].track.streamUrl, undefined);
   const restored = await manager(t, registry, 'chat', chat.dataDir);
-  assert.deepEqual(restored.queue.map(item => item.track.sourceId), ['first', 'second', 'third']);
-  assert.equal(restored.queue[0].startedAt, chat.current.startedAt);
+  await restored.restorePlayback();
+  assert.deepEqual(restored.queue.map(item => item.track.sourceId), ['second', 'third']);
+  assert.equal(restored.current.startedAt, chat.current.startedAt);
 
   const uid = chat.current.uid;
   await chat.reportError(uid, actor.userKey);
   assert.equal(chat.current.uid, uid);
   assert.equal(chat.current.sourceRevision, 1);
   assert.match(chat.current.track.streamUrl, /\?renewed$/);
-  chat.current.recoveryAttempted = false;
+  chat.current.lastRecoveryAt = 0;
   fail = true;
-  // The queued source has aged out and is missing from disk.
-  chat.preparedQueue.checkedAt = Date.now() - 61_000;
   await chat.reportError(uid, 'another-listener');
-  await chat.advancing.promise;
-  assert.equal(chat.current.track.sourceId, 'third');
+  assert.equal(chat.current.uid, uid);
+  assert.equal(chat.current.sourceRevision, 1);
   assert.equal(tea.current.track.sourceId, 'other');
-  assert.equal(chat.historyLogs[0].outcome, 'unavailable');
-  assert.equal(chat.historyLogs[1].outcome, 'unavailable');
 });
 
 test('duration changes reschedule and premature ended cannot advance', async t => {
@@ -113,6 +110,9 @@ test('supplier fallback validates the actual media and search pagination uses th
   const result = await provider.resolveStream('id');
   assert.equal(result.providerChannel, 'vkeys');
   assert.equal(result.mimeType, 'audio/mpeg');
+  const resolved = await new MusicRegistry([provider]).resolvePlayable(track('id'), origin, 'fixture');
+  assert.equal(resolved.streamUrl, 'https://ws.stream.qqmusic.qq.com/good');
+  assert.ok(resolved.proxyUrl.startsWith(origin + '/api/music/stream'));
   const page = await provider.search('Demo', 30, 2);
   assert.equal(page.tracks.length, 1);
   assert.equal(page.hasMore, true);
@@ -152,20 +152,23 @@ test('cached proxy supports prefix, suffix, clamping, HEAD and invalid range', a
 
 test('warm queue head can switch after the resolver cache expires without another upstream call', async t => {
   const calls = [];
-  const warmed = [];
   const registry = {
     resolvePlayable: async item => { calls.push(item.sourceId); return playable(item); },
     isCached: async () => true
   };
   const mgr = await manager(t, registry);
-  mgr.onPrefetchTrack = url => warmed.push(url);
   await mgr.enqueueTrack(track('first'), actor);
   await mgr.enqueueTrack(track('next'), actor);
   await mgr.enqueueTrack(track('third'), actor);
-  assert.deepEqual(warmed, [origin + '/audio/next']);
+  const advertised = mgr.getSnapshot().next;
+  assert.equal(advertised.track.sourceId, 'next');
   mgr.preparedQueue.checkedAt = Date.now() - 120_000;
+  const before = Date.now();
   await mgr.advanceNext();
   assert.equal(mgr.current.track.sourceId, 'next');
+  assert.equal(mgr.current.track, advertised.track);
+  assert.equal(mgr.current.phase, 'scheduled');
+  assert.ok(mgr.current.startedAt >= before + 500 && mgr.current.startedAt <= Date.now() + 500);
   assert.equal(calls.filter(id => id === 'next').length, 1);
 });
 
@@ -202,4 +205,63 @@ test('a historic implicit fallback does not resume, while an explicitly selected
   await restored.resume();
   assert.equal(restored.current.track.sourceId, 'radio');
   assert.equal(restored.current.requesterName, 'Selected (轮播)');
+});
+
+test('shuffle rotation plays sequentially without pure-random duplication, reshuffles on exhaust, and request takes priority', async t => {
+  const registry = {
+    resolvePlaylistTrack: async item => item,
+    resolvePlayable: async item => playable(item)
+  };
+  const mgr = await manager(t, registry, 'chat');
+  const tracks = [track('song-1'), track('song-2'), track('song-3')];
+  mgr.setFallbackPlaylist('pl_test', tracks, 'TestPlaylist', { start: false });
+
+  // 检查已生成洗牌牌堆，且包含了 3 首歌
+  assert.equal(mgr.rotationDeck.length, 3);
+  const queue1 = mgr.getRotationQueue(10);
+  assert.equal(queue1.length, 3);
+  const snapshot1 = mgr.getSnapshot();
+  assert.equal(snapshot1.rotationQueue.length, 3);
+  assert.equal(snapshot1.rotationDeckTotal, 3);
+  assert.equal(snapshot1.rotationPoolTotal, 3);
+
+  // 记录这三首歌被打乱后的顺序
+  const expectedOrder = mgr.rotationDeck.map(x => x.sourceId);
+
+  // 顺次播放第一首轮播曲
+  await mgr.resume();
+  assert.equal(mgr.current.track.sourceId, expectedOrder[0]);
+  assert.equal(mgr.current.isFallback, true);
+  assert.equal(mgr.rotationDeck.length, 2);
+
+  // 此时用户点歌：当前为轮播且队列为空，立即切播用户点歌
+  await mgr.enqueueTrack(track('user-req-1'), actor);
+  assert.equal(mgr.current.track.sourceId, 'user-req-1');
+  assert.equal(mgr.current.isFallback, false);
+  // 轮播牌堆保持原进度，未被破坏
+  assert.equal(mgr.rotationDeck.length, 2);
+
+  // 用户再点第二首歌：当前正在播放点歌，加入排队队列
+  await mgr.enqueueTrack(track('user-req-2'), actor);
+  assert.equal(mgr.queue.length, 1);
+
+  // 切歌或播完第一首点歌：播放排队的第二首点歌
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.sourceId, 'user-req-2');
+  assert.equal(mgr.current.isFallback, false);
+  assert.equal(mgr.queue.length, 0);
+  assert.equal(mgr.rotationDeck.length, 2);
+
+  // 点歌全部播完后，自然继续播放轮播的第二首
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.sourceId, expectedOrder[1]);
+  assert.equal(mgr.current.isFallback, true);
+  assert.equal(mgr.rotationDeck.length, 1);
+
+  // 播放轮播的第三首
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.sourceId, expectedOrder[2]);
+  assert.equal(mgr.current.isFallback, true);
+  // 牌堆播完后，自动触发重新洗牌，牌堆补满为 3 首歌
+  assert.equal(mgr.rotationDeck.length, 3);
 });

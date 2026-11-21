@@ -2,6 +2,8 @@
 import { onMount, tick } from "svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatWindow from "./ChatWindow.svelte";
+import ChatModal from "./ChatModal.svelte";
+import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
 import {
 	type ChatAppearanceSettings,
 	type ChatPanelSlot,
@@ -97,7 +99,7 @@ const LAST_ROOM_STORAGE_KEY = "lengxi_chat_last_room";
 let mobileDrawer = $state<"none" | "room" | "music">("none");
 const roomPanelId = "chat-room-panel";
 let isMobileLayout = $state(false);
-let splitLayoutBreakpoint = $state(1240);
+const splitLayoutBreakpoint = 1100;
 let stageContentRect = $state<DOMRectReadOnly>();
 const isSplitLayout = $derived(
 	!isMobileLayout &&
@@ -797,9 +799,6 @@ $effect(() => {
 let ChatAuthModalComp = $state<
 	typeof import("./ChatAuthModal.svelte").default | null
 >(null);
-let ChatInterconnectPopoverComp = $state<
-	typeof import("./ChatInterconnectPopover.svelte").default | null
->(null);
 let ChatPollCreateModalComp = $state<
 	typeof import("./ChatPollCreateModal.svelte").default | null
 >(null);
@@ -820,19 +819,6 @@ $effect(() => {
 				console.error("[chat] Failed to load ChatAuthModal:", err);
 				showAuthModal = false;
 				showNotice("登录弹窗加载失败，请检查网络后重试", "error");
-			});
-	}
-});
-$effect(() => {
-	if (showInterconnect && !ChatInterconnectPopoverComp) {
-		void import("./ChatInterconnectPopover.svelte")
-			.then((mod) => {
-				ChatInterconnectPopoverComp = mod.default;
-			})
-			.catch((err) => {
-				console.error("[chat] Failed to load ChatInterconnectPopover:", err);
-				showInterconnect = false;
-				showNotice("互联节点列表加载失败，请检查网络后重试", "error");
 			});
 	}
 });
@@ -940,11 +926,11 @@ function runSecondaryStartup() {
 	void import("./ChatUserDetailModal.svelte").then((mod) => {
 		if (!isUnmounted && !ChatUserDetailModalComp)
 			ChatUserDetailModalComp = mod.default;
-	});
+	}).catch(() => {});
 	void import("./ChatProfileModal.svelte").then((mod) => {
 		if (!isUnmounted && !ChatProfileModalComp)
 			ChatProfileModalComp = mod.default;
-	});
+	}).catch(() => {});
 	void loadStickerPacks(stickerPackUrls).then((packs) => {
 		if (!isUnmounted) stickerPacks = packs;
 	});
@@ -1965,7 +1951,6 @@ function connectRoom(roomId: string) {
 					}
 					if (nextUid && nextUid !== prevUid) {
 						recordMusicEvent("broadcast", nextUid, { previous: prevUid, serverSent: packet.serverTime, deadline: packet.current!.startedAt, selectionStartedAt: packet.current!.selectionStartedAt ?? 0, clock: Math.round(serverNow()) });
-						sampleRoomClock(socket);
 					}
 					musicClock.seed(packet.serverTime);
 					if (!hasClockSample) clockOffsetMs = packet.serverTime - Date.now();
@@ -1975,6 +1960,11 @@ function connectRoom(roomId: string) {
 						next: packet.next,
 						current: packet.current,
 						queue: packet.queue,
+						rotationQueue: packet.rotationQueue ?? musicState?.rotationQueue ?? [],
+						rotationDeckTotal: packet.rotationDeckTotal ?? musicState?.rotationDeckTotal ?? 0,
+						rotationPoolTotal: packet.rotationPoolTotal ?? musicState?.rotationPoolTotal ?? 0,
+						fallbackPlaylistName: packet.fallbackPlaylistName ?? musicState?.fallbackPlaylistName ?? "歌单轮播",
+						fallbackPlaylistId: packet.fallbackPlaylistId ?? musicState?.fallbackPlaylistId,
 						history: packet.history ?? musicState?.history ?? [],
 						historyLogs: packet.historyLogs ?? musicState?.historyLogs ?? [],
 						requesterOnline: packet.requesterOnline,
@@ -2682,29 +2672,6 @@ onMount(() => {
 		stageTouchStart = null;
 	};
 	mobileLayoutQuery.addEventListener("change", handleMobileLayoutChange);
-	const touchLayoutQuery = window.matchMedia("(pointer: coarse)");
-	const updateSplitLayoutBreakpoint = () => {
-		if (!touchLayoutQuery.matches) {
-			splitLayoutBreakpoint = 1240;
-			return;
-		}
-		const { width, height, orientation } = window.screen;
-		const isPortrait =
-			orientation?.type.startsWith("portrait") ?? width < height;
-		const portraitWidth = Math.min(width, height);
-		// A full-width portrait iPad can be narrower than the tablet split breakpoint.
-		splitLayoutBreakpoint =
-			isPortrait && portraitWidth >= 768
-				? Math.min(1024, portraitWidth - 2)
-				: 1024;
-	};
-	updateSplitLayoutBreakpoint();
-	touchLayoutQuery.addEventListener("change", updateSplitLayoutBreakpoint);
-	window.addEventListener("resize", updateSplitLayoutBreakpoint);
-	window.screen.orientation?.addEventListener(
-		"change",
-		updateSplitLayoutBreakpoint,
-	);
 	// 切入聊天室时立即停止全站侧栏/顶栏音乐播放器，避免与点歌台同时发声
 	window.__fireflyMusic?.stop?.();
 	baseDocumentTitle = document.title;
@@ -3119,12 +3086,6 @@ onMount(() => {
 		window.removeEventListener("wheel", resetIdleTimer);
 		window.removeEventListener("touchstart", resetIdleTimer);
 		mobileLayoutQuery.removeEventListener("change", handleMobileLayoutChange);
-		touchLayoutQuery.removeEventListener("change", updateSplitLayoutBreakpoint);
-		window.removeEventListener("resize", updateSplitLayoutBreakpoint);
-		window.screen.orientation?.removeEventListener(
-			"change",
-			updateSplitLayoutBreakpoint,
-		);
 		cancelWalinePopup?.();
 		clearReconnectTimer();
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
@@ -3342,13 +3303,11 @@ onMount(() => {
         />
       </div>
 
-      {#if ChatInterconnectPopoverComp}
-        <ChatInterconnectPopoverComp
-          open={showInterconnect}
-          sites={interconnectSites}
-          onClose={() => (showInterconnect = false)}
-        />
-      {/if}
+      <ChatInterconnectPopover
+        open={showInterconnect}
+        sites={interconnectSites}
+        onClose={() => (showInterconnect = false)}
+      />
     </div>
 
     <div
@@ -3383,7 +3342,7 @@ onMount(() => {
           </div>
         </div>
       {/if}
-      <audio bind:this={chatAudio} preload="auto" playsinline muted></audio>
+      <audio bind:this={chatAudio} preload="none" playsinline muted></audio>
       {#if MusicPanelComp}
       {#key currentRoom}
       <MusicPanelComp
@@ -3437,9 +3396,6 @@ onMount(() => {
         isSkippingTrack={isSkippingTrack}
         onSkipTrack={handleSkipTrack}
         onVoteSkip={handleVoteSkip}
-        onReady={(playUid, sourceRevision) =>
-          sendPacket({ type: "music:ready", playUid, sourceRevision })
-        }
         onReportDuration={(playUid, durationSec) =>
           sendPacket({ type: "music:report_duration", playUid, durationSec })
         }
@@ -3463,6 +3419,25 @@ onMount(() => {
       {/if}
     </div>
   </div>
+
+  {#if (showProfileModal && !ChatProfileModalComp) || (showUserDetailModal && !ChatUserDetailModalComp) || (showAuthModal && !ChatAuthModalComp) || (showPollCreateModal && !ChatPollCreateModalComp)}
+    <ChatModal
+      open={true}
+      title={showAuthModal ? "登录" : showPollCreateModal ? "发起投票" : showProfileModal ? "编辑资料" : "用户资料"}
+      topPriority={showAuthModal}
+      onClose={() => {
+        showAuthModal = false;
+        showPollCreateModal = false;
+        showProfileModal = false;
+        showUserDetailModal = false;
+      }}
+    >
+      <div class="flex items-center justify-center gap-2 py-10 text-sm text-[var(--chat-meta-color)]" role="status">
+        <svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <span>正在加载...</span>
+      </div>
+    </ChatModal>
+  {/if}
 
   <!-- 个人资料独立编辑弹窗 -->
   {#if ChatProfileModalComp}

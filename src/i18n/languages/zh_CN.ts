@@ -483,6 +483,9 @@ export const zh_CN: Translation = {
 	[Key.settingsTabAppearance]: "外观",
 	[Key.settingsTabWallpaper]: "壁纸",
 	[Key.settingsTabEffects]: "特效",
+	[Key.settingsTabDeveloper]: "开发工具",
+	[Key.exportMusicDiagnostics]: "导出播放诊断",
+	[Key.musicDiagnosticsHint]: "导出当前浏览器会话中的聊天室播放记录。",
 
 	// 卡片样式
 	[Key.cardSettings]: "卡片样式",

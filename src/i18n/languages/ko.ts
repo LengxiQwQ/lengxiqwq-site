@@ -491,6 +491,10 @@ export const ko: Translation = {
 	[Key.settingsTabAppearance]: "외형",
 	[Key.settingsTabWallpaper]: "배경화면",
 	[Key.settingsTabEffects]: "효과",
+	[Key.settingsTabDeveloper]: "개발 도구",
+	[Key.exportMusicDiagnostics]: "재생 진단 내보내기",
+	[Key.musicDiagnosticsHint]:
+		"현재 브라우저 세션의 채팅 재생 기록을 내보냅니다.",
 
 	// 카드 스타일
 	[Key.cardSettings]: "카드 스타일",

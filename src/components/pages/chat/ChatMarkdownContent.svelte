@@ -14,6 +14,7 @@ import {
 import type { ChatMentionEntity } from "./chatTypes";
 import LottieSticker from "./LottieSticker.svelte";
 import {
+	formatStickerAttachmentAlt,
 	isChatInlineSticker,
 	resolveInlineStickerCategory,
 	type StickerItem,
@@ -97,18 +98,18 @@ function getInlineChildren(token: Token): Token[] | undefined {
       {@const safeSrc = isSafeImageUrl(imgTok.href)}
       {#if safeSrc}
         {@const isSticker = isChatInlineSticker(safeSrc, imgTok.text, stickerMap)}
-        {#if isSticker}
-          {@const cat = resolveInlineStickerCategory(safeSrc, imgTok.text)}
+        {@const cat = isSticker ? resolveInlineStickerCategory(safeSrc, imgTok.text) : null}
+        {#if isSticker && (cat === "qq" || cat === "emoji")}
           <img
             src={safeSrc}
-            alt={imgTok.text || "表情"}
-            title={imgTok.text || "表情"}
+            alt={formatStickerAttachmentAlt(imgTok.text) || "表情"}
+            title={formatStickerAttachmentAlt(imgTok.text) || "表情"}
             loading="lazy"
             decoding="async"
             class="chat-sticker chat-sticker--{cat} chat-sticker--inline select-none"
           />
         {:else}
-          <ChatImagePreview src={safeSrc} alt={imgTok.text || "图片"} metadata={imageDimensions?.[safeSrc]} inline />
+          <ChatImagePreview src={safeSrc} alt={formatStickerAttachmentAlt(imgTok.text) || "图片"} metadata={imageDimensions?.[safeSrc]} inline />
         {/if}
       {:else}
         {imgTok.raw}

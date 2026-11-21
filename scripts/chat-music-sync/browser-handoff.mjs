@@ -117,6 +117,14 @@ try {
 		await tab.route(/https?:\/\/(?!127\.0\.0\.1:)/, (route) => route.abort());
 		await tab.addInitScript(() => {
 			window.audios = new Set();
+			window.preloaded = {};
+			const load = HTMLMediaElement.prototype.load;
+			HTMLMediaElement.prototype.load = function () {
+				if (this.src && this.preload === "auto") {
+					preloaded[new URL(this.src).pathname.split("/").pop()] = this;
+				}
+				return load.call(this);
+			};
 			window.first = {};
 			const play = HTMLMediaElement.prototype.play;
 			HTMLMediaElement.prototype.play = function () {
@@ -149,22 +157,32 @@ try {
 	for (let i = 0; i < rounds; i++) {
 		const next = song("song" + i, 0);
 		await broadcast(current, next);
-		if (i % 3 === 0) await new Promise((r) => setTimeout(r, 500));
-		current = song(next.uid, Date.now() + 1200);
+		const file = next.uid + ".mp3";
+		await Promise.all(devices.map(tab => tab.waitForFunction(k => {
+			const el = preloaded[k];
+			return el && el.paused && el.buffered.length && el.buffered.end(0) > 0;
+		}, file, { timeout: 5000 })));
+		current = { ...next, uid: "play-" + next.uid, startedAt: Date.now() + 500, phase: "scheduled" };
 		await broadcast(current);
-		const key = current.uid + ".mp3";
+		const key = file;
 		await Promise.all(
 			devices.map((tab) =>
 				tab.waitForFunction((k) => !!first[k], key, { timeout: 10000 }),
 			),
 		);
+		for (const tab of devices) {
+			assert.ok(await tab.evaluate(k => audios.has(preloaded[k]) && !preloaded[k].paused, key),
+				"the buffered element itself must play");
+		}
 		const obs = await Promise.all(
 			devices.map((tab) => tab.evaluate((k) => first[k], key)),
 		);
+		assert.ok(obs.every(([firstAt]) => firstAt >= current.startedAt), "started before shared deadline");
 		offsets.push(...obs.map((v) => v[1]));
 		skew.push(
 			Math.max(...obs.map((v) => v[0])) - Math.min(...obs.map((v) => v[0])),
 		);
+		assert.ok(skew.at(-1) <= 1200, "switch exceeded sync tolerance");
 		assert.ok(
 			obs.every((v) => v[1] < 2),
 			"missed opening " + key,
@@ -173,14 +191,15 @@ try {
 			(r) => r.song.endsWith("/" + key) && r.start === 0 && r.end > 65536,
 		);
 		assert.ok(
-			loads.length <= devices.length,
+			loads.length === devices.length,
 			"duplicate media start " + key + " " + loads.length,
 		);
 	}
-	await Promise.all(devices.map((tab) => button(tab, "停止收听")));
-	const muted = song("muted", Date.now() + 1200);
-	await broadcast(muted);
+	await Promise.all(devices.map((tab) => button(tab, "正在收听（点击停止）")));
+	const muted = song("muted", Date.now());
+	await broadcast(muted, song("idle-next", 0));
 	await new Promise((r) => setTimeout(r, 2600));
+	assert.ok(!requests.some(r => /\/(muted|idle-next)\.mp3$/.test(r.song)), "idle client downloaded music");
 	const count = requests.length;
 	await Promise.all(devices.map((tab) => button(tab, "开始收听")));
 	await Promise.all(

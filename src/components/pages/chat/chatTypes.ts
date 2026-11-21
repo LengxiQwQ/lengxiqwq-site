@@ -373,7 +373,7 @@ export interface MusicHistoryEntry {
 
 export interface FetchMusicHistoryParams {
 	roomId?: string;
-	type?: "request" | "rotation";
+	type?: "all" | "request" | "rotation";
 	sort?: "recent" | "count";
 	requesterKey?: string;
 	offset?: number;
@@ -382,7 +382,7 @@ export interface FetchMusicHistoryParams {
 
 export interface FetchMusicHistoryResponse {
 	ok: boolean;
-	type: "request" | "rotation";
+	type: "all" | "request" | "rotation";
 	total: number;
 	offset: number;
 	limit: number;
@@ -421,12 +421,30 @@ export interface CurrentPlayback {
 	phase?: "transitioning" | "preparing" | "scheduled" | "playing";
 }
 
+export interface RotationQueueItem {
+	id: string;
+	sourcePlatform?: string;
+	sourceTrackId?: string;
+	title: string;
+	artist: string;
+	album?: string;
+	durationSec?: number;
+	pic?: string;
+	sourcePlaylistTitle?: string;
+	sourcePlaylistId?: string;
+}
+
 export interface RoomMusicState {
 	protocolVersion?: number;
 	stateVersion?: number;
 	next?: CurrentPlayback | null;
 	current: CurrentPlayback | null;
 	queue: QueueEntry[];
+	rotationQueue?: RotationQueueItem[];
+	rotationDeckTotal?: number;
+	rotationPoolTotal?: number;
+	fallbackPlaylistName?: string;
+	fallbackPlaylistId?: string | null;
 	history?: MusicHistoryEntry[];
 	historyLogs?: MusicHistoryLogEntry[];
 	requesterOnline: boolean;

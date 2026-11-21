@@ -1563,6 +1563,40 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	animation: chatStarPop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
 }
 
+/* 收藏按钮禁用时不使用全站通用的灰色方块及 SVG 填色。 */
+html[data-chat-page] #chat-page .chat-current-favorite:disabled,
+html[data-chat-page] #chat-page .chat-current-favorite:disabled:hover {
+	opacity: 1 !important;
+	background-color: transparent !important;
+	border-color: transparent !important;
+	color: var(--chat-meta-color) !important;
+}
+
+html[data-chat-page] #chat-page .chat-current-favorite[data-favorited="true"]:disabled {
+	color: var(--color-amber-400) !important;
+}
+
+html[data-chat-page] #chat-page .chat-current-favorite[data-favorited="false"]:disabled svg,
+html[data-chat-page] #chat-page .chat-current-favorite[data-favorited="false"]:disabled polygon {
+	fill: none !important;
+}
+
+/* 直接设置星形路径的颜色和填充，避免继承列表按钮的灰色。 */
+html[data-chat-page] #chat-page .chat-favorite-star[data-favorited="true"] polygon {
+	fill: #fbbf24 !important;
+	stroke: #fbbf24 !important;
+}
+
+html[data-chat-page] #chat-page .chat-favorite-star[data-favorited="false"] polygon {
+	fill: none !important;
+	stroke: var(--chat-meta-color) !important;
+}
+
+/* 收藏星星稳态光晕 — 收藏后始终保持一圈淡金色辉光 */
+.chat-fav-star-glow {
+	filter: drop-shadow(0 0 3px rgba(251, 191, 36, 0.55)) drop-shadow(0 0 6px rgba(251, 191, 36, 0.25));
+}
+
 @keyframes chatStarPop {
 	0% { transform: scale(1); }
 	25% { transform: scale(0.6); }
@@ -2241,14 +2275,6 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	.chat-mobile-stage {
 		--chat-left-panel-width: 280px;
 		--chat-right-panel-width: 340px;
-	}
-}
-
-/* 触屏平板竖屏仍显示三栏，按可用宽度缩窄两侧。 */
-@media (768px <= width < 1024px) and (pointer: coarse) {
-	.chat-mobile-stage {
-		--chat-left-panel-width: min(280px, 27.5vw);
-		--chat-right-panel-width: min(340px, 33.5vw);
 	}
 }
 

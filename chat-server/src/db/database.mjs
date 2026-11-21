@@ -481,6 +481,71 @@ export class ChatDatabase {
       };
     }
 
+    if (type === 'all' && !requesterKey) {
+      const countStmt = this.db.prepare('SELECT COUNT(*) AS total FROM music_tracks WHERE (total_requests > 0 OR total_rotations > 0)');
+      const total = Number(countStmt.get().total) || 0;
+
+      const orderClause = sort === 'count'
+        ? 'ORDER BY (COALESCE(total_requests, 0) + COALESCE(total_rotations, 0)) DESC, MAX(COALESCE(last_requested_at, 0), COALESCE(last_rotated_at, 0)) DESC'
+        : 'ORDER BY MAX(COALESCE(last_requested_at, 0), COALESCE(last_rotated_at, 0)) DESC, (COALESCE(total_requests, 0) + COALESCE(total_rotations, 0)) DESC';
+
+      const queryStmt = this.db.prepare(`
+        SELECT t.track_json,
+               t.total_requests,
+               t.first_requested_at,
+               t.last_requested_at,
+               t.total_rotations,
+               t.first_rotated_at,
+               t.last_rotated_at,
+               t.last_playlist_name,
+               (SELECT requester_name FROM music_request_logs WHERE track_id = t.id ORDER BY requested_at DESC LIMIT 1) AS last_requester_name
+        FROM music_tracks t
+        WHERE (t.total_requests > 0 OR t.total_rotations > 0)
+        ${orderClause}
+        LIMIT ? OFFSET ?
+      `);
+
+      const rows = queryStmt.all(limit, offset);
+      const items = rows.map((r) => {
+        let track = {};
+        try { track = JSON.parse(r.track_json); } catch {}
+        const totalReq = r.total_requests || 0;
+        const totalRot = r.total_rotations || 0;
+        const totalCount = totalReq + totalRot;
+        const lastRot = r.last_rotated_at || 0;
+        const lastReq = r.last_requested_at || 0;
+        const isLastRotation = lastRot > lastReq;
+        let lastRequesterName = '';
+        if (isLastRotation) {
+          lastRequesterName = r.last_playlist_name ? `${r.last_playlist_name} (轮播)` : '歌单轮播';
+        } else {
+          lastRequesterName = r.last_requester_name || (r.last_playlist_name ? `${r.last_playlist_name} (轮播)` : '');
+        }
+        const firstValidTimes = [r.first_requested_at, r.first_rotated_at].filter(Boolean);
+        const firstAt = firstValidTimes.length > 0 ? Math.min(...firstValidTimes) : 0;
+        const lastAt = Math.max(lastRot, lastReq);
+
+        return {
+          track,
+          requestCount: totalCount,
+          lastRequesterName,
+          firstRequestedAt: firstAt || lastAt,
+          lastRequestedAt: lastAt,
+          isRotation: isLastRotation
+        };
+      });
+
+      return {
+        ok: true,
+        type: 'all',
+        total,
+        offset,
+        limit,
+        hasMore: offset + limit < total,
+        items
+      };
+    }
+
     // type === 'request'
     if (requesterKey) {
       // 查询特定点歌人点过的歌（去重并汇总点歌次数与最近时间）
