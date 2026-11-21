@@ -20,7 +20,7 @@ self.addEventListener("push", (event) => {
 		tag = `chat-msg-${payload.roomId}-${payload.msgUid}`;
 	}
 	event.waitUntil(self.registration.showNotification(
-		payload.test ? "聊天室推送测试" : "LengxiQwQ 聊天室",
+		"冷汐的杂货铺 · 聊天室",
 		{ body: payload.body, icon: "/favicon/favicon-light-192.png", tag, data: { url: url.href } },
 	));
 });

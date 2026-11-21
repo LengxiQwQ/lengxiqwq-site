@@ -62,6 +62,18 @@ export function matchesPushMode(record, message, roomMention) {
   );
 }
 
+function previewMessage(message) {
+  const content = typeof message.content === 'string' ? message.content : '';
+  const preview = (message.poll?.question || content)
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '[图片]')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!preview) return message.attachments?.length ? '[附件]' : '[新消息]';
+  const characters = Array.from(preview);
+  return characters.length > 240 ? characters.slice(0, 240).join('') + '…' : preview;
+}
+
 export function createChatPush({ webPush, dataDir, resolveCaller, canReadRoom, isReading, logger = console }) {
   const keyFile = join(dataDir, 'web-push-vapid.json');
   const storeFile = join(dataDir, 'web-push-subscriptions.json');
@@ -149,19 +161,19 @@ export function createChatPush({ webPush, dataDir, resolveCaller, canReadRoom, i
     recent.set(id, now + MAX_AGE);
     if (recent.size > 10000) recent.delete(recent.keys().next().value);
     const roomMention = message.mentionKeys?.includes('room') === true;
-    const payload = { roomId, msgUid: message.msgUid, roomMention };
+    const payload = { roomId, msgUid: message.msgUid };
+    const sender = Array.from(String(message.name || '有人').replace(/\s+/g, ' ').trim()).slice(0, 48).join('') || '有人';
+    const preview = previewMessage(message);
     for (const record of records.values()) {
       if (queue.length >= 5000) break;
       if (!canReadRoom(record.userKey, roomId) || !matchesPushMode(record, message, roomMention)) continue;
       const isCurrent = () => records.get(record.id) === record && Date.now() < expires &&
         canReadRoom(record.userKey, roomId) && !isReading(record, roomId);
+      const action = message.mentionKeys?.includes(record.userKey) || roomMention ? ' 提到了你' :
+        message.replyTo?.userKey === record.userKey ? ' 回复了你' : '';
       queue.push({
         record,
-        payload: {
-          ...payload,
-          body: message.mentionKeys?.includes(record.userKey) || roomMention ? '有人提及了你' :
-            message.replyTo?.userKey === record.userKey ? '有人回复了你' : '聊天室有新消息',
-        },
+        payload: { ...payload, body: sender + action + '\n' + preview },
         isCurrent,
         ttl: () => Math.max(0, Math.floor((expires - Date.now()) / 1000)),
       });
@@ -238,7 +250,7 @@ export function createChatPush({ webPush, dataDir, resolveCaller, canReadRoom, i
               if (until > now) break;
               lastTest.delete(key);
             }
-            const sent = await deliver(current, { test: true, body: '浏览器推送已启用' }, 60);
+            const sent = await deliver(current, { test: true, body: '测试通知\n浏览器推送已启用' }, 60);
             json(res, sent ? 200 : 502, { ok: sent });
           }
         } else json(res, 404, { error: 'route' });

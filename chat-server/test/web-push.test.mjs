@@ -74,7 +74,7 @@ test('chat push routes and live delivery respect account, room, browser and mode
   assert.deepEqual(await call('status', desktop, bob), [200, { mode: 'off' }]);
 
   push = createChatPush(options);
-  const message = { kind: 'user', msgUid: 'a1', userKey: bob, createdAt: Date.now() };
+  const message = { kind: 'user', msgUid: 'a1', userKey: bob, name: '小茶', content: '今晚一起听歌吗？', createdAt: Date.now() };
   push.publish('interconnect', message, false);
   push.publish('interconnect', { ...message, createdAt: Date.now() - 600_000 });
   push.publish('interconnect', { ...message, kind: 'system' });
@@ -90,13 +90,16 @@ test('chat push routes and live delivery respect account, room, browser and mode
     endpoint: phone.subscription.endpoint,
     roomId: 'interconnect',
     msgUid: 'a2',
-    roomMention: false,
-    body: '有人提及了你',
+    body: '小茶 提到了你\n今晚一起听歌吗？',
   }]);
   push.publish('interconnect', { ...message, msgUid: 'a3', mentionKeys: ['room'] });
   assert.equal(sent.splice(0).length, 1);
   push.publish('interconnect', { ...message, msgUid: 'a4', replyTo: { userKey: alice } });
-  assert.equal(sent.splice(0)[0]?.body, '有人回复了你');
+  assert.equal(sent.splice(0)[0]?.body, '小茶 回复了你\n今晚一起听歌吗？');
+  push.publish('interconnect', { ...message, msgUid: 'attachment', content: '', attachments: [{}], mentionKeys: [alice] });
+  assert.equal(sent.splice(0)[0]?.body, '小茶 提到了你\n[附件]');
+  push.publish('interconnect', { ...message, msgUid: 'long', content: '🎵'.repeat(300), mentionKeys: [alice] });
+  assert.equal(sent.splice(0)[0]?.body, '小茶 提到了你\n' + '🎵'.repeat(240) + '…');
 
   assert.equal((await call('test', phone, alice))[0], 200);
   assert.equal(sent.splice(0)[0]?.test, true);
