@@ -1,37 +1,25 @@
 <script module lang="ts">
-const loadedCoverUrls = new Set<string>();
-const failedCoverUrls = new Set<string>();
-const MAX_COVER_URL_CACHE = 1000;
-
-function markCoverLoaded(url: string): void {
-	if (!url) return;
-	if (loadedCoverUrls.size >= MAX_COVER_URL_CACHE) loadedCoverUrls.clear();
-	loadedCoverUrls.add(url);
-}
-
-function markCoverFailed(url: string): void {
-	if (!url) return;
-	if (failedCoverUrls.size >= MAX_COVER_URL_CACHE) failedCoverUrls.clear();
-	failedCoverUrls.add(url);
-}
-
 function resolveMusicThumbUrl(raw?: string): string {
 	if (!raw) return "";
-	if (raw.includes("music.126.net/") && !raw.includes("param=")) {
-		return `${raw}${raw.includes("?") ? "&" : "?"}param=100y100`;
+	let url: URL;
+	try {
+		url = new URL(raw);
+	} catch {
+		return raw;
 	}
-	if (
-		raw.includes("is1-ssl.mzstatic.com/") &&
-		!raw.includes("/thumb/gen/") &&
-		!raw.includes("signature=")
-	) {
-		return raw.replace(/\/\d+x\d+bb(\.[a-zA-Z0-9]+(?:\?.*)?)$/, "/100x100bb$1");
+	if (url.hostname.endsWith(".music.126.net")) {
+		url.searchParams.set("param", "100y100");
+		return url.href;
 	}
-	if (raw.includes("y.gtimg.cn/music/photo_new/")) {
-		return raw.replace(
-			/T002R(?:300|500|800)x(?:300|500|800)M000/,
-			"T002R150x150M000",
-		);
+	if (/^is\d+-ssl\.mzstatic\.com$/.test(url.hostname)) {
+		return raw.replace(/\/\d+x\d+bb(\.[a-zA-Z0-9]+)$/, "/100x100bb$1");
+	}
+	if (url.hostname === "y.gtimg.cn") {
+		return raw.replace(/T002R(?:300|500|800)x(?:300|500|800)M000/, "T002R150x150M000");
+	}
+	if (url.hostname === "i.scdn.co" && /^\/image\/ab67616d0000(?:b273|1e02)[a-f0-9]{24}$/i.test(url.pathname)) {
+		url.pathname = url.pathname.replace(/^\/image\/ab67616d0000(?:b273|1e02)/i, "/image/ab67616d00004851");
+		return url.href;
 	}
 	return raw;
 }
@@ -471,38 +459,6 @@ let isDeletingPlaylistId = $state("");
 let confirmDeleteTimer: number | null = null;
 
 // 歌单与历史列表虚拟滚动状态
-// 先绘制文字与固定尺寸占位，再按可见范围请求歌单图片。
-function deferPlaylistImage(node: HTMLImageElement, options: { url: string; deferred: boolean }) {
-	let observer: IntersectionObserver | undefined;
-	let frame = 0;
-	let nextFrame = 0;
-	function apply(next: { url: string; deferred: boolean }) {
-		observer?.disconnect();
-		cancelAnimationFrame(frame);
-		cancelAnimationFrame(nextFrame);
-		node.removeAttribute("src");
-		if (!next.url) return;
-		const load = () => {
-			observer?.disconnect();
-			frame = requestAnimationFrame(() => {
-				nextFrame = requestAnimationFrame(() => { node.src = next.url; });
-			});
-		};
-		if (!next.deferred || loadedCoverUrls.has(next.url)) {
-			node.src = next.url;
-		} else if (typeof IntersectionObserver === "undefined") {
-			load();
-		} else {
-			observer = new IntersectionObserver((entries) => {
-				if (entries.some((entry) => entry.isIntersecting)) load();
-			}, { rootMargin: "150px" });
-			observer.observe(node);
-		}
-	}
-	apply(options);
-	return { update: apply, destroy() { observer?.disconnect(); cancelAnimationFrame(frame); cancelAnimationFrame(nextFrame); } };
-}
-
 const VIRTUAL_MUSIC_THRESHOLD = 60;
 const VIRTUAL_MUSIC_OVERSCAN = 12;
 let playlistScrollEl: HTMLDivElement | null = $state(null);
@@ -755,6 +711,9 @@ const queue = $derived(musicState?.queue ?? []);
 const rotationQueue = $derived(musicState?.rotationQueue ?? []);
 const rotationDeckTotal = $derived(musicState?.rotationDeckTotal ?? rotationQueue.length);
 const rotationPoolTotal = $derived(musicState?.rotationPoolTotal ?? 0);
+const rotationEmptyMessage = $derived(rotationPoolTotal > 0 && rotationDeckTotal === 0
+	? "本轮已无待播歌曲，下一轮开始时重新洗牌"
+	: "当前未开启歌单轮播或轮播池为空");
 const historyRequesters = $derived.by<HistoryRequesterOption[]>(() => {
 	const peopleMap = new Map<
 		string,
@@ -3126,7 +3085,7 @@ $effect(() => {
     <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.pic}
-          <img src={item.pic} alt="" loading="lazy" class="w-full h-full object-cover" />
+          <img src={resolveMusicThumbUrl(item.pic)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
         {:else}
           <span class="text-[10px] text-(--primary)">♪</span>
         {/if}
@@ -3134,14 +3093,14 @@ $effect(() => {
       <div class="flex-1 min-w-0">
         <div class="text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)] flex items-center gap-1.5 min-w-0">
           <span
-            class="truncate min-w-0 {item.sourcePlaylistTitle ? 'flex-1 max-w-fit' : 'max-w-full'}"
+            class="min-w-0 flex-1 truncate"
             title={item.title}
           >
             {item.title}
           </span>
           {#if item.sourcePlaylistTitle}
             <span
-              class="truncate min-w-0 flex-1 max-w-fit text-[10px] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)] font-normal shrink"
+              class="max-w-[45%] shrink-0 truncate text-[10px] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)] font-normal"
               title={item.sourcePlaylistTitle}
             >
               {item.sourcePlaylistTitle}
@@ -3235,40 +3194,24 @@ $effect(() => {
     countBadge?: string,
     favoriters?: FavoriteUserItem[],
     favoriteCount?: number,
-    durationSec?: number,
-    deferCover = false
+    durationSec?: number
   )}
     {@const isCurrent = isTrackCurrent(song)}
     {@const isQueued = isTrackQueued(song)}
     {@const thumbCover = resolveMusicThumbUrl(song.cover)}
-    {@const coverFailed = Boolean(thumbCover && failedCoverUrls.has(thumbCover))}
-    {@const coverLoaded = Boolean(thumbCover && loadedCoverUrls.has(thumbCover))}
     {@const isFav = isTrackFavorited(song)}
     {@const songLookupKey = song.id || getTrackTitleArtistKey(song.title, song.artist)}
     {@const isToggling = songLookupKey ? favoriteTogglingTrackIds.has(songLookupKey) : false}
     {@const hasSparkle = songLookupKey ? favSparkleTrackIds.has(songLookupKey) : false}
     <div class="flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-10 h-10 md:w-8 md:h-8 rounded-lg md:rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
-        {#if thumbCover && !coverFailed}
-          <span class="text-xs text-(--primary)/70 select-none" aria-hidden="true">♪</span>
-          <img
-            use:deferPlaylistImage={{ url: thumbCover, deferred: deferCover }}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            fetchpriority="low"
-            class="absolute inset-0 w-full h-full object-cover {coverLoaded ? 'opacity-100' : 'opacity-0 transition-opacity duration-150'}"
-            onload={(e) => {
-              markCoverLoaded(thumbCover);
-              e.currentTarget.style.opacity = "1";
-            }}
-            onerror={(e) => {
-              markCoverFailed(thumbCover);
-              e.currentTarget.style.display = "none";
-            }}
-          />
-        {:else}
-          <span class="text-xs text-(--primary)">♪</span>
+        <span class="text-xs text-(--primary)/70 select-none" aria-hidden="true">♪</span>
+        {#if thumbCover}
+          {#key thumbCover}
+            <img src={thumbCover} alt="" loading="lazy" decoding="async"
+              class="absolute inset-0 w-full h-full object-cover"
+              onerror={(event) => { event.currentTarget.hidden = true; }} />
+          {/key}
         {/if}
         {#if isCurrent}
           <div class="absolute inset-0 bg-black/45 flex items-center justify-center" aria-hidden="true">
@@ -3483,7 +3426,7 @@ $effect(() => {
     <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.track.cover}
-          <img src={item.track.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
+          <img src={resolveMusicThumbUrl(item.track.cover)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
         {:else}
           <span class="text-[10px] text-(--primary)">♪</span>
         {/if}
@@ -4039,7 +3982,7 @@ $effect(() => {
               {#if rotationQueue.length === 0}
                 <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1.5 text-center px-3 pt-3 pb-5">
                   <span class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
-                    当前未开启歌单轮播或轮播池为空
+                    {rotationEmptyMessage}
                   </span>
                   {#if isWalineLoggedIn}
                     <button
@@ -4267,7 +4210,7 @@ $effect(() => {
         {:else}
           {#if rotationQueue.length === 0}
             <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
-              当前未开启歌单轮播或轮播池为空
+              {rotationEmptyMessage}
               {#if isWalineLoggedIn}
                 <div class="mt-1.5">
                   <button
@@ -4305,7 +4248,7 @@ $effect(() => {
             {#if pl.id === "pl_collective_favorites"}
               {@render collectiveCover()}
             {:else if pl.coverUrl}
-              <img use:deferPlaylistImage={{ url: resolveMusicThumbUrl(pl.coverUrl), deferred: true }} alt="" loading="lazy" decoding="async" fetchpriority="low" class="w-full h-full object-cover" />
+              <img src={resolveMusicThumbUrl(pl.coverUrl)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
             {:else}
               <span class="text-sm text-(--primary)">♪</span>
             {/if}
@@ -4487,7 +4430,7 @@ $effect(() => {
                 {#if selectedPlaylist.id === "pl_collective_favorites"}
                   {@render collectiveCover()}
                 {:else if selectedPlaylist.coverUrl}
-                  <img use:deferPlaylistImage={{ url: resolveMusicThumbUrl(selectedPlaylist.coverUrl), deferred: true }} alt="" loading="lazy" decoding="async" fetchpriority="low" class="w-full h-full object-cover" />
+                  <img src={resolveMusicThumbUrl(selectedPlaylist.coverUrl)} alt="" decoding="async" class="w-full h-full object-cover" />
                 {:else}
                   <span class="text-xs text-(--primary)">♪</span>
                 {/if}
@@ -4975,8 +4918,7 @@ $effect(() => {
                   undefined,
                   isCollective ? item.favoritedUsers : undefined,
                   isCollective ? item.favCount : undefined,
-                  item.durationSec,
-                  true
+                  item.durationSec
                 )}
               {/each}
             </div>
@@ -5548,7 +5490,7 @@ $effect(() => {
                       {#if playlist.id === "pl_collective_favorites"}
                         {@render collectiveCover()}
                       {:else if playlist.coverUrl}
-                        <img src={playlist.coverUrl} alt="" loading="lazy" class="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" />
+                        <img src={resolveMusicThumbUrl(playlist.coverUrl)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" />
                       {:else}
                         <svg class="w-5 h-5 text-(--primary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                           <path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>
@@ -5607,7 +5549,7 @@ $effect(() => {
                     {#if playlist.id === "pl_collective_favorites"}
                       {@render collectiveCover()}
                     {:else if playlist.coverUrl}
-                      <img src={playlist.coverUrl} alt="" loading="lazy" class="w-full h-full object-cover" />
+                      <img src={resolveMusicThumbUrl(playlist.coverUrl)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
                     {:else}
                       <svg class="w-5 h-5 text-(--primary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>

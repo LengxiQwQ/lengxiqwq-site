@@ -145,6 +145,13 @@ function preferRecording(a, b) {
     (a.durationDiff === b.durationDiff ? 0 : a.durationDiff - b.durationDiff);
 }
 
+function preferRotationAlternative(original, a, b) {
+  const score = option => option.versionKey === original.versionKey ? 2 :
+    (!option.versionKey && !original.versionKey.startsWith('live') ? 1 : 0);
+  return score(b) - score(a) || Number(b.albumMatch) - Number(a.albumMatch) ||
+    (a.durationDiff === b.durationDiff ? 0 : a.durationDiff - b.durationDiff);
+}
+
 function sameReleaseRecording(a, b) {
   if (a.versionKey !== b.versionKey) return false;
   if (a.isrc && b.isrc) return a.isrc === b.isrc;
@@ -332,19 +339,33 @@ export class MusicRegistry {
     const budgetMs = options.budgetMs ?? (options.alternatives ? (ordered.length > 1 ? 6500 : 10_500) : 2800);
     if (!ordered.length) return { temporaryFailure: false };
     const deadline = Date.now() + budgetMs;
-    const lookup = (id, signal) => this.resolveProviderRecording(item, resolve, id, { ...options, deadline, signal });
+    const lookup = (id, signal) => this.resolveProviderRecording(item, resolve, id, {
+      ...options, alternatives: options.alternatives || options.autoSelectAlternative, deadline, signal
+    });
     const result = ordered.length === 1
       ? await lookup(ordered[0])
-      : await lookupPreferredProviders(ordered, lookup, budgetMs);
+      : await lookupPreferredProviders(ordered, lookup, budgetMs, options.autoSelectAlternative ? Infinity : 3);
     if (result.verifiedMatch) {
       const track = normalizeMusicTrack(result.playable);
       if (track) this.saveMatch(this.matchStorageKey(item, track.provider), track, STORED_MATCH_TTL_MS);
+    }
+    if (!result.playable && options.autoSelectAlternative) {
+      const original = recordingMetadata(item);
+      const noAliases = new Map();
+      const alternatives = (result.alternatives || [])
+        .filter(option => option.relation === 'same_artist_version')
+        .map(({ track }) => ({ track, ...compareRecording(original, recordingMetadata(track), noAliases) }))
+        .sort((a, b) => preferRotationAlternative(original, a, b));
+      const best = alternatives[0]?.track;
+      if (best) {
+        return { playable: { ...best, rotationReplacement: { title: item.title, artist: item.artist } } };
+      }
     }
     return result;
   }
 
   async resolveProviderRecording(item, resolve, providerId, {
-    alternatives = false, exclude = () => false, budgetMs, preferredTrack, random = false, deadline, signal
+    alternatives = false, autoSelectAlternative = false, exclude = () => false, budgetMs, preferredTrack, random = false, deadline, signal
   }) {
     const platform = item.sourcePlatform || item.provider;
     const sourceId = item.sourceTrackId || item.sourceId ||
@@ -452,17 +473,20 @@ export class MusicRegistry {
     if (!alternatives || random) return { temporaryFailure };
 
     const remaining = ranked
-      .filter(option => option.relation && !seen.has(option.track.id))
+      .filter(option => option.relation && !seen.has(option.track.id) &&
+        (!autoSelectAlternative || option.relation === 'same_artist_version'))
       .sort((a, b) => ROTATION_RELATIONS.indexOf(a.relation) - ROTATION_RELATIONS.indexOf(b.relation) ||
-        preferRecording(a, b));
-    const checked = await Promise.all(remaining.slice(0, Math.max(0, MAX_SOURCE_CHECKS - recordings.length)).map(async option => {
+        (autoSelectAlternative ? preferRotationAlternative(original, a, b) : preferRecording(a, b)));
+    const alternativeLimit = autoSelectAlternative ? 3 : Math.max(0, MAX_SOURCE_CHECKS - recordings.length);
+    const checked = await Promise.all(remaining.slice(0, alternativeLimit).map(async option => {
       const track = await check(option.track);
       return track ? { track, relation: option.relation } : null;
     }));
     const distinctRecordings = checkedRecordings.filter((option, index) => !checkedRecordings.slice(0, index)
       .some(previous => sameReleaseRecording(previous, option)));
     return {
-      alternatives: [...distinctRecordings.map(({ track, relation }) => ({ track, relation })), ...checked.filter(Boolean)].slice(0, 3),
+      alternatives: [...distinctRecordings.map(({ track, relation }) => ({ track, relation })), ...checked.filter(Boolean)]
+        .slice(0, autoSelectAlternative ? Infinity : 3),
       temporaryFailure
     };
   }

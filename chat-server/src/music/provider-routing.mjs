@@ -1,7 +1,7 @@
 const SECONDARY_START_MS = 450;
 const PRIORITY_WAIT_MS = 350;
 
-export function lookupPreferredProviders(providers, lookup, budgetMs) {
+export function lookupPreferredProviders(providers, lookup, budgetMs, alternativeLimit = 3) {
   return new Promise(resolve => {
     const controller = new AbortController();
     const results = Array(providers.length).fill(null);
@@ -29,7 +29,7 @@ export function lookupPreferredProviders(providers, lookup, budgetMs) {
       }
       const order = ['same_artist_version', 'same_title', 'same_artist_other'];
       const alternatives = [...choices.values()]
-        .sort((a, b) => order.indexOf(a.relation) - order.indexOf(b.relation)).slice(0, 3);
+        .sort((a, b) => order.indexOf(a.relation) - order.indexOf(b.relation)).slice(0, alternativeLimit);
       resolve({ alternatives, temporaryFailure: timedOut || results.some(result => result?.temporaryFailure) });
     }
 

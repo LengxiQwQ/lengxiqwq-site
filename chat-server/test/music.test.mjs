@@ -380,8 +380,107 @@ test('shuffle rotation plays sequentially without pure-random duplication, reshu
   await mgr.advanceNext();
   assert.equal(mgr.current.track.sourceId, expectedOrder[2]);
   assert.equal(mgr.current.isFallback, true);
-  // 牌堆播完后，自动触发重新洗牌，牌堆补满为 3 首歌
-  assert.equal(mgr.rotationDeck.length, 3);
+  // 正在播本轮最后一首时，读取队列不会提前开始下一轮。
+  assert.deepEqual(mgr.getSnapshot().rotationQueue, []);
+  await mgr.advanceNext();
+  assert.notEqual(mgr.current.track.sourceId, expectedOrder[2]);
+  assert.equal(mgr.rotationDeck.length, 2);
+});
+
+test('removing rotation tracks preserves the playing track and remaining order through refresh and restart', async t => {
+  const registry = { resolvePlaylistTrack: async item => item, resolvePlayable: async item => playable(item) };
+  const mgr = await manager(t, registry);
+  const tracks = ['a', 'b', 'c', 'd'].map((id, index) => ({
+    ...track(id), sourcePlaylistId: index < 2 ? 'first' : 'second'
+  }));
+  mgr.setFallbackPlaylist('first,second', tracks, 'Both', { start: false });
+  await mgr.resume();
+  const playing = mgr.current;
+  const timer = mgr._advanceTimer;
+  const [head, middle, tail] = mgr.getRotationQueue();
+  assert.equal(mgr.removeRotation({ entryId: middle.entryId }, actor).ok, true);
+  assert.deepEqual(mgr.getRotationQueue(), [head, tail]);
+  mgr.setFallbackPlaylist('first,second', tracks.map(item => ({ ...item })), 'Both', { start: false });
+  assert.deepEqual(mgr.getRotationQueue(), [head, tail]);
+  assert.equal(mgr.removeRotation({ entryId: head.entryId }, actor).ok, true);
+  assert.equal(mgr.removeRotation({ entryId: tail.entryId }, actor).ok, true);
+  assert.equal(mgr.current, playing);
+  assert.equal(mgr._advanceTimer, timer);
+  await mgr.prepareNext();
+  assert.deepEqual(mgr.getSnapshot().rotationQueue, []);
+  const restored = await manager(t, registry, 'chat', mgr.dataDir);
+  restored.setFallbackPlaylist('first,second', tracks, 'Both', { start: false });
+  await restored.restorePlayback();
+  assert.deepEqual(restored.getSnapshot().rotationQueue, []);
+  await restored.advanceNext();
+  assert.equal(restored.fallbackTracks.length, 4);
+  assert.equal(restored.rotationDeck.length, 3);
+});
+
+test('background preparation leaves the visible rotation order untouched', async t => {
+  const mgr = await manager(t, rotationRegistry([]));
+  const first = track('missing');
+  const second = track('available');
+  mgr.setFallbackPlaylist('selected', [first, second], 'Selected', { start: false });
+  mgr.rotationDeck = [first, second];
+  mgr.playTrack(playable(track('current')), actor, true);
+  mgr.resolveRotationSource = async item => ({ playable: item === second ? playable(item) : null });
+  await mgr.prepareNext();
+  assert.deepEqual(mgr.rotationDeck, [first, second]);
+  assert.equal(mgr.removeRotation({ entryId: mgr.rotationEntryIds.get(second) }, actor).ok, true);
+  assert.equal(mgr.preparedFallback, null);
+  assert.deepEqual(mgr.rotationDeck, [first]);
+  assert.equal(mgr.current.track.sourceId, 'current');
+});
+
+test('unattended rotation plays the closest version before moving to the next song', async t => {
+  const original = { ...recording('original'), sourcePlatform: 'applemusic', sourceTrackId: 'original' };
+  const live = recording('live', { title: 'Morning (Live)' });
+  const closest = recording('long-studio', { durationSec: 190 });
+  const unrelated = recording('other', { title: 'Evening' });
+  const differentArtist = recording('same-title', { artist: 'Another band' });
+  const next = recording('following', { title: 'Next' });
+  const mgr = await manager(t, rotationRegistry([live, closest, unrelated, differentArtist]));
+  mgr.setFallbackPlaylist('selected', [original, next], 'Selected', { start: false });
+  mgr.rotationDeck = [original, next];
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.id, closest.id);
+  assert.deepEqual(mgr.current.track.rotationReplacement, { title: original.title, artist: original.artist });
+  assert.deepEqual(mgr.rotationDeck, [next]);
+  const noEligible = await rotationRegistry([differentArtist, unrelated])
+    .resolveRotationTrack(original, playable, { autoSelectAlternative: true });
+  assert.equal(noEligible.playable, undefined);
+});
+
+test('unattended alternatives wait for a strict match and can rank results across providers', async () => {
+  const original = { title: 'Morning', artist: 'Band', durationSec: 180, album: 'Debut' };
+  const live = recording('live', { title: 'Morning (Live)' });
+  const studio = { ...recording('studio', { durationSec: 191 }), id: 'netease:123', sourceId: '123', provider: 'netease' };
+  const strict = { ...studio, durationSec: 180 };
+  for (const item of [studio, strict]) {
+    const registry = new MusicRegistry([
+      { id: 'qq', async search() { return { tracks: [live] }; } },
+      { id: 'netease', async search() { return { tracks: [item] }; } }
+    ]);
+    const found = await registry.resolveRotationTrack(original, playable, { autoSelectAlternative: true });
+    assert.equal(found.playable.id, item.id);
+    assert.equal(Boolean(found.playable.rotationReplacement), item === studio);
+  }
+});
+
+test('removing a rotation entry invalidates its in-flight manual switch', async t => {
+  const mgr = await manager(t, rotationRegistry([]));
+  const planned = track('planned');
+  mgr.setFallbackPlaylist('selected', [planned, track('following')], 'Selected', { start: false });
+  mgr.playTrack(playable(track('current')), actor, true);
+  let resolve;
+  mgr.resolveRotationSource = () => new Promise(done => { resolve = done; });
+  const target = mgr.getRotationQueue().find(item => item.id === planned.id);
+  const pending = mgr.playRotationTrack(target.entryId, actor, 1);
+  assert.equal(mgr.removeRotation({ entryId: target.entryId }, actor).ok, true);
+  resolve({ playable: playable(planned) });
+  assert.equal((await pending).code, 'PLAYBACK_CHANGED');
+  assert.equal(mgr.current.track.sourceId, 'current');
 });
 
 test('playRotationTrack directly switches to chosen rotation track as fallback and removes it from deck', async t => {

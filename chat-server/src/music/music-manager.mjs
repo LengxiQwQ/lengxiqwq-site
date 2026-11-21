@@ -66,6 +66,7 @@ export class MusicManager {
     this._nextRotationLogId = 1;
     this.fallbackTracks = [];
     this.rotationDeck = [];
+    this.rotationPoolKey = null;
     this.rotationEntryIds = new WeakMap();
     this.rotationEntries = new Map();
     this.rotationOffers = new WeakMap();
@@ -189,8 +190,17 @@ export class MusicManager {
   savePlayback() {
     writeJsonAtomic(this.statePath, {
       current: this.current && { ...this.current, track: stableTrack(this.current.track) },
-      queue: this.queue.map(item => ({ ...item, track: stableTrack(item.track) }))
+      queue: this.queue.map(item => ({ ...item, track: stableTrack(item.track) })),
+      rotation: this.snapshotRotationRound()
     });
+  }
+
+  snapshotRotationRound() {
+    return {
+      poolKey: this.rotationPoolKey,
+      entries: [...this.rotationEntries.keys()],
+      remaining: this.rotationDeck.map(track => this.rotationEntryIds.get(track)).filter(Boolean)
+    };
   }
 
   async restorePlayback() {
@@ -252,6 +262,9 @@ export class MusicManager {
   }
 
   setFallbackPlaylist(playlistId, tracks, playlistName, { start = true, all = false } = {}) {
+    const previous = this.rotationPoolKey === null ? this.savedState?.rotation : this.snapshotRotationRound();
+    const poolKey = all ? 'all' : JSON.stringify(String(playlistId ?? '').split(',').filter(Boolean).sort());
+    this.rotationPoolKey = poolKey;
     this.fallbackPlaylistId = playlistId;
     this.fallbackPlaylistName = playlistName;
     this.fallbackTracks = playlistId || all ? tracks : [];
@@ -271,8 +284,18 @@ export class MusicManager {
       this.rotationEntries.set(id, track);
     });
     this.fallbackGeneration++;
-    this.reshuffleRotationDeck(true);
+    if (previous?.poolKey === poolKey && Array.isArray(previous.entries) && Array.isArray(previous.remaining)) {
+      const previousEntries = new Set(previous.entries);
+      const remaining = new Set(previous.remaining);
+      this.rotationDeck = [...remaining].map(id => this.rotationEntries.get(id)).filter(Boolean);
+      for (const [id, track] of this.rotationEntries) {
+        if (!previousEntries.has(id) && !remaining.has(id)) this.rotationDeck.push(track);
+      }
+    } else {
+      this.reshuffleRotationDeck();
+    }
     this.preparedFallback = null;
+    if (!this.savedState) this.savePlayback();
     if (start && (!this.current || this.current.isFallback)) {
       this.generation++;
       void this.advanceNext();
@@ -281,7 +304,7 @@ export class MusicManager {
     }
   }
 
-  reshuffleRotationDeck(isNewPool = false) {
+  reshuffleRotationDeck() {
     if (!this.fallbackTracks.length) {
       this.rotationDeck = [];
       return;
@@ -303,9 +326,6 @@ export class MusicManager {
   }
 
   getRotationQueue(limit = 30) {
-    if (!this.rotationDeck.length && this.fallbackTracks.length > 0) {
-      this.reshuffleRotationDeck();
-    }
     if (!this.rotationDeck.length) return [];
     return this.rotationDeck.slice(0, limit).map((track, index) => {
       const sourceId = track.sourceTrackId || track.sourceId || '';
@@ -345,9 +365,6 @@ export class MusicManager {
       this.rotationDeck.splice(idx, 1);
     } else if (!playable.rotationEntryId) {
       this.rotationDeck.shift();
-    }
-    if (this.rotationDeck.length === 0 && this.fallbackTracks.length > 0) {
-      this.reshuffleRotationDeck();
     }
   }
 
@@ -947,19 +964,22 @@ export class MusicManager {
     };
   }
 
-  async resolveRotationSource(candidate, { alternatives = false, exclude, budgetMs, preferredTrack, random } = {}) {
+  async resolveRotationSource(candidate, options = {}) {
     if (this.musicRegistry.resolveRotationTrack) {
       return this.musicRegistry.resolveRotationTrack(candidate,
-        track => this.resolve(track, { rejectTransient: true }), { alternatives, exclude, budgetMs, preferredTrack, random });
+        track => this.resolve(track, { rejectTransient: true }), options);
     }
     const matched = await this.musicRegistry.resolvePlaylistTrack(candidate);
     const track = matched || (candidate.id?.startsWith('qq:') ? candidate : null);
-    return { playable: track && !exclude?.(track) ? await this.resolve(track) : null };
+    return { playable: track && !options.exclude?.(track) ? await this.resolve(track) : null };
   }
 
-  async resolveFallbackTrackPlayable(excludeIds = new Set()) {
+  async resolveFallbackTrackPlayable(excludeIds = new Set(), { preparing = false } = {}) {
     if (!this.fallbackTracks.length) return null;
-    if (!this.rotationDeck.length) this.reshuffleRotationDeck();
+    if (!this.rotationDeck.length) {
+      if (preparing) return null;
+      this.reshuffleRotationDeck();
+    }
     const deck = this.rotationDeck;
     const generation = this.fallbackGeneration;
     const exclude = track => deck.length > 1 &&
@@ -970,8 +990,10 @@ export class MusicManager {
       if (remaining <= 0) break;
       let playable;
       try {
+        const budgetMs = Math.min(remaining, 4200);
         ({ playable } = await withTimeout(
-          this.resolveRotationSource(candidate, { exclude }), Math.min(remaining, 3000)
+          this.resolveRotationSource(candidate, { exclude, budgetMs, autoSelectAlternative: true }),
+          Math.min(remaining, budgetMs + 50)
         ));
       } catch (error) {
         console.warn('[Music] rotation source', this.roomId, error.message);
@@ -980,6 +1002,7 @@ export class MusicManager {
       const index = deck.indexOf(candidate);
       if (index < 0) continue;
       if (playable) return { ...playable, rotationEntryId: this.rotationEntryIds.get(candidate) };
+      if (preparing) continue;
       deck.splice(index, 1);
       // Keep the current song at the end so a one-song (or all-duplicate) pool can repeat.
       if (exclude(candidate)) deck.push(candidate);
@@ -1007,16 +1030,21 @@ export class MusicManager {
     this[slot] = record;
     record.pending = Promise.resolve(resolved || (queued
       ? this.resolve(queued.track)
-      : previous?.playable ? this.resolve(previous.playable) : this.resolveFallbackTrackPlayable()));
+      : previous?.playable ? this.resolve(previous.playable) : this.resolveFallbackTrackPlayable(undefined, { preparing: true })));
     const playable = await record.pending;
     if (this[slot] !== record) return;
-    if (!playable) {
+    if (!playable || (!queued && !this.isRotationCandidatePending(playable))) {
       this[slot] = null;
       return;
     }
     record.playable = playable;
     record.checkedAt = Date.now();
     if (this.advancing?.generation !== this.generation) this.onStateChanged();
+  }
+
+  isRotationCandidatePending(playable) {
+    if (!playable?.rotationEntryId) return Boolean(playable);
+    return this.rotationDeck.includes(this.rotationEntries.get(playable.rotationEntryId));
   }
 
   async usePrepared(record) {
@@ -1094,10 +1122,11 @@ export class MusicManager {
     const prepared = this.preparedFallback?.key === fallbackGeneration ? this.preparedFallback : null;
     this.preparedFallback = null;
     let known = await this.usePrepared(prepared);
-    if (known && known.id === this.current?.track?.id) known = null;
+    if (!this.isRotationCandidatePending(known) || known.id === this.current?.track?.id) known = null;
     const playable = known || await this.resolveFallbackTrackPlayable();
     if (generation !== this.generation) return;
     if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt);
+    if (playable && !this.isRotationCandidatePending(playable)) return this.selectNext(generation, selectionStartedAt);
     if (playable) {
       this.consumeRotationTrack(playable);
       this.lastPlayedFallbackId = playable.id;
@@ -1177,12 +1206,11 @@ export class MusicManager {
     const index = this.rotationDeck.indexOf(entry);
     if (index < 0) return { ok: false, error: '曲目不在当前轮播队列中' };
     const [removed] = this.rotationDeck.splice(index, 1);
-    if (index === 0) {
+    if (index === 0 || this.preparedFallback?.playable?.rotationEntryId === this.rotationEntryIds.get(removed)) {
       this.preparedFallback = null;
       clearTimeout(this._prepareFallbackTimer);
       this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 300);
     }
-    if (!this.rotationDeck.length && this.fallbackTracks.length) this.reshuffleRotationDeck();
     this.savePlayback();
     this.onStateChanged();
     return { ok: true, track: removed };
@@ -1314,9 +1342,11 @@ export class MusicManager {
       return this.rotationFailure('ROTATION_CHANGED', '轮播列表已更新，请重新选择曲目');
     }
     const entryId = this.rotationEntryIds.get(requested);
+    const wasInDeck = offer?.wasInDeck ?? this.rotationDeck.includes(requested);
     const snapshot = { current: this.current, queue: this.queue[0], pool: this.rotationEntryIds };
     const stillCurrent = () => active() && snapshot.current === this.current &&
       snapshot.queue === this.queue[0] && snapshot.pool === this.rotationEntryIds &&
+      (!wasInDeck || this.rotationDeck.includes(requested)) &&
       this.rotationPermission(actor, getAudience()) &&
       (!offer || (offer.snapshot.current === this.current && offer.snapshot.queue === this.queue[0] &&
         offer.snapshot.pool === this.rotationEntryIds && offer.expiresAt > Date.now()));
@@ -1354,7 +1384,7 @@ export class MusicManager {
         const token = randomUUID();
         const expiresAt = Date.now() + 90_000;
         this.rotationOffers.set(owner, {
-          token, expiresAt, choices: result.alternatives, requested, snapshot
+          token, expiresAt, choices: result.alternatives, requested, snapshot, wasInDeck
         });
         return {
           ok: false,
