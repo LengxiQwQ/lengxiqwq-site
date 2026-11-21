@@ -165,6 +165,7 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
 <!doctype html>
 <html lang={siteLang} class="bg-(--page-bg) text-[14px] md:text-[16px]" data-wallpaper-mode={backgroundWallpaper.mode} data-fullscreen-layout={fullscreenLayout} data-has-wallpaper={hasWallpaper ? "" : undefined} data-tag-style={siteConfig.tagStyle ?? "pill"} data-category-style={siteConfig.categoryStyle ?? "rectangle"} style={`--hue:${configHue}`}>
   <head>
+    <link rel="manifest" href="/site.webmanifest" />
     <meta charset="UTF-8" />
     <meta name="color-scheme" content="light dark" />
     <meta name="format-detection" content="telephone=no, date=no, address=no, email=no" />

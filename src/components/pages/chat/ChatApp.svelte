@@ -1,5 +1,14 @@
 <script lang="ts">
-import { onMount, tick } from "svelte";
+import { onMount, tick, untrack } from "svelte";
+import {
+	disableChatPush,
+	enableChatPush,
+	getChatPushMode,
+	prepareChatPush,
+	readChatPushSettings,
+	supportsChatPush,
+	testChatPush,
+} from "./chatPush";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatWindow from "./ChatWindow.svelte";
 import ChatModal from "./ChatModal.svelte";
@@ -26,6 +35,7 @@ import {
 	clearStoredChatUser,
 	clearWalineAuth,
 	consumeUrlWalineToken,
+	getOrCreateVisitorId,
 	GUEST_TOKEN_STORAGE_KEY,
 	formatClockSeconds,
 	isMentionedForUser,
@@ -335,6 +345,11 @@ let hasAppMounted = false;
 
 const NOTIFICATION_MODE_STORAGE_KEY = "fireflyChatDesktopNotificationMode";
 const NOTIFICATION_STORAGE_KEY = "fireflyChatDesktopNotification";
+let preparedPush: Awaited<ReturnType<typeof prepareChatPush>> | undefined;
+let pushPreparing = $state(false);
+let pushBusy = $state(false);
+let pushNeedsMigration = $state(false);
+let pushOperation: Promise<void> | undefined;
 let desktopNotificationMode = $state<ChatDesktopNotificationMode>("off");
 let desktopNotificationPermission = $state<NotificationPermission>("default");
 const desktopNotificationEnabled = $derived(desktopNotificationMode !== "off");
@@ -1335,155 +1350,121 @@ function showNotice(msg: string, tone?: "default" | "error") {
 	}, 3600);
 }
 
-async function setDesktopNotificationMode(
-	mode: ChatDesktopNotificationMode,
-): Promise<boolean> {
-	if (typeof window === "undefined" || !("Notification" in window)) {
-		showNotice("当前浏览器不支持桌面系统通知");
-		desktopNotificationMode = "off";
-		return false;
-	}
-
-	desktopNotificationPermission = Notification.permission;
-
-	if (mode === "off") {
-		desktopNotificationMode = "off";
-		try {
-			localStorage.setItem(NOTIFICATION_MODE_STORAGE_KEY, "off");
-			localStorage.setItem(NOTIFICATION_STORAGE_KEY, "false");
-		} catch {}
-		showNotice("已关闭桌面通知");
-		return true;
-	}
-
-	if (Notification.permission === "denied") {
-		showNotice(
-			"系统通知权限已被浏览器拒绝，请在浏览器地址栏的网站设置中允许通知权限",
-		);
-		desktopNotificationMode = "off";
-		return false;
-	}
-
-	if (Notification.permission === "default") {
-		try {
-			const perm = await Notification.requestPermission();
-			desktopNotificationPermission = perm;
-			if (perm !== "granted") {
-				desktopNotificationMode = "off";
-				showNotice("未授予通知权限，可在浏览器设置中随时开启");
-				return false;
-			}
-		} catch {
-			showNotice("请求通知权限失败");
-			desktopNotificationMode = "off";
-			return false;
-		}
-	}
-
-	desktopNotificationMode = mode;
+function refreshPushDisplay() {
+	const saved = readChatPushSettings();
+	const permission = typeof Notification !== "undefined" ? Notification.permission : "default";
+	desktopNotificationPermission = permission;
+	desktopNotificationMode = saved && saved.userKey === currentUser?.userKey &&
+		permission === "granted" ? saved.mode : "off";
 	try {
-		localStorage.setItem(NOTIFICATION_MODE_STORAGE_KEY, mode);
-		localStorage.setItem(NOTIFICATION_STORAGE_KEY, "true");
+		const legacyMode = localStorage.getItem(NOTIFICATION_MODE_STORAGE_KEY);
+		pushNeedsMigration = !saved && (legacyMode === "all" || legacyMode === "mention" ||
+			(!legacyMode && localStorage.getItem(NOTIFICATION_STORAGE_KEY) === "true"));
 	} catch {}
-
-	if (mode === "mention") {
-		showNotice("桌面通知：已设为 仅 @ 与回复");
-	} else {
-		showNotice("桌面通知：已设为 所有消息");
-	}
-	return true;
 }
 
-async function handleToggleDesktopNotification() {
-	if (desktopNotificationMode === "off") {
-		await setDesktopNotificationMode("mention");
-	} else if (desktopNotificationMode === "mention") {
-		await setDesktopNotificationMode("all");
-	} else {
-		await setDesktopNotificationMode("off");
-	}
-}
-
-function triggerDesktopNotification(
-	roomId: string,
-	message: ChatMessageRecord,
-) {
-	if (desktopNotificationMode === "off") return;
-	if (typeof window === "undefined" || !("Notification" in window)) return;
-	if (Notification.permission !== "granted") return;
-
-	if (currentUser && message.userKey === currentUser.userKey) return;
-	if (message.kind !== "user") return;
-
-	const isCurrent = roomId === currentRoom;
-	if (isCurrent && !document.hidden && isWindowFocused) {
-		return;
-	}
-
-	const isMentioned = isMentionedForUser(message, currentUser);
-	const isReplyToMe = Boolean(
-		currentUser &&
-			message.replyTo &&
-			message.replyTo.userKey === currentUser.userKey,
-	);
-
-	if (desktopNotificationMode === "mention" && !isMentioned && !isReplyToMe) {
-		return;
-	}
-
-	const roomMeta = rooms.find((r) => r.id === roomId);
-	const roomTitle = roomMeta?.name ? `#${roomMeta.name}` : `#${roomId}`;
-	const senderName = message.name || "未知用户";
-
-	let titleNotice = "";
-	if (isMentioned && isReplyToMe) {
-		titleNotice = " [@与回复]";
-	} else if (isMentioned) {
-		titleNotice = " [有人@你]";
-	} else if (isReplyToMe) {
-		titleNotice = " [回复了你]";
-	}
-	const title = `${roomTitle} · ${senderName}${titleNotice}`;
-
-	let body = (message.content || "")
-		.replace(/!\[([^\]]*)\]\([^)]*\)/g, "[图片]")
-		.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-		.replace(/[`#*_~]/g, "")
-		.trim();
-
-	if (message.attachments && message.attachments.length > 0) {
-		body = body ? `${body} [图片]` : "[图片]";
-	}
-	if (message.poll) {
-		body = `[发起投票] ${message.poll.question || body}`;
-	}
-	if (!body) {
-		body = "[新消息]";
-	}
-	if (body.length > 100) {
-		body = `${body.slice(0, 97)}...`;
-	}
-
-	const avatarUrl = resolveChatAvatarUrl(message.avatar);
-	const icon = avatarUrl || "/favicon.ico";
-
+async function preparePushSettings(userKey: string) {
+	if (!supportsChatPush() || !currentAuth || !normalizedChatServer || pushPreparing) return;
+	pushPreparing = true;
+	const auth = currentAuth;
 	try {
-		const notification = new Notification(title, {
-			body,
-			icon,
-			tag: `chat-msg-${roomId}-${message.msgUid}`,
-		});
-
-		notification.onclick = () => {
-			window.focus();
-			if (currentRoom !== roomId) {
-				handleRoomSelect(roomId);
-			}
-			notification.close();
-		};
-	} catch (e) {
-		console.warn("[ChatApp] notification error:", e);
+		const saved = readChatPushSettings();
+		if (saved && saved.userKey !== userKey) await disableChatPush(normalizedChatServer, saved);
+		if (readChatPushSettings()?.userKey === userKey) {
+			await getChatPushMode(normalizedChatServer, auth, userKey);
+		}
+		preparedPush = await prepareChatPush(normalizedChatServer);
+		refreshPushDisplay();
+	} catch {
+		preparedPush = undefined;
+	} finally {
+		pushPreparing = false;
 	}
+}
+
+$effect(() => {
+	const userKey = currentUser?.userKey;
+	const profileOpen = showProfileModal;
+	const mounted = hasAppMounted;
+	if (!mounted) return;
+	untrack(() => {
+		refreshPushDisplay();
+		if (!userKey) return;
+		const saved = readChatPushSettings();
+		if (profileOpen) {
+			void preparePushSettings(userKey);
+		} else if (saved && saved.userKey !== userKey) {
+			void disableChatPush(normalizedChatServer, saved).then(refreshPushDisplay, () =>
+				showNotice("旧账号的推送尚未关闭，请重试开启或关闭浏览器通知权限"));
+		}
+	});
+});
+
+async function setDesktopNotificationMode(mode: ChatDesktopNotificationMode) {
+	const auth = currentAuth;
+	const userKey = currentUser?.userKey;
+	if (!auth || !userKey || pushBusy || pushPreparing) return;
+	if (mode !== "off" && !supportsChatPush()) {
+		showNotice("当前环境不支持浏览器推送，iPhone 或 iPad 请先将网站添加到主屏幕");
+		return;
+	}
+	if (mode !== "off" && Notification.permission === "denied") {
+		showNotice("请先在浏览器的网站权限中允许通知");
+		return;
+	}
+	if (mode !== "off" && !preparedPush) {
+		await preparePushSettings(userKey);
+		showNotice(preparedPush ? "推送已准备好，请再次选择提醒档位" : "推送准备失败，请重试");
+		return;
+	}
+	pushBusy = true;
+	const applyMode = async () => {
+		if (mode === "off") {
+			await disableChatPush(normalizedChatServer);
+			if (preparedPush) preparedPush.subscription = null;
+		} else if (preparedPush) {
+			await enableChatPush(normalizedChatServer, auth, userKey, getOrCreateVisitorId(), mode, preparedPush);
+		}
+		try {
+			localStorage.removeItem(NOTIFICATION_MODE_STORAGE_KEY);
+			localStorage.removeItem(NOTIFICATION_STORAGE_KEY);
+		} catch {}
+	};
+	pushOperation = applyMode();
+	try {
+		await pushOperation;
+		showNotice(mode === "off" ? "已关闭此浏览器的推送" : "已更新此浏览器的推送设置");
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : "";
+		showNotice(reason === "endpoint" ? "当前浏览器的推送服务暂未适配" :
+			Notification.permission === "denied" ? "浏览器未授予通知权限" : "保存推送设置失败，请重试");
+	} finally {
+		pushOperation = undefined;
+		pushBusy = false;
+		refreshPushDisplay();
+	}
+}
+
+async function sendTestPush() {
+	const auth = currentAuth;
+	const userKey = currentUser?.userKey;
+	if (!auth || !userKey || pushBusy) return;
+	pushBusy = true;
+	try {
+		await testChatPush(normalizedChatServer, auth, userKey);
+		showNotice("测试推送已发出，请查看系统通知");
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : "";
+		showNotice(reason === "rate" ? "请稍后再发送测试推送" : "测试推送未发出，请检查订阅状态后重试");
+		void preparePushSettings(userKey);
+	} finally {
+		pushBusy = false;
+	}
+}
+
+function handleToggleDesktopNotification() {
+	if (currentUser) showProfileModal = true;
+	else showAuthModal = true;
 }
 
 function sendPacket(packet: Record<string, unknown>): boolean {
@@ -2043,7 +2024,6 @@ function connectRoom(roomId: string) {
 						}
 					}
 				}
-				triggerDesktopNotification(packet.roomId, packet.message);
 				break;
 			}
 			case "chat:updated": {
@@ -2568,7 +2548,15 @@ function handleAuthenticated(
 	});
 }
 
-function handleLogout() {
+async function handleLogout() {
+	try {
+		await pushOperation?.catch(() => {});
+		await disableChatPush(normalizedChatServer);
+		if (preparedPush) preparedPush.subscription = null;
+	} catch {
+		showNotice("关闭此浏览器的推送失败，请重试退出");
+		return;
+	}
 	if (currentAuth?.kind === "waline") {
 		clearWalineAuth();
 	} else if (currentAuth?.kind === "guest") {
@@ -3138,21 +3126,7 @@ onMount(() => {
 
 	hasAppMounted = true;
 
-	if (typeof window !== "undefined" && "Notification" in window) {
-		desktopNotificationPermission = Notification.permission;
-		const storedMode = localStorage.getItem(NOTIFICATION_MODE_STORAGE_KEY);
-		if (storedMode === "all" || storedMode === "mention" || storedMode === "off") {
-			desktopNotificationMode =
-				Notification.permission === "granted" ? storedMode : "off";
-		} else {
-			const storedPref = localStorage.getItem(NOTIFICATION_STORAGE_KEY);
-			if (storedPref === "true" && Notification.permission === "granted") {
-				desktopNotificationMode = "mention";
-			} else {
-				desktopNotificationMode = "off";
-			}
-		}
-	}
+	refreshPushDisplay();
 
 	const urlParams = new URLSearchParams(window.location.search);
 	const paramRoom = urlParams.get("room")?.trim().toLowerCase() || "";
@@ -3388,6 +3362,7 @@ onMount(() => {
 	window.addEventListener("offline", handleNetworkOffline);
 	window.addEventListener("online", handleNetworkOnline);
 	window.addEventListener("storage", handleWalineStorageSync);
+	window.addEventListener("storage", refreshPushDisplay);
 	window.addEventListener("mousemove", resetIdleTimer, { passive: true });
 	window.addEventListener("pointerdown", resetIdleTimer, { passive: true });
 	window.addEventListener("keydown", resetIdleTimer, { passive: true });
@@ -3514,6 +3489,7 @@ onMount(() => {
 		window.removeEventListener("offline", handleNetworkOffline);
 		window.removeEventListener("online", handleNetworkOnline);
 		window.removeEventListener("storage", handleWalineStorageSync);
+		window.removeEventListener("storage", refreshPushDisplay);
 		window.removeEventListener("mousemove", resetIdleTimer);
 		window.removeEventListener("pointerdown", resetIdleTimer);
 		window.removeEventListener("keydown", resetIdleTimer);
@@ -4031,6 +4007,9 @@ onMount(() => {
       desktopNotificationMode={desktopNotificationMode}
       desktopNotificationPermission={desktopNotificationPermission}
       onChangeDesktopNotificationMode={setDesktopNotificationMode}
+      notificationBusy={pushBusy || pushPreparing}
+      notificationNeedsMigration={pushNeedsMigration}
+      onTestNotification={sendTestPush}
       onSave={handleUpdateProfile}
       onClose={() => (showProfileModal = false)}
       onLogout={handleLogout}

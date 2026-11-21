@@ -1,4 +1,5 @@
 <script lang="ts">
+import { supportsChatPush } from "./chatPush";
 import Icon from "@/components/common/Icon.svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
@@ -22,6 +23,9 @@ interface Props {
 	desktopNotificationMode?: ChatDesktopNotificationMode;
 	desktopNotificationPermission?: NotificationPermission;
 	onChangeDesktopNotificationMode?: (mode: ChatDesktopNotificationMode) => void;
+	notificationBusy?: boolean;
+	notificationNeedsMigration?: boolean;
+	onTestNotification?: () => void;
 	onSave: (draft: ChatProfileDraft) => void;
 	onClose: () => void;
 	onLogout?: () => void;
@@ -34,6 +38,9 @@ const {
 	desktopNotificationMode = "off",
 	desktopNotificationPermission = "default" as NotificationPermission,
 	onChangeDesktopNotificationMode,
+	notificationBusy = false,
+	notificationNeedsMigration = false,
+	onTestNotification,
 	onSave,
 	onClose,
 	onLogout,
@@ -90,7 +97,7 @@ const isEmailUndeliverable = $derived(!emailDeliverability.deliverable);
 const isNotifyDisabled = $derived(isIsolatedGuest || isEmailUndeliverable);
 
 const isNotificationSupported = $derived(
-	typeof window !== "undefined" && "Notification" in window,
+	supportsChatPush(),
 );
 
 function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
@@ -373,7 +380,7 @@ function handleSubmit(e: SubmitEvent) {
                 <div class="flex items-start justify-between gap-2">
                   <div class="min-w-0">
                     <div class="text-xs font-medium text-(--btn-content) flex items-center gap-1.5">
-                      <span>桌面通知</span>
+                      <span>浏览器推送</span>
                       {#if desktopNotificationPermission === "denied"}
                         <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20">
                           权限受阻
@@ -405,6 +412,8 @@ function handleSubmit(e: SubmitEvent) {
                       {desktopNotificationMode === 'off'
                         ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
                         : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                    disabled={notificationBusy}
+                    aria-pressed={desktopNotificationMode === "off"}
                     onclick={() => handleSelectNotificationMode("off")}
                   >
                     <Icon icon="mingcute:notification-off-line" class="w-3.5 h-3.5" />
@@ -416,10 +425,12 @@ function handleSubmit(e: SubmitEvent) {
                       {desktopNotificationMode === 'mention'
                         ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
                         : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                    disabled={notificationBusy}
+                    aria-pressed={desktopNotificationMode === "mention"}
                     onclick={() => handleSelectNotificationMode("mention")}
                   >
                     <Icon icon="mingcute:notification-newdot-line" class="w-3.5 h-3.5" />
-                    <span>仅提及</span>
+                    <span>提及与回复</span>
                   </button>
                   <button
                     type="button"
@@ -427,12 +438,26 @@ function handleSubmit(e: SubmitEvent) {
                       {desktopNotificationMode === 'all'
                         ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
                         : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                    disabled={notificationBusy}
+                    aria-pressed={desktopNotificationMode === "all"}
                     onclick={() => handleSelectNotificationMode("all")}
                   >
                     <Icon icon="mingcute:bell-ringing-line" class="w-3.5 h-3.5" />
                     <span>全部消息</span>
                   </button>
                 </div>
+                {#if !isNotificationSupported}
+                  <p class="text-[11px] text-(--content-meta)">iPhone 或 iPad 可先将本站添加到主屏幕，再从主屏幕打开并启用推送。</p>
+                {:else if notificationNeedsMigration}
+                  <p class="text-[11px] text-(--content-meta)">重新选择提醒档位，即可启用离开网页后仍能收到的浏览器推送。</p>
+                {:else if desktopNotificationMode !== "off"}
+                  <button
+                    type="button"
+                    class="text-xs text-(--primary) cursor-pointer disabled:opacity-50"
+                    disabled={notificationBusy}
+                    onclick={() => onTestNotification?.()}
+                  >发送测试推送</button>
+                {/if}
               </div>
             </div>
           </div>

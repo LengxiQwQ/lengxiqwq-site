@@ -343,12 +343,9 @@ export function buildWsUrl(
 	if (auth?.token) {
 		params.set("authKind", auth.kind);
 		params.set("token", auth.token);
-	} else {
-		const vid = getOrCreateVisitorId();
-		if (vid) {
-			params.set("visitorId", vid);
-		}
 	}
+	const vid = getOrCreateVisitorId();
+	if (vid) params.set("visitorId", vid);
 	if (lastReadAt > 0) {
 		params.set("lastReadAt", String(Math.floor(lastReadAt)));
 	}

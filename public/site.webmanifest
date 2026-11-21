@@ -1,0 +1,12 @@
+{
+  "id": "/",
+  "name": "LengxiQwQ",
+  "short_name": "LengxiQwQ",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "icons": [
+    { "src": "/favicon/favicon-light-192.png", "sizes": "192x192", "type": "image/png" }
+  ]
+}

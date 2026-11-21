@@ -1,0 +1,46 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -25,2 +25,4 @@
+ import { EmailVerifier } from './src/auth/email-verifier.mjs';
++import { createChatPush } from './src/notify/web-push.mjs';
++import * as webPush from 'web-push';
+ import { ChatDatabase } from './src/db/database.mjs';
+@@ -524,2 +526,13 @@
+ const clients = new Set();
++const chatPush = createChatPush({
++  webPush,
++  dataDir: DATA_DIR,
++  resolveCaller: resolveHttpCaller,
++  canReadRoom: (_userKey, roomId) => MUSIC_ROOMS.includes(roomId),
++  isReading: (record, roomId) => [...clients].some((client) =>
++    client.readyState === WebSocket.OPEN &&
++    client.user?.userKey === record.userKey &&
++    client.pushDeviceId === record.deviceId &&
++    client.currentRoom === roomId && client.isFocused !== false),
++});
+ const userMatrixTokenCache = new Map();
+@@ -2527,2 +2540,4 @@
+   const url = new URL(req.url, 'http://' + host);
++
++  if (url.pathname.startsWith('/api/chat/push/') && await chatPush.handle(req, res, url.pathname)) return;
+
+@@ -4320,2 +4335,3 @@
+   const visitorIdParam = reqUrl.searchParams.get('visitorId');
++  ws.pushDeviceId = visitorIdParam;
+   const visitorKey = getSpectatorVisitorKey(visitorIdParam, cleanIp, ws.userAgent);
+@@ -5429,2 +5445,3 @@
+         });
++        chatPush.publish(ws.currentRoom, pollMsg);
+
+@@ -5655,2 +5672,3 @@
+         mentionMailer.enqueueForMessage({ roomId: ws.currentRoom, message: msg, isLive: true });
++        chatPush.publish(ws.currentRoom, msg);
+
+@@ -7138,2 +7156,3 @@
+             broadcastToRoom('interconnect', { type: 'chat:message', roomId: 'interconnect', message: pollMsg });
++            chatPush.publish('interconnect', pollMsg, hadSinceToken);
+           }
+@@ -7432,2 +7451,3 @@
+             mentionMailer.enqueueForMessage({ roomId: 'interconnect', message: msg, isLive: hadSinceToken });
++            chatPush.publish('interconnect', msg, hadSinceToken);
+           }

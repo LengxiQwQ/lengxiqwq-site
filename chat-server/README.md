@@ -40,3 +40,11 @@ python3 scripts/backfill-chat-image-dimensions.py /path/to/chat-data-copy \
 
 发布时将生成的尺寸文件随网关候选放到数据目录。网关启动时读取该文件，并在历史分页中附带尺寸。
 站长可以按房间关闭歌单轮播、随机播放全部公开歌单，或指定一份公开歌单。没有开启轮播时，待播队列播完后点歌台进入空闲。
+
+## 浏览器推送
+
+生产网关需要固定版本依赖 `web-push@4.0.0`。针对当前网关先校验并应用 `gateway-web-push.patch`，将 `src/web-push.mjs` 安装到网关的 `src/notify/web-push.mjs`，然后运行 `node --check server.mjs`。先发布网关并检查 `GET /api/chat/push/config`，再发布静态站。生产站和本地开发的浏览器订阅按网站来源隔离。
+
+网关首次启动在数据目录生成 `web-push-vapid.json`，订阅写入 `web-push-subscriptions.json`。这两个文件随服务保留并按私密数据备份。更换 VAPID 密钥后，已启用的浏览器需要重新订阅。回滚时恢复网关入口并重启，保留数据文件。
+
+定向回归用 `node --test chat-server/test/web-push.test.mjs`。送达验收从「个人资料 → 浏览器推送」启用，在对应浏览器点击「发送测试推送」，并用第二个账号验证关掉本站标签页后仍能收到实际聊天消息。
