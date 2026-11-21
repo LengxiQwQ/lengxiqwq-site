@@ -51,6 +51,10 @@ test('NetEase native tracks start with their own ID and a fast hit skips other c
   const source = { sourcePlatform: 'netease', sourceTrackId: '1234', title: 'Original', artist: 'Artist', durationSec: 180 };
   const found = await registry.resolveRotationTrack(source, async item => playable(item), { alternatives: true });
   assert.equal(found.playable.id, 'netease:1234');
+  assert.deepEqual(found.playable.playbackSelection, {
+    mode: 'original',
+    original: { title: 'Original', artist: 'Artist', platform: 'netease' }
+  });
   assert.equal(searched, 0);
 });
 
@@ -225,6 +229,7 @@ test('supplier fallback validates the actual media and search pagination uses th
   const resolved = await new MusicRegistry([provider]).resolvePlayable(track('id'), origin, 'fixture');
   assert.equal(resolved.streamUrl, 'https://ws.stream.qqmusic.qq.com/good');
   assert.ok(resolved.proxyUrl.startsWith(origin + '/api/music/stream'));
+  assert.deepEqual(resolved.audioSource, { checked: true, channel: 'cyapi', mimeType: 'audio/mpeg' });
   const page = await provider.search('Demo', 30, 2);
   assert.equal(page.tracks.length, 1);
   assert.equal(page.hasMore, true);
@@ -302,6 +307,7 @@ test('concurrent skip and fallback warm-up share one resolver', async t => {
   };
   const preparing = mgr.prepareNext();
   const skipping = mgr.advanceNext();
+  assert.equal(mgr.advanceNext(), skipping);
   release(playable(track('fallback')));
   await Promise.all([preparing, skipping]);
   assert.equal(resolves, 1);
@@ -417,20 +423,90 @@ test('removing rotation tracks preserves the playing track and remaining order t
   assert.equal(restored.rotationDeck.length, 3);
 });
 
-test('background preparation leaves the visible rotation order untouched', async t => {
+test('background preparation does not promote a later song after a temporary failure at the head', async t => {
   const mgr = await manager(t, rotationRegistry([]));
-  const first = track('missing');
-  const second = track('available');
-  mgr.setFallbackPlaylist('selected', [first, second], 'Selected', { start: false });
-  mgr.rotationDeck = [first, second];
+  const first = track('first');
+  const second = track('second');
+  const third = track('third');
+  mgr.setFallbackPlaylist('selected', [first, second, third], 'Selected', { start: false });
+  mgr.rotationDeck = [first, second, third];
   mgr.playTrack(playable(track('current')), actor, true);
-  mgr.resolveRotationSource = async item => ({ playable: item === second ? playable(item) : null });
+  const calls = [];
+  mgr.resolveRotationSource = async item => {
+    calls.push(item.id);
+    return calls.length === 1 ? { temporaryFailure: true } : { playable: playable(item) };
+  };
   await mgr.prepareNext();
-  assert.deepEqual(mgr.rotationDeck, [first, second]);
-  assert.equal(mgr.removeRotation({ entryId: mgr.rotationEntryIds.get(second) }, actor).ok, true);
-  assert.equal(mgr.preparedFallback, null);
-  assert.deepEqual(mgr.rotationDeck, [first]);
-  assert.equal(mgr.current.track.sourceId, 'current');
+  assert.deepEqual(calls, [first.id]);
+  assert.deepEqual(mgr.rotationDeck, [first, second, third]);
+  assert.equal(mgr.getSnapshot().next, null);
+  assert.equal(mgr.skip(actor, 1).skipped, true);
+  await mgr.advancing.promise;
+  assert.deepEqual(calls, [first.id, first.id]);
+  assert.equal(mgr.current.track.id, first.id);
+  assert.deepEqual(mgr.rotationDeck, [second, third]);
+});
+
+test('a confirmed missing track is passed over while a temporarily unavailable one stays in this round', async t => {
+  const mgr = await manager(t, rotationRegistry([]));
+  const unavailable = track('unavailable');
+  const missing = track('missing');
+  const ready = track('ready');
+  const next = track('next');
+  mgr.setFallbackPlaylist('selected', [unavailable, missing, ready, next], 'Selected', { start: false });
+  mgr.rotationDeck = [unavailable, missing, ready, next];
+  mgr.playTrack(playable(track('current')), actor, true);
+  mgr.resolveRotationSource = async item => {
+    if (item === unavailable) return { temporaryFailure: true };
+    if (item === missing) return { temporaryFailure: false };
+    return { playable: playable(item) };
+  };
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.id, ready.id);
+  assert.deepEqual(mgr.rotationDeck, [next, unavailable]);
+});
+
+test('deleting the head during a cut starts from the new head without consuming another entry', async t => {
+  const mgr = await manager(t, rotationRegistry([]));
+  mgr.setFallbackPlaylist('selected', [track('first'), track('second'), track('third')], 'Selected', { start: false });
+  mgr.playTrack(playable(track('current')), actor, true);
+  const [head, second, third] = mgr.getRotationQueue();
+  let release;
+  let started;
+  const onHead = new Promise(resolve => { release = resolve; });
+  const lookupStarted = new Promise(resolve => { started = resolve; });
+  mgr.resolveRotationSource = async item => {
+    if (item.id === head.id) {
+      started();
+      await onHead;
+    }
+    return { playable: playable(item) };
+  };
+  const switching = mgr.advanceNext();
+  await lookupStarted;
+  assert.equal(mgr.removeRotation({ entryId: head.entryId }, actor).ok, true);
+  release();
+  await switching;
+  assert.equal(mgr.current.track.id, second.id);
+  assert.deepEqual(mgr.getRotationQueue().map(item => item.entryId), [third.entryId]);
+});
+
+test('a request arriving during a rotation lookup takes priority without removing the rotation head', async t => {
+  const mgr = await manager(t, rotationRegistry([]));
+  mgr.musicRegistry.resolvePlayable = async item => playable(item);
+  mgr.setFallbackPlaylist('selected', [track('rotation-next')], 'Selected', { start: false });
+  await mgr.enqueueTrack(track('current-request'), actor);
+  let release;
+  let started;
+  const lookupStarted = new Promise(resolve => { started = resolve; });
+  mgr.resolveRotationSource = () => new Promise(resolve => { release = resolve; started(); });
+  const switching = mgr.advanceNext();
+  await lookupStarted;
+  await mgr.enqueueTrack(track('next-request'), actor);
+  release({ temporaryFailure: false });
+  await switching;
+  assert.equal(mgr.current.track.sourceId, 'next-request');
+  assert.deepEqual(mgr.getRotationQueue().map(item => item.id), ['qq:rotation-next']);
 });
 
 test('unattended rotation plays the closest version before moving to the next song', async t => {
@@ -446,6 +522,8 @@ test('unattended rotation plays the closest version before moving to the next so
   await mgr.advanceNext();
   assert.equal(mgr.current.track.id, closest.id);
   assert.deepEqual(mgr.current.track.rotationReplacement, { title: original.title, artist: original.artist });
+  assert.equal(mgr.current.track.playbackSelection.mode, 'automatic-alternative');
+  assert.equal(mgr.current.track.playbackSelection.original.platform, 'applemusic');
   assert.deepEqual(mgr.rotationDeck, [next]);
   const noEligible = await rotationRegistry([differentArtist, unrelated])
     .resolveRotationTrack(original, playable, { autoSelectAlternative: true });
@@ -465,6 +543,7 @@ test('unattended alternatives wait for a strict match and can rank results acros
     const found = await registry.resolveRotationTrack(original, playable, { autoSelectAlternative: true });
     assert.equal(found.playable.id, item.id);
     assert.equal(Boolean(found.playable.rotationReplacement), item === studio);
+    assert.equal(found.playable.playbackSelection.mode, item === studio ? 'automatic-alternative' : 'same-version');
   }
 });
 
@@ -919,7 +998,9 @@ test('manual version choice survives a new manager and stays private to the choo
   const active = () => true;
   const firstResult = await first.enqueueWithAlternatives(original, actor, { owner, active });
   assert.equal(firstResult.code, 'ALTERNATIVES');
-  assert.equal((await first.enqueueWithAlternatives(null, actor, { owner, active, offerId: firstResult.offer.token, choiceId: live.id })).ok, true);
+  const manual = await first.enqueueWithAlternatives(null, actor, { owner, active, offerId: firstResult.offer.token, choiceId: live.id });
+  assert.equal(manual.ok, true);
+  assert.equal(manual.track.playbackSelection.mode, 'manual-choice');
   const key = first.preferredTrackKey(original, actor.userKey);
   const preference = db.getKv(key);
   assert.equal(preference.id, live.id);
@@ -930,6 +1011,7 @@ test('manual version choice survives a new manager and stays private to the choo
   const repeat = await later.enqueueWithAlternatives(original, actor, { owner: {}, active });
   assert.equal(repeat.track.id, live.id);
   assert.equal(repeat.track.rotationReplacement.title, original.title);
+  assert.equal(repeat.track.playbackSelection.mode, 'saved-choice');
   assert.equal(queries, previousQueries);
   const other = await later.enqueueWithAlternatives(original, { ...actor, userKey:'another' }, { owner: {}, active });
   assert.equal(other.code, 'ALTERNATIVES');

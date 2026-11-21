@@ -12,8 +12,9 @@ import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import {
-	getStoredMusicNoticesEnabled,
 	isMusicNoticeMessage,
+	parseMusicNoticeContent,
+	type ParsedMusicNotice,
 	saveDevPanelWallpaperPreview,
 	trackBgImgAspectRatio,
 } from "./chatAppearance";
@@ -390,7 +391,6 @@ function handleDrop(e: DragEvent) {
 }
 let activePopover = $state<"none" | "emoji">("none");
 let activeEmojiTab = $state<string>("kaomoji");
-let showMusicNotices = $state(false);
 
 let mentionMenuOpen = $state(false);
 let mentionQuery = $state("");
@@ -398,6 +398,15 @@ let mentionActiveIndex = $state(-1);
 
 let showMentionHistory = $state(false);
 let showThreadListMenu = $state(false);
+/**
+ * 点歌记录顶栏功能开关：
+ * 设为 false 时，不加载组件、不渲染 DOM、不执行排序与未读数计算，完全节省空间与内存。
+ * 以后想重新启用时，只需将此值改为 true 即可一键恢复。
+ */
+const ENABLE_HEADER_MUSIC_NOTICES = false;
+let showMusicNoticeMenu = $state(false);
+let lastSeenMusicNoticeTs = $state<number>(0);
+let musicNoticeWrapEl: HTMLDivElement | null = $state(null);
 let showMobileMoreMenu = $state(false);
 let mobileMoreMenuWrapEl: HTMLDivElement | null = $state(null);
 let mobileMoreTrigger: HTMLButtonElement | null = $state(null);
@@ -723,10 +732,24 @@ function isChatPaneFocused(): boolean {
 }
 
 const baseFilteredMessages = $derived(
-	showMusicNotices
-		? messages
-		: messages.filter((msg) => !isMusicNoticeMessage(msg)),
+	messages.filter((msg) => !isMusicNoticeMessage(msg)),
 );
+
+const musicNoticeMessages = $derived.by(() => {
+	if (!ENABLE_HEADER_MUSIC_NOTICES) return [];
+	return messages.filter((msg) => isMusicNoticeMessage(msg));
+});
+
+const sortedMusicNotices = $derived.by(() => {
+	if (!ENABLE_HEADER_MUSIC_NOTICES) return [];
+	return musicNoticeMessages.slice().sort((a, b) => b.createdAt - a.createdAt);
+});
+
+const unreadMusicNoticeCount = $derived.by(() => {
+	if (!ENABLE_HEADER_MUSIC_NOTICES) return 0;
+	return musicNoticeMessages.filter((m) => m.createdAt > lastSeenMusicNoticeTs)
+		.length;
+});
 
 const loadedMainRootIds = $derived.by(() => {
 	const set = new Set<string>();
@@ -1355,9 +1378,7 @@ const unreadBadgeCount = $derived.by(() => {
 	const loadedCount = visibleMessages.filter(
 		(m) => m.createdAt > sessionUnreadSince,
 	).length;
-	const serverCount = showMusicNotices
-		? serverUnreadCount
-		: serverUnreadUserCount;
+	const serverCount = serverUnreadUserCount ?? 0;
 	return hasUnloadedUnread ? Math.max(loadedCount, serverCount) : loadedCount;
 });
 
@@ -1469,6 +1490,12 @@ const mentionsInMore = $derived(
 	mobileHeaderEndWidth > 0 &&
 		hasHeaderMentions &&
 		unreadMentionUids.length === 0 &&
+		mobileRoomButtonWidth + mobileHeaderTarget > mobileRoomBudget,
+);
+const musicNoticesInMore = $derived(
+	ENABLE_HEADER_MUSIC_NOTICES &&
+		mobileHeaderEndWidth > 0 &&
+		unreadMusicNoticeCount === 0 &&
 		mobileRoomButtonWidth + mobileHeaderTarget > mobileRoomBudget,
 );
 const fitsMobileRoomAvatar = $derived(
@@ -2353,23 +2380,144 @@ function dismissAlertBanner() {
 	}
 }
 
+function fitBalancedTopicWidth(node: HTMLElement, _dep?: unknown) {
+	let rafId = 0;
+	const measure = () => {
+		cancelAnimationFrame(rafId);
+		rafId = requestAnimationFrame(() => {
+			node.style.width = "auto";
+			const range = document.createRange();
+			range.selectNodeContents(node);
+			const rects = Array.from(range.getClientRects());
+			if (rects.length > 1) {
+				let maxW = 0;
+				for (const r of rects) {
+					if (r.width > maxW) maxW = r.width;
+				}
+				if (maxW > 0) {
+					node.style.width = `${Math.ceil(maxW) + 2}px`;
+				}
+			}
+		});
+	};
+
+	measure();
+
+	const ro = new ResizeObserver(() => {
+		measure();
+	});
+	if (node.parentElement?.parentElement) {
+		ro.observe(node.parentElement.parentElement);
+	}
+
+	return {
+		update(_nextDep?: unknown) {
+			measure();
+		},
+		destroy() {
+			cancelAnimationFrame(rafId);
+			ro.disconnect();
+		},
+	};
+}
+
 function formatShortTime(ts: number): string {
 	if (!ts) return "";
 	const d = new Date(ts);
 	return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+function handleOpenNoticeUserProfile(
+	name: string,
+	userKey?: string,
+	avatar?: string,
+) {
+	if (!onOpenUserProfile) return;
+	const cleanName = (name || "").trim();
+	onOpenUserProfile({
+		userKey: userKey || "",
+		name: cleanName || "成员",
+		avatar: avatar || undefined,
+		authType: userKey
+			? userKey.startsWith("waline:")
+				? "waline"
+				: "guest"
+			: undefined,
+	});
+}
+
+function getSongExtraInfo(songTitle?: string) {
+	if (!songTitle) return null;
+	if (musicState?.current?.track?.title === songTitle) {
+		return musicState.current.track;
+	}
+	const fromHistory = (musicState?.historyLogs ?? []).find(
+		(h) => h.track?.title === songTitle,
+	);
+	return fromHistory?.track ?? null;
+}
+
+function resolveMusicNoticeAvatar(
+	item: ChatMessageRecord,
+	parsed: ParsedMusicNotice,
+): string {
+	if (item.avatar && typeof item.avatar === "string" && item.avatar.trim()) {
+		return item.avatar.trim();
+	}
+	const actorName = (parsed.actorName || item.name || "").trim();
+	if (!actorName) return "";
+
+	// 1. 如果匹配到当前登录用户
+	if (
+		currentUser &&
+		(currentUser.name === actorName ||
+			(item.userKey && item.userKey === currentUser.userKey))
+	) {
+		if (currentUser.avatar) return currentUser.avatar;
+	}
+
+	// 2. 从服务器点歌流水 historyLogs 查找
+	const fromHistory = (musicState?.historyLogs ?? []).find(
+		(h) =>
+			h.requesterName === actorName ||
+			(item.userKey && h.requesterKey === item.userKey),
+	);
+	if (fromHistory?.requesterAvatar) {
+		return fromHistory.requesterAvatar;
+	}
+
+	// 3. 从当前播放查找
+	if (
+		musicState?.current &&
+		musicState.current.requesterName === actorName &&
+		musicState.current.requesterAvatar
+	) {
+		return musicState.current.requesterAvatar;
+	}
+
+	// 4. 从成员名录 (mergedMentionCandidates / onlineMembers) 查找
+	const fromCandidate = mergedMentionCandidates.find(
+		(m) =>
+			m.name === actorName ||
+			(item.userKey && m.userKey === item.userKey),
+	);
+	if (fromCandidate?.avatar) {
+		return fromCandidate.avatar;
+	}
+
+	// 5. 从历史聊天消息查找该发送者发言时的头像
+	const fromRecentMsg = messages.find(
+		(m) => m.name === actorName && m.avatar,
+	);
+	if (fromRecentMsg?.avatar) {
+		return fromRecentMsg.avatar;
+	}
+
+	return "";
+}
+
+
 onMount(() => {
-	showMusicNotices = getStoredMusicNoticesEnabled();
-	const handleMusicNoticesSync = (e: Event) => {
-		const ce = e as CustomEvent<{ enabled?: boolean }>;
-		if (typeof ce.detail?.enabled === "boolean") {
-			showMusicNotices = ce.detail.enabled;
-		} else {
-			showMusicNotices = getStoredMusicNoticesEnabled();
-		}
-	};
-	window.addEventListener("chat-music-notices-change", handleMusicNoticesSync);
 	setChatLightboxSourceProvider(collectChatImageSources);
 
 	const updateImageConstraints = () => {
@@ -2535,11 +2683,13 @@ onMount(() => {
 		const insideMore = mobileMoreMenuWrapEl?.contains(target);
 		const insideMention = mentionHistoryWrapEl?.contains(target);
 		const insideThread = threadListWrapEl?.contains(target);
+		const insideMusicNotice =
+			ENABLE_HEADER_MUSIC_NOTICES && musicNoticeWrapEl?.contains(target);
 
 		// 仅当点击真正发生在所有顶栏菜单及触发器外部时，才在 pointerdown 阶段关闭。
 		// 如果点击命中任何一个顶栏菜单包装容器（包含其触发按钮），交给按钮自身的点击事件原子切换，
 		// 避免移动端触屏在 pointerdown 阶段提前销毁 DOM 打断后续 click 事件导致必须按两次或切换冲突。
-		if (!insideMore && !insideMention && !insideThread) {
+		if (!insideMore && !insideMention && !insideThread && !insideMusicNotice) {
 			closeAllHeaderMenus();
 		}
 	};
@@ -2568,10 +2718,6 @@ onMount(() => {
 	document.addEventListener("pointerdown", handlePointerDown);
 	document.addEventListener("keydown", handleDocKeydown);
 	return () => {
-		window.removeEventListener(
-			"chat-music-notices-change",
-			handleMusicNoticesSync,
-		);
 		window.removeEventListener("dragover", preventWindowDrag);
 		window.removeEventListener("drop", preventWindowDrag);
 		resizeObserver?.disconnect();
@@ -2902,9 +3048,9 @@ $effect(() => {
 			}
 			prevVisibleCount = visLen;
 
-			const visibleIncomingCount = showMusicNotices
-				? liveIncoming.length
-				: liveIncoming.filter((m) => !isMusicNoticeMessage(m)).length;
+			const visibleIncomingCount = liveIncoming.filter(
+				(m) => !isMusicNoticeMessage(m),
+			).length;
 			if (visibleIncomingCount > 0) {
 				const currentGap = getScrollGap();
 				const wasAtBottom =
@@ -2916,7 +3062,7 @@ $effect(() => {
 					void scrollToBottom();
 					if (!isChatPaneFocused()) {
 						for (const m of liveIncoming) {
-							if (showMusicNotices || !isMusicNoticeMessage(m)) {
+							if (!isMusicNoticeMessage(m)) {
 								unfocusedArrivalUids.push(m.msgUid);
 							}
 						}
@@ -3738,13 +3884,17 @@ function closeAllHeaderMenus() {
 	showMobileMoreMenu = false;
 	showMentionHistory = false;
 	showThreadListMenu = false;
+	showMusicNoticeMenu = false;
 }
 
 function toggleMobileMoreMenu() {
 	const isCurrentTriggerOpen =
 		showMobileMoreMenu ||
 		(threadInMore && showThreadListMenu) ||
-		(mentionsInMore && showMentionHistory);
+		(mentionsInMore && showMentionHistory) ||
+		(ENABLE_HEADER_MUSIC_NOTICES &&
+			musicNoticesInMore &&
+			showMusicNoticeMenu);
 	if (isCurrentTriggerOpen) {
 		closeAllHeaderMenus();
 	} else {
@@ -3753,7 +3903,10 @@ function toggleMobileMoreMenu() {
 	}
 }
 
-function toggleHeaderList(list: "threads" | "mentions", fromMore = false) {
+function toggleHeaderList(
+	list: "threads" | "mentions" | "musicNotices",
+	fromMore = false,
+) {
 	if (list === "threads") {
 		const willOpen = !showThreadListMenu;
 		closeAllHeaderMenus();
@@ -3762,6 +3915,14 @@ function toggleHeaderList(list: "threads" | "mentions", fromMore = false) {
 		const willOpen = !showMentionHistory;
 		closeAllHeaderMenus();
 		showMentionHistory = willOpen;
+	} else if (list === "musicNotices") {
+		if (!ENABLE_HEADER_MUSIC_NOTICES) return;
+		const willOpen = !showMusicNoticeMenu;
+		closeAllHeaderMenus();
+		showMusicNoticeMenu = willOpen;
+		if (willOpen) {
+			lastSeenMusicNoticeTs = Date.now();
+		}
 	}
 	if (fromMore) {
 		mobileMoreTrigger?.focus({ preventScroll: true });
@@ -3937,6 +4098,189 @@ function removePendingImage(index: number) {
     </div>
   {/snippet}
 
+  {#snippet headerMusicNoticeList(reference?: HTMLElement | null)}
+    <div
+      data-chat-floating
+      use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }}
+      class="chat-music-notice-menu custom-scrollbar"
+      role="menu"
+      aria-label="点歌记录列表"
+    >
+      <div class="chat-music-notice-header">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 18V5l12-2v13" />
+            <circle cx="6" cy="18" r="3" />
+            <circle cx="18" cy="16" r="3" />
+          </svg>
+          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">房间点歌动态</span>
+          <span class="chat-music-notice-pill">{sortedMusicNotices.length} 条</span>
+        </div>
+        {#if onOpenMusicDrawer}
+          <button
+            type="button"
+            class="chat-music-notice-action-btn"
+            onclick={() => {
+              closeAllHeaderMenus();
+              onOpenMusicDrawer?.();
+            }}
+          >
+            <span>打开点歌台</span>
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
+        {/if}
+      </div>
+
+      <div class="my-1.5 border-t border-[var(--chat-divider-color)]"></div>
+
+      {#if sortedMusicNotices.length === 0}
+        <div class="chat-music-notice-empty">
+          <div class="w-12 h-12 rounded-full bg-[var(--primary)]/10 text-[var(--primary)] flex items-center justify-center mb-2">
+            <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </svg>
+          </div>
+          <p class="text-xs font-semibold text-[var(--deep-text)] dark:text-white/90 m-0">暂无点歌动态</p>
+          <p class="text-[11px] text-[var(--chat-meta-color)] mt-1 mb-2.5">点一首喜欢的歌，全房同步播放</p>
+          {#if onOpenMusicDrawer}
+            <button
+              type="button"
+              class="px-3.5 py-1 text-xs rounded-full bg-[var(--primary)] text-white hover:opacity-90 transition-opacity border-none cursor-pointer font-medium"
+              onclick={() => {
+                closeAllHeaderMenus();
+                onOpenMusicDrawer?.();
+              }}
+            >点一首歌</button>
+          {/if}
+        </div>
+      {:else}
+        <div class="chat-music-notice-list flex flex-col gap-2">
+          {#each sortedMusicNotices as item (item.msgUid)}
+            {@const parsed = parseMusicNoticeContent(item.content)}
+            {@const extraTrack = getSongExtraInfo(parsed.songTitle)}
+            {@const actorAvatar = resolveMusicNoticeAvatar(item, parsed)}
+            {@const actorDisplayName = parsed.actorName || item.name || "成员"}
+            {@const isReq = parsed.actionType === "request"}
+            {@const isSkip = parsed.actionType === "skip" || parsed.actionType === "vote_skip"}
+            {@const isErr = parsed.actionType === "error"}
+            {@const isPlayingNow = Boolean(parsed.songTitle && musicState?.current?.track?.title === parsed.songTitle)}
+            <div class="chat-music-notice-card group">
+              <!-- 卡片顶部：点歌人 + 动作标签 + 时间 -->
+              <div class="flex items-center justify-between gap-1.5 mb-1.5">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <button
+                    type="button"
+                    class="chat-music-notice-avatar-btn shrink-0"
+                    title={`查看 ${actorDisplayName} 的资料`}
+                    onclick={() => {
+                      handleOpenNoticeUserProfile(actorDisplayName, item.userKey, actorAvatar);
+                    }}
+                  >
+                    <ChatAvatar
+                      src={actorAvatar}
+                      name={actorDisplayName}
+                      size="xs"
+                    />
+                  </button>
+
+                  <button
+                    type="button"
+                    class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 hover:text-[var(--primary)] hover:underline truncate bg-transparent border-none p-0 cursor-pointer text-left transition-colors"
+                    onclick={() => {
+                      handleOpenNoticeUserProfile(actorDisplayName, item.userKey, actorAvatar);
+                    }}
+                  >
+                    {actorDisplayName}
+                  </button>
+
+                  <span class="chat-notice-tag {isReq ? 'tag-request' : isSkip ? 'tag-skip' : isErr ? 'tag-error' : 'tag-system'}">
+                    {parsed.actionLabel}
+                  </span>
+                </div>
+
+                <span class="text-[10px] text-[var(--chat-meta-color)] tabular-nums shrink-0 opacity-70">
+                  {formatShortTime(item.createdAt)}
+                </span>
+              </div>
+
+              <!-- 卡片主体：歌曲封面与详情 -->
+              <div class="chat-music-notice-track-body">
+                <!-- 封面图 -->
+                <div class="chat-music-notice-cover-wrap shrink-0">
+                  {#if extraTrack?.coverUrl}
+                    <img
+                      src={extraTrack.coverUrl}
+                      alt={parsed.songTitle || "封面"}
+                      class="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  {:else}
+                    <div class="w-full h-full flex items-center justify-center bg-[var(--primary)]/10 text-[var(--primary)]">
+                      <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M9 18V5l12-2v13" />
+                        <circle cx="6" cy="18" r="3" />
+                        <circle cx="18" cy="16" r="3" />
+                      </svg>
+                    </div>
+                  {/if}
+                  {#if isPlayingNow}
+                    <div class="absolute inset-0 bg-black/45 flex items-center justify-center" aria-hidden="true">
+                      <span class="chat-eq-bars chat-eq-bars--light">
+                        <span class="chat-eq-bar"></span>
+                        <span class="chat-eq-bar"></span>
+                        <span class="chat-eq-bar"></span>
+                      </span>
+                    </div>
+                  {/if}
+                </div>
+
+                <!-- 歌名与歌手 -->
+                <div class="min-w-0 flex-1">
+                  <div class="font-bold text-[13px] leading-tight text-[var(--deep-text)] dark:text-white/95 truncate {isErr ? 'text-red-500/90' : ''}">
+                    {parsed.songTitle ? `《${parsed.songTitle}》` : parsed.rawContent}
+                  </div>
+                  <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-1 flex items-center gap-1.5">
+                    {#if extraTrack?.artist}
+                      <span class="truncate">{extraTrack.artist}</span>
+                    {:else if isPlayingNow}
+                      <span class="text-[var(--chat-accent-text)] font-medium">正在播放中</span>
+                    {:else if isReq}
+                      <span>房间点歌</span>
+                    {:else}
+                      <span>系统切播</span>
+                    {/if}
+                  </div>
+                </div>
+
+                <!-- 快捷操作按钮 -->
+                {#if onOpenMusicDrawer}
+                  <button
+                    type="button"
+                    class="chat-music-notice-play-btn shrink-0"
+                    title="在点歌台查看"
+                    onclick={() => {
+                      closeAllHeaderMenus();
+                      onOpenMusicDrawer?.();
+                    }}
+                  >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polygon points="5 3 19 12 5 21 5 3" />
+                    </svg>
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/snippet}
+
+
   <!-- 顶部悬浮毛玻璃层（小标题栏 + 置顶横幅） -->
   <div class="chat-header-stack" bind:clientHeight={chatHeaderStackHeight}>
     <!-- 顶栏 -->
@@ -4077,26 +4421,36 @@ function removePendingImage(index: number) {
             </span>
           </div>
         {/if}
-        <span class="text-xs text-[var(--chat-meta-color)] truncate hidden lg:inline">
-          {effectiveSubtitle}
-        </span>
-        {#if currentUser?.isAdmin && onSetTopic}
-          <ChatTooltip text="编辑房间主题" position="bottom" align="left">
-            <button
-              type="button"
-              class="hidden md:inline-flex items-center justify-center w-5 h-5 rounded text-[var(--chat-meta-color)] hover:text-[var(--primary)] hover:bg-black/5 dark:hover:bg-white/10 transition-colors shrink-0"
-              aria-label="编辑房间主题"
-              onclick={() => {
-                topicDraft = effectiveSubtitle;
-                editingTopic = true;
-              }}
-            >
-              <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 20h9" />
-                <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-              </svg>
-            </button>
-          </ChatTooltip>
+        {#if effectiveSubtitle?.trim() || (currentUser?.isAdmin && onSetTopic)}
+          <div class="chat-header-topic-wrap">
+            {#if effectiveSubtitle?.trim()}
+              <span
+                use:fitBalancedTopicWidth={effectiveSubtitle}
+                class="chat-header-topic-text"
+                title={effectiveSubtitle}
+              >
+                {effectiveSubtitle.replace(/[\r\n]+/g, " ").trim()}
+              </span>
+            {/if}
+            {#if currentUser?.isAdmin && onSetTopic}
+              <ChatTooltip text="编辑房间主题" position="bottom" align="left">
+                <button
+                  type="button"
+                  class="chat-header-topic-edit-btn"
+                  aria-label="编辑房间主题"
+                  onclick={() => {
+                    topicDraft = effectiveSubtitle;
+                    editingTopic = true;
+                  }}
+                >
+                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                  </svg>
+                </button>
+              </ChatTooltip>
+            {/if}
+          </div>
         {/if}
       {/if}
     </div>
@@ -4133,7 +4487,7 @@ function removePendingImage(index: number) {
           class="chat-mobile-header-action"
           class:is-active={showInterconnect}
           aria-label="更多聊天室选项"
-          aria-expanded={showMobileMoreMenu || (threadInMore && showThreadListMenu) || (mentionsInMore && showMentionHistory)}
+          aria-expanded={showMobileMoreMenu || (threadInMore && showThreadListMenu) || (mentionsInMore && showMentionHistory) || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu)}
           data-floating-panel-no-expanded
           bind:this={mobileMoreTrigger}
           onclick={toggleMobileMoreMenu}
@@ -4172,7 +4526,20 @@ function removePendingImage(index: number) {
                 <span class="chat-mobile-more-count">{mentionsToMe.length}</span>
               </button>
             {/if}
-            {#if threadInMore || mentionsInMore}
+            {#if ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore}
+              <button type="button" role="menuitem" class="chat-mobile-more-item" onclick={() => toggleHeaderList("musicNotices", true)}>
+                <span class="flex items-center gap-2.5">
+                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M9 18V5l12-2v13" />
+                    <circle cx="6" cy="18" r="3" />
+                    <circle cx="18" cy="16" r="3" />
+                  </svg>
+                  <span>点歌记录</span>
+                </span>
+                <span class="chat-mobile-more-count">{sortedMusicNotices.length}</span>
+              </button>
+            {/if}
+            {#if threadInMore || mentionsInMore || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore)}
               <div class="mx-2 my-0.5 border-t border-[var(--skin-line)]"></div>
             {/if}
 
@@ -4268,6 +4635,8 @@ function removePendingImage(index: number) {
           {@render headerThreadList(mobileMoreTrigger)}
         {:else if mentionsInMore && showMentionHistory}
           {@render headerMentionList(mobileMoreTrigger)}
+        {:else if ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu}
+          {@render headerMusicNoticeList(mobileMoreTrigger)}
         {/if}
       </div>
 
@@ -4295,6 +4664,37 @@ function removePendingImage(index: number) {
           {/if}
         </div>
       {/if}
+
+      <!-- 点歌记录胶囊入口（当前设为不加载，节省内存与空间；改 ENABLE_HEADER_MUSIC_NOTICES = true 即可恢复） -->
+      {#if ENABLE_HEADER_MUSIC_NOTICES}
+        <div class="relative shrink-0" bind:this={musicNoticeWrapEl}>
+          <button
+            type="button"
+            class="chat-header-pill-btn chat-mobile-header-action chat-music-notice-btn {unreadMusicNoticeCount > 0 ? 'has-unread' : ''} {showMusicNoticeMenu ? 'active' : ''}"
+            aria-expanded={showMusicNoticeMenu}
+            aria-label={unreadMusicNoticeCount > 0 ? `查看点歌记录，${unreadMusicNoticeCount} 条新动态` : "查看点歌记录"}
+            class:chat-mobile-header-collapsed={musicNoticesInMore}
+            onclick={() => toggleHeaderList("musicNotices")}
+          >
+            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </svg>
+            <span class="chat-mention-label font-medium text-[var(--deep-text)] dark:text-white/90">点歌记录</span>
+            {#if unreadMusicNoticeCount > 0}
+              <span class="chat-mention-unread-badge">{unreadMusicNoticeCount}</span>
+            {:else if sortedMusicNotices.length > 0}
+              <span class="chat-mention-count text-[11px] md:text-[10px] opacity-75 tabular-nums text-[var(--chat-meta-color)]">{sortedMusicNotices.length}</span>
+            {/if}
+          </button>
+
+          {#if showMusicNoticeMenu && !musicNoticesInMore}
+            {@render headerMusicNoticeList()}
+          {/if}
+        </div>
+      {/if}
+
 
       <!-- 桌面端顶栏右侧控件 -->
       <div class="chat-desktop-only">
@@ -4696,11 +5096,7 @@ function removePendingImage(index: number) {
 
         {#if visibleMessages.length === 0}
           <div class="flex-1 flex flex-col items-center justify-center text-center py-8 text-xs text-[var(--chat-meta-color)]">
-            {#if messages.length > 0 && !showMusicNotices}
-              <p class="m-0">当前已隐藏聊天中的点歌记录，发条消息开启话题吧~</p>
-            {:else}
-              <p class="m-0">房间暂时很安静，发条消息或点首歌开启话题吧~</p>
-            {/if}
+            <p class="m-0">房间暂时很安静，发条消息开启话题吧~</p>
           </div>
         {:else}
           {#if renderedWindow.topSpacerPx > 0}

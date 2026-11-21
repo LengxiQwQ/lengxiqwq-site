@@ -9,7 +9,6 @@ import {
 	type ChatAppearanceSettings,
 	type ChatPanelSlot,
 	type ChatWallpaperConfig,
-	getStoredMusicNoticesEnabled,
 	isChatPanelSlot,
 	isMusicNoticeMessage,
 	loadChatAppearanceSettings,
@@ -61,12 +60,12 @@ import type {
 	RotationQueueItem,
 	RoomMusicState,
 } from "./chatTypes";
-import { recordMusicEvent } from "./musicTrace";
+import { recordMusicEvent, updatePlaybackDiagnostic } from "./musicTrace";
 import { MusicClock } from "./musicClock";
 import type { ChatMusicTrack } from "./musicTypes";
 import { formatPlatformLabel } from "./playlistClient";
 import RoomPanel from "./RoomPanel.svelte";
-import type { AudioStatus } from "./roomAudioPlayer";
+import type { AudioStatus, LocalAudioDiagnostic } from "./roomAudioPlayer";
 import {
 	buildStickerLookup,
 	loadStickerPacks,
@@ -257,6 +256,7 @@ function clearAllTypingTimers() {
 }
 let readReceipts = $state<Record<string, ChatReadReceipt[]>>({});
 let musicState = $state<RoomMusicState | null>(null);
+let localAudioDiagnostic = $state.raw<LocalAudioDiagnostic | null>(null);
 let musicAudience = $state({ onlineCount: 0, listeningCount: 0 });
 const songRequests = new Map<
 	string,
@@ -588,13 +588,12 @@ function applyUnreadInitState(
 	unreadUserCount = 0,
 	hasMore = false,
 ) {
-	const showMusic = getStoredMusicNoticesEnabled();
 	const localSeen = readUserLastSeen(roomId, userKey);
 	const baseline = Math.max(lastReadAt, localSeen);
 	const visibleUnreadInBatch = roomMessages.some(
-		(m) => m.createdAt > baseline && (showMusic || !isMusicNoticeMessage(m)),
+		(m) => m.createdAt > baseline && !isMusicNoticeMessage(m),
 	);
-	const serverVisibleUnread = showMusic ? unreadCount : unreadUserCount;
+	const serverVisibleUnread = unreadUserCount;
 	const oldestLoadedTs = roomMessages[0]?.createdAt ?? 0;
 	const hasOlderUnloadedUnread =
 		baseline > 0 &&
@@ -992,6 +991,10 @@ const activeMeta = $derived(
 	rooms.find((r) => r.id === currentRoom) ??
 		rooms[0] ?? { id: "chat", name: "闲聊", subtitle: "随便聊聊日常与折腾" },
 );
+
+$effect(() => {
+	updatePlaybackDiagnostic(musicState?.current ?? null, localAudioDiagnostic, activeMeta.name, connectionState === "connected");
+});
 const normalizedChatServer = $derived(normalizeServerUrl(chatServerUrl));
 
 function clearSkipPending() {
@@ -3492,6 +3495,7 @@ onMount(() => {
 			}
 		}
 		isUnmounted = true;
+		updatePlaybackDiagnostic(null, null, "", false);
 		clearHistoryLoadTimer();
 		clearAllTypingTimers();
 		if (secondaryStartupTimer !== null) {
@@ -3826,6 +3830,7 @@ onMount(() => {
             memoryVolume = status.volume;
           }
         }}
+        onAudioDiagnosticChange={(diagnostic) => { localAudioDiagnostic = diagnostic; }}
         onRemoveQueue={(uid) => {
           if (!currentUser) {
             showAuthModal = true;

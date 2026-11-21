@@ -185,6 +185,20 @@ export function musicTrackMatchKey(item) {
   return JSON.stringify([platform === 'qqmusic' ? 'qq' : platform, sourceId, item.title, item.artist, item.album, item.durationSec, item.isrc]);
 }
 
+export function withPlaybackSelection(track, original, mode) {
+  return {
+    ...track,
+    playbackSelection: {
+      mode,
+      original: {
+        title: String(original.title || '').slice(0, 240),
+        artist: String(original.artist || '').slice(0, 240),
+        platform: String(original.sourcePlatform || original.provider || '').slice(0, 48)
+      }
+    }
+  };
+}
+
 export class MusicRegistry {
   constructor(providers = [], { matchStore } = {}) {
     this.providers = new Map();
@@ -358,8 +372,14 @@ export class MusicRegistry {
         .sort((a, b) => preferRotationAlternative(original, a, b));
       const best = alternatives[0]?.track;
       if (best) {
-        return { playable: { ...best, rotationReplacement: { title: item.title, artist: item.artist } } };
+        const replacement = { ...best, rotationReplacement: { title: item.title, artist: item.artist } };
+        return { playable: withPlaybackSelection(replacement, item, 'automatic-alternative') };
       }
+    }
+    if (result.playable) {
+      const mode = result.usedPreference ? 'saved-choice'
+        : result.nativeMatch ? 'original' : 'same-version';
+      return { ...result, playable: withPlaybackSelection(result.playable, item, mode) };
     }
     return result;
   }
@@ -416,7 +436,7 @@ export class MusicRegistry {
     const preference = await check(preferredTrack?.provider === providerId ? preferredTrack : null, 1300);
     if (preference) return { playable: preference, usedPreference: true };
     const directPlayable = await check(direct, budgetMs ? 1900 : alternatives ? 5600 : 2300);
-    if (directPlayable) return { playable: directPlayable };
+    if (directPlayable) return { playable: directPlayable, nativeMatch: true };
 
     const matchKey = this.matchStorageKey(item, providerId);
     const cached = this.readMatch(matchKey);
@@ -539,6 +559,11 @@ export class MusicRegistry {
       streamUrl: primaryStreamUrl,
       proxyUrl,
       directUrl,
+      audioSource: {
+        checked: Boolean(source.providerChannel && source.mimeType),
+        channel: source.providerChannel || '',
+        mimeType: source.mimeType || ''
+      },
       lrcUrl: base + '/api/music/lyric?provider=' + provider.id + '&id=' + encodeURIComponent(id)
     };
   }

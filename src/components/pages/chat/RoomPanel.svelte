@@ -128,15 +128,15 @@ const isNotificationActive = $derived(
 
 const notificationTooltip = $derived.by(() => {
 	if (desktopNotificationPermission === "denied") {
-		return "桌面通知已被浏览器拦截（点击查看提示）";
+		return "通知权限受阻";
 	}
 	if (effectiveNotificationMode === "all") {
-		return "桌面通知：全部消息（点击切为关闭）";
+		return "桌面通知：全部";
 	}
 	if (effectiveNotificationMode === "mention") {
-		return "桌面通知：仅提及与回复（点击切为全部消息）";
+		return "桌面通知：仅提及";
 	}
-	return "桌面通知：已关闭（点击开启）";
+	return "桌面通知：关闭";
 });
 
 const notificationIcon = $derived.by(() => {

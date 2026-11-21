@@ -156,6 +156,12 @@ function syncChatPageRuntimeState(isChatPage: boolean): void {
 	}
 
 	root.setAttribute("data-chat-page", "true");
+	if (
+		typeof navigator !== "undefined" &&
+		/iPhone|iPod/.test(navigator.userAgent)
+	) {
+		root.setAttribute("data-is-iphone", "true");
+	}
 	applyChatAppearanceToDocument(loadChatAppearanceSettings(), false);
 	window.dispatchEvent(
 		new CustomEvent("bannerCarouselChange", { detail: { enabled: false } }),

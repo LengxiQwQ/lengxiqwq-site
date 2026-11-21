@@ -208,231 +208,220 @@ function handleSubmit(e: SubmitEvent) {
           </div>
         </div>
 
-        <!-- 下方左右对称两栏表单 -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5 items-start">
-          <!-- 左栏：基本资料 + 在线状态 -->
-          <div class="space-y-3">
-            <div>
-              <div class="chat-settings-section-title">
-                <span>基本资料</span>
-              </div>
-              <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
-                <div>
-                  <label for="profile-modal-nick" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
-                    展示昵称
-                  </label>
-                  <input
-                    id="profile-modal-nick"
-                    type="text"
-                    maxlength={16}
-                    bind:value={draftNickname}
-                    placeholder="输入展示昵称"
-                    class="chat-auth-input"
-                  />
-                </div>
-
-                <div>
-                  <label for="profile-modal-bio" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
-                    个性签名（可选，最多 80 字）
-                  </label>
-                  <input
-                    id="profile-modal-bio"
-                    type="text"
-                    maxlength={80}
-                    bind:value={draftBio}
-                    placeholder="写一句简短介绍，别人点击你的头像时可见"
-                    class="chat-auth-input"
-                  />
-                </div>
-              </div>
+        <!-- 下方左右对称两栏表单 (Grid 自动等高行对齐) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+          <!-- 1. 基本资料 (左上) -->
+          <div class="md:col-start-1 md:row-start-1">
+            <div class="chat-settings-section-title">
+              <span>基本资料</span>
             </div>
-
-            <div>
-              <div class="chat-settings-section-title">
-                <span>个性状态</span>
+            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
+              <div>
+                <label for="profile-modal-nick" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
+                  展示昵称
+                </label>
+                <input
+                  id="profile-modal-nick"
+                  type="text"
+                  maxlength={16}
+                  bind:value={draftNickname}
+                  placeholder="输入展示昵称"
+                  class="chat-auth-input"
+                />
               </div>
-              <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2">
-                <div class="flex items-center justify-between text-xs text-[var(--btn-content)] opacity-85 px-0.5">
-                  <span class="text-[11px]">点选状态标签：</span>
-                  {#if draftStatus}
-                    <button
-                      type="button"
-                      class="text-[11px] text-[var(--primary)] hover:underline bg-transparent border-none cursor-pointer p-0 font-normal"
-                      onclick={() => (draftStatus = "")}
-                    >
-                      清除状态
-                    </button>
-                  {/if}
-                </div>
-                <div class="grid grid-cols-4 gap-1.5 max-h-28 overflow-y-auto custom-scrollbar pr-1 pt-0.5">
-                  {#each CHAT_STATUS_PRESETS as preset (preset)}
-                    <button
-                      type="button"
-                      class="w-full text-center px-1 py-1 text-xs rounded-lg font-medium active:scale-95 transition-all cursor-pointer border truncate
-                        {draftStatus === preset
-                          ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow-xs font-semibold'
-                          : 'bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) text-(--btn-content) opacity-80 hover:opacity-100 border-black/5 dark:border-white/10'}"
-                      onclick={() => (draftStatus = draftStatus === preset ? "" : preset)}
-                    >
-                      {preset}
-                    </button>
-                  {/each}
-                </div>
+
+              <div>
+                <label for="profile-modal-bio" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
+                  个性签名（可选，最多 80 字）
+                </label>
+                <input
+                  id="profile-modal-bio"
+                  type="text"
+                  maxlength={80}
+                  bind:value={draftBio}
+                  placeholder="写一句简短介绍，别人点击你的头像时可见"
+                  class="chat-auth-input"
+                />
               </div>
             </div>
           </div>
 
-          <!-- 右栏：主页与头像 + 个人设置 -->
-          <div class="space-y-3">
-            <div>
-              <div class="chat-settings-section-title">
-                <span>主页与头像</span>
+          <!-- 2. 主页与头像 (右上) -->
+          <div class="md:col-start-2 md:row-start-1">
+            <div class="chat-settings-section-title">
+              <span>主页与头像</span>
+            </div>
+            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
+              <div>
+                <label for="profile-modal-url" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
+                  个人主页（可选）
+                </label>
+                <input
+                  id="profile-modal-url"
+                  type="text"
+                  maxlength={200}
+                  bind:value={draftUrl}
+                  placeholder="https://your-site.com"
+                  class="chat-auth-input"
+                />
               </div>
-              <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
-                <div>
-                  <label for="profile-modal-url" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
-                    个人主页（可选）
-                  </label>
-                  <input
-                    id="profile-modal-url"
-                    type="text"
-                    maxlength={200}
-                    bind:value={draftUrl}
-                    placeholder="https://your-site.com"
-                    class="chat-auth-input"
-                  />
-                </div>
 
-                <div>
-                  <div class="flex items-center justify-between mb-1">
-                    <label for="profile-modal-avatar" class="block text-xs font-medium text-(--btn-content) opacity-85">
-                      自定义头像链接（可选）
-                    </label>
-                    <button
-                      type="button"
-                      class="text-[11px] font-medium text-(--primary) bg-transparent border-none cursor-pointer p-0 hover:underline"
-                      onclick={() => {
-                        draftAvatar = "";
-                        avatarEdited = true;
-                      }}
-                    >
-                      恢复默认
-                    </button>
-                  </div>
-                  <input
-                    id="profile-modal-avatar"
-                    type="url"
-                    maxlength={400}
-                    bind:value={draftAvatar}
-                    oninput={() => (avatarEdited = true)}
-                    placeholder="留空或点恢复默认即使用账号默认头像"
-                    class="chat-auth-input"
-                  />
+              <div>
+                <div class="flex items-center justify-between mb-1">
+                  <label for="profile-modal-avatar" class="block text-xs font-medium text-(--btn-content) opacity-85">
+                    自定义头像链接（可选）
+                  </label>
+                  <button
+                    type="button"
+                    class="text-[11px] font-medium text-(--primary) bg-transparent border-none cursor-pointer p-0 hover:underline"
+                    onclick={() => {
+                      draftAvatar = "";
+                      avatarEdited = true;
+                    }}
+                  >
+                    恢复默认
+                  </button>
                 </div>
+                <input
+                  id="profile-modal-avatar"
+                  type="url"
+                  maxlength={400}
+                  bind:value={draftAvatar}
+                  oninput={() => (avatarEdited = true)}
+                  placeholder="留空或点恢复默认即使用账号默认头像"
+                  class="chat-auth-input"
+                />
               </div>
             </div>
+          </div>
 
-            <div>
-              <div class="chat-settings-section-title">
-                <span>个人设置</span>
+          <!-- 3. 个性状态 (左下，卡片高度随右侧个人设置自动撑满拉平，底边严格水平对齐) -->
+          <div class="md:col-start-1 md:row-start-2 flex flex-col min-h-0">
+            <div class="chat-settings-section-title">
+              <span>个性状态</span>
+            </div>
+            <div class="flex-1 flex flex-col rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 min-h-0">
+              <div class="flex items-center justify-between text-xs text-[var(--btn-content)] opacity-85 px-0.5 shrink-0 mb-2">
+                <span class="text-[11px]">点选状态标签：</span>
+                {#if draftStatus}
+                  <button
+                    type="button"
+                    class="text-[11px] text-[var(--primary)] hover:underline bg-transparent border-none cursor-pointer p-0 font-normal"
+                    onclick={() => (draftStatus = "")}
+                  >
+                    清除状态
+                  </button>
+                {/if}
               </div>
-              <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-3 flex items-center justify-between gap-3">
-                <div class="min-w-0">
-                  <div class="text-xs font-medium text-(--btn-content)">离线 @ 与回复邮件提醒</div>
-                  <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
-                    {#if isIsolatedGuest}
-                      独立临时身份未经邮箱所有权验证，已禁用离线邮件提醒，防止误发邮件
-                    {:else if isEmailUndeliverable}
-                      <span class="text-red-500 dark:text-red-400 font-medium inline-block">
-                        当前邮箱 {userEmail ? `(${userEmail})` : ""} 为不可送达地址（{emailDeliverability.reason || "无法送达"}），已禁用邮件提醒
-                      </span>
-                    {:else}
-                      不在线时有人 @ 或回复你，将发送摘要至邮箱账号
-                    {/if}
-                  </div>
+              <div class="flex-1 max-h-[6.5rem] grid grid-cols-4 auto-rows-[1.75rem] gap-1.5 overflow-y-auto custom-scrollbar pr-1 pt-0.5">
+                {#each CHAT_STATUS_PRESETS as preset (preset)}
+                  <button
+                    type="button"
+                    class="h-7 min-h-7 w-full inline-flex items-center justify-center px-1 text-xs rounded-lg font-medium active:scale-95 transition-all cursor-pointer border truncate
+                      {draftStatus === preset
+                        ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow-xs font-semibold'
+                        : 'bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) text-(--btn-content) opacity-80 hover:opacity-100 border-black/5 dark:border-white/10'}"
+                    onclick={() => (draftStatus = draftStatus === preset ? "" : preset)}
+                  >
+                    {preset}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. 个人设置 (右下) -->
+          <div class="md:col-start-2 md:row-start-2 flex flex-col justify-start">
+            <div class="chat-settings-section-title">
+              <span>个人设置</span>
+            </div>
+            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <div class="text-xs font-medium text-(--btn-content)">离线 @ 与回复邮件提醒</div>
+                <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
+                  {#if isIsolatedGuest}
+                    独立临时身份未经邮箱所有权验证，已禁用离线邮件提醒，防止误发邮件
+                  {:else if isEmailUndeliverable}
+                    <span class="text-red-500 dark:text-red-400 font-medium inline-block">
+                      当前邮箱 {userEmail ? `(${userEmail})` : ""} 为不可送达地址（{emailDeliverability.reason || "无法送达"}），已禁用邮件提醒
+                    </span>
+                  {:else}
+                    不在线时有人 @ 或回复你，将发送摘要至邮箱账号
+                  {/if}
                 </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={isNotifyDisabled ? false : draftNotifyEmail}
+                aria-label="切换离线 @ 邮件提醒"
+                disabled={isNotifyDisabled}
+                class="p-0 border-none bg-transparent shrink-0 {isNotifyDisabled ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}"
+                onclick={() => {
+                  if (isNotifyDisabled) return;
+                  draftNotifyEmail = !draftNotifyEmail;
+                }}
+              >
+                <span class="chat-switch-track {!isNotifyDisabled && draftNotifyEmail ? 'checked' : ''}" aria-hidden="true">
+                  <span class="chat-switch-thumb"></span>
+                </span>
+              </button>
+            </div>
+
+            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 mt-2.5 space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <div class="text-xs font-medium text-(--btn-content) flex items-center gap-1.5">
+                  <span>桌面通知</span>
+                  {#if desktopNotificationPermission === "denied"}
+                    <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20">
+                      权限受阻
+                    </span>
+                  {/if}
+                </div>
+                {#if !isNotificationSupported}
+                  <span class="text-[11px] text-(--content-meta)">环境不支持</span>
+                {/if}
+              </div>
+              {#if desktopNotificationPermission === "denied"}
+                <div class="text-[11px] text-red-500 dark:text-red-400 leading-tight">
+                  通知已被拦截，请在浏览器地址栏网站权限中允许
+                </div>
+              {/if}
+
+              <div class="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10">
                 <button
                   type="button"
-                  role="switch"
-                  aria-checked={isNotifyDisabled ? false : draftNotifyEmail}
-                  aria-label="切换离线 @ 邮件提醒"
-                  disabled={isNotifyDisabled}
-                  class="p-0 border-none bg-transparent shrink-0 {isNotifyDisabled ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}"
-                  onclick={() => {
-                    if (isNotifyDisabled) return;
-                    draftNotifyEmail = !draftNotifyEmail;
-                  }}
+                  class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
+                    {desktopNotificationMode === 'off'
+                      ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
+                      : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                  onclick={() => handleSelectNotificationMode("off")}
                 >
-                  <span class="chat-switch-track {!isNotifyDisabled && draftNotifyEmail ? 'checked' : ''}" aria-hidden="true">
-                    <span class="chat-switch-thumb"></span>
-                  </span>
+                  <Icon icon="mingcute:notification-off-line" class="w-3.5 h-3.5" />
+                  <span>关闭</span>
                 </button>
-              </div>
-
-              <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-3 mt-2.5 space-y-2.5">
-                <div class="flex items-start justify-between gap-2">
-                  <div class="min-w-0">
-                    <div class="text-xs font-medium text-(--btn-content) flex items-center gap-1.5">
-                      <span>桌面通知</span>
-                      {#if desktopNotificationPermission === "denied"}
-                        <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20">
-                          权限受阻
-                        </span>
-                      {/if}
-                    </div>
-                    <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
-                      {#if !isNotificationSupported}
-                        当前浏览器环境不支持桌面系统通知
-                      {:else if desktopNotificationPermission === "denied"}
-                        <span class="text-red-500 dark:text-red-400 font-medium inline-block">
-                          通知已被浏览器拦截，请在地址栏网站权限中允许通知后开启
-                        </span>
-                      {:else if desktopNotificationMode === "off"}
-                        处于后台或离开当前房间时，接收桌面系统级横幅通知
-                      {:else if desktopNotificationMode === "mention"}
-                        仅在有人 @ 你、@全体成员 或回复你的消息时弹出桌面通知
-                      {:else}
-                        接收聊天室内所有新发言的桌面通知（较活跃时可能会频繁弹窗）
-                      {/if}
-                    </div>
-                  </div>
-                </div>
-
-                <div class="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10">
-                  <button
-                    type="button"
-                    class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
-                      {desktopNotificationMode === 'off'
-                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
-                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
-                    onclick={() => handleSelectNotificationMode("off")}
-                  >
-                    <Icon icon="mingcute:notification-off-line" class="w-3.5 h-3.5" />
-                    <span>关闭</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
-                      {desktopNotificationMode === 'mention'
-                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
-                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
-                    onclick={() => handleSelectNotificationMode("mention")}
-                  >
-                    <Icon icon="mingcute:notification-newdot-line" class="w-3.5 h-3.5" />
-                    <span>仅提及</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
-                      {desktopNotificationMode === 'all'
-                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
-                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
-                    onclick={() => handleSelectNotificationMode("all")}
-                  >
-                    <Icon icon="mingcute:bell-ringing-line" class="w-3.5 h-3.5" />
-                    <span>全部消息</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
+                    {desktopNotificationMode === 'mention'
+                      ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
+                      : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                  onclick={() => handleSelectNotificationMode("mention")}
+                >
+                  <Icon icon="mingcute:notification-newdot-line" class="w-3.5 h-3.5" />
+                  <span>仅提及</span>
+                </button>
+                <button
+                  type="button"
+                  class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
+                    {desktopNotificationMode === 'all'
+                      ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
+                      : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                  onclick={() => handleSelectNotificationMode("all")}
+                >
+                  <Icon icon="mingcute:bell-ringing-line" class="w-3.5 h-3.5" />
+                  <span>全部消息</span>
+                </button>
               </div>
             </div>
           </div>
