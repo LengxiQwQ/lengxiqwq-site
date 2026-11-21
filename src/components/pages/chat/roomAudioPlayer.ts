@@ -20,11 +20,18 @@ export const audioStatusLabel: Record<AudioStatus, string> = {
 	error: "加载失败，点击重试",
 };
 
+export interface LocalAudioDiagnostic {
+	uid: string;
+	revision: number;
+	status: AudioStatus;
+	transport?: "direct" | "proxy";
+}
+
 const SYNC_TOLERANCE_SEC = 1.2;
 
 interface Callbacks {
 	now: () => number;
-	status: (status: AudioStatus, intent: boolean) => void;
+	status: (status: AudioStatus, intent: boolean, diagnostic: LocalAudioDiagnostic | null) => void;
 	error: (uid: string, revision: number) => void;
 	ended: (uid: string) => void;
 	duration: (uid: string, duration: number) => void;
@@ -123,7 +130,14 @@ export class RoomAudioPlayer {
 
 	private update(status: AudioStatus) {
 		this.status = status;
-		this.callbacks.status(status, this.intent);
+		const play = this.play;
+		const source = status === "idle" ? null : this.audio.getAttribute("src");
+		const transport = source && source === play?.track.proxyUrl ? "proxy"
+			: source && source === (play?.track.directUrl || play?.track.streamUrl) ? "direct"
+			: undefined;
+		this.callbacks.status(status, this.intent, play ? {
+			uid: play.uid, revision: play.sourceRevision ?? 0, status, transport,
+		} : null);
 	}
 
 	private openOutput() {

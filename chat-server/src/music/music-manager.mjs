@@ -2,10 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { normalizeMusicTrack } from './music-input.mjs';
-import { musicTrackMatchKey } from './registry.mjs';
+import { musicTrackMatchKey, withPlaybackSelection } from './registry.mjs';
 
 export function stableTrack(track) {
-  const { streamUrl, proxyUrl, directUrl, lrcUrl, url, lrc, rotationEntryId, ...identity } = track;
+  const { streamUrl, proxyUrl, directUrl, lrcUrl, url, lrc, rotationEntryId, audioSource, ...identity } = track;
   return identity;
 }
 
@@ -412,13 +412,15 @@ export class MusicManager {
     ).slice(0, 100);
 
     const prepared = this.queue.length ? this.preparedQueue : this.preparedFallback;
+    const next = prepared?.key === (this.queue[0]?.uid ?? this.fallbackGeneration) &&
+      (this.queue.length || this.isRotationHead(prepared.playable)) ? prepared.playable : null;
     const logsList = this.historyLogs.slice(-80).reverse();
 
     return {
       protocolVersion: 2,
-      next: prepared?.playable && prepared.key === (this.queue[0]?.uid ?? this.fallbackGeneration) ? {
-        uid: String(prepared.key), track: prepared.playable, startedAt: 0,
-        durationSec: prepared.playable.durationSec || 0, requesterKey: '', requesterName: '',
+      next: next ? {
+        uid: String(prepared.key), track: next, startedAt: 0,
+        durationSec: next.durationSec || 0, requesterKey: '', requesterName: '',
         isFallback: !this.queue.length, skipVotes: []
       } : null,
       stateVersion: ++this.stateVersion,
@@ -537,9 +539,10 @@ export class MusicManager {
       }
       if (result.playable) {
         this.requestOffers.delete(owner);
-        const playable = choice || result.usedPreference
+        let playable = choice || result.usedPreference
           ? { ...result.playable, rotationReplacement: { title: requested.title, artist: requested.artist } }
           : result.playable;
+        if (choice) playable = withPlaybackSelection(playable, requested, 'manual-choice');
         const accepted = await this.enqueueTrack(playable, requester, playable);
         if (accepted.ok && choice) this.savePreferredTrack(requested, requester.userKey, playable);
         return accepted;
@@ -582,7 +585,10 @@ export class MusicManager {
     };
     const before = check();
     if (before) return { ok: false, error: before };
-    const playable = verifiedSource || await this.resolve(rawTrack);
+    let playable = verifiedSource || await this.resolve(rawTrack);
+    if (playable && !verifiedSource && !playable.playbackSelection && !rawTrack.rotationReplacement) {
+      playable = withPlaybackSelection(playable, rawTrack, 'original');
+    }
     const after = check();
     if (after) return { ok: false, error: after };
     if (!playable) return { ok: false, error: '歌曲暂时没有可用音源' };
@@ -985,27 +991,29 @@ export class MusicManager {
     const exclude = track => deck.length > 1 &&
       (track.id === this.current?.track?.id || excludeIds.has(track.id));
     const deadline = Date.now() + 8000;
-    for (const candidate of deck.slice(0, 12)) {
+    for (const candidate of deck.slice(0, preparing ? 1 : 12)) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
       let playable;
+      let temporaryFailure;
       try {
         const budgetMs = Math.min(remaining, 4200);
-        ({ playable } = await withTimeout(
+        ({ playable, temporaryFailure } = await withTimeout(
           this.resolveRotationSource(candidate, { exclude, budgetMs, autoSelectAlternative: true }),
           Math.min(remaining, budgetMs + 50)
         ));
       } catch (error) {
+        temporaryFailure = true;
         console.warn('[Music] rotation source', this.roomId, error.message);
       }
-      if (deck !== this.rotationDeck || generation !== this.fallbackGeneration) return null;
+      if (deck !== this.rotationDeck || generation !== this.fallbackGeneration || this.queue.length) return null;
       const index = deck.indexOf(candidate);
       if (index < 0) continue;
       if (playable) return { ...playable, rotationEntryId: this.rotationEntryIds.get(candidate) };
       if (preparing) continue;
       deck.splice(index, 1);
-      // Keep the current song at the end so a one-song (or all-duplicate) pool can repeat.
-      if (exclude(candidate)) deck.push(candidate);
+      // Retry transient failures later in this round. Keep duplicate current tracks eligible too.
+      if (temporaryFailure || exclude(candidate)) deck.push(candidate);
     }
     return null;
   }
@@ -1033,7 +1041,7 @@ export class MusicManager {
       : previous?.playable ? this.resolve(previous.playable) : this.resolveFallbackTrackPlayable(undefined, { preparing: true })));
     const playable = await record.pending;
     if (this[slot] !== record) return;
-    if (!playable || (!queued && !this.isRotationCandidatePending(playable))) {
+    if (!playable || (!queued && !this.isRotationHead(playable))) {
       this[slot] = null;
       return;
     }
@@ -1045,6 +1053,11 @@ export class MusicManager {
   isRotationCandidatePending(playable) {
     if (!playable?.rotationEntryId) return Boolean(playable);
     return this.rotationDeck.includes(this.rotationEntries.get(playable.rotationEntryId));
+  }
+
+  isRotationHead(playable) {
+    if (!playable?.rotationEntryId) return Boolean(playable);
+    return Boolean(this.rotationDeck[0] && this.rotationEntryIds.get(this.rotationDeck[0]) === playable.rotationEntryId);
   }
 
   async usePrepared(record) {
@@ -1063,7 +1076,12 @@ export class MusicManager {
     this.pendingResolutions ??= new Map();
     const key = JSON.stringify([track.id, Boolean(options?.fresh), Boolean(options?.rejectTransient)]);
     const running = this.pendingResolutions.get(key);
-    if (running) return running;
+    if (running) {
+      const playable = await running;
+      return playable && playable.playbackSelection !== track.playbackSelection
+        ? { ...playable, playbackSelection: track.playbackSelection }
+        : playable;
+    }
     const pending = Promise.resolve().then(() =>
       this.musicRegistry.resolvePlayable(track, this.serverOrigin, this.signSecret, options)
     ).catch(error => {
@@ -1121,9 +1139,10 @@ export class MusicManager {
     const fallbackGeneration = this.fallbackGeneration;
     const prepared = this.preparedFallback?.key === fallbackGeneration ? this.preparedFallback : null;
     this.preparedFallback = null;
-    let known = await this.usePrepared(prepared);
-    if (!this.isRotationCandidatePending(known) || known.id === this.current?.track?.id) known = null;
-    const playable = known || await this.resolveFallbackTrackPlayable();
+    const known = await this.usePrepared(prepared);
+    if (generation !== this.generation) return;
+    if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt);
+    const playable = this.isRotationHead(known) ? known : await this.resolveFallbackTrackPlayable();
     if (generation !== this.generation) return;
     if (this.queue.length || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt);
     if (playable && !this.isRotationCandidatePending(playable)) return this.selectNext(generation, selectionStartedAt);
@@ -1206,7 +1225,8 @@ export class MusicManager {
     const index = this.rotationDeck.indexOf(entry);
     if (index < 0) return { ok: false, error: '曲目不在当前轮播队列中' };
     const [removed] = this.rotationDeck.splice(index, 1);
-    if (index === 0 || this.preparedFallback?.playable?.rotationEntryId === this.rotationEntryIds.get(removed)) {
+    if (index === 0) {
+      this.fallbackGeneration++;
       this.preparedFallback = null;
       clearTimeout(this._prepareFallbackTimer);
       this._prepareFallbackTimer = setTimeout(() => void this.prepareNext(), 300);
@@ -1367,9 +1387,10 @@ export class MusicManager {
       if (!stillCurrent()) return changed();
       if (result.playable) {
         this.rotationOffers.delete(owner);
-        const track = selected || result.usedPreference
+        let track = selected || result.usedPreference
           ? { ...result.playable, rotationReplacement: { title: requested.title, artist: requested.artist } }
           : result.playable;
+        if (selected) track = withPlaybackSelection(track, requested, 'manual-choice');
         this.consumeRotationTrack({ ...track, rotationEntryId: entryId });
         this.lastPlayedFallbackId = track.id;
         this.playTrack(track, {

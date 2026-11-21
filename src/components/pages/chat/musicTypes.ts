@@ -18,4 +18,21 @@ export interface ChatMusicTrack {
 	durationSec?: number;
 	quality?: string;
 	rotationReplacement?: { title: string; artist: string };
+	playbackSelection?: PlaybackSelection;
+	audioSource?: PlaybackAudioSource;
+}
+export interface PlaybackSelection {
+	mode:
+		| "original"
+		| "same-version"
+		| "automatic-alternative"
+		| "manual-choice"
+		| "saved-choice";
+	original: { title: string; artist: string; platform: string };
+}
+
+export interface PlaybackAudioSource {
+	checked: boolean;
+	channel: string;
+	mimeType: string;
 }

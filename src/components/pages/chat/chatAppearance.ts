@@ -514,6 +514,86 @@ export function trackBgImgAspectRatio(
 	};
 }
 
+export interface ParsedMusicNotice {
+	rawContent: string;
+	actionType: "request" | "skip" | "vote_skip" | "error" | "system";
+	actorName?: string;
+	songTitle?: string;
+	actionLabel: string;
+}
+
+export function parseMusicNoticeContent(content: string): ParsedMusicNotice {
+	const rawContent = (content || "").trim();
+	// 1. 点播：xxx 点播了《歌名》
+	const requestMatch = rawContent.match(/^(.*?)\s*点播了[《<](.+?)[》>]/);
+	if (requestMatch) {
+		return {
+			rawContent,
+			actionType: "request",
+			actorName: requestMatch[1]?.trim() || undefined,
+			songTitle: requestMatch[2]?.trim(),
+			actionLabel: "点歌",
+		};
+	}
+
+	// 2. 切播：xxx 切播了《歌名》
+	const directSwitchMatch = rawContent.match(/^(.*?)\s*切播了[《<](.+?)[》>]/);
+	if (directSwitchMatch) {
+		return {
+			rawContent,
+			actionType: "skip",
+			actorName: directSwitchMatch[1]?.trim() || undefined,
+			songTitle: directSwitchMatch[2]?.trim(),
+			actionLabel: "切播",
+		};
+	}
+
+	// 3. 切到了下一首：xxx 切到了下一首 (《歌名》)?
+	const nextMatch = rawContent.match(
+		/^(.*?)\s*切到了下一首(?:[《<](.+?)[》>])?/,
+	);
+	if (nextMatch) {
+		return {
+			rawContent,
+			actionType: "skip",
+			actorName: nextMatch[1]?.trim() || undefined,
+			songTitle: nextMatch[2]?.trim() || undefined,
+			actionLabel: "切歌",
+		};
+	}
+
+	// 4. 投票切歌通过
+	if (rawContent.includes("投票切歌通过")) {
+		const songMatch = rawContent.match(/[《<](.+?)[》>]/);
+		return {
+			rawContent,
+			actionType: "vote_skip",
+			songTitle: songMatch?.[1]?.trim(),
+			actionLabel: "投票切歌",
+		};
+	}
+
+	// 5. 播放/音源失败
+	if (/(音源解析失败|播放失败)/.test(rawContent)) {
+		const songMatch = rawContent.match(/[《<](.+?)[》>]/);
+		return {
+			rawContent,
+			actionType: "error",
+			songTitle: songMatch?.[1]?.trim(),
+			actionLabel: "播放失败",
+		};
+	}
+
+	// 其他兜底系统音乐动态
+	const genericSong = rawContent.match(/[《<](.+?)[》>]/);
+	return {
+		rawContent,
+		actionType: "system",
+		songTitle: genericSong?.[1]?.trim(),
+		actionLabel: "点歌台",
+	};
+}
+
 export function isMusicNoticeContent(content: string): boolean {
 	return /(点播了|切到了下一首|投票切歌通过|切播了|音源解析失败|播放失败)/.test(
 		content,

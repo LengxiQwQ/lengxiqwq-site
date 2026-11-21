@@ -128,15 +128,15 @@ const isNotificationActive = $derived(
 
 const notificationTooltip = $derived.by(() => {
 	if (desktopNotificationPermission === "denied") {
-		return "浏览器推送权限被拦截（打开设置）";
+		return "通知权限受阻";
 	}
 	if (effectiveNotificationMode === "all") {
-		return "浏览器推送：全部消息（打开设置）";
+		return "浏览器推送：全部";
 	}
 	if (effectiveNotificationMode === "mention") {
-		return "浏览器推送：提及与回复（打开设置）";
+		return "浏览器推送：提及与回复";
 	}
-	return "浏览器推送：已关闭（打开设置）";
+	return "浏览器推送：关闭";
 });
 
 const notificationIcon = $derived.by(() => {

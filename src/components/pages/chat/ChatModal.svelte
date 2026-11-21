@@ -294,7 +294,7 @@ const sizeClass = $derived(
           {/if}
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 min-w-0">
-              <h3 class="text-sm font-bold text-[var(--deep-text)] m-0 truncate">
+              <h3 class="text-base sm:text-sm font-bold text-[var(--deep-text)] m-0 truncate">
                 {title}
               </h3>
               {#if headerExtra}
@@ -302,7 +302,7 @@ const sizeClass = $derived(
               {/if}
             </div>
             {#if subtitle}
-              <p class="text-[11px] text-[var(--chat-meta-color)] mt-0.5 mb-0 truncate">
+              <p class="text-xs sm:text-[11px] text-[var(--chat-meta-color)] mt-0.5 mb-0 truncate">
                 {subtitle}
               </p>
             {/if}

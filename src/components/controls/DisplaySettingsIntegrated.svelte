@@ -59,6 +59,7 @@ import {
 import { onMount } from "svelte";
 import Icon from "@/components/common/Icon.svelte";
 import { downloadMusicTrace } from "@/components/pages/chat/musicTrace";
+import PlaybackDiagnostics from "./PlaybackDiagnostics.svelte";
 import {
 	applyChatAppearanceToDocument,
 	CHAT_PANEL_SLOTS,
@@ -78,7 +79,6 @@ import {
 	getDefaultChatAppearance,
 	getDevPanelWallpaperBlob,
 	getDevPreviewTransformKey,
-	getStoredMusicNoticesEnabled,
 	isChatPanelSlot,
 	itemToPanelTransform,
 	loadChatAppearanceSettings,
@@ -86,7 +86,6 @@ import {
 	resolveSlotEffectiveTransform,
 	saveDevPanelWallpaperPreview,
 	setRuntimeChatWallpaperCatalog,
-	setStoredMusicNoticesEnabled,
 } from "@/components/pages/chat/chatAppearance";
 import {
 	backgroundWallpaper,
@@ -145,7 +144,6 @@ const isDev = import.meta.env.DEV;
 let chatCatalog = $state<ChatWallpaperConfig>(getChatWallpaperConfig());
 let chatAppearance = $state<ChatAppearanceSettings>(getDefaultChatAppearance());
 let activeChatBgSlot = $state<ChatPanelSlot>("center");
-let chatMusicNotices = $state(false);
 let devPreviewPanels = $state<Partial<Record<ChatPanelSlot, string>>>({});
 let isSavingChatWallpapers = $state(false);
 let chatWallpaperSaveStatus = $state("");
@@ -235,8 +233,7 @@ const isChatLayoutDefault = $derived.by(() => {
 	const defaults = getDefaultChatAppearance();
 	return (
 		chatAppearance.chatFontSize === defaults.chatFontSize &&
-		chatAppearance.chatDensity === defaults.chatDensity &&
-		!chatMusicNotices
+		chatAppearance.chatDensity === defaults.chatDensity
 	);
 });
 
@@ -458,8 +455,6 @@ function resetChatLayout() {
 	};
 	chatAppearance = next;
 	applyChatAppearanceToDocument(next, true, devPreviewPanels);
-	chatMusicNotices = false;
-	setStoredMusicNoticesEnabled(false);
 }
 
 function toggleChatDensity() {
@@ -467,11 +462,6 @@ function toggleChatDensity() {
 		"chatDensity",
 		chatAppearance.chatDensity === "compact" ? "comfortable" : "compact",
 	);
-}
-
-function toggleChatMusicNotices() {
-	chatMusicNotices = !chatMusicNotices;
-	setStoredMusicNoticesEnabled(chatMusicNotices);
 }
 
 async function handlePickDevPanelWallpaper(slot: ChatPanelSlot, e: Event) {
@@ -1262,7 +1252,6 @@ onMount(() => {
 	checkScreenSize();
 	isChatPage = document.documentElement.hasAttribute("data-chat-page");
 	chatAppearance = loadChatAppearanceSettings();
-	chatMusicNotices = getStoredMusicNoticesEnabled();
 	if (isChatPage) {
 		applyChatAppearanceToDocument(chatAppearance, false);
 		requestAnimationFrame(refreshAllRangeProgress);
@@ -1277,21 +1266,11 @@ onMount(() => {
 		isChatPage = nextIsChat;
 		if (nextIsChat) {
 			chatAppearance = loadChatAppearanceSettings();
-			chatMusicNotices = getStoredMusicNoticesEnabled();
 		} else {
 			themeHueMode = getThemeHueMode();
 			hue = getHue();
 		}
 		requestAnimationFrame(refreshAllRangeProgress);
-	};
-
-	const handleMusicNoticesSync = (event: Event) => {
-		const ce = event as CustomEvent<{ enabled?: boolean }>;
-		if (typeof ce.detail?.enabled === "boolean") {
-			chatMusicNotices = ce.detail.enabled;
-		} else {
-			chatMusicNotices = getStoredMusicNoticesEnabled();
-		}
 	};
 
 	const handleChatAppearanceSync = (event: Event) => {
@@ -1332,7 +1311,6 @@ onMount(() => {
 
 	window.addEventListener("chatPageChange", handleChatPageChange);
 	window.addEventListener("chatAppearanceChange", handleChatAppearanceSync);
-	window.addEventListener("chat-music-notices-change", handleMusicNoticesSync);
 
 	// 从localStorage读取保存的壁纸模式
 	wallpaperMode = getStoredWallpaperMode();
@@ -1410,10 +1388,6 @@ onMount(() => {
 		window.removeEventListener(
 			"chatAppearanceChange",
 			handleChatAppearanceSync,
-		);
-		window.removeEventListener(
-			"chat-music-notices-change",
-			handleMusicNoticesSync,
 		);
 		window.removeEventListener("resize", checkScreenSize);
 	};
@@ -2127,27 +2101,6 @@ $effect(() => {
 							 class:left-5={chatAppearance.chatDensity === "compact"}></div>
 					</div>
 				</button>
-
-				<button
-					type="button"
-					class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all relative overflow-hidden"
-					class:bg-(--btn-regular-bg-hover)={chatMusicNotices}
-					onclick={toggleChatMusicNotices}
-				>
-					<svg class="w-[1.25rem] h-[1.25rem] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-						<path d="M9 18V5l12-2v13" />
-						<circle cx="6" cy="18" r="3" />
-						<circle cx="18" cy="16" r="3" />
-					</svg>
-					<span class="text-sm flex-1">聊天显示点歌记录</span>
-					<div class="w-10 h-5 rounded-full transition-all duration-200 relative"
-						 class:bg-(--primary)={chatMusicNotices}
-						 class:bg-(--btn-regular-bg-active)={!chatMusicNotices}>
-						<div class="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all duration-200"
-							 class:left-0.5={!chatMusicNotices}
-							 class:left-5={chatMusicNotices}></div>
-					</div>
-				</button>
 			</div>
 		</div>
 		{:else}
@@ -2678,6 +2631,7 @@ $effect(() => {
 
 	{#if activeTab === "developer"}
 		<div class="section-title">{i18n(I18nKey.settingsTabDeveloper)}</div>
+		<div class="mb-2"><PlaybackDiagnostics lang={siteConfig.lang || "en"} /></div>
 		<button type="button" class="w-full btn-regular rounded-md py-2 px-3 flex items-center gap-3 text-left active:scale-95 transition-all" onclick={downloadMusicTrace}>
 			<Icon icon="material-symbols:monitor-heart-outline" class="text-[1.25rem] shrink-0"></Icon>
 			<span class="text-sm flex-1">{i18n(I18nKey.exportMusicDiagnostics)}</span>

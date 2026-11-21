@@ -49,7 +49,7 @@ import type {
 	RoomRotation,
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
-import { RoomAudioPlayer, audioStatusLabel, type AudioStatus } from "./roomAudioPlayer";
+import { RoomAudioPlayer, audioStatusLabel, type AudioStatus, type LocalAudioDiagnostic } from "./roomAudioPlayer";
 import type { ChatMusicTrack } from "./musicTypes";
 import {
 	type AmbiguousResolveCandidate,
@@ -132,6 +132,7 @@ interface Props {
 		volume?: number;
 		currentLyric?: string;
 	}) => void;
+	onAudioDiagnosticChange?: (diagnostic: LocalAudioDiagnostic | null) => void;
 	onNotify?: (message: string) => void;
 }
 
@@ -180,6 +181,7 @@ const {
 	fallbackSearch,
 	externalPlaylistRequest,
 	onPlaybackStatusChange,
+	onAudioDiagnosticChange,
 	onNotify,
 }: Props = $props();
 
@@ -2901,10 +2903,11 @@ $effect(() => {
 	if (!element) return;
 	const controller = untrack(() => new RoomAudioPlayer(element, {
 		now: () => serverNow?.() ?? Date.now() + clockOffsetMs,
-		status: (status, intent) => {
+		status: (status, intent, diagnostic) => {
 			audioStatus = status;
 			listenIntent = intent;
 			isListening = intent && status !== "error";
+			onAudioDiagnosticChange?.(diagnostic);
 			updateMediaSessionMetadata();
 		},
 		error: (uid, revision) => onReportError(uid, revision),
@@ -5356,10 +5359,10 @@ $effect(() => {
     <form class="flex flex-1 flex-col min-h-0 overflow-hidden" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>
       <!-- 双栏主体容器：桌面端左右分割，移动端上下堆叠 -->
       <div class="flex-1 min-h-0 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-[var(--chat-divider-color)] overflow-hidden">
-        <!-- 左栏：播放状态与轮播模式设置 -->
-        <div class="w-full md:w-[320px] lg:w-[340px] shrink-0 flex flex-col overflow-y-auto custom-scrollbar p-3.5 sm:p-4 space-y-4 bg-[var(--skin-surface)] max-h-[42vh] md:max-h-none">
-          <!-- 当前播放状态卡片 -->
-          <section aria-label="当前播放状态" class="rounded-xl border border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/60 p-3.5 space-y-2">
+        <!-- 左栏：播放状态与轮播模式设置（移动端精简紧凑并横排展示） -->
+        <div class="w-full md:w-[320px] lg:w-[340px] shrink-0 flex flex-col md:overflow-y-auto custom-scrollbar p-3 sm:p-3.5 md:p-4 space-y-2.5 md:space-y-4 bg-[var(--skin-surface)]">
+          <!-- 当前播放状态卡片：桌面端展示，手机端隐藏以极大释放歌单选择空间 -->
+          <section aria-label="当前播放状态" class="hidden md:block rounded-xl border border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/60 p-3.5 space-y-2">
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-1.5 text-xs font-semibold text-[var(--deep-text)]">
                 <svg class="w-3.5 h-3.5 text-(--primary)" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -5388,44 +5391,43 @@ $effect(() => {
             {/if}
           </section>
 
-          <!-- 轮播模式单选组 -->
-          <fieldset class="border-0 p-0 m-0 space-y-2" disabled={rotationSaving}>
+          <!-- 轮播模式单选组：手机端横排紧凑切换，去除冗余小字解释 -->
+          <fieldset class="border-0 p-0 m-0 space-y-1.5 md:space-y-2" disabled={rotationSaving}>
             <div class="flex items-center justify-between">
-              <legend class="text-xs font-semibold text-[var(--deep-text)] uppercase tracking-wider">轮播模式</legend>
-              <span class="text-[11px] text-[var(--chat-meta-color)]">队列为空时策略</span>
+              <legend class="text-[13.5px] sm:text-xs font-bold text-[var(--deep-text)]">轮播模式</legend>
+              <span class="hidden md:inline text-[11px] text-[var(--chat-meta-color)]">队列为空时策略</span>
             </div>
-            <div class="flex flex-col gap-2">
+            <div class="grid grid-cols-3 gap-1.5 md:flex md:flex-col md:gap-2">
               {#each [
                 {
                   value: "playlist",
                   title: "指定歌单",
-                  detail: "仅在右侧勾选的一个或多个歌单中轮播",
-                  badge: rotationMode === "playlist" && validSelectedRotationIds.length > 0 ? `已选 ${validSelectedRotationIds.length}` : ""
+                  shortTitle: "指定歌单",
+                  detail: "仅在选中的一个或多个歌单中轮播"
                 },
                 {
                   value: "all",
                   title: "全部公开歌单",
-                  detail: "从房间所有公开歌单中随机挑选",
-                  badge: rotationChoices.length > 0 ? `共 ${rotationChoices.length} 个` : ""
+                  shortTitle: "全部公开",
+                  detail: "从房间所有公开歌单中随机挑选"
                 },
                 {
                   value: "off",
                   title: "关闭轮播",
-                  detail: "待播队列播放完毕后自动静止",
-                  badge: ""
+                  shortTitle: "关闭轮播",
+                  detail: "待播队列播放完毕后自动静止"
                 }
               ] as option (option.value)}
                 {@const isSelected = rotationMode === option.value}
-                <label class="group relative flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/40 hover:bg-(--btn-plain-bg-hover)'}">
-                  <input type="radio" name="rotation-mode" value={option.value} bind:group={rotationMode} class="mt-0.5 shrink-0 accent-(--primary)" />
-                  <span class="min-w-0 flex-1">
-                    <span class="flex items-center justify-between gap-1">
-                      <span class="text-[13px] font-semibold text-[var(--deep-text)] {isSelected ? 'text-(--primary)' : ''}">{option.title}</span>
-                      {#if option.badge}
-                        <span class="px-1.5 py-0.2 rounded text-[10px] font-medium {isSelected ? 'bg-(--primary)/20 text-(--primary)' : 'bg-[var(--chat-divider-color)] text-[var(--chat-meta-color)]'}">{option.badge}</span>
-                      {/if}
+                <label class="group relative flex flex-col md:flex-row items-center md:items-start justify-center md:justify-start gap-1 md:gap-3 rounded-xl border py-2 px-2.5 md:p-3 cursor-pointer text-center md:text-left transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/40 hover:bg-(--btn-plain-bg-hover)'}">
+                  <input type="radio" name="rotation-mode" value={option.value} bind:group={rotationMode} class="sr-only md:not-sr-only md:mt-0.5 shrink-0 accent-(--primary)" />
+                  <span class="min-w-0 flex-1 w-full">
+                    <span class="block text-[13.5px] sm:text-[13px] font-semibold truncate {isSelected ? 'text-(--primary)' : 'text-[var(--deep-text)]'}">
+                      <span class="md:hidden">{option.shortTitle}</span>
+                      <span class="hidden md:inline">{option.title}</span>
                     </span>
-                    <span class="block mt-0.5 text-[11px] leading-relaxed text-[var(--chat-meta-color)]">{option.detail}</span>
+                    <!-- 手机端去除废话小字解释，仅在桌面端显示 -->
+                    <span class="hidden md:block mt-0.5 text-[11px] leading-relaxed text-[var(--chat-meta-color)]">{option.detail}</span>
                   </span>
                 </label>
               {/each}
@@ -5437,58 +5439,90 @@ $effect(() => {
         <div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-[var(--chat-surface-soft)]/20">
           {#if rotationMode === "playlist"}
             <!-- 指定歌单模式：支持搜索、全选/清空、多选列表 -->
-            <div class="shrink-0 flex items-center justify-between gap-2 px-3.5 sm:px-4 py-2.5 border-b border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/30">
-              <div class="flex items-center gap-2 min-w-0">
-                <span class="text-xs font-semibold text-[var(--deep-text)]">选择轮播歌单</span>
-                <span class="px-2 py-0.5 rounded-full text-[11px] font-medium {validSelectedRotationIds.length > 0 ? 'bg-(--primary)/15 text-(--primary)' : 'bg-red-500/10 text-red-500'}">
-                  已选 {validSelectedRotationIds.length} / {rotationChoices.length}
-                </span>
+            <div class="shrink-0 px-3 sm:px-4 py-2 sm:py-2.5 border-b border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/30">
+              <div class="flex items-center justify-between gap-2">
+                <!-- 标题与已选计数 -->
+                <div class="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                  <span class="text-[14px] sm:text-xs font-bold text-[var(--deep-text)] whitespace-nowrap">
+                    <span class="sm:hidden">选择歌单</span>
+                    <span class="hidden sm:inline">选择轮播歌单</span>
+                  </span>
+                  <span class="px-2 py-0.5 rounded-full text-[11px] font-medium {validSelectedRotationIds.length > 0 ? 'bg-(--primary)/15 text-(--primary)' : 'bg-red-500/10 text-red-500'} whitespace-nowrap">
+                    已选 {validSelectedRotationIds.length} / {rotationChoices.length}
+                  </span>
+                </div>
+                <!-- 桌面端搜索与按钮组 / 手机端全选与清空按钮（提高触控高度至 32px） -->
+                <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                  {#if rotationChoices.length > 3}
+                    <div class="relative hidden md:block w-36">
+                      <input
+                        type="text"
+                        bind:value={rotationPlaylistSearch}
+                        placeholder="搜索歌单..."
+                        class="w-full h-7 pl-6 pr-2 text-xs rounded-lg border border-[var(--chat-divider-color)] bg-transparent text-[var(--skin-text)] focus:outline-none focus:border-(--primary) placeholder:text-[var(--chat-meta-color)]"
+                      />
+                      <svg class="w-3 h-3 absolute left-2 top-2 text-[var(--chat-meta-color)] pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+                      </svg>
+                    </div>
+                  {/if}
+                  {#if rotationChoices.length > 1}
+                    <button
+                      type="button"
+                      class="h-8 md:h-7 px-3 md:px-2.5 text-xs font-medium rounded-lg border border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-(--btn-plain-bg-hover) active:scale-95 transition-all"
+                      onclick={() => rotationPlaylistIds = rotationChoices.map((playlist) => playlist.id)}
+                    >
+                      全选
+                    </button>
+                    <button
+                      type="button"
+                      class="h-8 md:h-7 px-3 md:px-2.5 text-xs font-medium rounded-lg border border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-red-500 hover:border-red-500/30 hover:bg-red-500/5 active:scale-95 transition-all"
+                      onclick={() => rotationPlaylistIds = []}
+                    >
+                      清空
+                    </button>
+                  {/if}
+                </div>
               </div>
-              <div class="flex items-center gap-2 shrink-0">
-                {#if rotationChoices.length > 3}
-                  <div class="relative w-32 sm:w-36">
-                    <input
-                      type="text"
-                      bind:value={rotationPlaylistSearch}
-                      placeholder="搜索歌单..."
-                      class="w-full h-7 pl-6 pr-2 text-xs rounded-lg border border-[var(--chat-divider-color)] bg-transparent text-[var(--skin-text)] focus:outline-none focus:border-(--primary) placeholder:text-[var(--chat-meta-color)]"
-                    />
-                    <svg class="w-3 h-3 absolute left-2 top-2 text-[var(--chat-meta-color)] pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
-                    </svg>
-                  </div>
-                {/if}
-                {#if rotationChoices.length > 1}
-                  <button
-                    type="button"
-                    class="h-7 px-2.5 text-xs rounded-lg border border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-(--btn-plain-bg-hover) active:scale-95 transition-all"
-                    onclick={() => rotationPlaylistIds = rotationChoices.map((playlist) => playlist.id)}
-                  >
-                    全选
-                  </button>
-                  <button
-                    type="button"
-                    class="h-7 px-2.5 text-xs rounded-lg border border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-red-500 hover:border-red-500/30 hover:bg-red-500/5 active:scale-95 transition-all"
-                    onclick={() => rotationPlaylistIds = []}
-                  >
-                    清空
-                  </button>
-                {/if}
-              </div>
+
+              <!-- 手机端独立全宽搜索栏：36px 舒适高度，16px 字号彻底杜绝 iOS 自动放大视口 -->
+              {#if rotationChoices.length > 3}
+                <div class="relative w-full mt-2 md:hidden">
+                  <input
+                    type="text"
+                    bind:value={rotationPlaylistSearch}
+                    placeholder="搜索歌单名称..."
+                    class="w-full h-9 pl-8 pr-8 text-base rounded-xl border border-[var(--chat-divider-color)] bg-[var(--skin-surface)] text-[var(--skin-text)] focus:outline-none focus:border-(--primary) placeholder:text-[var(--chat-meta-color)] placeholder:text-xs"
+                  />
+                  <svg class="w-3.5 h-3.5 absolute left-2.5 top-3 text-[var(--chat-meta-color)] pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
+                  </svg>
+                  {#if rotationPlaylistSearch}
+                    <button
+                      type="button"
+                      class="absolute right-2 top-2 p-1 text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] rounded-full"
+                      onclick={() => rotationPlaylistSearch = ""}
+                      aria-label="清空搜索"
+                    >
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    </button>
+                  {/if}
+                </div>
+              {/if}
             </div>
 
             <fieldset class="flex-1 min-h-0 border-0 p-0 m-0 flex flex-col overflow-hidden" disabled={rotationSaving}>
-              <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3 sm:p-4 space-y-2">
+              <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2.5 sm:p-3 md:p-4 space-y-1.5 sm:space-y-2">
                 {#each filteredRotationChoices as playlist (playlist.id)}
                   {@const isSelected = rotationPlaylistIds.includes(playlist.id)}
-                  <label class="group flex items-center gap-3 p-2.5 rounded-xl border cursor-pointer transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/30 hover:bg-(--btn-plain-bg-hover)'}">
+                  <label class="group flex items-center gap-2.5 sm:gap-3 p-2 sm:p-2.5 rounded-xl border cursor-pointer transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/30 hover:bg-(--btn-plain-bg-hover)'}">
                     <input
                       type="checkbox"
                       checked={isSelected}
                       onchange={() => toggleRotationPlaylist(playlist.id)}
                       class="shrink-0 accent-(--primary) w-4 h-4 rounded cursor-pointer"
                     />
-                    <div class="w-11 h-11 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center border border-black/5 dark:border-white/5">
+                    <div class="w-10 h-10 sm:w-11 sm:h-11 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center border border-black/5 dark:border-white/5">
                       {#if playlist.id === "pl_collective_favorites"}
                         {@render collectiveCover()}
                       {:else if playlist.coverUrl}
@@ -5500,7 +5534,7 @@ $effect(() => {
                       {/if}
                     </div>
                     <div class="min-w-0 flex-1">
-                      <span class="block truncate text-[13px] font-semibold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
+                      <span class="block truncate text-[14px] sm:text-[13px] font-semibold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
                       <div class="flex items-center gap-1.5 mt-0.5 text-xs text-[var(--chat-meta-color)]">
                         <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-[var(--chat-divider-color)]/70 text-[var(--chat-meta-color)]">
                           {formatPlatformLabel(playlist.platform)}
@@ -5530,24 +5564,24 @@ $effect(() => {
             </fieldset>
           {:else if rotationMode === "all"}
             <!-- 全部公开歌单模式：展示包含的所有歌单列表概览 -->
-            <div class="shrink-0 flex items-center justify-between gap-2 px-3.5 sm:px-4 py-2.5 border-b border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/30">
+            <div class="shrink-0 flex items-center justify-between gap-2 px-3 sm:px-4 py-2 sm:py-2.5 border-b border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/30">
               <div class="flex items-center gap-2 min-w-0">
-                <span class="text-xs font-semibold text-[var(--deep-text)]">轮播歌曲来源</span>
-                <span class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-(--primary)/15 text-(--primary)">
+                <span class="text-[13.5px] sm:text-xs font-bold text-[var(--deep-text)]">轮播歌曲来源</span>
+                <span class="px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium bg-(--primary)/15 text-(--primary) whitespace-nowrap">
                   已全选（共 {rotationChoices.length} 个公开歌单）
                 </span>
               </div>
             </div>
-            <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3 sm:p-4 space-y-2">
-              <div class="rounded-xl border border-dashed border-(--primary)/40 bg-(--primary)/5 p-3 mb-3 text-xs text-(--primary) flex items-center gap-2">
+            <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2.5 sm:p-3 md:p-4 space-y-1.5 sm:space-y-2">
+              <div class="rounded-xl border border-dashed border-(--primary)/40 bg-(--primary)/5 p-2.5 sm:p-3 mb-1.5 sm:mb-2 text-xs text-(--primary) flex items-center gap-2">
                 <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
-                <span>当前模式将从以下所有已公开的歌单中随机挑选歌曲轮播：</span>
+                <span>从以下所有已公开的歌单中随机挑选轮播：</span>
               </div>
               {#each rotationChoices as playlist (playlist.id)}
-                <div class="flex items-center gap-3 p-2.5 rounded-xl border border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/40 opacity-80">
-                  <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+                <div class="flex items-center gap-2.5 sm:gap-3 p-2 sm:p-2.5 rounded-xl border border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/40 opacity-80">
+                  <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
                     {#if playlist.id === "pl_collective_favorites"}
                       {@render collectiveCover()}
                     {:else if playlist.coverUrl}
@@ -5559,7 +5593,7 @@ $effect(() => {
                     {/if}
                   </div>
                   <div class="min-w-0 flex-1">
-                    <span class="block truncate text-[13px] font-semibold text-[var(--deep-text)]">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
+                    <span class="block truncate text-[14px] sm:text-[13px] font-semibold text-[var(--deep-text)]">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
                     <div class="flex items-center gap-1.5 mt-0.5 text-xs text-[var(--chat-meta-color)]">
                       <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-[var(--chat-divider-color)]/70 text-[var(--chat-meta-color)]">{formatPlatformLabel(playlist.platform)}</span>
                       <span>{playlist.trackCount} 首</span>
@@ -5567,7 +5601,7 @@ $effect(() => {
                       <span class="truncate">{playlist.id === "pl_collective_favorites" ? "全站成员" : playlist.ownerName || "全站成员"}</span>
                     </div>
                   </div>
-                  <span class="px-2 py-0.5 text-[11px] font-medium rounded-full bg-(--primary)/10 text-(--primary) shrink-0">已包含</span>
+                  <span class="px-2 py-0.5 text-[10px] sm:text-[11px] font-medium rounded-full bg-(--primary)/10 text-(--primary) shrink-0">已包含</span>
                 </div>
               {:else}
                 <p class="text-xs text-[var(--chat-meta-color)] p-4 text-center">暂无公开歌单</p>
@@ -5576,14 +5610,14 @@ $effect(() => {
           {:else}
             <!-- 关闭轮播模式：指引占位 -->
             <div class="flex-1 flex flex-col items-center justify-center text-center p-6 text-[var(--chat-meta-color)] space-y-3">
-              <div class="w-14 h-14 rounded-full bg-(--btn-regular-bg) border border-[var(--chat-divider-color)] flex items-center justify-center text-[var(--chat-meta-color)]">
-                <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <div class="w-12 h-12 sm:w-14 sm:h-14 rounded-full bg-(--btn-regular-bg) border border-[var(--chat-divider-color)] flex items-center justify-center text-[var(--chat-meta-color)]">
+                <svg class="w-6 h-6 sm:w-7 sm:h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <circle cx="12" cy="12" r="10" />
                   <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
                 </svg>
               </div>
               <div class="max-w-xs space-y-1">
-                <h5 class="m-0 text-sm font-semibold text-[var(--deep-text)]">歌单轮播已关闭</h5>
+                <h5 class="m-0 text-[15px] sm:text-sm font-bold text-[var(--deep-text)]">歌单轮播已关闭</h5>
                 <p class="m-0 text-xs leading-relaxed text-[var(--chat-meta-color)]">
                   当前未开启轮播，电台在待播歌曲放完后将自动静止。
                 </p>
@@ -5601,14 +5635,14 @@ $effect(() => {
       </div>
 
       <!-- 底部操作与状态栏 -->
-      <div class="shrink-0 flex items-center justify-between gap-3 px-3.5 sm:px-4 py-3 border-t border-[var(--chat-divider-color)] bg-[var(--skin-surface)]">
-        <div class="min-w-0 flex-1 pr-2">
+      <div class="shrink-0 flex items-center justify-between gap-2.5 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 border-t border-[var(--chat-divider-color)] bg-[var(--skin-surface)]">
+        <div class="min-w-0 flex-1 pr-1 sm:pr-2">
           {#if rotationError}
             <p role="alert" class="m-0 text-xs text-red-500 truncate">{rotationError}</p>
           {:else if rotationMode === "playlist" && validSelectedRotationIds.length === 0}
-            <p class="m-0 text-xs text-amber-500 truncate">⚠️ 请在右侧至少勾选一个歌单</p>
+            <p class="m-0 text-xs text-amber-500 truncate">⚠️ 请至少勾选一个歌单</p>
           {:else}
-            <div class="flex flex-col sm:flex-row sm:items-center gap-0.5 sm:gap-2 text-[11px] text-[var(--chat-meta-color)]">
+            <div class="hidden sm:flex items-center gap-2 text-[11px] text-[var(--chat-meta-color)]">
               <span class="inline-flex items-center gap-1 font-medium text-[var(--deep-text)] shrink-0">
                 <svg class="w-3.5 h-3.5 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <circle cx="12" cy="12" r="10" />
@@ -5617,16 +5651,14 @@ $effect(() => {
                 </svg>
                 <span>轮播提示</span>
               </span>
-              <span class="truncate">房友点歌始终拥有最高优先级</span>
-              <span class="hidden sm:inline opacity-40">·</span>
-              <span class="truncate">轮播中如有房友点歌将立即切播</span>
+              <span class="truncate">房友点歌优先，点歌时自动切播</span>
             </div>
           {/if}
         </div>
         <div class="flex items-center gap-2 shrink-0">
           <button
             type="button"
-            class="rounded-lg px-3.5 py-2 text-[13px] xl:text-[12px] border border-[var(--chat-divider-color)] text-[var(--deep-text)] hover:bg-(--btn-plain-bg-hover) active:scale-95 transition-all"
+            class="rounded-lg px-3.5 py-2 text-[13px] border border-[var(--chat-divider-color)] text-[var(--deep-text)] hover:bg-(--btn-plain-bg-hover) active:scale-95 transition-all"
             disabled={rotationSaving}
             onclick={closeRotationSettings}
           >
@@ -5635,7 +5667,7 @@ $effect(() => {
           <button
             type="submit"
             disabled={rotationSaving || !canSaveRotation}
-            class="rounded-lg border-none bg-(--primary) px-4 py-2 text-[13px] xl:text-[12px] font-semibold text-white shadow-xs hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            class="rounded-lg border-none bg-(--primary) px-4 py-2 text-[13px] font-semibold text-white shadow-xs hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
             {rotationSaving ? "保存中..." : "保存设置"}
           </button>

@@ -378,6 +378,13 @@ const ogImageAlt = propsOgImageAlt ?? pageTitle;
         isChatDevEnv: import.meta.env.DEV,
       }}
     >
+      // 客户端环境识别：仅检测是否为 iPhone / iPod 苹果手机设备
+      // 仅 iPhone 手机端聚焦 <16px 输入框会强制放大视口，iPad 与安卓等均不需要该补丁
+      var isIPhone = /iPhone|iPod/.test(navigator.userAgent);
+      if (isIPhone) {
+        document.documentElement.setAttribute("data-is-iphone", "true");
+      }
+
       // 主题初始化 - 与setting-utils.ts保持一致
       const LIGHT_MODE = "light";
       const DARK_MODE = "dark";

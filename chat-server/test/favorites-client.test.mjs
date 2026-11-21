@@ -20,7 +20,7 @@ test('共享收藏超过单次返回上限时读取所有分页并保留成员�
     }));
     return Response.json({ ok: true, total: 205, offset, limit: 200, items });
   };
-  const detail = await fetchPlaylistDetail('https://example.test', 'chat', 'pl_collective_favorites', '', 'user:a');
+  const detail = await fetchPlaylistDetail('https://example.test', 'chat', 'pl_collective_favorites', undefined, 'user:a');
   assert.equal(detail.tracks.length, 205);
   assert.equal(detail.tracks[204].matchedTrack.id, 'qq:204');
   assert.deepEqual(calls.slice(1).map((url) => url.searchParams.get('offset')), ['0', '200']);
