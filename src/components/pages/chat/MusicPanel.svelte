@@ -3565,12 +3565,9 @@ $effect(() => {
             {#if currentPlay}
               <div
                 class="text-[13px] xl:text-[12px] font-medium text-[var(--chat-meta-color)] truncate min-w-0 leading-normal select-text cursor-text"
-                title={[getTrackArtistAndAlbum(currentPlay.track), currentPlay.track.provider && formatPlatformLabel(currentPlay.track.provider)].filter(Boolean).join(" · ")}
+                title={getTrackArtistAndAlbum(currentPlay.track)}
               >
                 {getTrackArtistAndAlbum(currentPlay.track)}
-                {#if currentPlay.track.provider}
-                  · {formatPlatformLabel(currentPlay.track.provider)}
-                {/if}
               </div>
             {:else}
               <div
