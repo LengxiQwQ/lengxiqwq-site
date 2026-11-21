@@ -23,13 +23,15 @@ multi_source_legacy_gateway=3c76fc1c1355b1118bfdd1fb2371c455a0d40f1548178835af68
 live_recording_base=cc219eb14a15bce3f7178a07557e0cda1286047c0441709c05b60ea4c29b1060
 live_recording_gateway=c364ebcf7dc5d413021376901fc0249ed85478bed21adda8446c90321753be92
 recording_gateway=d27a45164810fddb9657a53ea68af29bf07cc85a7d99e7056b256ad95daac9ae
+live_guest_playlists_gateway=b68e27c5df193c8ca7698633ad28a43816cb7e8681963afb52ad87b871348300
+guest_playlists_gateway=618ba418456578531776ed583e7ddfbc1e500fdaf2cb9105bd24ed94bed8fcc9
 exec 9>/opt/chat-server-music-deploy.lock
 flock -n 9
 
 actual_gateway=$(sha256sum "$install_dir/server.mjs" | awk '{print $1}')
 modern_gateway=false
 case "$actual_gateway" in
-  "$multi_source_legacy_gateway"|"$live_recording_base"|"$live_recording_gateway"|"$recording_gateway")
+  "$multi_source_legacy_gateway"|"$live_recording_base"|"$live_recording_gateway"|"$recording_gateway"|"$live_guest_playlists_gateway"|"$guest_playlists_gateway")
     modern_gateway=true ;;
 esac
 if [[ "$modern_gateway" == false && "$actual_gateway" != "$original_gateway" && "$actual_gateway" != "$integrated_gateway" && "$actual_gateway" != "$observer_gateway" && "$actual_gateway" != "$explicit_fallback_gateway" && "$actual_gateway" != "$matrix_gateway" && "$actual_gateway" != "$matrix_fallback_gateway" && "$actual_gateway" != "$rotation_base_gateway" && "$actual_gateway" != "$rotation_gateway" && "$actual_gateway" != "$request_gateway" && "$actual_gateway" != "$random_gateway" && "$actual_gateway" != "$multi_source_gateway" && "$actual_gateway" != "$multi_source_legacy_gateway" ]]; then
@@ -108,12 +110,21 @@ fi
       [[ $(sha256sum server.mjs | awk '{print $1}') == "$multi_source_legacy_gateway" ]]
     fi
   fi
-  if [[ "$actual_gateway" != "$live_recording_gateway" && "$actual_gateway" != "$recording_gateway" ]]; then
+  if [[ "$actual_gateway" != "$live_recording_gateway" && "$actual_gateway" != "$recording_gateway" && "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
     git apply --check "$release_dir/recording-match.patch"
     git apply "$release_dir/recording-match.patch"
     expected_recording_gateway=$recording_gateway
     if [[ "$actual_gateway" == "$live_recording_base" ]]; then expected_recording_gateway=$live_recording_gateway; fi
     [[ $(sha256sum server.mjs | awk '{print $1}') == "$expected_recording_gateway" ]]
+  fi
+  if [[ "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
+    git apply --check "$release_dir/guest-playlists.patch"
+    git apply "$release_dir/guest-playlists.patch"
+    expected_guest_gateway=$guest_playlists_gateway
+    if [[ "$actual_gateway" == "$live_recording_base" || "$actual_gateway" == "$live_recording_gateway" ]]; then
+      expected_guest_gateway=$live_guest_playlists_gateway
+    fi
+    [[ $(sha256sum server.mjs | awk '{print $1}') == "$expected_guest_gateway" ]]
   fi
   node --check server.mjs
   for file in src/music/*.mjs; do node --check "$file"; done

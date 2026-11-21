@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { cp, mkdir, readFile, writeFile, mkdtemp, symlink, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { createHmac } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -27,6 +28,7 @@ try {
   }
   await symlink(testModules, join(dir, 'node_modules'), 'junction');
   let source = (await readFile(docs, 'utf8'))
+    .replace(/^loadEnvFile\([^\n]+\);$/m, '')
     .replace(/^(const (?:[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*)) = .*$/gm, "$1 = 'fixture';")
     .replace(/const PORT = 3001;/, 'const PORT = ' + port + ';')
     .replace(/const DATA_DIR = .*;/, 'const DATA_DIR = ' + JSON.stringify(data) + ';')
@@ -38,6 +40,7 @@ try {
     " const u = new URL(target);",
     " if (u.pathname === '/api/token') {",
     "  const role = new Headers(opts.headers).get('authorization').slice(7);",
+    "  if(role!=='admin' && role!=='user')return Response.json({errno:1},{status:401});",
     "  return Response.json({errno:0,data:{objectId:role,display_name:role,type:role==='admin'?'administrator':'user'}});",
     " }",
     " if (u.hostname==='cyapi.top') {",
@@ -79,14 +82,51 @@ try {
     };
     return { socket, take, send: packet => socket.send(JSON.stringify(packet)) };
   };
-  const request = async (api, body, token) => {
+  const request = async (api, body, token, authKind) => {
     const response = await fetch(origin + api, {
       method: body ? 'POST' : 'GET',
-      headers: token ? { Authorization: 'Bearer ' + token } : undefined,
+      headers: token ? { Authorization: 'Bearer ' + token, ...(authKind && { 'X-Auth-Kind': authKind }) } : undefined,
       body: body ? JSON.stringify(body) : undefined
     });
     return { code: response.status, body: await response.json() };
   };
+  if (process.argv.includes('--guest-playlists')) {
+    const guest = name => {
+      const user = { userKey: 'guest:' + name, authType: 'guest', name, isAdmin: false };
+      const payload = Buffer.from(JSON.stringify({ user, exp: Math.floor(Date.now() / 1000) + 60 })).toString('base64url');
+      return payload + '.' + createHmac('sha256', 'fixture').update(payload).digest('base64url');
+    };
+    const owner = guest('owner');
+    const other = guest('other');
+    const playlist = { title: 'Guest playlist', platform: 'qqmusic', sourceUrl: 'https://y.qq.com/guest-fixture',
+      tracks: [{ title: 'Song', sourceTrackId: 'one', sourcePlatform: 'qqmusic', durationSec: 180 }] };
+    const call = (path, body, token) => request('/api/playlists' + path, body, token, token && 'guest');
+    assert.equal((await call('/import', playlist)).code, 401);
+    assert.equal((await call('/import', playlist, 'invalid.guest')).code, 401);
+    const created = await call('/import', playlist, owner);
+    assert.equal(created.code, 200);
+    const playlistId = created.body.playlist.id;
+    assert.equal(created.body.playlist.ownerKey, 'guest:owner');
+    assert.equal((await call('?room=chat', null, owner)).body.mine[0].id, playlistId);
+    assert.equal((await call('?room=interconnect', null, other)).body.mine.length, 0);
+    for (const settings of [{ isFallback: true }, { isFeatured: true }]) {
+      assert.equal((await call('/flags', { playlistId, ...settings }, owner)).code, 403);
+    }
+    assert.equal((await call('/rotation?room=chat', { mode: 'all' }, owner)).code, 401);
+    assert.equal((await call('/flags', { playlistId, isPublic: false }, owner)).code, 200);
+    assert.equal((await call('/detail?id=' + playlistId, null, owner)).code, 200);
+    assert.equal((await call('/detail?id=' + playlistId, null, other)).code, 404);
+    assert.equal((await call('/detail?id=' + playlistId)).code, 404);
+    assert.equal((await call('/flags', { playlistId }, other)).code, 403);
+    const refresh = { playlistId, playlist: { ...playlist, title: 'Updated by guest' } };
+    assert.equal((await call('/refresh', refresh, other)).code, 403);
+    assert.equal((await call('/refresh', refresh, owner)).body.playlist.title, refresh.playlist.title);
+    assert.equal((await call('/delete', { playlistId }, other)).code, 403);
+    assert.equal((await call('/delete', { playlistId }, owner)).code, 200);
+    assert.equal((await call('/detail?id=' + playlistId, null, owner)).code, 404);
+    assert.equal((await request('/api/playlists/import', playlist, 'user')).code, 200);
+    console.log('PASS guest playlists: import, read, private access, refresh, share, delete, spectator and room permissions');
+  } else {
   const anonA = open('chat');
   await anonA.take(packet => packet.type === 'room:init');
   const anonB = open('chat');
@@ -193,6 +233,7 @@ try {
   assert.equal(page.body.tracks.length,1);
   assert.equal(page.body.hasMore,true);
   console.log('PASS gateway HTTP/WS: unique visitors, shared/private playlists, isolated rooms, synchronized skip, stream and search');
+  }
 } finally {
   for (const socket of sockets) socket.close();
   if (server) {

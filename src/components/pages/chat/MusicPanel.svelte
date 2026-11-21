@@ -67,6 +67,7 @@ import {
 	toEnqueueableTrack,
 	fetchUserFavoriteKeys,
 	toggleFavoriteTrack,
+	type PlaylistAuth,
 	type UserPlaylistCandidate,
 	updatePlaylistFlags,
 } from "./playlistClient";
@@ -77,6 +78,7 @@ interface Props {
 	chatServerUrl?: string;
 	playlistOutApiUrl?: string;
 	walineToken?: string;
+	playlistAuth?: PlaylistAuth;
 	playlistRefreshSeq?: number;
 	fallbackTracks?: ChatMusicTrack[];
 	musicState: RoomMusicState | null;
@@ -109,8 +111,6 @@ interface Props {
 	onTrackEnded: (playUid: string) => void;
 	onReportError: (playUid: string, revision?: number) => void;
 	onRequestAuth?: () => void;
-	onRequestWalineAuth?: () => void;
-	walineLoginWaiting?: boolean;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	fallbackSearch?: { query: string; seq: number };
 	externalPlaylistRequest?: {
@@ -146,6 +146,7 @@ const {
 	chatServerUrl = "",
 	playlistOutApiUrl = DEFAULT_PLAYLISTOUT_API_URL,
 	walineToken = "",
+	playlistAuth,
 	playlistRefreshSeq = 0,
 	fallbackTracks = [],
 	musicState = null,
@@ -175,8 +176,6 @@ const {
 	onTrackEnded,
 	onReportError,
 	onRequestAuth,
-	onRequestWalineAuth,
-	walineLoginWaiting = false,
 	onOpenUserProfile,
 	fallbackSearch,
 	externalPlaylistRequest,
@@ -1275,6 +1274,14 @@ function switchMusicTab(tab: MusicTab) {
 	activeTab = tab;
 }
 
+const personalPlaylistAuth = $derived(
+	playlistAuth && currentUser?.authType === playlistAuth.kind ? playlistAuth : undefined,
+);
+
+function playlistAuthKey(auth?: PlaylistAuth): string {
+	return auth ? `${auth.kind}:${auth.token}` : "";
+}
+
 const isWalineLoggedIn = $derived(
 	Boolean(currentUser && currentUser.authType === "waline" && walineToken),
 );
@@ -1290,7 +1297,7 @@ function formatPlaylistDate(ts: number): string {
 }
 
 function canManagePlaylist(playlist: PlaylistSummary | null): boolean {
-	if (!playlist || !isWalineLoggedIn || !currentUser) return false;
+	if (!playlist || !personalPlaylistAuth || !currentUser) return false;
 	return currentUser.isAdmin || playlist.ownerKey === currentUser.userKey;
 }
 
@@ -1388,7 +1395,8 @@ let lastRoomPlaylistSnapshot = "";
 
 async function loadPlaylists(force = false): Promise<void> {
 	if (!chatServerUrl) return;
-	const authSeg = isWalineLoggedIn ? walineToken : "";
+	const auth = personalPlaylistAuth;
+	const authSeg = playlistAuthKey(auth);
 	const cacheKey = `${roomId}|${authSeg}|${playlistRefreshSeq}`;
 	if (
 		!force &&
@@ -1400,12 +1408,13 @@ async function loadPlaylists(force = false): Promise<void> {
 	isLoadingPlaylists = true;
 	playlistsError = "";
 	try {
-		const res = await fetchRoomPlaylists(chatServerUrl, roomId, authSeg);
+		const res = await fetchRoomPlaylists(chatServerUrl, roomId, auth);
+		if (authSeg !== playlistAuthKey(personalPlaylistAuth)) return;
 		const now = Date.now();
 		const allSummaries = [...res.featured, ...res.mine, ...res.members];
 		const nextSigs = new Map<string, string>();
 		let summaryChanged = false;
-		const snapshotKey = allSummaries
+		const snapshotKey = authSeg + "#" + allSummaries
 			.map((p) => `${p.id}:${p.updatedAt ?? 0}:${p.trackCount}:${p.isFeatured}:${p.isFallback}:${p.isPublic}`)
 			.join("|") + `#${JSON.stringify(res.rotation ?? null)}`;
 
@@ -1460,9 +1469,11 @@ async function loadPlaylists(force = false): Promise<void> {
 			}
 		}
 	} catch (err) {
-		playlistsError = err instanceof Error ? err.message : "加载歌单列表失败";
+		if (authSeg === playlistAuthKey(personalPlaylistAuth)) {
+			playlistsError = err instanceof Error ? err.message : "加载歌单列表失败";
+		}
 	} finally {
-		isLoadingPlaylists = false;
+		if (authSeg === playlistAuthKey(personalPlaylistAuth)) isLoadingPlaylists = false;
 	}
 }
 
@@ -1517,12 +1528,12 @@ function resolveOwnerAvatar(ownerKey: string, fallbackAvatar?: string): string {
 
 async function getOrFetchPlaylistDetail(
 	playlistId: string,
-	authSeg: string,
+	auth: PlaylistAuth | undefined,
 	force = false,
 	filterUser?: string,
 	onPartial?: (detail: PlaylistDetail) => void,
 ): Promise<PlaylistDetail> {
-	const detailKey = `${roomId}|${authSeg}|${playlistId}|${filterUser || ""}`;
+	const detailKey = `${roomId}|${playlistAuthKey(auth)}|${playlistId}|${filterUser || ""}`;
 	if (!force) {
 		const cached = playlistDetailCache.get(detailKey);
 		if (cached && Date.now() - cached.fetchedAt < PLAYLIST_CACHE_TTL_MS) {
@@ -1546,7 +1557,7 @@ async function getOrFetchPlaylistDetail(
 		chatServerUrl,
 		roomId,
 		playlistId,
-		authSeg,
+		auth,
 		filterUser,
 		(partial) => {
 			progress.latest = partial;
@@ -1580,7 +1591,8 @@ function cancelPlaylistDetailPrefetch(): void {
 function schedulePlaylistDetailPrefetch(playlistId: string): void {
 	if (!chatServerUrl || !playlistId) return;
 	cancelPlaylistDetailPrefetch();
-	const authSeg = isWalineLoggedIn ? walineToken : "";
+	const auth = personalPlaylistAuth;
+	const authSeg = playlistAuthKey(auth);
 	const detailKey = `${roomId}|${authSeg}|${playlistId}|`;
 	const cached = playlistDetailCache.get(detailKey);
 	if (cached && Date.now() - cached.fetchedAt < PLAYLIST_CACHE_TTL_MS) return;
@@ -1588,7 +1600,7 @@ function schedulePlaylistDetailPrefetch(playlistId: string): void {
 
 	playlistHoverTimer = window.setTimeout(() => {
 		playlistHoverTimer = null;
-		void getOrFetchPlaylistDetail(playlistId, authSeg).catch(() => {});
+		void getOrFetchPlaylistDetail(playlistId, auth).catch(() => {});
 	}, 180);
 }
 
@@ -1613,6 +1625,19 @@ function syncDetailFlags(detail: PlaylistDetail): PlaylistDetail {
 }
 
 let playlistDetailRequestSeq = 0;
+let displayedPlaylistAuthKey = "";
+
+$effect(() => {
+	const key = playlistAuthKey(personalPlaylistAuth);
+	if (displayedPlaylistAuthKey === key) return;
+	displayedPlaylistAuthKey = key;
+	myPlaylists = [];
+	selectedPlaylist = null;
+	isLoadingPlaylistDetail = false;
+	isLoadingPlaylists = false;
+	playlistDetailRequestSeq++;
+	invalidatePlaylistCaches();
+});
 
 async function openPlaylistDetail(
 	playlistId: string,
@@ -1624,7 +1649,8 @@ async function openPlaylistDetail(
 	const isNewPlaylist = selectedPlaylist?.id !== playlistId;
 	const requestSeq = ++playlistDetailRequestSeq;
 	cancelPlaylistDetailPrefetch();
-	const authSeg = isWalineLoggedIn ? walineToken : "";
+	const auth = personalPlaylistAuth;
+	const authSeg = playlistAuthKey(auth);
 	const detailKey = `${roomId}|${authSeg}|${playlistId}|${filterUser || ""}`;
 
 	// 1. 若本地已有新鲜缓存且非强制刷新，立刻以完整详情打开
@@ -1676,7 +1702,7 @@ async function openPlaylistDetail(
 
 	// 3. 后台异步拉取曲目清单与最新数据
 	try {
-		const detail = await getOrFetchPlaylistDetail(playlistId, authSeg, force, filterUser, (partial) => {
+		const detail = await getOrFetchPlaylistDetail(playlistId, auth, force, filterUser, (partial) => {
 			if (isNewPlaylist && existingTracks.length === 0 && requestSeq === playlistDetailRequestSeq && selectedPlaylist?.id === playlistId) {
 				selectedPlaylist = syncDetailFlags(partial);
 			}
@@ -1702,7 +1728,8 @@ async function handleImportSubmit(overrideOptions?: {
 	type?: "playlist" | "user";
 	platform?: string;
 }): Promise<void> {
-	if (!isWalineLoggedIn) {
+	const auth = personalPlaylistAuth;
+	if (!auth) {
 		onRequestAuth?.();
 		return;
 	}
@@ -1722,6 +1749,7 @@ async function handleImportSubmit(overrideOptions?: {
 			raw,
 			overrideOptions,
 		);
+		if (personalPlaylistAuth !== auth) return;
 		if (resolved.kind === "ambiguous") {
 			pendingAmbiguousImport = {
 				query: resolved.query,
@@ -1740,9 +1768,10 @@ async function handleImportSubmit(overrideOptions?: {
 		const saved = await saveImportedPlaylist(
 			chatServerUrl,
 			roomId,
-			walineToken,
+			auth,
 			resolved.payload,
 		);
+		if (personalPlaylistAuth !== auth) return;
 		importInput = "";
 		if (resolved.retrievalMessage) {
 			importStatusText = resolved.retrievalMessage;
@@ -1765,7 +1794,8 @@ async function handleImportSubmit(overrideOptions?: {
 async function handleImportUserCandidate(
 	candidate: UserPlaylistCandidate,
 ): Promise<void> {
-	if (!isWalineLoggedIn) return;
+	const auth = personalPlaylistAuth;
+	if (!auth) return;
 	isImportingPlaylist = true;
 	importError = "";
 	importStatusText = "";
@@ -1775,12 +1805,14 @@ async function handleImportUserCandidate(
 			candidate.sourceUrl,
 			candidate.platform,
 		);
+		if (personalPlaylistAuth !== auth) return;
 		const saved = await saveImportedPlaylist(
 			chatServerUrl,
 			roomId,
-			walineToken,
+			auth,
 			parsed.payload,
 		);
+		if (personalPlaylistAuth !== auth) return;
 		pendingUserImport = null;
 		importInput = "";
 		if (parsed.retrievalMessage) {
@@ -1798,7 +1830,8 @@ async function handleImportUserCandidate(
 }
 
 async function handleRefreshPlaylist(playlist: PlaylistSummary): Promise<void> {
-	if (playlist.id === "pl_collective_favorites" || !isWalineLoggedIn || isRefreshingPlaylistId) return;
+	const auth = personalPlaylistAuth;
+	if (!auth || playlist.id === "pl_collective_favorites" || !canManagePlaylist(playlist) || isRefreshingPlaylistId) return;
 	isRefreshingPlaylistId = playlist.id;
 	try {
 		const fresh = await fetchPlaylistByUrlFromPlaylistOut(
@@ -1806,13 +1839,15 @@ async function handleRefreshPlaylist(playlist: PlaylistSummary): Promise<void> {
 			playlist.sourceUrl,
 			playlist.platform !== "external" ? playlist.platform : undefined,
 		);
+		if (personalPlaylistAuth !== auth) return;
 		const updated = await refreshSavedPlaylist(
 			chatServerUrl,
 			roomId,
-			walineToken,
+			auth,
 			playlist.id,
 			fresh.payload,
 		);
+		if (personalPlaylistAuth !== auth) return;
 		onNotify?.(`已刷新《${updated.title}》（共 ${updated.trackCount} 首）`);
 		invalidatePlaylistCaches(playlist.id);
 		void loadPlaylists(true);
@@ -1841,7 +1876,7 @@ async function loadRotationSettings() {
 	rotationError = "";
 	try {
 		if (!requestedServer) throw new Error("聊天室尚未连接，请稍后重试");
-		const result = await fetchRoomPlaylists(requestedServer, requestedRoom, walineToken);
+		const result = await fetchRoomPlaylists(requestedServer, requestedRoom, { kind: "waline", token: walineToken });
 		if (request !== rotationRequestSeq || !rotationExpanded || roomId !== requestedRoom || chatServerUrl !== requestedServer) return;
 		if (!result.rotation) throw new Error("未能获取轮播设置，请重试");
 		rotation = result.rotation;
@@ -1891,7 +1926,7 @@ async function handleSaveRotation() {
 	rotationSaving = true;
 	rotationError = "";
 	try {
-		rotation = await saveRoomRotation(chatServerUrl, roomId, walineToken, setting);
+		rotation = await saveRoomRotation(chatServerUrl, roomId, { kind: "waline", token: walineToken }, setting);
 		rotationExpanded = false;
 		onNotify?.("已保存本房间的轮播设置");
 		await loadPlaylists(true);
@@ -1906,7 +1941,8 @@ async function handleTogglePlaylistFlag(
 	playlist: PlaylistSummary,
 	flag: "isPublic" | "isFeatured",
 ): Promise<void> {
-	if (!walineToken || isUpdatingFlagsId) return;
+	const auth = personalPlaylistAuth;
+	if (!auth || isUpdatingFlagsId) return;
 	if (flag === "isPublic" && !canManagePlaylist(playlist)) return;
 	if (flag !== "isPublic" && !currentUser?.isAdmin) return;
 	isUpdatingFlagsId = playlist.id;
@@ -1918,7 +1954,7 @@ async function handleTogglePlaylistFlag(
 		const updated = await updatePlaylistFlags(
 			chatServerUrl,
 			roomId,
-			walineToken,
+			auth,
 			playlist.id,
 			nextFlags,
 		);
@@ -1954,7 +1990,8 @@ async function handleTogglePlaylistFlag(
 }
 
 async function handleDeletePlaylist(playlist: PlaylistSummary): Promise<void> {
-	if (!isWalineLoggedIn || isDeletingPlaylistId) return;
+	const auth = personalPlaylistAuth;
+	if (!auth || !canManagePlaylist(playlist) || isDeletingPlaylistId) return;
 	if (confirmDeletePlaylistId !== playlist.id) {
 		confirmDeletePlaylistId = playlist.id;
 		if (confirmDeleteTimer !== null) {
@@ -1972,7 +2009,7 @@ async function handleDeletePlaylist(playlist: PlaylistSummary): Promise<void> {
 	}
 	isDeletingPlaylistId = playlist.id;
 	try {
-		await deleteSavedPlaylist(chatServerUrl, roomId, walineToken, playlist.id);
+		await deleteSavedPlaylist(chatServerUrl, roomId, auth, playlist.id);
 		confirmDeletePlaylistId = "";
 		if (selectedPlaylist?.id === playlist.id) {
 			selectedPlaylist = null;
@@ -2169,7 +2206,7 @@ $effect(() => {
 $effect(() => {
 	roomId;
 	chatServerUrl;
-	walineToken;
+	personalPlaylistAuth;
 	void playlistRefreshSeq;
 	if (activeTab === "playlist") {
 		void loadPlaylists();
@@ -2182,14 +2219,14 @@ $effect(() => {
 	const ids = [...new Set([...featuredPlaylists, ...myPlaylists, ...membersPlaylists].map((playlist) => playlist.id).filter(Boolean))];
 	const requestRoom = roomId;
 	const requestServer = chatServerUrl;
-	const authSeg = isWalineLoggedIn ? walineToken : "";
+	const auth = personalPlaylistAuth;
 	let cancelled = false;
 	let next = 0;
 	async function preload() {
 		while (!cancelled && next < ids.length) {
 			const id = ids[next++];
 			if (!id || activeTab !== "playlist" || roomId !== requestRoom || chatServerUrl !== requestServer) return;
-			try { await getOrFetchPlaylistDetail(id, authSeg); } catch { /* 点击时仍可正常重试。 */ }
+			try { await getOrFetchPlaylistDetail(id, auth); } catch { /* 点击时仍可正常重试。 */ }
 		}
 	}
 	void preload();
@@ -4989,7 +5026,7 @@ $effect(() => {
           >
             <span class="flex items-center gap-1.5 min-w-0">
               <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">我的歌单</span>
-              {#if isWalineLoggedIn && myPlaylists.length > 0}
+              {#if personalPlaylistAuth && myPlaylists.length > 0}
                 <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{myPlaylists.length}</span>
               {/if}
             </span>
@@ -4998,45 +5035,10 @@ $effect(() => {
             </svg>
           </button>
           {#if !myCollapsed}
-          {#if !isWalineLoggedIn}
-            <div class="rounded-xl border border-amber-500/35 bg-amber-500/10 p-3 space-y-2">
-              {#if currentUser?.authType === "guest"}
-                <div class="flex items-center gap-1.5 text-[13px] xl:text-[12px] font-bold text-amber-600 dark:text-amber-400">
-                  <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
-                  </svg>
-                  <span>当前为访客身份，无法使用个人歌单</span>
-                </div>
-                <p class="text-[13px] xl:text-[12px] leading-relaxed text-[var(--deep-text)] m-0">
-                  你目前仅填写了访客昵称和邮箱，必须使用 <strong class="font-bold">Waline 账号</strong>登录后，才可导入并管理自己的歌单（访客仍可浏览精选与成员歌单）。
-                </p>
-              {:else}
-                <div class="flex items-center gap-1.5 text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">
-                  <svg class="w-3.5 h-3.5 text-(--primary) shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                  </svg>
-                  <span>需要 Waline 登录</span>
-                </div>
-                <p class="text-[13px] xl:text-[12px] leading-relaxed text-[var(--chat-meta-color)] m-0">
-                  必须使用 <strong class="font-bold text-[var(--deep-text)]">Waline 账号</strong>登录后，才可导入并保存自己的歌单（临时访客身份暂不支持）。
-                </p>
-              {/if}
-              {#if onRequestWalineAuth || onRequestAuth}
-                <div class="pt-0.5">
-                  <button
-                    type="button"
-                    disabled={walineLoginWaiting}
-                    class="px-2.5 py-1 rounded-lg text-[13px] xl:text-[12px] font-semibold bg-(--primary) text-white border-none cursor-pointer hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
-                    onclick={() => (onRequestWalineAuth ?? onRequestAuth)?.()}
-                  >
-                    {walineLoginWaiting ? "等待 Waline 完成登录..." : "使用 Waline 账号登录"}
-                  </button>
-                </div>
-              {/if}
-            </div>
+          {#if !personalPlaylistAuth}
+            <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0 px-2 py-1">
+              {currentUser ? "正在确认聊天室身份…" : "旁观模式可浏览公开歌单。加入聊天室后可导入自己的歌单。"}
+            </p>
           {:else}
             {@render importPlaylistCard()}
             {#if myPlaylists.length === 0}

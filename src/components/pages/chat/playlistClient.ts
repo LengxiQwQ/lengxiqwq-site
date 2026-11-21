@@ -361,13 +361,19 @@ export async function fetchPlaylistByUrlFromPlaylistOut(
 	return normalizePlaylistOutPlaylist(json.data, sourceUrl);
 }
 
-function buildAuthHeaders(walineToken?: string, hasBody = false): HeadersInit {
+export interface PlaylistAuth {
+	kind: "guest" | "waline";
+	token: string;
+}
+
+function buildAuthHeaders(auth?: PlaylistAuth, hasBody = false): HeadersInit {
 	const headers: Record<string, string> = {};
 	if (hasBody) {
 		headers["Content-Type"] = "application/json";
 	}
-	if (walineToken?.trim()) {
-		headers.Authorization = `Bearer ${walineToken.trim()}`;
+	if (auth?.token.trim()) {
+		headers.Authorization = `Bearer ${auth.token.trim()}`;
+		headers["X-Auth-Kind"] = auth.kind;
 	}
 	return headers;
 }
@@ -375,7 +381,7 @@ function buildAuthHeaders(walineToken?: string, hasBody = false): HeadersInit {
 export async function fetchRoomPlaylists(
 	chatServerUrl: string,
 	roomId: string,
-	walineToken?: string,
+	auth?: PlaylistAuth,
 	options?: { includeTracks?: boolean },
 ): Promise<PlaylistsResponse> {
 	const base = normalizeServerUrl(chatServerUrl);
@@ -385,7 +391,7 @@ export async function fetchRoomPlaylists(
 		`${base}/api/playlists?room=${encodeURIComponent(roomId)}${includeTracks ? "&includeTracks=1" : ""}`,
 		{
 			method: "GET",
-			headers: buildAuthHeaders(walineToken),
+			headers: buildAuthHeaders(auth),
 		},
 	);
 	const json = (await resp.json().catch(() => null)) as {
@@ -418,7 +424,7 @@ export async function fetchRoomPlaylists(
 export async function saveRoomRotation(
 	chatServerUrl: string,
 	roomId: string,
-	walineToken: string,
+	auth: PlaylistAuth,
 	rotation: RoomRotation,
 ): Promise<RoomRotation> {
 	const base = normalizeServerUrl(chatServerUrl);
@@ -426,7 +432,7 @@ export async function saveRoomRotation(
 		`${base}/api/playlists/rotation?room=${encodeURIComponent(roomId)}`,
 		{
 			method: "POST",
-			headers: buildAuthHeaders(walineToken, true),
+			headers: buildAuthHeaders(auth, true),
 			body: JSON.stringify(rotation),
 			signal: AbortSignal.timeout(10_000),
 		},
@@ -446,7 +452,7 @@ export async function fetchPlaylistDetail(
 	chatServerUrl: string,
 	roomId: string,
 	playlistId: string,
-	walineToken?: string,
+	auth?: PlaylistAuth,
 	filterUser?: string,
 	onPartial?: (detail: PlaylistDetail) => void,
 ): Promise<PlaylistDetail> {
@@ -458,7 +464,7 @@ export async function fetchPlaylistDetail(
 	});
 	const resp = await fetch(`${base}/api/playlists/detail?${q.toString()}`, {
 		method: "GET",
-		headers: buildAuthHeaders(walineToken),
+		headers: buildAuthHeaders(auth),
 		signal: AbortSignal.timeout(15_000),
 	});
 	const json = (await resp.json().catch(() => null)) as {
@@ -514,7 +520,7 @@ export async function fetchPlaylistDetail(
 export async function saveImportedPlaylist(
 	chatServerUrl: string,
 	roomId: string,
-	walineToken: string,
+	auth: PlaylistAuth,
 	payload: PlaylistImportPayload,
 ): Promise<{ playlist: PlaylistSummary; updatedExisting: boolean }> {
 	const base = normalizeServerUrl(chatServerUrl);
@@ -522,7 +528,7 @@ export async function saveImportedPlaylist(
 		`${base}/api/playlists/import?room=${encodeURIComponent(roomId)}`,
 		{
 			method: "POST",
-			headers: buildAuthHeaders(walineToken, true),
+			headers: buildAuthHeaders(auth, true),
 			body: JSON.stringify(payload),
 		},
 	);
@@ -544,7 +550,7 @@ export async function saveImportedPlaylist(
 export async function refreshSavedPlaylist(
 	chatServerUrl: string,
 	roomId: string,
-	walineToken: string,
+	auth: PlaylistAuth,
 	playlistId: string,
 	payload: PlaylistImportPayload,
 ): Promise<PlaylistSummary> {
@@ -553,7 +559,7 @@ export async function refreshSavedPlaylist(
 		`${base}/api/playlists/refresh?room=${encodeURIComponent(roomId)}`,
 		{
 			method: "POST",
-			headers: buildAuthHeaders(walineToken, true),
+			headers: buildAuthHeaders(auth, true),
 			body: JSON.stringify({ playlistId, playlist: payload }),
 		},
 	);
@@ -571,7 +577,7 @@ export async function refreshSavedPlaylist(
 export async function updatePlaylistFlags(
 	chatServerUrl: string,
 	roomId: string,
-	walineToken: string,
+	auth: PlaylistAuth,
 	playlistId: string,
 	flags: { isPublic?: boolean; isFeatured?: boolean; isFallback?: boolean },
 ): Promise<PlaylistSummary> {
@@ -580,7 +586,7 @@ export async function updatePlaylistFlags(
 		`${base}/api/playlists/flags?room=${encodeURIComponent(roomId)}`,
 		{
 			method: "POST",
-			headers: buildAuthHeaders(walineToken, true),
+			headers: buildAuthHeaders(auth, true),
 			body: JSON.stringify({ playlistId, ...flags }),
 		},
 	);
@@ -598,7 +604,7 @@ export async function updatePlaylistFlags(
 export async function deleteSavedPlaylist(
 	chatServerUrl: string,
 	roomId: string,
-	walineToken: string,
+	auth: PlaylistAuth,
 	playlistId: string,
 ): Promise<void> {
 	const base = normalizeServerUrl(chatServerUrl);
@@ -606,7 +612,7 @@ export async function deleteSavedPlaylist(
 		`${base}/api/playlists/delete?room=${encodeURIComponent(roomId)}`,
 		{
 			method: "POST",
-			headers: buildAuthHeaders(walineToken, true),
+			headers: buildAuthHeaders(auth, true),
 			body: JSON.stringify({ playlistId }),
 		},
 	);

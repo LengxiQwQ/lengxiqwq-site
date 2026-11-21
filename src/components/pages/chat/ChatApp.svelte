@@ -30,7 +30,6 @@ import {
 	formatClockSeconds,
 	isMentionedForUser,
 	normalizeServerUrl,
-	openWalineLoginPopup,
 	persistStoredChatUser,
 	readInitialCachedUser,
 	readStoredChatUser,
@@ -133,8 +132,7 @@ function isDocumentActivelyVisibleAndFocused(): boolean {
 let isWindowFocused = $state(false);
 let isIdleAway = $state(false);
 const isEffectiveFocused = $derived(isWindowFocused && !isIdleAway);
-let currentAuth: { kind: "waline" | "guest"; token: string } | null =
-	resolveInitialAuth();
+let currentAuth = $state.raw<ReturnType<typeof resolveInitialAuth>>(resolveInitialAuth());
 let currentUser = $state<ChatSessionUser | null>(readInitialCachedUser());
 let walineToken = $state(
 	currentAuth?.kind === "waline" ? currentAuth.token : "",
@@ -914,7 +912,6 @@ let externalPlaylistRequest = $state<
 	| { playlistId: string; seq: number; summary?: Partial<PlaylistSummary> }
 	| undefined
 >(undefined);
-let walineLoginWaiting = $state(false);
 let mentionEvent = $state<
 	{ name: string; userKey?: string; seq: number } | undefined
 >(undefined);
@@ -927,7 +924,6 @@ let ws: WebSocket | null = null;
 let pendingCloseSocket: WebSocket | null = null;
 let reconnectTimer: number | null = null;
 let noticeTimer: number | null = null;
-let cancelWalinePopup: (() => void) | null = null;
 let reconnectAttempt = 0;
 let isUnmounted = false;
 let secondaryStartupDone = false;
@@ -2540,30 +2536,6 @@ function handleMentionUser(name: string, userKey?: string) {
 	closeSplitRoom();
 }
 
-function handleDirectWalineLogin() {
-	if (!walineServerUrl) {
-		showNotice("未配置 Waline 服务地址");
-		return;
-	}
-	walineLoginWaiting = true;
-	cancelWalinePopup?.();
-	cancelWalinePopup = openWalineLoginPopup(
-		walineServerUrl,
-		(token) => {
-			walineLoginWaiting = false;
-			cancelWalinePopup = null;
-			handleAuthenticated({ kind: "waline", token });
-		},
-		() => {
-			walineLoginWaiting = false;
-			cancelWalinePopup = null;
-		},
-		() => {
-			showNotice("登录窗口被浏览器拦截，请允许本站弹出窗口后重试");
-		},
-	);
-}
-
 function handleAuthenticated(
 	auth: { kind: "waline" | "guest"; token: string },
 	user?: ChatSessionUser,
@@ -3401,9 +3373,6 @@ onMount(() => {
 			nextToken &&
 			(currentAuth?.kind !== "waline" || currentAuth.token !== nextToken)
 		) {
-			walineLoginWaiting = false;
-			cancelWalinePopup?.();
-			cancelWalinePopup = null;
 			showAuthModal = false;
 			handleAuthenticated({ kind: "waline", token: nextToken });
 		}
@@ -3551,7 +3520,6 @@ onMount(() => {
 		window.removeEventListener("wheel", resetIdleTimer);
 		window.removeEventListener("touchstart", resetIdleTimer);
 		mobileLayoutQuery.removeEventListener("change", handleMobileLayoutChange);
-		cancelWalinePopup?.();
 		clearReconnectTimer();
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 		if (skipPendingTimer !== null) window.clearTimeout(skipPendingTimer);
@@ -3821,6 +3789,7 @@ onMount(() => {
         roomId={currentRoom}
         chatServerUrl={normalizedChatServer}
         playlistOutApiUrl={playlistOutApiUrl}
+        playlistAuth={currentAuth ?? undefined}
         walineToken={walineToken}
         playlistRefreshSeq={playlistRefreshSeq}
         externalPlaylistRequest={externalPlaylistRequest}
@@ -3891,8 +3860,6 @@ onMount(() => {
           sendPacket({ type: "music:report_error", playUid, sourceRevision })
         }
         onRequestAuth={() => (showAuthModal = true)}
-        onRequestWalineAuth={handleDirectWalineLogin}
-        walineLoginWaiting={walineLoginWaiting}
       />
       {/key}
       {:else}

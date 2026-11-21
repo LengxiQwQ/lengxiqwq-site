@@ -1,0 +1,136 @@
+diff --git a/server.mjs b/server.mjs
+--- a/server.mjs
++++ b/server.mjs
+@@ -3168,9 +3168,7 @@
+     const roomId = playlistRoom;
+     const includeTracks = url.searchParams.get('includeTracks') === '1';
+ 
+-    const authHeader = req.headers.authorization || '';
+-    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+-    const caller = token ? await verifyWalineTokenRemote(token) : null;
++    const caller = await resolveHttpCaller(req);
+ 
+     const featuredIds = new Set(roomSettings[roomId]?.featured || []);
+     const fallbackIds = new Set(normalizeFallbackIds(roomSettings[roomId]));
+@@ -3221,7 +3219,7 @@
+ 
+     res.writeHead(200, {
+       'Content-Type': 'application/json; charset=utf-8',
+-      'Cache-Control': 'no-store'
++      'Cache-Control': 'private, no-store'
+     });
+     res.end(JSON.stringify({
+       ok: true,
+@@ -3283,8 +3281,7 @@
+       res.end(JSON.stringify({ ok: true, playlist: enriched }));
+       return;
+     }
+-    const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+-    const caller = token ? await verifyWalineTokenRemote(token) : null;
++    const caller = await resolveHttpCaller(req);
+     const detail = Object.hasOwn(playlistDetailsStore, plId) ? playlistDetailsStore[plId] : null;
+     if (visiblePlaylist(detail, caller)) {
+       const featuredIds = new Set(roomSettings[roomId]?.featured || []);
+@@ -3294,7 +3291,7 @@
+         isFeatured: featuredIds.has(plId),
+         isFallback: fallbackIds.has(plId)
+       };
+-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
++      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'private, no-store' });
+       res.end(JSON.stringify({ ok: true, playlist: enriched }));
+     } else {
+       res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+@@ -3312,16 +3309,20 @@
+ 
+     {
+       try {
+-        const authHeader = req.headers.authorization || '';
+-        const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+-        const caller = await verifyWalineTokenRemote(token);
++        const caller = await resolveHttpCaller(req);
+         if (!caller) {
+           res.writeHead(401, { 'Content-Type': 'application/json' });
+-          res.end(JSON.stringify({ ok: false, error: '请先登录账号后再操作歌单' }));
++          res.end(JSON.stringify({ ok: false, error: '请先加入聊天室后再操作歌单' }));
+           return;
+         }
+ 
+         const body = await readPlaylistJson(req);
++        if (caller.authType === 'guest' &&
++            (Object.hasOwn(body, 'isFallback') || Object.hasOwn(body, 'isFeatured'))) {
++          res.writeHead(403, { 'Content-Type': 'application/json' });
++          res.end(JSON.stringify({ ok: false, error: '当前身份只能调整个人歌单的共享状态' }));
++          return;
++        }
+         const playlistId = body.playlistId;
+         if (!playlistId) {
+           res.writeHead(400, { 'Content-Type': 'application/json' });
+@@ -3329,6 +3330,11 @@
+           return;
+         }
+ 
++        if (caller.authType === 'guest' && playlistId === 'pl_collective_favorites') {
++          res.writeHead(403, { 'Content-Type': 'application/json' });
++          res.end(JSON.stringify({ ok: false, error: '仅可管理自己的歌单' }));
++          return;
++        }
+         if (playlistId === 'pl_collective_favorites') {
+           if (typeof body.isFallback === 'boolean') {
+             const nextFallbacks = normalizeFallbackIds(roomSettings[roomId]).filter((id) => id !== 'pl_collective_favorites');
+@@ -3381,6 +3387,11 @@
+         }
+ 
+         const isOwner = target.ownerKey === caller.userKey;
++        if (caller.authType === 'guest' && !isOwner) {
++          res.writeHead(403, { 'Content-Type': 'application/json' });
++          res.end(JSON.stringify({ ok: false, error: '仅可管理自己的歌单' }));
++          return;
++        }
+         if (typeof body.isPublic === 'boolean' && !caller.isAdmin && !isOwner) {
+           res.writeHead(403, { 'Content-Type': 'application/json' });
+           res.end(JSON.stringify({ ok: false, error: '仅歌单创建者或站长可调整共享状态' }));
+@@ -3455,12 +3466,10 @@
+ 
+     {
+       try {
+-        const authHeader = req.headers.authorization || '';
+-        const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+-        const caller = await verifyWalineTokenRemote(token);
++        const caller = await resolveHttpCaller(req);
+         if (!caller) {
+           res.writeHead(401, { 'Content-Type': 'application/json' });
+-          res.end(JSON.stringify({ ok: false, error: '请先登录账号后再导入歌单' }));
++          res.end(JSON.stringify({ ok: false, error: '请先加入聊天室后再导入歌单' }));
+           return;
+         }
+ 
+@@ -3557,12 +3566,10 @@
+ 
+     {
+       try {
+-        const authHeader = req.headers.authorization || '';
+-        const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+-        const caller = await verifyWalineTokenRemote(token);
++        const caller = await resolveHttpCaller(req);
+         if (!caller) {
+           res.writeHead(401, { 'Content-Type': 'application/json' });
+-          res.end(JSON.stringify({ ok: false, error: '请先登录账号' }));
++          res.end(JSON.stringify({ ok: false, error: '请先加入聊天室' }));
+           return;
+         }
+ 
+@@ -3660,12 +3667,10 @@
+ 
+     {
+       try {
+-        const authHeader = req.headers.authorization || '';
+-        const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+-        const caller = await verifyWalineTokenRemote(token);
++        const caller = await resolveHttpCaller(req);
+         if (!caller) {
+           res.writeHead(401, { 'Content-Type': 'application/json' });
+-          res.end(JSON.stringify({ ok: false, error: '请先登录账号' }));
++          res.end(JSON.stringify({ ok: false, error: '请先加入聊天室' }));
+           return;
+         }
+ 
