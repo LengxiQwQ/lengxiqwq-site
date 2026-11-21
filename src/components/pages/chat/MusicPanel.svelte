@@ -2945,7 +2945,7 @@ $effect(() => {
     <button
       type="button"
       disabled={!currentPlay}
-      class="text-xs md:text-[0.6875rem] px-3 md:px-2.5 py-1 md:py-0.5 rounded-full border font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed
+      class="chat-listen-status text-xs md:text-[0.6875rem] px-3 md:px-2.5 py-0 rounded-full border font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed
         {isListening && currentPlay
           ? 'bg-(--primary)/14 border-(--primary)/30 text-[var(--chat-accent-text)] hover:bg-(--primary)/22'
           : 'bg-[var(--card-bg)]/60 border-[var(--chat-divider-color)] text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-[var(--card-bg)]/85'}"

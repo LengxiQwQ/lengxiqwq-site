@@ -218,9 +218,49 @@ try {
 			),
 		),
 	);
+	// Capture the position at the actual unmute setter, including brief openings
+	// that a periodic observation of currentTime would miss.
+	for (const tab of devices) {
+		await tab.evaluate(startedAt => {
+			const el = [...audios].find(a => !a.paused && !a.muted);
+			window.resumeAudio = el;
+			window.unmuteErrors = [];
+			const mutedProperty = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "muted");
+			Object.defineProperty(el, "muted", {
+				get() { return mutedProperty.get.call(this); },
+				set(value) {
+					if (!value && this.muted) {
+						unmuteErrors.push(Math.abs(this.currentTime - (musicFixture.now() - startedAt) / 1000));
+					}
+					mutedProperty.set.call(this, value);
+				},
+			});
+		}, muted.startedAt);
+	}
+	await Promise.all(devices.map(tab => button(tab, "正在收听（点击停止）")));
+	for (const tab of devices) {
+		await tab.evaluate(() => {
+			if (!resumeAudio.muted || resumeAudio.paused) throw Error("local mute interrupted playback");
+			resumeAudio.pause(); // Browser suspends the decoder while muted.
+			resumeAudio.currentTime = Math.max(0, resumeAudio.currentTime - 0.5);
+		});
+	}
+	await Promise.all(devices.map(tab => button(tab, "开始收听")));
+	for (const tab of devices) {
+		await tab.waitForFunction(() => unmuteErrors.length && !resumeAudio.muted);
+		await tab.evaluate(() => {
+			resumeAudio.dispatchEvent(new Event("waiting"));
+			if (!resumeAudio.muted) throw Error("buffering leaked output");
+			resumeAudio.currentTime -= 0.5;
+		});
+		await tab.waitForFunction(() => unmuteErrors.length >= 2 && !resumeAudio.muted);
+	}
+	const resumeErrors = (await Promise.all(devices.map(tab => tab.evaluate(() => unmuteErrors)))).flat();
+	assert.ok(resumeErrors.every(error => error < 0.09), "unmuted off timeline: " + resumeErrors);
 	console.log(
 		JSON.stringify({
 			devices: devices.length,
+			maxResumeErrorMs: Math.round(Math.max(...resumeErrors) * 1000),
 			switches: rounds,
 			p95ProgressSkewMs: skew.sort((a, b) => a - b)[
 				Math.ceil(rounds * 0.95) - 1

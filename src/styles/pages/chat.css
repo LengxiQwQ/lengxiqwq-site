@@ -2202,7 +2202,19 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transform: scale(0.92);
 }
 
+.chat-listen-status {
+	box-sizing: border-box;
+	inline-size: calc(9em + 3.25rem);
+	block-size: 2em;
+	flex: none;
+	justify-content: center;
+	white-space: nowrap;
+}
+
 .chat-play-btn {
+	box-sizing: border-box;
+	inline-size: calc(4em + 3.5rem);
+	white-space: nowrap;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -2605,6 +2617,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	}
 
 	.chat-play-btn {
+		inline-size: calc(4em + 4rem);
 		height: 2.625rem;
 		padding-inline: 1.25rem;
 		font-size: 0.875rem;

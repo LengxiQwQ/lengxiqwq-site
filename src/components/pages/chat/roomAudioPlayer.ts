@@ -41,6 +41,7 @@ export class RoomAudioPlayer {
 	private readonly events = new AbortController();
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private lastSeek = -Infinity;
+	private needsResumeSeek = false;
 
 	constructor(
 		private audio: HTMLAudioElement,
@@ -67,17 +68,22 @@ export class RoomAudioPlayer {
 			on("playing", () => {
 				if (!this.active || audio.paused) return;
 				reportDuration();
-				this.align();
-				audio.muted = audio.seeking;
-				this.update("playing");
+				this.openOutput();
 			});
-			on("seeked", () => {
-				if (this.active && !audio.paused) audio.muted = false;
+			on("seeked", () => this.openOutput());
+			on("timeupdate", () => {
+				if (audio.muted) this.openOutput();
+				else this.align();
 			});
-			on("timeupdate", () => this.align());
-			on("waiting", () => {
-				if (this.active && !audio.paused) this.update("loading");
-			});
+			const interrupt = () => {
+				if (this.active && !audio.ended) {
+					if (!audio.muted) this.needsResumeSeek = true;
+					audio.muted = true;
+					this.update("loading");
+				}
+			};
+			on("waiting", interrupt);
+			on("pause", interrupt);
 			on("ended", () => {
 				if (this.active && audio.ended) this.callbacks.ended(this.play!.uid);
 			});
@@ -98,6 +104,7 @@ export class RoomAudioPlayer {
 		const resume = () => {
 			if (document.hidden || !this.active || this.status === "blocked" || this.status === "error") return;
 			if (this.audio.paused && !this.audio.ended) this.start(this.audio.getAttribute("src") || undefined);
+			else if (this.audio.muted) this.openOutput();
 			else this.align();
 		};
 		document.addEventListener("visibilitychange", resume, options);
@@ -119,17 +126,28 @@ export class RoomAudioPlayer {
 		this.callbacks.status(status, this.intent);
 	}
 
+	private openOutput() {
+		const audio = this.audio;
+		if (!this.active || audio.paused || audio.ended || audio.seeking || audio.readyState < 3) return;
+		if (this.needsResumeSeek) this.align();
+		if (audio.seeking) return;
+		audio.muted = false;
+		if (this.status !== "playing") this.update("playing");
+	}
+
 	private align() {
-		if (!this.active || this.audio.readyState < 1 || this.audio.seeking || this.audio.ended) return;
+		const audio = this.audio;
+		if (!this.active || audio.readyState < 1 || audio.seeking || audio.ended) return;
 		const elapsed = (this.callbacks.now() - this.play!.startedAt) / 1000;
-		const target = Number.isFinite(this.audio.duration)
-			? Math.min(elapsed, this.audio.duration)
-			: elapsed;
-		if (Math.abs(this.audio.currentTime - target) <= SYNC_TOLERANCE_SEC) return;
+		const target = Number.isFinite(audio.duration) ? Math.min(elapsed, audio.duration) : elapsed;
 		const now = performance.now();
-		if (now - this.lastSeek < 1200) return;
+		if (!this.needsResumeSeek &&
+			(Math.abs(audio.currentTime - target) <= SYNC_TOLERANCE_SEC || now - this.lastSeek < 1200)) return;
+		this.needsResumeSeek = false;
+		if (audio.currentTime === target) return;
+		audio.muted = true;
 		this.lastSeek = now;
-		this.audio.currentTime = target;
+		audio.currentTime = target;
 		recordMusicEvent("realign-seek", this.play!.uid, { target });
 	}
 
@@ -187,8 +205,9 @@ export class RoomAudioPlayer {
 		else if (this.audio.error) this.audio.load();
 		this.update("loading");
 		this.align();
-		this.audio.muted = this.audio.seeking;
-		void this.audio.play().catch((error: DOMException) => {
+		void this.audio.play().then(() => {
+			if (generation === this.generation) this.openOutput();
+		}).catch((error: DOMException) => {
 			if (generation !== this.generation || error.name === "AbortError" || this.audio.error) return;
 			this.update(error.name === "NotAllowedError" ? "blocked" : "error");
 		});
@@ -202,6 +221,7 @@ export class RoomAudioPlayer {
 			previous?.startedAt === play?.startedAt && (previous?.phase === "transitioning") === (play?.phase === "transitioning")) return;
 		this.lastSeek = -Infinity;
 		this.reportedDuration = 0;
+		this.needsResumeSeek = false;
 		this.release();
 		if (play && this.intent) {
 			const url = play.track.streamUrl || play.track.proxyUrl;
@@ -217,14 +237,18 @@ export class RoomAudioPlayer {
 		this.intent = true;
 		this.preloadNext(this.next);
 		if (this.active && !this.audio.paused && this.status === "playing") return;
-		if (this.play) this.start();
+		this.needsResumeSeek = true;
+		if (this.play) this.start(this.audio.getAttribute("src") || undefined);
 		else this.update("idle");
 	}
 
 	stop(): void {
 		this.intent = false;
+		this.needsResumeSeek = false;
+		this.audio.muted = true;
+		clearTimeout(this.timer);
+		this.generation++;
 		this.preloadNext(this.next);
-		this.release();
 		this.update("idle");
 	}
 
@@ -235,5 +259,6 @@ export class RoomAudioPlayer {
 	destroy(): void {
 		this.events.abort();
 		this.stop();
+		this.release();
 	}
 }
