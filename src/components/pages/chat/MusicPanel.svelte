@@ -1150,10 +1150,24 @@ const queuedTrackIds = $derived(new Set(queue.map((item) => item.track.id)));
 $effect(() => {
 	if (enqueuingTrackIds.size > 0) {
 		const currentId = currentPlay?.track.id;
+		const currentTa = currentPlay?.track ? getTrackTitleArtistKey(currentPlay.track.title, currentPlay.track.artist) : "";
+		const queuedKeys = new Set<string>();
+		for (const item of queue) {
+			queuedKeys.add(item.track.id);
+			if (item.track.sourceId) queuedKeys.add(item.track.sourceId);
+			const bare = item.track.id.replace(/^[a-z_]+:/i, "");
+			if (bare) queuedKeys.add(bare);
+			const ta = getTrackTitleArtistKey(item.track.title, item.track.artist);
+			if (ta) queuedKeys.add(ta);
+		}
 		let changed = false;
-		for (const id of enqueuingTrackIds) {
-			if (id === currentId || queue.some((item) => item.track.id === id)) {
-				enqueuingTrackIds.delete(id);
+		for (const key of enqueuingTrackIds) {
+			if (
+				key === currentId ||
+				(currentTa && key === currentTa) ||
+				queuedKeys.has(key)
+			) {
+				enqueuingTrackIds.delete(key);
 				changed = true;
 			}
 		}
@@ -2068,6 +2082,9 @@ const queueLookupIndex = $derived.by(() => {
 	const byTitleNorm = new Map<string, Array<{ entry: QueueEntry; artistNorm: string }>>();
 	for (const item of queue) {
 		byId.set(item.track.id, item);
+		if (item.track.sourceId) byId.set(item.track.sourceId, item);
+		const bare = item.track.id.replace(/^[a-z_]+:/i, "");
+		if (bare) byId.set(bare, item);
 		const titleNorm = normalizeMatchTitle(item.track.title);
 		const artistNorm = normalizeMatchTitle(item.track.artist);
 		const bucket = byTitleNorm.get(titleNorm);
@@ -2084,30 +2101,49 @@ function isTrackCurrent(song: ChatMusicTrack): boolean {
 	const info = currentPlayMatchInfo;
 	if (!info) return false;
 	if (info.id === song.id) return true;
-	if (song.provider === "external") {
-		if (info.titleNorm !== normalizeMatchTitle(song.title)) return false;
+	if (song.sourceId && info.id.endsWith(song.sourceId)) return true;
+	const bareSong = song.id ? song.id.replace(/^[a-z_]+:/i, "") : "";
+	const bareCurr = info.id.replace(/^[a-z_]+:/i, "");
+	if (bareSong && bareCurr && bareSong === bareCurr) return true;
+	if (info.titleNorm === normalizeMatchTitle(song.title)) {
 		const firstArtist = normalizeMatchTitle(
 			song.artist.split(/[/,&、;；]+/)[0] || "",
 		);
-		return info.artistNorm.includes(firstArtist);
+		const currentFirstArtist = info.artistNorm.split(/[/,&、;；]+/)[0] || "";
+		if (
+			!firstArtist ||
+			!info.artistNorm ||
+			info.artistNorm.includes(firstArtist) ||
+			(currentFirstArtist && normalizeMatchTitle(song.artist).includes(currentFirstArtist))
+		) {
+			return true;
+		}
 	}
 	return false;
 }
 
 function findQueuedEntryForSong(song: ChatMusicTrack): QueueEntry | undefined {
 	const { byId, byTitleNorm } = queueLookupIndex;
-	const direct = byId.get(song.id);
-	if (direct) return direct;
-	if (song.provider === "external") {
-		const bucket = byTitleNorm.get(normalizeMatchTitle(song.title));
-		if (!bucket) return undefined;
-		const targetArtist = normalizeMatchTitle(
-			song.artist.split(/[/,&、;；]+/)[0] || "",
-		);
-		for (const candidate of bucket) {
-			if (!targetArtist || candidate.artistNorm.includes(targetArtist)) {
-				return candidate.entry;
-			}
+	if (song.id && byId.has(song.id)) return byId.get(song.id);
+	if (song.sourceId && byId.has(song.sourceId)) return byId.get(song.sourceId);
+	if (song.id) {
+		const bare = song.id.replace(/^[a-z_]+:/i, "");
+		if (bare && byId.has(bare)) return byId.get(bare);
+	}
+	const bucket = byTitleNorm.get(normalizeMatchTitle(song.title));
+	if (!bucket) return undefined;
+	const targetArtist = normalizeMatchTitle(
+		song.artist.split(/[/,&、;；]+/)[0] || "",
+	);
+	const fullSongArtist = normalizeMatchTitle(song.artist);
+	for (const candidate of bucket) {
+		if (
+			!targetArtist ||
+			!candidate.artistNorm ||
+			candidate.artistNorm.includes(targetArtist) ||
+			fullSongArtist.includes(candidate.artistNorm)
+		) {
+			return candidate.entry;
 		}
 	}
 	return undefined;
@@ -2806,22 +2842,54 @@ function markPendingAutoUnmuteIfImmediate(songId: string): void {
 	}
 }
 
+function isEnqueuingTrack(song: ChatMusicTrack): boolean {
+	if (enqueuingTrackIds.has(song.id)) return true;
+	if (song.sourceId && enqueuingTrackIds.has(song.sourceId)) return true;
+	const bareId = song.id ? song.id.replace(/^[a-z_]+:/i, "") : "";
+	if (bareId && enqueuingTrackIds.has(bareId)) return true;
+	const taKey = getTrackTitleArtistKey(song.title, song.artist);
+	if (taKey && enqueuingTrackIds.has(taKey)) return true;
+	return false;
+}
+
 async function requestTrack(song: ChatMusicTrack, anchor?: HTMLElement) {
-	if (enqueuingTrackIds.has(song.id)) return;
-	enqueuingTrackIds = new Set([...enqueuingTrackIds, song.id]);
+	if (isEnqueuingTrack(song) || isTrackQueued(song) || isTrackCurrent(song)) return;
+	const keysToAdd = [song.id];
+	if (song.sourceId) keysToAdd.push(song.sourceId);
+	const taKey = getTrackTitleArtistKey(song.title, song.artist);
+	if (taKey) keysToAdd.push(taKey);
+
+	enqueuingTrackIds = new Set([...enqueuingTrackIds, ...keysToAdd]);
 	markPendingAutoUnmuteIfImmediate(song.id);
 	try {
 		const accepted = await onEnqueueTrack(song, anchor);
-		if (!accepted && pendingAutoUnmuteTrackId === song.id) pendingAutoUnmuteTrackId = "";
-	} finally {
+		if (!accepted) {
+			if (pendingAutoUnmuteTrackId === song.id) pendingAutoUnmuteTrackId = "";
+			const next = new Set(enqueuingTrackIds);
+			for (const k of keysToAdd) next.delete(k);
+			enqueuingTrackIds = next;
+		} else {
+			window.setTimeout(() => {
+				let changed = false;
+				const next = new Set(enqueuingTrackIds);
+				for (const k of keysToAdd) {
+					if (next.has(k)) {
+						next.delete(k);
+						changed = true;
+					}
+				}
+				if (changed) enqueuingTrackIds = next;
+			}, 3500);
+		}
+	} catch {
 		const next = new Set(enqueuingTrackIds);
-		next.delete(song.id);
+		for (const k of keysToAdd) next.delete(k);
 		enqueuingTrackIds = next;
 	}
 }
 
 function handleToggleQueueTrack(song: ChatMusicTrack, anchor?: HTMLElement) {
-	if (isTrackCurrent(song)) return;
+	if (isTrackCurrent(song) || isEnqueuingTrack(song)) return;
 	const existing = findQueuedEntryForSong(song);
 	if (existing) {
 		if (canRemoveEntry(existing)) onRemoveQueue(existing.uid);
@@ -3441,7 +3509,7 @@ $effect(() => {
             <span class="text-[11px] leading-none font-semibold tabular-nums">{countBadge}</span>
           {/if}
         </button>
-      {:else if enqueuingTrackIds.has(song.id)}
+      {:else if isEnqueuingTrack(song)}
         <button
           type="button"
           disabled
