@@ -1,0 +1,49 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -511,6 +511,12 @@
+ 
+ const legacyUserKeyMap = loadJsonSafe('legacy_user_key_map.json', {});
+ 
++function normalizeCanonicalUserKey(rawKey) {
++  if (!rawKey || typeof rawKey !== 'string') return '';
++  const trimmed = rawKey.trim();
++  return legacyUserKeyMap[trimmed] || trimmed;
++}
++
+ function allocateNextQwqId() {
+   let maxNum = 0;
+   for (const m of membersStore) {
+@@ -1287,6 +1293,7 @@
+   }
+ 
+   if (user && user.userKey) {
++    user.userKey = normalizeCanonicalUserKey(user.userKey);
+     if (resolvedEmail) {
+       mentionMailer.recordMemberEmail(user.userKey, resolvedEmail);
+     }
+@@ -1486,6 +1493,7 @@
+ // Matrix Account Provisioning for Users
+ async function getOrCreateMatrixAccountForUser(user) {
+   if (!user || !user.userKey) return null;
++  user.userKey = normalizeCanonicalUserKey(user.userKey);
+   if (user.isAdmin) {
+     if (!adminProfileEnsured) {
+       ensureMatrixAdminProfile().catch(() => {});
+@@ -1898,6 +1906,7 @@
+ 
+ function upsertMember(user) {
+   if (!user || !user.userKey) return;
++  user.userKey = normalizeCanonicalUserKey(user.userKey);
+   const isWaline = user.userKey.startsWith('waline:');
+   const isMatrix = user.userKey.startsWith('matrix:') || user.userKey.startsWith('@');
+   const authType = user.authType || (isWaline ? 'waline' : isMatrix ? 'matrix' : 'guest');
+@@ -4171,6 +4180,9 @@
+           return regEmail && regEmail.toLowerCase() === email;
+         });
+         let userKey = existingMember?.userKey;
++        if (userKey) {
++          userKey = normalizeCanonicalUserKey(userKey);
++        }
+         if (!userKey) {
+           const nextQwq = allocateNextQwqId();
+           userKey = `guest:${nextQwq}`;
