@@ -70,6 +70,18 @@ export class RoomAudioPlayer {
 				audio.duration === this.reportedDuration
 			)
 				return;
+			// 严格防线：当前 audio 标签上的音源必须确实属于当前这首歌，绝不上报旧歌曲的残留时长
+			if (!this.isCurrentAudioSrcValid()) {
+				return;
+			}
+			// 保护性检查：若原歌曲已有合理时长，偏差超过 20 秒视为异常音源不予污染服务器
+			const baseSec = play.durationSec || play.track.durationSec || 0;
+			if (
+				baseSec > 30 &&
+				Math.abs(audio.duration - baseSec) > Math.max(15, baseSec * 0.2)
+			) {
+				return;
+			}
 			this.reportedDuration = audio.duration;
 			this.callbacks.duration(play.uid, audio.duration);
 		};
@@ -166,7 +178,7 @@ export class RoomAudioPlayer {
 				this.waitingTimer = undefined;
 				const proxy = play.track.proxyUrl;
 				if (proxy && proxy !== audio.getAttribute("src")) {
-					this.start(proxy);
+					this.start(true);
 					return;
 				}
 				this.update("error");
@@ -183,11 +195,15 @@ export class RoomAudioPlayer {
 				this.status === "error"
 			)
 				return;
-			if (audio.paused && !audio.ended) {
-				this.start(audio.getAttribute("src") || undefined);
+			if (this.isCurrentAudioSrcValid()) {
+				if (audio.paused && !audio.ended) {
+					this.start(false);
+				} else {
+					this.openOutput();
+					this.align(false);
+				}
 			} else {
-				this.openOutput();
-				this.align(false);
+				this.start(false);
 			}
 		};
 
@@ -207,6 +223,38 @@ export class RoomAudioPlayer {
 			!!this.play &&
 			this.play.phase !== "transitioning" &&
 			this.callbacks.now() >= this.play.startedAt
+		);
+	}
+
+	private isCurrentAudioSrcValid(): boolean {
+		const play = this.play;
+		if (!play) return false;
+		const currentSrc = this.audio.getAttribute("src");
+		if (!currentSrc) return false;
+		const validUrls = [
+			play.track.streamUrl,
+			play.track.directUrl,
+			play.track.proxyUrl,
+		].filter((u): u is string => Boolean(u));
+		return validUrls.includes(currentSrc);
+	}
+
+	private resolveTargetUrl(preferProxy = false): string | null {
+		const play = this.play;
+		if (!play) return null;
+		if (preferProxy) {
+			return (
+				play.track.proxyUrl ||
+				play.track.streamUrl ||
+				play.track.directUrl ||
+				null
+			);
+		}
+		return (
+			play.track.streamUrl ||
+			play.track.directUrl ||
+			play.track.proxyUrl ||
+			null
 		);
 	}
 
@@ -251,6 +299,7 @@ export class RoomAudioPlayer {
 		if (
 			!this.active ||
 			!play ||
+			!this.isCurrentAudioSrcValid() ||
 			audio.readyState < 1 ||
 			audio.seeking ||
 			audio.ended ||
@@ -299,7 +348,7 @@ export class RoomAudioPlayer {
 		}
 	}
 
-	private start(source?: string) {
+	private start(preferProxy = false) {
 		const play = this.play;
 		if (!play || !this.intent) return;
 		clearTimeout(this.timer);
@@ -307,29 +356,30 @@ export class RoomAudioPlayer {
 		this.waitingTimer = undefined;
 		const generation = ++this.generation;
 
-		if (!this.active) {
-			this.update("preparing");
-			if (play.phase !== "transitioning") {
-				const url = source || play.track.streamUrl || play.track.proxyUrl;
-				if (url && this.audio.getAttribute("src") !== url) {
-					this.audio.src = url;
-				}
-				this.timer = setTimeout(
-					() => this.start(source),
-					Math.max(0, play.startedAt - this.callbacks.now()),
-				);
+		const targetUrl = this.resolveTargetUrl(preferProxy);
+		if (!targetUrl) {
+			try {
+				this.audio.pause();
+			} catch {}
+			if (!this.isCurrentAudioSrcValid()) {
+				this.audio.removeAttribute("src");
+				this.audio.load();
 			}
-			return;
-		}
-
-		const url = source || play.track.streamUrl || play.track.proxyUrl;
-		if (!url) {
 			this.update("error");
 			return;
 		}
 
-		if (this.audio.getAttribute("src") !== url) {
-			this.audio.src = url;
+		if (this.audio.getAttribute("src") !== targetUrl) {
+			this.audio.src = targetUrl;
+		}
+
+		if (!this.active) {
+			this.update("preparing");
+			this.timer = setTimeout(
+				() => this.start(preferProxy),
+				Math.max(0, play.startedAt - this.callbacks.now()),
+			);
+			return;
 		}
 
 		this.update("loading");
@@ -350,8 +400,12 @@ export class RoomAudioPlayer {
 					return;
 				if (this.audio.error) {
 					const proxy = play.track.proxyUrl;
-					if (proxy && proxy !== this.audio.getAttribute("src")) {
-						this.start(proxy);
+					if (
+						proxy &&
+						!preferProxy &&
+						proxy !== this.audio.getAttribute("src")
+					) {
+						this.start(true);
 						return;
 					}
 					this.update("error");
@@ -364,23 +418,44 @@ export class RoomAudioPlayer {
 
 	setTrack(play: CurrentPlayback | null): void {
 		const previous = this.play;
-		this.play = play;
-		if (
+		const isSamePlay =
 			previous?.uid === play?.uid &&
 			previous?.sourceRevision === play?.sourceRevision &&
 			previous?.track.streamUrl === play?.track.streamUrl &&
-			previous?.track.proxyUrl === play?.track.proxyUrl &&
+			previous?.track.proxyUrl === play?.track.proxyUrl;
+
+		this.play = play;
+
+		if (
+			isSamePlay &&
 			previous?.startedAt === play?.startedAt &&
 			(previous?.phase === "transitioning") ===
 				(play?.phase === "transitioning")
 		)
 			return;
+
 		this.lastSeek = Number.NEGATIVE_INFINITY;
 		this.reportedDuration = 0;
 		this.isSeekingInternal = false;
 		this.release();
+
+		// 如果切到了不同的歌曲，并且新歌存在有效音源，立即替换 audio.src 并暂停，杜绝旧音频潜伏发声
+		if (!isSamePlay && play) {
+			const targetUrl = this.resolveTargetUrl(false);
+			if (targetUrl) {
+				if (this.audio.getAttribute("src") !== targetUrl) {
+					this.audio.src = targetUrl;
+				}
+			} else {
+				if (!this.isCurrentAudioSrcValid()) {
+					this.audio.removeAttribute("src");
+					this.audio.load();
+				}
+			}
+		}
+
 		if (play && this.intent) {
-			this.start();
+			this.start(false);
 		} else {
 			this.update("idle");
 		}
@@ -388,12 +463,19 @@ export class RoomAudioPlayer {
 
 	listen(): void {
 		this.intent = true;
-		if (this.active && !this.audio.paused && this.status === "playing") return;
-		if (this.play) {
-			this.start(this.audio.getAttribute("src") || undefined);
-		} else {
+		if (!this.play) {
 			this.update("idle");
+			return;
 		}
+		if (
+			this.active &&
+			!this.audio.paused &&
+			this.status === "playing" &&
+			this.isCurrentAudioSrcValid()
+		) {
+			return;
+		}
+		this.start(false);
 	}
 
 	stop(): void {
