@@ -30,6 +30,88 @@ export function mentionRanges(
 		});
 }
 
+export function normalizeMentionSpacing(
+	content: string,
+	entities: readonly ChatMentionEntity[] = [],
+): ChatDraft {
+	if (!entities?.length) {
+		return { content: content.trim(), mentionEntities: [] };
+	}
+	const sorted = [...entities]
+		.filter(
+			(e) =>
+				e &&
+				Number.isSafeInteger(e.offset) &&
+				Number.isSafeInteger(e.length) &&
+				e.length > 0 &&
+				e.offset >= 0 &&
+				e.offset + e.length <= content.length,
+		)
+		.sort((a, b) => a.offset - b.offset);
+
+	let result = "";
+	let cursor = 0;
+	const newEntities: ChatMentionEntity[] = [];
+
+	for (let i = 0; i < sorted.length; i++) {
+		const entity = sorted[i];
+		const segBefore = content.slice(cursor, entity.offset);
+
+		if (i === 0) {
+			const trimmed = segBefore.replace(/^[ \t]+/, "");
+			result += trimmed;
+			if (result.length > 0 && !/[\s]/.test(result.slice(-1))) {
+				result += " ";
+			}
+		} else {
+			if (!segBefore.trim()) {
+				const hasNewline = segBefore.includes("\n");
+				if (hasNewline) {
+					result = `${result.replace(/[ \t]+$/, "")}\n`;
+				} else if (result.length > 0 && !/[\s]/.test(result.slice(-1))) {
+					result += " ";
+				}
+			} else {
+				let middle = segBefore;
+				if (
+					!/^[\s]/.test(middle) &&
+					result.length > 0 &&
+					!/[\s]/.test(result.slice(-1))
+				) {
+					middle = ` ${middle}`;
+				}
+				if (!/[\s]/.test(middle.slice(-1))) {
+					middle = `${middle} `;
+				}
+				result += middle;
+			}
+		}
+
+		const newOffset = result.length;
+		const label = content.slice(entity.offset, entity.offset + entity.length);
+		result += label;
+		newEntities.push({
+			offset: newOffset,
+			length: label.length,
+			userKey: entity.userKey,
+		});
+		cursor = entity.offset + entity.length;
+	}
+
+	const segAfter = content.slice(cursor);
+	if (!segAfter.trim()) {
+		result = result.replace(/[ \t]+$/, "");
+	} else {
+		let trail = segAfter.replace(/[\s]+$/, "");
+		if (!/^[\s]/.test(trail)) {
+			trail = ` ${trail}`;
+		}
+		result += trail;
+	}
+
+	return { content: result, mentionEntities: newEntities };
+}
+
 export function trimChatDraft(draft: ChatDraft): ChatDraft {
 	const left = draft.content.length - draft.content.trimStart().length;
 	const content = draft.content.trim();
@@ -40,7 +122,7 @@ export function trimChatDraft(draft: ChatDraft): ChatDraft {
 			offset: entity.offset - left,
 		})),
 	);
-	return { content, mentionEntities };
+	return normalizeMentionSpacing(content, mentionEntities);
 }
 
 export function readChatComposer(container: HTMLElement): ChatDraft {
@@ -137,12 +219,36 @@ export function insertChatMention(
 	const range =
 		replacement || (selection?.rangeCount ? selection.getRangeAt(0) : null);
 	const pill = createPill(`@${label}`, userKey);
+
+	let needsLeadingSpace = false;
 	if (range && container.contains(range.commonAncestorContainer)) {
+		const sc = range.startContainer;
+		const so = range.startOffset;
+		if (sc.nodeType === Node.TEXT_NODE) {
+			const text = sc.nodeValue || "";
+			if (so > 0 && !/[\s]/.test(text[so - 1])) {
+				needsLeadingSpace = true;
+			}
+		}
 		range.deleteContents();
+		if (needsLeadingSpace) {
+			const spaceNode = document.createTextNode(" ");
+			range.insertNode(spaceNode);
+			range.setStartAfter(spaceNode);
+			range.collapse(true);
+		}
 		range.insertNode(pill);
 	} else {
+		const last = container.lastChild;
+		if (last?.nodeType === Node.TEXT_NODE) {
+			const text = last.nodeValue || "";
+			if (text.length > 0 && !/[\s]/.test(text[text.length - 1])) {
+				container.append(document.createTextNode(" "));
+			}
+		}
 		container.append(pill);
 	}
+
 	let caret: Text;
 	const nextSibling = pill.nextSibling;
 	if (

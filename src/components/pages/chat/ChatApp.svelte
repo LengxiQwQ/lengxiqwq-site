@@ -960,6 +960,37 @@ let stickerPacks = $state<StickerPack[]>([]);
 let mentionSeq = 0;
 let externalPlaylistSeq = 0;
 let baseDocumentTitle = "";
+
+function cleanDocumentTitle(title: string): string {
+	return (title || "")
+		.replace(/^(\[(?:有人提到了你|提到了你)\]\s*)+/gu, "")
+		.trim();
+}
+
+function isDocumentHidden(): boolean {
+	if (typeof document === "undefined") return false;
+	return document.hidden || document.visibilityState !== "visible";
+}
+
+function updateMentionDocumentTitle(): void {
+	if (typeof document === "undefined") return;
+	const clean =
+		cleanDocumentTitle(baseDocumentTitle || document.title) || "聊天室";
+	baseDocumentTitle = clean;
+	if (!document.title.startsWith("[提到了你]")) {
+		document.title = `[提到了你] ${clean}`;
+	}
+}
+
+function restoreDocumentTitle(): void {
+	if (typeof document === "undefined") return;
+	const clean =
+		cleanDocumentTitle(baseDocumentTitle || document.title) || "聊天室";
+	baseDocumentTitle = clean;
+	if (document.title !== clean) {
+		document.title = clean;
+	}
+}
 let ws: WebSocket | null = null;
 let pendingCloseSocket: WebSocket | null = null;
 let reconnectTimer: number | null = null;
@@ -2103,11 +2134,10 @@ function connectRoom(roomId: string) {
 					if (!messages.some((m) => m.msgUid === packet.message.msgUid)) {
 						messages = [...messages, packet.message];
 						if (
-							document.hidden &&
+							isDocumentHidden() &&
 							isMentionedForUser(packet.message, currentUser)
 						) {
-							if (!baseDocumentTitle) baseDocumentTitle = document.title;
-							document.title = `[有人提到了你] ${baseDocumentTitle}`;
+							updateMentionDocumentTitle();
 						}
 					}
 				} else {
@@ -2126,6 +2156,12 @@ function connectRoom(roomId: string) {
 								[packet.roomId]: [...prevUids, packet.message.msgUid],
 							};
 						}
+					}
+					if (
+						isDocumentHidden() &&
+						isMentionedForUser(packet.message, currentUser)
+					) {
+						updateMentionDocumentTitle();
 					}
 				}
 				break;
@@ -3204,7 +3240,7 @@ onMount(() => {
 	mobileLayoutQuery.addEventListener("change", handleMobileLayoutChange);
 	// 切入聊天室时立即停止全站侧栏/顶栏音乐播放器，避免与点歌台同时发声
 	window.__fireflyMusic?.stop?.();
-	baseDocumentTitle = document.title;
+	baseDocumentTitle = cleanDocumentTitle(document.title);
 	currentAuth = resolveInitialAuth();
 	walineToken = currentAuth?.kind === "waline" ? currentAuth.token : "";
 	if (!currentUser) {
@@ -3328,9 +3364,6 @@ onMount(() => {
 		}, IDLE_AWAY_MS);
 	};
 
-	const isDocumentHidden = () =>
-		document.hidden || document.visibilityState !== "visible";
-
 	const computeFocusedState = () => isDocumentActivelyVisibleAndFocused();
 
 	const syncFocusState = () => {
@@ -3339,10 +3372,12 @@ onMount(() => {
 		reportFocusState();
 		if (focused) {
 			resetIdleTimer();
+			restoreDocumentTitle();
 		}
 	};
 
 	const handleWindowFocus = () => {
+		restoreDocumentTitle();
 		refreshPushDisplay();
 		syncFocusState();
 	};
@@ -3377,9 +3412,7 @@ onMount(() => {
 			if (isWindowFocused) {
 				resetIdleTimer();
 			}
-			if (baseDocumentTitle && document.title !== baseDocumentTitle) {
-				document.title = baseDocumentTitle;
-			}
+			restoreDocumentTitle();
 			void refreshGlobalPresence();
 			void refreshMemberDirectory();
 			void refreshSpectatorHistory();
