@@ -1,13 +1,14 @@
 <script lang="ts">
 import { onMount, tick, untrack } from "svelte";
 import {
+	chatPushUnavailableReason,
 	disableChatPush,
 	enableChatPush,
-	getChatPushMode,
 	prepareChatPush,
 	readChatPushSettings,
 	supportsChatPush,
 	testChatPush,
+	updateChatPushMode,
 } from "./chatPush";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatWindow from "./ChatWindow.svelte";
@@ -346,8 +347,30 @@ let hasAppMounted = false;
 const NOTIFICATION_MODE_STORAGE_KEY = "fireflyChatDesktopNotificationMode";
 const NOTIFICATION_STORAGE_KEY = "fireflyChatDesktopNotification";
 let preparedPush: Awaited<ReturnType<typeof prepareChatPush>> | undefined;
-let pushPreparing = $state(false);
-let pushBusy = $state(false);
+let pushPreparation: Promise<Awaited<ReturnType<typeof prepareChatPush>>> | undefined;
+let pushSaving = $state(false);
+let pushTesting = $state(false);
+let pushTestUntil = $state(0);
+let pushTestSeconds = $state(0);
+
+$effect(() => {
+	const until = pushTestUntil;
+	let timer: ReturnType<typeof setTimeout>;
+	function tickCooldown() {
+		const remaining = Math.max(0, until - Date.now());
+		pushTestSeconds = Math.ceil(remaining / 1000);
+		if (remaining) timer = setTimeout(tickCooldown, remaining % 1000 || 1000);
+	}
+	tickCooldown();
+	return () => clearTimeout(timer);
+});
+let pushLoggingOut = false;
+let pendingPushMode: {
+	server: string;
+	auth: NonNullable<typeof currentAuth>;
+	userKey: string;
+	mode: ChatDesktopNotificationMode;
+} | undefined;
 let pushNeedsMigration = $state(false);
 let pushOperation: Promise<void> | undefined;
 let desktopNotificationMode = $state<ChatDesktopNotificationMode>("off");
@@ -1353,121 +1376,175 @@ function showNotice(msg: string, tone?: "default" | "error") {
 	}, 3600);
 }
 
+function pushTestStorageKey(userKey: string) {
+	return `fireflyChatPushTestUntil:${userKey}`;
+}
+
 function refreshPushDisplay() {
 	const saved = readChatPushSettings();
-	const permission = typeof Notification !== "undefined" ? Notification.permission : "default";
+	const permission = typeof Notification !== "undefined" ? Notification.permission :
+		saved && saved.userKey === currentUser?.userKey && saved.mode !== "off" ? "granted" : "default";
 	desktopNotificationPermission = permission;
-	desktopNotificationMode = saved && saved.userKey === currentUser?.userKey &&
-		permission === "granted" ? saved.mode : "off";
+	if (!pushSaving) {
+		desktopNotificationMode = saved && saved.userKey === currentUser?.userKey &&
+			permission === "granted" ? saved.mode : "off";
+	}
 	try {
+		const userKey = currentUser?.userKey;
+		pushTestUntil = userKey ? Number(localStorage.getItem(pushTestStorageKey(userKey))) || 0 : 0;
 		const legacyMode = localStorage.getItem(NOTIFICATION_MODE_STORAGE_KEY);
 		pushNeedsMigration = !saved && (legacyMode === "all" || legacyMode === "mention" ||
 			(!legacyMode && localStorage.getItem(NOTIFICATION_STORAGE_KEY) === "true"));
 	} catch {}
 }
 
-async function preparePushSettings(userKey: string) {
-	if (!supportsChatPush() || !currentAuth || !normalizedChatServer || pushPreparing) return;
-	pushPreparing = true;
-	const auth = currentAuth;
-	try {
-		const saved = readChatPushSettings();
-		if (saved && saved.userKey !== userKey) await disableChatPush(normalizedChatServer, saved);
-		if (readChatPushSettings()?.userKey === userKey) {
-			await getChatPushMode(normalizedChatServer, auth, userKey);
-		}
-		preparedPush = await prepareChatPush(normalizedChatServer);
-		refreshPushDisplay();
-	} catch {
-		preparedPush = undefined;
-	} finally {
-		pushPreparing = false;
-	}
+function preparePushSettings() {
+	pushPreparation ??= prepareChatPush(normalizedChatServer)
+		.then((prepared) => {
+			preparedPush = prepared;
+			return prepared;
+		})
+		.finally(() => { pushPreparation = undefined; });
+	return pushPreparation;
 }
 
 $effect(() => {
 	const userKey = currentUser?.userKey;
-	const profileOpen = showProfileModal;
-	const mounted = hasAppMounted;
-	if (!mounted) return;
+	if (!hasAppMounted || !userKey) return;
 	untrack(() => {
 		refreshPushDisplay();
-		if (!userKey) return;
 		const saved = readChatPushSettings();
-		if (profileOpen) {
-			void preparePushSettings(userKey);
-		} else if (saved && saved.userKey !== userKey) {
-			void disableChatPush(normalizedChatServer, saved).then(refreshPushDisplay, () =>
-				showNotice("旧账号的推送尚未关闭，请重试开启或关闭浏览器通知权限"));
+		if (saved && saved.userKey !== userKey) {
+			void (async () => {
+				await pushOperation;
+				const previous = readChatPushSettings();
+				if (previous && previous.userKey !== currentUser?.userKey) {
+					await disableChatPush(normalizedChatServer, previous);
+					preparedPush = undefined;
+				}
+				refreshPushDisplay();
+			})().catch(() => showNotice("旧账号的推送尚未关闭，请重试开启或关闭浏览器通知权限"));
+		} else if (!saved && !preparedPush && normalizedChatServer && supportsChatPush()) {
+			// Prepare before the click so the first subscribe call can run in the browser's user gesture.
+			void preparePushSettings().catch(() => {});
 		}
 	});
 });
 
-async function setDesktopNotificationMode(mode: ChatDesktopNotificationMode) {
-	const auth = currentAuth;
-	const userKey = currentUser?.userKey;
-	if (!auth || !userKey || pushBusy || pushPreparing) return;
-	if (mode !== "off" && !supportsChatPush()) {
-		showNotice("当前环境不支持浏览器推送，iPhone 或 iPad 请先将网站添加到主屏幕");
+async function savePushMode(
+	server: string,
+	auth: NonNullable<typeof currentAuth>,
+	userKey: string,
+	mode: ChatDesktopNotificationMode,
+) {
+	const saved = readChatPushSettings();
+	const owned = saved?.userKey === userKey ? saved : null;
+	const result = owned ? await updateChatPushMode(server, userKey, mode) : "missing";
+	if (result === "updated") return;
+	if (mode === "off") {
+		if (owned) {
+			await disableChatPush(server, owned);
+			preparedPush = undefined;
+		}
 		return;
 	}
-	if (mode !== "off" && Notification.permission === "denied") {
+	if (saved && !owned) {
+		await disableChatPush(server, saved);
+		preparedPush = undefined;
+	}
+	const prepared = preparedPush ?? await preparePushSettings();
+	if (currentUser?.userKey !== userKey || !currentAuth) return;
+	if (result === "missing" && owned && prepared.subscription) {
+		await prepared.subscription.unsubscribe();
+		prepared.subscription = null;
+	}
+	await enableChatPush(server, auth, userKey, getOrCreateVisitorId(), mode, prepared);
+}
+
+function setDesktopNotificationMode(mode: ChatDesktopNotificationMode) {
+	const auth = currentAuth;
+	const userKey = currentUser?.userKey;
+	const server = normalizedChatServer;
+	if (!auth || !userKey || !server || pushLoggingOut || (pushSaving && mode === desktopNotificationMode)) return;
+	const unavailable = mode === "off" ? null : chatPushUnavailableReason();
+	if (unavailable) {
+		showNotice(unavailable);
+		return;
+	}
+	if (mode !== "off" && typeof Notification !== "undefined" && Notification.permission === "denied") {
 		showNotice("请先在浏览器的网站权限中允许通知");
 		return;
 	}
-	if (mode !== "off" && !preparedPush) {
-		await preparePushSettings(userKey);
-		showNotice(preparedPush ? "推送已准备好，请再次选择提醒档位" : "推送准备失败，请重试");
-		return;
-	}
-	pushBusy = true;
-	const applyMode = async () => {
-		if (mode === "off") {
-			await disableChatPush(normalizedChatServer);
-			if (preparedPush) preparedPush.subscription = null;
-		} else if (preparedPush) {
-			await enableChatPush(normalizedChatServer, auth, userKey, getOrCreateVisitorId(), mode, preparedPush);
+	desktopNotificationMode = mode;
+	pendingPushMode = { server, auth, userKey, mode };
+	if (pushSaving) return;
+	pushSaving = true;
+	const saveLatestMode = async () => {
+		while (pendingPushMode) {
+			const requested = pendingPushMode;
+			pendingPushMode = undefined;
+			if (currentUser?.userKey !== requested.userKey) continue;
+			try {
+				await savePushMode(requested.server, requested.auth, requested.userKey, requested.mode);
+				try {
+					localStorage.removeItem(NOTIFICATION_MODE_STORAGE_KEY);
+					localStorage.removeItem(NOTIFICATION_STORAGE_KEY);
+				} catch {}
+			} catch (error) {
+				if (pendingPushMode || currentUser?.userKey !== requested.userKey) continue;
+				const reason = error instanceof Error ? error.message : "";
+				if ((typeof Notification !== "undefined" && Notification.permission === "denied") ||
+					(error instanceof Error && error.name === "NotAllowedError")) {
+					showNotice("浏览器未授予通知权限，请检查本站的网站权限");
+				} else if (reason === "worker") {
+					showNotice("浏览器推送脚本未能启动，请刷新后重试");
+				} else if (reason === "push-api") {
+					showNotice("当前浏览器配置未开放后台推送，请在普通标签页重试");
+				} else if (reason === "endpoint") {
+					showNotice("当前浏览器的推送服务暂未适配");
+				} else if (error instanceof Error && error.name === "AbortError") {
+					showNotice("浏览器未能建立推送订阅，请检查网络后重试");
+				} else {
+					showNotice("同步推送设置失败，请重试");
+				}
+			}
 		}
-		try {
-			localStorage.removeItem(NOTIFICATION_MODE_STORAGE_KEY);
-			localStorage.removeItem(NOTIFICATION_STORAGE_KEY);
-		} catch {}
 	};
-	pushOperation = applyMode();
-	try {
-		await pushOperation;
-		showNotice(mode === "off" ? "已关闭此浏览器的推送" : "已更新此浏览器的推送设置");
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : "";
-		showNotice(reason === "endpoint" ? "当前浏览器的推送服务暂未适配" :
-			Notification.permission === "denied" ? "浏览器未授予通知权限" : "保存推送设置失败，请重试");
-	} finally {
+	pushOperation = saveLatestMode().finally(() => {
+		pendingPushMode = undefined;
 		pushOperation = undefined;
-		pushBusy = false;
+		pushSaving = false;
 		refreshPushDisplay();
-	}
+	});
 }
 
 async function sendTestPush() {
 	const auth = currentAuth;
 	const userKey = currentUser?.userKey;
-	if (!auth || !userKey || pushBusy) return;
-	pushBusy = true;
+	if (!auth || !userKey || pushSaving || pushTesting || pushTestUntil > Date.now()) return;
+	pushTesting = true;
 	try {
-		await testChatPush(normalizedChatServer, auth, userKey);
-		showNotice("测试推送已发出，请查看系统通知");
-	} catch (error) {
-		const reason = error instanceof Error ? error.message : "";
-		showNotice(reason === "rate" ? "请稍后再发送测试推送" : "测试推送未发出，请检查订阅状态后重试");
-		void preparePushSettings(userKey);
+		const { status, cooldownMs } = await testChatPush(normalizedChatServer, auth, userKey);
+		const until = Date.now() + cooldownMs;
+		try { localStorage.setItem(pushTestStorageKey(userKey), String(until)); } catch {}
+		if (currentUser?.userKey !== userKey) return;
+		pushTestUntil = until;
+		if (status === "sent") showNotice("测试推送已发出，请查看系统通知");
+		if (status === "failed") showNotice("测试推送未发出，请检查订阅状态");
+	} catch {
+		showNotice("测试推送未发出，请检查订阅状态后重试");
 	} finally {
-		pushBusy = false;
+		pushTesting = false;
 	}
 }
 
 function handleToggleDesktopNotification() {
-	if (currentUser) showProfileModal = true;
-	else showAuthModal = true;
+	if (!currentUser) {
+		showAuthModal = true;
+		return;
+	}
+	const next = { off: "mention", mention: "all", all: "off" } as const;
+	setDesktopNotificationMode(next[desktopNotificationMode]);
 }
 
 function sendPacket(packet: Record<string, unknown>): boolean {
@@ -2552,13 +2629,17 @@ function handleAuthenticated(
 }
 
 async function handleLogout() {
+	if (pushLoggingOut) return;
+	pushLoggingOut = true;
 	try {
-		await pushOperation?.catch(() => {});
+		await pushOperation;
 		await disableChatPush(normalizedChatServer);
-		if (preparedPush) preparedPush.subscription = null;
+		preparedPush = undefined;
 	} catch {
 		showNotice("关闭此浏览器的推送失败，请重试退出");
 		return;
+	} finally {
+		pushLoggingOut = false;
 	}
 	if (currentAuth?.kind === "waline") {
 		clearWalineAuth();
@@ -3237,6 +3318,7 @@ onMount(() => {
 	};
 
 	const handleWindowFocus = () => {
+		refreshPushDisplay();
 		syncFocusState();
 	};
 
@@ -4012,7 +4094,9 @@ onMount(() => {
       desktopNotificationMode={desktopNotificationMode}
       desktopNotificationPermission={desktopNotificationPermission}
       onChangeDesktopNotificationMode={setDesktopNotificationMode}
-      notificationBusy={pushBusy || pushPreparing}
+      notificationSaving={pushSaving}
+      notificationTesting={pushTesting}
+      notificationTestSeconds={pushTestSeconds}
       notificationNeedsMigration={pushNeedsMigration}
       onTestNotification={sendTestPush}
       onSave={handleUpdateProfile}

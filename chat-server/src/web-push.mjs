@@ -209,6 +209,20 @@ export function createChatPush({ webPush, dataDir, resolveCaller, canReadRoom, i
           json(res, 200, { mode: 'off' });
           return true;
         }
+        // The device key can change delivery for its existing subscription only.
+        if (path === PUSH_ROOT + 'mode') {
+          if (!MODES.has(data.mode)) json(res, 400, { error: 'invalid' });
+          else if (!record) json(res, 404, { error: 'missing' });
+          else {
+            if (record.mode !== data.mode) {
+              const next = new Map(records);
+              next.set(id, { ...record, mode: data.mode });
+              update(next);
+            }
+            json(res, 200, { mode: data.mode });
+          }
+          return true;
+        }
         const caller = await resolveCaller(req);
         const userKey = caller?.userKey;
         if (!/^(waline|guest):.+$/.test(userKey || '')) json(res, 401, { error: 'auth' });
@@ -242,16 +256,21 @@ export function createChatPush({ webPush, dataDir, resolveCaller, canReadRoom, i
         } else if (path === PUSH_ROOT + 'test') {
           const current = records.get(id);
           const now = Date.now();
-          if (current?.userKey !== userKey) json(res, 404, { error: 'missing' });
-          else if ((lastTest.get(userKey) || 0) > now) json(res, 429, { error: 'rate' });
+          if (current?.userKey !== userKey || current.mode === 'off') json(res, 404, { error: 'missing' });
+          else if ((lastTest.get(userKey) || 0) > now) {
+            json(res, 429, { error: 'rate', cooldownMs: lastTest.get(userKey) - now });
+          }
           else {
-            lastTest.set(userKey, now + TEST_INTERVAL);
+            const nextTestAt = now + TEST_INTERVAL;
+            lastTest.set(userKey, nextTestAt);
             for (const [key, until] of lastTest) {
               if (until > now) break;
               lastTest.delete(key);
             }
             const sent = await deliver(current, { test: true, body: '测试通知\n浏览器推送已启用' }, 60);
-            json(res, sent ? 200 : 502, { ok: sent });
+            const cooldownMs = Math.max(0, nextTestAt - Date.now());
+            if (sent) json(res, 200, { ok: true, cooldownMs });
+            else json(res, 502, { ok: false, error: 'delivery', cooldownMs });
           }
         } else json(res, 404, { error: 'route' });
       }

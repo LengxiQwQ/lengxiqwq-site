@@ -101,13 +101,35 @@ test('chat push routes and live delivery respect account, room, browser and mode
   push.publish('interconnect', { ...message, msgUid: 'long', content: '🎵'.repeat(300), mentionKeys: [alice] });
   assert.equal(sent.splice(0)[0]?.body, '小茶 提到了你\n' + '🎵'.repeat(240) + '…');
 
-  assert.equal((await call('test', phone, alice))[0], 200);
+  assert.deepEqual(await call('mode', { revocationKey: phone.revocationKey, mode: 'off' }), [200, { mode: 'off' }]);
+  push.publish('interconnect', { ...mention, msgUid: 'muted' });
+  assert.equal(sent.length, 0);
+  assert.equal((await call('test', phone, alice))[0], 404);
+
+  push = createChatPush(options);
+  assert.deepEqual(await call('status', phone, alice), [200, { mode: 'off' }]);
+  assert.equal((await call('mode', { revocationKey: phone.revocationKey, mode: 'invalid' }))[0], 400);
+  assert.deepEqual(await call('mode', { revocationKey: phone.revocationKey, mode: 'all' }), [200, { mode: 'all' }]);
+  push.publish('interconnect', { ...message, msgUid: 'resumed' });
+  assert.deepEqual(sent.splice(0).map(row => row.endpoint), [phone.subscription.endpoint]);
+  assert.deepEqual(await call('mode', { revocationKey: phone.revocationKey, mode: 'mention' }), [200, { mode: 'mention' }]);
+  push.publish('interconnect', { ...message, msgUid: 'ordinary-mention-mode' });
+  assert.equal(sent.length, 0);
+
+  const [testStatus, testBody] = await call('test', phone, alice);
+  assert.equal(testStatus, 200);
+  assert.ok(testBody.cooldownMs > 0 && testBody.cooldownMs <= 15_000);
   assert.equal(sent.splice(0)[0]?.test, true);
-  assert.equal((await call('test', phone, alice))[0], 429);
+  const [limitedStatus, limited] = await call('test', phone, alice);
+  assert.equal(limitedStatus, 429);
+  assert.equal(limited.error, 'rate');
+  assert.ok(limited.cooldownMs > 0 && limited.cooldownMs <= testBody.cooldownMs);
+  assert.equal(sent.length, 0);
   revoked.add(phone.subscription.endpoint);
   push.publish('interconnect', { ...mention, msgUid: 'a5' });
   await setImmediate();
   assert.deepEqual(await call('status', phone, alice), [200, { mode: 'off' }]);
+  assert.equal((await call('mode', { revocationKey: phone.revocationKey, mode: 'all' }))[0], 404);
   assert.equal((await call('disable', desktop))[0], 200);
   assert.deepEqual(await call('status', desktop, alice), [200, { mode: 'off' }]);
   if (process.platform !== 'win32') {

@@ -127,16 +127,17 @@ const isNotificationActive = $derived(
 );
 
 const notificationTooltip = $derived.by(() => {
+	if (!currentUser) return "登录后可设置";
 	if (desktopNotificationPermission === "denied") {
 		return "通知权限受阻";
 	}
 	if (effectiveNotificationMode === "all") {
-		return "浏览器推送：全部";
+		return "全部消息";
 	}
 	if (effectiveNotificationMode === "mention") {
-		return "浏览器推送：提及与回复";
+		return "仅提及";
 	}
-	return "浏览器推送：关闭";
+	return "通知关闭";
 });
 
 const notificationIcon = $derived.by(() => {
@@ -981,7 +982,7 @@ function formatOfflineTime(ts?: number): string {
         <button
           type="button"
           class="chat-tool-btn w-9! h-9! md:w-7! md:h-7! shrink-0 {isNotificationActive ? 'text-[var(--chat-accent-text)]' : ''}"
-          aria-label={notificationTooltip}
+          aria-label={`浏览器推送 · ${notificationTooltip}`}
           onclick={() => onToggleDesktopNotification?.()}
         >
           <Icon icon={notificationIcon} class="w-4.5 h-4.5 md:w-4 md:h-4" />
@@ -999,7 +1000,7 @@ function formatOfflineTime(ts?: number): string {
         <button
           type="button"
           class="chat-tool-btn w-7! h-7! shrink-0 {isNotificationActive ? 'text-[var(--chat-accent-text)]' : ''}"
-          aria-label={notificationTooltip}
+          aria-label={`浏览器推送 · ${notificationTooltip}`}
           onclick={() => onToggleDesktopNotification?.()}
         >
           <Icon icon={notificationIcon} class="w-4 h-4" />

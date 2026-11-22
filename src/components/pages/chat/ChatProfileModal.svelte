@@ -1,5 +1,5 @@
 <script lang="ts">
-import { supportsChatPush } from "./chatPush";
+import { chatPushUnavailableReason } from "./chatPush";
 import Icon from "@/components/common/Icon.svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
@@ -23,7 +23,9 @@ interface Props {
 	desktopNotificationMode?: ChatDesktopNotificationMode;
 	desktopNotificationPermission?: NotificationPermission;
 	onChangeDesktopNotificationMode?: (mode: ChatDesktopNotificationMode) => void;
-	notificationBusy?: boolean;
+	notificationSaving?: boolean;
+	notificationTesting?: boolean;
+	notificationTestSeconds?: number;
 	notificationNeedsMigration?: boolean;
 	onTestNotification?: () => void;
 	onSave: (draft: ChatProfileDraft) => void;
@@ -38,7 +40,9 @@ const {
 	desktopNotificationMode = "off",
 	desktopNotificationPermission = "default" as NotificationPermission,
 	onChangeDesktopNotificationMode,
-	notificationBusy = false,
+	notificationSaving = false,
+	notificationTesting = false,
+	notificationTestSeconds = 0,
 	notificationNeedsMigration = false,
 	onTestNotification,
 	onSave,
@@ -96,9 +100,8 @@ const isEmailUndeliverable = $derived(!emailDeliverability.deliverable);
 
 const isNotifyDisabled = $derived(isIsolatedGuest || isEmailUndeliverable);
 
-const isNotificationSupported = $derived(
-	supportsChatPush(),
-);
+const notificationUnavailable = $derived(chatPushUnavailableReason());
+const isNotificationSupported = $derived(notificationUnavailable === null);
 
 function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
 	if (!isNotificationSupported) return;
@@ -215,8 +218,7 @@ function handleSubmit(e: SubmitEvent) {
           </div>
         </div>
 
-        <!-- 下方左右对称两栏表单 (Grid 自动等高行对齐) -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+        <div class="grid grid-cols-1 items-start gap-3.5 md:grid-cols-2">
           <!-- 1. 基本资料 (左上) -->
           <div class="md:col-start-1 md:row-start-1">
             <div class="chat-settings-section-title">
@@ -302,29 +304,29 @@ function handleSubmit(e: SubmitEvent) {
             </div>
           </div>
 
-          <!-- 3. 个性状态 (左下，卡片高度随右侧个人设置自动撑满拉平，底边严格水平对齐) -->
-          <div class="md:col-start-1 md:row-start-2 flex flex-col min-h-0">
-            <div class="chat-settings-section-title">
+        </div>
+
+        <div class="grid grid-cols-1 gap-x-3.5 gap-y-3 md:grid-cols-2">
+          <!-- 个性状态 -->
+          <div class="flex min-w-0 flex-col gap-1.5">
+            <div class="chat-settings-section-title m-0! min-h-6">
               <span>个性状态</span>
+              {#if draftStatus}
+                <button
+                  type="button"
+                  class="ml-auto min-h-6 text-[11px] font-normal text-(--primary) hover:underline cursor-pointer"
+                  onclick={() => (draftStatus = "")}
+                >
+                  清除状态
+                </button>
+              {/if}
             </div>
-            <div class="flex-1 flex flex-col rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 min-h-0">
-              <div class="flex items-center justify-between text-xs text-[var(--btn-content)] opacity-85 px-0.5 shrink-0 mb-2">
-                <span class="text-[11px]">点选状态标签：</span>
-                {#if draftStatus}
-                  <button
-                    type="button"
-                    class="text-[11px] text-[var(--primary)] hover:underline bg-transparent border-none cursor-pointer p-0 font-normal"
-                    onclick={() => (draftStatus = "")}
-                  >
-                    清除状态
-                  </button>
-                {/if}
-              </div>
-              <div class="flex-1 max-h-[6.5rem] grid grid-cols-4 auto-rows-[1.75rem] gap-1.5 overflow-y-auto custom-scrollbar pr-1 pt-0.5">
+            <div class="relative min-h-[7.25rem] flex-1 rounded-xl bg-(--btn-regular-bg)">
+              <div class="custom-scrollbar absolute inset-x-3 inset-y-2.5 grid grid-cols-4 auto-rows-[calc((100%-0.75rem)/3)] gap-1.5 overflow-y-auto pr-1">
                 {#each CHAT_STATUS_PRESETS as preset (preset)}
                   <button
                     type="button"
-                    class="h-7 min-h-7 w-full inline-flex items-center justify-center px-1 text-xs rounded-lg font-medium active:scale-95 transition-all cursor-pointer border truncate
+                    class="min-h-0 w-full inline-flex items-center justify-center px-1 text-xs rounded-lg font-medium active:scale-95 transition-all cursor-pointer border truncate
                       {draftStatus === preset
                         ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow-xs font-semibold'
                         : 'bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) text-(--btn-content) opacity-80 hover:opacity-100 border-black/5 dark:border-white/10'}"
@@ -337,117 +339,126 @@ function handleSubmit(e: SubmitEvent) {
             </div>
           </div>
 
-          <!-- 4. 个人设置 (右下) -->
-          <div class="md:col-start-2 md:row-start-2 flex flex-col justify-start">
-            <div class="chat-settings-section-title">
+          <!-- 个人设置 -->
+          <div class="flex min-w-0 flex-col gap-1.5">
+            <div class="chat-settings-section-title m-0! min-h-6">
               <span>个人设置</span>
             </div>
-            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 flex items-center justify-between gap-3">
-              <div class="min-w-0">
-                <div class="text-xs font-medium text-(--btn-content)">离线 @ 与回复邮件提醒</div>
-                <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
-                  {#if isIsolatedGuest}
-                    独立临时身份未经邮箱所有权验证，已禁用离线邮件提醒，防止误发邮件
-                  {:else if isEmailUndeliverable}
-                    <span class="text-red-500 dark:text-red-400 font-medium inline-block">
-                      当前邮箱 {userEmail ? `(${userEmail})` : ""} 为不可送达地址（{emailDeliverability.reason || "无法送达"}），已禁用邮件提醒
+            <div class="flex-1 space-y-2.5 rounded-xl bg-(--btn-regular-bg) px-3 py-2.5">
+              <div class="flex items-center justify-between gap-3">
+                <div class="min-w-0">
+                  <div class="text-xs font-medium text-(--btn-content)">离线 @ 与回复邮件提醒</div>
+                  <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
+                    {#if isIsolatedGuest}
+                      独立临时身份未经邮箱所有权验证，已禁用离线邮件提醒，防止误发邮件
+                    {:else if isEmailUndeliverable}
+                      <span class="text-red-500 dark:text-red-400 font-medium inline-block">
+                        当前邮箱 {userEmail ? `(${userEmail})` : ""} 为不可送达地址（{emailDeliverability.reason || "无法送达"}），已禁用邮件提醒
+                      </span>
+                    {:else}
+                      不在线时有人 @ 或回复你，将发送摘要至邮箱账号
+                    {/if}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={isNotifyDisabled ? false : draftNotifyEmail}
+                  aria-label="切换离线 @ 邮件提醒"
+                  disabled={isNotifyDisabled}
+                  class="p-0 border-none bg-transparent shrink-0 {isNotifyDisabled ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}"
+                  onclick={() => {
+                    if (isNotifyDisabled) return;
+                    draftNotifyEmail = !draftNotifyEmail;
+                  }}
+                >
+                  <span class="chat-switch-track {!isNotifyDisabled && draftNotifyEmail ? 'checked' : ''}" aria-hidden="true">
+                    <span class="chat-switch-thumb"></span>
+                  </span>
+                </button>
+              </div>
+
+              <div class="space-y-1">
+                <div class="flex min-h-7 items-center justify-between gap-2">
+                  <div class="text-xs font-medium text-(--btn-content) flex items-center gap-1.5 whitespace-nowrap">
+                    <span>浏览器推送</span>
+                    <span class="inline-flex size-3 items-center justify-center" role="status">
+                      {#if notificationSaving}
+                        <span class="size-3 border-2 border-current border-r-transparent rounded-full motion-safe:animate-spin" aria-hidden="true"></span>
+                        <span class="sr-only">正在同步提醒档位</span>
+                      {/if}
                     </span>
+                    {#if desktopNotificationPermission === "denied"}
+                      <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20">
+                        权限受阻
+                      </span>
+                    {/if}
+                  </div>
+                  {#if isNotificationSupported && desktopNotificationPermission === "granted" &&
+                    desktopNotificationMode !== "off" && !notificationSaving && !notificationTesting && notificationTestSeconds === 0}
+                    <button
+                      type="button"
+                      class="min-h-7 shrink-0 whitespace-nowrap text-[11px] text-(--primary) hover:underline cursor-pointer"
+                      onclick={() => onTestNotification?.()}
+                    >发送测试推送</button>
                   {:else}
-                    不在线时有人 @ 或回复你，将发送摘要至邮箱账号
+                    <span class="inline-flex min-h-7 shrink-0 items-center whitespace-nowrap text-[11px] text-(--content-meta)">
+                      发送测试推送{#if notificationTestSeconds > 0}
+                        <span class="ml-0.5 tabular-nums">（{notificationTestSeconds} 秒）</span>
+                      {/if}
+                    </span>
                   {/if}
                 </div>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={isNotifyDisabled ? false : draftNotifyEmail}
-                aria-label="切换离线 @ 邮件提醒"
-                disabled={isNotifyDisabled}
-                class="p-0 border-none bg-transparent shrink-0 {isNotifyDisabled ? 'opacity-45 cursor-not-allowed' : 'cursor-pointer'}"
-                onclick={() => {
-                  if (isNotifyDisabled) return;
-                  draftNotifyEmail = !draftNotifyEmail;
-                }}
-              >
-                <span class="chat-switch-track {!isNotifyDisabled && draftNotifyEmail ? 'checked' : ''}" aria-hidden="true">
-                  <span class="chat-switch-thumb"></span>
-                </span>
-              </button>
-            </div>
+                {#if desktopNotificationPermission === "denied"}
+                  <div class="text-[11px] text-red-500 dark:text-red-400 leading-tight">
+                    通知已被拦截，请在浏览器地址栏网站权限中允许
+                  </div>
+                {/if}
 
-            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 mt-2.5 space-y-2">
-              <div class="flex items-center justify-between gap-2">
-                <div class="text-xs font-medium text-(--btn-content) flex items-center gap-1.5">
-                  <span>浏览器推送</span>
-                  {#if desktopNotificationPermission === "denied"}
-                    <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20">
-                      权限受阻
-                    </span>
-                  {/if}
+                <div class="grid grid-cols-3 gap-0.5 rounded-lg border border-black/5 bg-black/5 p-0.5 dark:border-white/10 dark:bg-white/5">
+                  <button
+                    type="button"
+                    class="flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
+                      {desktopNotificationMode === 'off'
+                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
+                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                    aria-pressed={desktopNotificationMode === "off"}
+                    onclick={() => handleSelectNotificationMode("off")}
+                  >
+                    <Icon icon="mingcute:notification-off-line" class="size-3 shrink-0" />
+                    <span>关闭</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
+                      {desktopNotificationMode === 'mention'
+                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
+                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                    aria-pressed={desktopNotificationMode === "mention"}
+                    onclick={() => handleSelectNotificationMode("mention")}
+                  >
+                    <Icon icon="mingcute:notification-newdot-line" class="size-3 shrink-0" />
+                    <span>仅提及</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
+                      {desktopNotificationMode === 'all'
+                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
+                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
+                    aria-pressed={desktopNotificationMode === "all"}
+                    onclick={() => handleSelectNotificationMode("all")}
+                  >
+                    <Icon icon="mingcute:bell-ringing-line" class="size-3 shrink-0" />
+                    <span>全部消息</span>
+                  </button>
                 </div>
                 {#if !isNotificationSupported}
-                  <span class="text-[11px] text-(--content-meta)">环境不支持</span>
+                  <p class="text-[11px] text-(--content-meta)">{notificationUnavailable}</p>
+                {:else if notificationNeedsMigration}
+                  <p class="text-[11px] text-(--content-meta)">重新选择提醒档位，即可启用离开网页后仍能收到的浏览器推送。</p>
                 {/if}
               </div>
-              {#if desktopNotificationPermission === "denied"}
-                <div class="text-[11px] text-red-500 dark:text-red-400 leading-tight">
-                  通知已被拦截，请在浏览器地址栏网站权限中允许
-                </div>
-              {/if}
-
-              <div class="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/10">
-                <button
-                  type="button"
-                  class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
-                    {desktopNotificationMode === 'off'
-                      ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
-                      : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
-                  disabled={notificationBusy}
-                  aria-pressed={desktopNotificationMode === "off"}
-                  onclick={() => handleSelectNotificationMode("off")}
-                >
-                  <Icon icon="mingcute:notification-off-line" class="w-3.5 h-3.5" />
-                  <span>关闭</span>
-                </button>
-                <button
-                  type="button"
-                  class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
-                    {desktopNotificationMode === 'mention'
-                      ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
-                      : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
-                  disabled={notificationBusy}
-                  aria-pressed={desktopNotificationMode === "mention"}
-                  onclick={() => handleSelectNotificationMode("mention")}
-                >
-                  <Icon icon="mingcute:notification-newdot-line" class="w-3.5 h-3.5" />
-                  <span>提及与回复</span>
-                </button>
-                <button
-                  type="button"
-                  class="flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-medium transition-all cursor-pointer border-none
-                    {desktopNotificationMode === 'all'
-                      ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
-                      : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
-                  disabled={notificationBusy}
-                  aria-pressed={desktopNotificationMode === "all"}
-                  onclick={() => handleSelectNotificationMode("all")}
-                >
-                  <Icon icon="mingcute:bell-ringing-line" class="w-3.5 h-3.5" />
-                  <span>全部消息</span>
-                </button>
-              </div>
-              {#if !isNotificationSupported}
-                <p class="text-[11px] text-(--content-meta)">iPhone 或 iPad 可先将本站添加到主屏幕，再从主屏幕打开并启用推送。</p>
-              {:else if notificationNeedsMigration}
-                <p class="text-[11px] text-(--content-meta)">重新选择提醒档位，即可启用离开网页后仍能收到的浏览器推送。</p>
-              {:else if desktopNotificationMode !== "off"}
-                <button
-                  type="button"
-                  class="text-xs text-(--primary) cursor-pointer disabled:opacity-50"
-                  disabled={notificationBusy}
-                  onclick={() => onTestNotification?.()}
-                >发送测试推送</button>
-              {/if}
             </div>
           </div>
         </div>
