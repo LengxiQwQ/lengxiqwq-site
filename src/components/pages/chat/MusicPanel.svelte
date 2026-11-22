@@ -2496,6 +2496,7 @@ function startOrResumeAudio() {
 	if (!audioEl || (!currentPlay?.track.streamUrl && !currentPlay?.track.proxyUrl)) return;
 	if (volume === 0) volume = 0.5;
 	hasJoinedAudio = true;
+	audioEl.muted = false;
 	player?.setVolume(volume);
 	player?.listen();
 	registerMediaSessionHandlers();
@@ -2818,12 +2819,24 @@ onMount(() => {
 		if (!currentPlay) return;
 
 		const expected = computeExpectedElapsed();
-		roomElapsed =
-			audioStatus === "preparing" || currentPlay.phase === "transitioning" || currentPlay.phase === "preparing"
-				? 0
-				: listenIntent && audioEl && audioStatus === "playing"
-					? (player?.position ?? audioEl.currentTime)
-					: expected;
+		const localPos = player?.position ?? audioEl?.currentTime ?? 0;
+		if (
+			audioStatus === "preparing" ||
+			currentPlay.phase === "transitioning" ||
+			currentPlay.phase === "preparing"
+		) {
+			roomElapsed = 0;
+		} else if (
+			listenIntent &&
+			audioStatus === "playing" &&
+			Number.isFinite(localPos) &&
+			localPos > 0 &&
+			Math.abs(localPos - expected) <= 4.0
+		) {
+			roomElapsed = localPos;
+		} else {
+			roomElapsed = expected;
+		}
 		syncLyricIndex(roomElapsed);
 
 	}, 250);

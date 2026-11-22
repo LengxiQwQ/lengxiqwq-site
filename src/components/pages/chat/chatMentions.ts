@@ -35,7 +35,7 @@ export function normalizeMentionSpacing(
 	entities: readonly ChatMentionEntity[] = [],
 ): ChatDraft {
 	if (!entities?.length) {
-		return { content: content.trim(), mentionEntities: [] };
+		return { content: (content || "").trim(), mentionEntities: [] };
 	}
 	const sorted = [...entities]
 		.filter(
@@ -45,7 +45,7 @@ export function normalizeMentionSpacing(
 				Number.isSafeInteger(e.length) &&
 				e.length > 0 &&
 				e.offset >= 0 &&
-				e.offset + e.length <= content.length,
+				e.offset + e.length <= (content || "").length,
 		)
 		.sort((a, b) => a.offset - b.offset);
 
@@ -59,8 +59,8 @@ export function normalizeMentionSpacing(
 
 		if (i === 0) {
 			const trimmed = segBefore.replace(/^[ \t]+/, "");
-			result += trimmed;
-			if (result.length > 0 && !/[\s]/.test(result.slice(-1))) {
+			result += trimmed.replace(/[ \t]+$/, "");
+			if (result.length > 0 && !/\n$/.test(result)) {
 				result += " ";
 			}
 		} else {
@@ -68,22 +68,12 @@ export function normalizeMentionSpacing(
 				const hasNewline = segBefore.includes("\n");
 				if (hasNewline) {
 					result = `${result.replace(/[ \t]+$/, "")}\n`;
-				} else if (result.length > 0 && !/[\s]/.test(result.slice(-1))) {
-					result += " ";
+				} else {
+					result = `${result.replace(/[ \t]+$/, "")} `;
 				}
 			} else {
-				let middle = segBefore;
-				if (
-					!/^[\s]/.test(middle) &&
-					result.length > 0 &&
-					!/[\s]/.test(result.slice(-1))
-				) {
-					middle = ` ${middle}`;
-				}
-				if (!/[\s]/.test(middle.slice(-1))) {
-					middle = `${middle} `;
-				}
-				result += middle;
+				const middle = segBefore.trim();
+				result = `${result.replace(/[ \t]+$/, "")} ${middle} `;
 			}
 		}
 
@@ -102,11 +92,13 @@ export function normalizeMentionSpacing(
 	if (!segAfter.trim()) {
 		result = result.replace(/[ \t]+$/, "");
 	} else {
-		let trail = segAfter.replace(/[\s]+$/, "");
-		if (!/^[\s]/.test(trail)) {
-			trail = ` ${trail}`;
+		const trail = segAfter.trimEnd();
+		const hasNewline = /^[ \t]*\r?\n/.test(trail);
+		if (hasNewline) {
+			result = `${result.replace(/[ \t]+$/, "")}\n${trail.replace(/^[ \t]*\r?\n[ \t]*/, "")}`;
+		} else {
+			result = `${result.replace(/[ \t]+$/, "")} ${trail.replace(/^[ \t]+/, "")}`;
 		}
-		result += trail;
 	}
 
 	return { content: result, mentionEntities: newEntities };

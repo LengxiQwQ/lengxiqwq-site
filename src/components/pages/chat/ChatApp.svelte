@@ -3899,7 +3899,7 @@ onMount(() => {
           </div>
         </div>
       {/if}
-      <audio bind:this={chatAudio} preload="none" playsinline muted></audio>
+      <audio bind:this={chatAudio} preload="metadata" playsinline></audio>
       {#if MusicPanelComp}
       {#key currentRoom}
       <MusicPanelComp
