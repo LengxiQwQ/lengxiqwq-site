@@ -4,8 +4,10 @@ import {
 	chatPushUnavailableReason,
 	disableChatPush,
 	enableChatPush,
+	isIOSDevice,
 	prepareChatPush,
 	readChatPushSettings,
+	requestNotificationPermission,
 	supportsChatPush,
 	testChatPush,
 	updateChatPushMode,
@@ -1462,7 +1464,7 @@ async function savePushMode(
 	await enableChatPush(server, auth, userKey, getOrCreateVisitorId(), mode, prepared);
 }
 
-function setDesktopNotificationMode(mode: ChatDesktopNotificationMode) {
+async function setDesktopNotificationMode(mode: ChatDesktopNotificationMode) {
 	const auth = currentAuth;
 	const userKey = currentUser?.userKey;
 	const server = normalizedChatServer;
@@ -1472,9 +1474,24 @@ function setDesktopNotificationMode(mode: ChatDesktopNotificationMode) {
 		showNotice(unavailable);
 		return;
 	}
-	if (mode !== "off" && typeof Notification !== "undefined" && Notification.permission === "denied") {
-		showNotice("请先在浏览器的网站权限中允许通知");
-		return;
+	if (mode !== "off" && typeof Notification !== "undefined") {
+		if (Notification.permission === "denied") {
+			showNotice("浏览器已拦截通知权限，请在地址栏网站权限中设为允许后重试");
+			return;
+		}
+		if (Notification.permission === "default") {
+			const perm = await requestNotificationPermission();
+			desktopNotificationPermission = perm;
+			if (perm !== "granted") {
+				if (perm === "denied") {
+					showNotice("浏览器已拦截通知权限，请在地址栏网站权限中设为允许后重试");
+				} else {
+					showNotice("未授予通知权限，无法启用浏览器推送");
+				}
+				refreshPushDisplay();
+				return;
+			}
+		}
 	}
 	desktopNotificationMode = mode;
 	pendingPushMode = { server, auth, userKey, mode };
@@ -1494,17 +1511,23 @@ function setDesktopNotificationMode(mode: ChatDesktopNotificationMode) {
 			} catch (error) {
 				if (pendingPushMode || currentUser?.userKey !== requested.userKey) continue;
 				const reason = error instanceof Error ? error.message : "";
-				if ((typeof Notification !== "undefined" && Notification.permission === "denied") ||
-					(error instanceof Error && error.name === "NotAllowedError")) {
-					showNotice("浏览器未授予通知权限，请检查本站的网站权限");
+				if (
+					(typeof Notification !== "undefined" && Notification.permission === "denied") ||
+					(error instanceof Error && error.name === "NotAllowedError")
+				) {
+					showNotice("浏览器未授予通知权限，请检查地址栏网站权限");
 				} else if (reason === "worker") {
 					showNotice("浏览器推送脚本未能启动，请刷新后重试");
 				} else if (reason === "push-api") {
-					showNotice("当前浏览器配置未开放后台推送，请在普通标签页重试");
+					showNotice(
+						isIOSDevice()
+							? "iOS 需在 Safari 点击【分享】->【添加到主屏幕】打开后使用推送"
+							: "当前浏览器环境未开放后台推送接口",
+					);
 				} else if (reason === "endpoint") {
 					showNotice("当前浏览器的推送服务暂未适配");
 				} else if (error instanceof Error && error.name === "AbortError") {
-					showNotice("浏览器未能建立推送订阅，请检查网络后重试");
+					showNotice("无法连接到浏览器的推送服务（FCM），请检查网络后重试");
 				} else {
 					showNotice("同步推送设置失败，请重试");
 				}
@@ -1539,13 +1562,13 @@ async function sendTestPush() {
 	}
 }
 
-function handleToggleDesktopNotification() {
+async function handleToggleDesktopNotification() {
 	if (!currentUser) {
 		showAuthModal = true;
 		return;
 	}
 	const next = { off: "mention", mention: "all", all: "off" } as const;
-	setDesktopNotificationMode(next[desktopNotificationMode]);
+	await setDesktopNotificationMode(next[desktopNotificationMode]);
 }
 
 function sendPacket(packet: Record<string, unknown>): boolean {

@@ -1525,7 +1525,7 @@ const mergedMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 		map.set("room", {
 			userKey: "room",
 			authType: "waline",
-			name: "所有人",
+			name: "全体成员",
 			avatar: "",
 			badge: "全员提醒",
 			badgeType: "host",
@@ -1588,7 +1588,12 @@ const filteredMentionCandidates = $derived.by<ChatMentionCandidate[]>(() => {
 	if (!q) return mergedMentionCandidates;
 	return mergedMentionCandidates.filter((c) => {
 		if (c.userKey === "room") {
-			return "room".includes(q) || "all".includes(q) || "所有人".includes(q);
+			return (
+				"room".includes(q) ||
+				"all".includes(q) ||
+				"全体成员".includes(q) ||
+				"所有人".includes(q)
+			);
 		}
 		return (
 			formatCandidateMentionName(c).toLowerCase().includes(q) ||
@@ -3508,7 +3513,7 @@ function formatCandidateMentionName(candidate: {
 	siteUrl?: string;
 	url?: string;
 }): string {
-	if (candidate.userKey === "room") return "所有人";
+	if (candidate.userKey === "room") return "全体成员";
 	const rawName = candidate.name || "";
 	if (isInterconnectRoom) {
 		const isExt = isExternalMatrixIdentity(candidate);
@@ -5354,12 +5359,12 @@ function removePendingImage(index: number) {
             {@const isExt = !isRoomMention && isExternalMatrixIdentity(person)}
             {@const extOrigin = isExt ? resolveExternalOrigin({ name: person.name, userKey: person.userKey, badge: person.badge, site: person.site, siteUrl: person.siteUrl, url: person.url }, interconnectSites) : null}
             {@const displayPersonName = isRoomMention
-              ? "所有人"
+              ? "全体成员"
               : isExt
                 ? (extOrigin?.cleanName || person.name)
                 : person.name}
             {@const personBadgeLabel = isRoomMention
-              ? "全员"
+              ? "全体成员"
               : isExt
                 ? (extOrigin?.siteName || person.badge || "互联茶友")
                 : localSiteName}
@@ -5370,7 +5375,7 @@ function removePendingImage(index: number) {
               type="button"
               role="option"
               aria-selected={idx === mentionActiveIndex}
-              title={isRoomMention ? "全房提醒" : `${formatCandidateMentionName(person)} (${person.userKey})`}
+              title={isRoomMention ? "全体成员提醒" : `${formatCandidateMentionName(person)} (${person.userKey})`}
               class="chat-mention-ac-item {idx === mentionActiveIndex ? 'active' : ''}"
               onmouseenter={() => (mentionActiveIndex = idx)}
               onpointerdown={(event) => event.preventDefault()}
@@ -5429,7 +5434,7 @@ function removePendingImage(index: number) {
               <div class="chat-mention-col-status">
                 {#if isRoomMention}
                   <span class="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium whitespace-nowrap text-left">
-                    全房提醒
+                    全体成员
                   </span>
                 {:else if person.online}
                   {@const mentionFallbackLabel = person.presenceMode === "fallback"}

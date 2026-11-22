@@ -1,5 +1,5 @@
 <script lang="ts">
-import { chatPushUnavailableReason } from "./chatPush";
+import { chatPushUnavailableReason, requestNotificationPermission } from "./chatPush";
 import Icon from "@/components/common/Icon.svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
@@ -103,8 +103,11 @@ const isNotifyDisabled = $derived(isIsolatedGuest || isEmailUndeliverable);
 const notificationUnavailable = $derived(chatPushUnavailableReason());
 const isNotificationSupported = $derived(notificationUnavailable === null);
 
-function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
+async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
 	if (!isNotificationSupported) return;
+	if (mode !== "off" && typeof Notification !== "undefined" && Notification.permission === "default") {
+		await requestNotificationPermission();
+	}
 	onChangeDesktopNotificationMode?.(mode);
 }
 
@@ -411,7 +414,7 @@ function handleSubmit(e: SubmitEvent) {
                 </div>
                 {#if desktopNotificationPermission === "denied"}
                   <div class="text-[11px] text-red-500 dark:text-red-400 leading-tight">
-                    通知已被拦截，请在浏览器地址栏网站权限中允许
+                    通知已被拦截，请点击地址栏网站权限图标设为允许
                   </div>
                 {/if}
 

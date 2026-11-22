@@ -137,16 +137,26 @@ export function insertChatMention(
 	const range =
 		replacement || (selection?.rangeCount ? selection.getRangeAt(0) : null);
 	const pill = createPill(`@${label}`, userKey);
-	const caret = document.createTextNode("");
 	if (range && container.contains(range.commonAncestorContainer)) {
 		range.deleteContents();
 		range.insertNode(pill);
-		pill.after(caret);
 	} else {
-		container.append(pill, caret);
+		container.append(pill);
+	}
+	let caret: Text;
+	const nextSibling = pill.nextSibling;
+	if (
+		nextSibling &&
+		nextSibling.nodeType === Node.TEXT_NODE &&
+		nextSibling.nodeValue?.startsWith(" ")
+	) {
+		caret = nextSibling as Text;
+	} else {
+		caret = document.createTextNode(" ");
+		pill.after(caret);
 	}
 	const next = document.createRange();
-	next.setStart(caret, 0);
+	next.setStart(caret, 1);
 	next.collapse(true);
 	selection?.removeAllRanges();
 	selection?.addRange(next);

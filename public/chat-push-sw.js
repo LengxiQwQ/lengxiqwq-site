@@ -2,6 +2,10 @@ self.addEventListener("install", (event) => {
 	event.waitUntil(self.skipWaiting());
 });
 
+self.addEventListener("activate", (event) => {
+	event.waitUntil(self.clients.claim());
+});
+
 self.addEventListener("push", (event) => {
 	let payload;
 	try {
@@ -14,25 +18,42 @@ self.addEventListener("push", (event) => {
 	const url = new URL("/chat/", self.location.origin);
 	let tag = "chat-push-test";
 	if (!payload.test) {
-		if (!["chat", "interconnect"].includes(payload.roomId) || typeof payload.msgUid !== "string") return;
+		if (
+			!["chat", "interconnect"].includes(payload.roomId) ||
+			typeof payload.msgUid !== "string"
+		)
+			return;
 		url.searchParams.set("room", payload.roomId);
 		url.searchParams.set("msg", payload.msgUid);
 		tag = `chat-msg-${payload.roomId}-${payload.msgUid}`;
 	}
-	event.waitUntil(self.registration.showNotification(
-		"冷汐的杂货铺 · 聊天室",
-		{ body: payload.body, icon: "/favicon/favicon-light-192.png", tag, data: { url: url.href } },
-	));
+	event.waitUntil(
+		self.registration.showNotification("冷汐的杂货铺 · 聊天室", {
+			body: payload.body,
+			icon: "/favicon/favicon-light-192.png",
+			tag,
+			data: { url: url.href },
+		}),
+	);
 });
 
 self.addEventListener("notificationclick", (event) => {
 	event.notification.close();
-	const target = new URL(event.notification.data?.url || "/chat/", self.location.origin);
-	if (target.origin !== self.location.origin || target.pathname !== "/chat/") return;
-	event.waitUntil((async () => {
-		const tabs = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-		const tab = tabs.find((client) => client.url === target.href);
-		if (tab) await tab.focus();
-		else await self.clients.openWindow(target.href);
-	})());
+	const target = new URL(
+		event.notification.data?.url || "/chat/",
+		self.location.origin,
+	);
+	if (target.origin !== self.location.origin || target.pathname !== "/chat/")
+		return;
+	event.waitUntil(
+		(async () => {
+			const tabs = await self.clients.matchAll({
+				type: "window",
+				includeUncontrolled: true,
+			});
+			const tab = tabs.find((client) => client.url === target.href);
+			if (tab) await tab.focus();
+			else await self.clients.openWindow(target.href);
+		})(),
+	);
 });
