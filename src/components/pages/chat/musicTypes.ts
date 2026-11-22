@@ -20,6 +20,9 @@ export interface ChatMusicTrack {
 	rotationReplacement?: { title: string; artist: string };
 	playbackSelection?: PlaybackSelection;
 	audioSource?: PlaybackAudioSource;
+	sourcePlaylistTitle?: string;
+	sourcePlaylistId?: string;
+	sourcePlaylistCover?: string;
 }
 export interface PlaybackSelection {
 	mode:

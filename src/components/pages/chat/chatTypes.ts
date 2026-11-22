@@ -442,6 +442,7 @@ export interface RotationQueueItem {
 	pic?: string;
 	sourcePlaylistTitle?: string;
 	sourcePlaylistId?: string;
+	sourcePlaylistCover?: string;
 }
 
 export interface RotationOffer {

@@ -1221,6 +1221,18 @@ const currentRequesterAvatar = $derived.by(() => {
 	return logMatch?.requesterAvatar || "";
 });
 
+const currentRotationPlaylistCover = $derived.by(() => {
+	if (!currentPlay || !currentPlay.isFallback) return "";
+	if (currentPlay.requesterAvatar) return currentPlay.requesterAvatar;
+	if (currentPlay.track?.sourcePlaylistCover) return currentPlay.track.sourcePlaylistCover;
+	const plId = currentPlay.track?.sourcePlaylistId || musicState?.fallbackPlaylistId;
+	if (plId) {
+		const found = [...featuredPlaylists, ...myPlaylists, ...membersPlaylists].find((p) => p.id === plId);
+		if (found?.coverUrl) return found.coverUrl;
+	}
+	return "";
+});
+
 function getTrackArtistAndAlbum(track?: ChatMusicTrack | null): string {
 	if (!track) return "";
 	const artist = (track.artist || "").trim();
@@ -1536,6 +1548,12 @@ function openRequesterProfile(requesterKey: string, requesterName: string) {
 		userKey: requesterKey,
 		name: requesterName || "房友",
 	});
+}
+
+function openPlaylistFromPlayer(playlistId?: string) {
+	if (!playlistId) return;
+	activeTab = "playlist";
+	void openPlaylistDetail(playlistId, false);
 }
 
 function resolveOwnerAvatar(ownerKey: string, fallbackAvatar?: string): string {
@@ -2490,7 +2508,7 @@ function updateMediaSessionMetadata() {
 	navigator.mediaSession.metadata = new MediaMetadata({
 		title: currentPlay.track.title,
 		artist: currentPlay.track.artist,
-		album: `#${roomId} 同步电台 · 点歌：${currentPlay.requesterName}`,
+		album: `#${roomId} 同步电台 · ${currentPlay.isFallback ? "轮播：" : "点歌："}${currentPlay.requesterName}`,
 		artwork: coverUrl
 			? [{ src: coverUrl, sizes: "300x300", type: "image/jpeg" }]
 			: [],
@@ -3233,7 +3251,7 @@ $effect(() => {
     }}
     {@const action = rotationAction?.entryId === (item.entryId ?? item.id) ? rotationAction : undefined}
     {@const isCurrent = item.entryId ? currentPlay?.track.id === item.id : isTrackCurrent(toTrack)}
-    <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+    <div class="flex items-center gap-2 py-1.5 pl-1.5 pr-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.pic}
           <img src={resolveMusicThumbUrl(item.pic)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
@@ -3242,21 +3260,8 @@ $effect(() => {
         {/if}
       </div>
       <div class="flex-1 min-w-0">
-        <div class="text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)] flex items-center gap-1.5 min-w-0">
-          <span
-            class="min-w-0 flex-1 truncate"
-            title={item.title}
-          >
-            {item.title}
-          </span>
-          {#if item.sourcePlaylistTitle}
-            <span
-              class="max-w-[45%] shrink-0 truncate text-[10px] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)] font-normal"
-              title={item.sourcePlaylistTitle}
-            >
-              {item.sourcePlaylistTitle}
-            </span>
-          {/if}
+        <div class="text-[13.5px] xl:text-[13px] font-bold text-[var(--deep-text)] truncate" title={item.title}>
+          {item.title}
         </div>
         <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate flex items-center gap-1.5">
           <span class="truncate">{item.artist}</span>
@@ -3265,6 +3270,26 @@ $effect(() => {
           {/if}
         </div>
       </div>
+
+      {#if item.sourcePlaylistTitle}
+        {#if item.sourcePlaylistId}
+          <button
+            type="button"
+            class="shrink-0 flex items-center justify-center self-center px-1.5 py-1 rounded bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/15 text-[var(--chat-meta-color)] hover:text-(--primary) text-[10.5px] xl:text-[10px] leading-tight text-center max-w-[96px] xl:max-w-[110px] line-clamp-2 border-none cursor-pointer transition-colors"
+            onclick={() => openPlaylistFromPlayer(item.sourcePlaylistId)}
+            title={`查看歌单《${item.sourcePlaylistTitle}》`}
+          >
+            {item.sourcePlaylistTitle}
+          </button>
+        {:else}
+          <span
+            class="shrink-0 flex items-center justify-center self-center px-1.5 py-1 rounded bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)] text-[10.5px] xl:text-[10px] leading-tight text-center max-w-[96px] xl:max-w-[110px] line-clamp-2 select-text"
+            title={item.sourcePlaylistTitle}
+          >
+            {item.sourcePlaylistTitle}
+          </span>
+        {/if}
+      {/if}
 
       <div class="flex items-center gap-1.5 shrink-0">
         {#if isCurrent}
@@ -3574,7 +3599,7 @@ $effect(() => {
   {/snippet}
 
   {#snippet queuedTrackRow(item: QueueEntry)}
-    <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+    <div class="flex items-center gap-2 py-1.5 pl-1.5 pr-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.track.cover}
           <img src={resolveMusicThumbUrl(item.track.cover)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
@@ -3677,7 +3702,7 @@ $effect(() => {
               </p>
             {/if}
 
-            <!-- 第三排：点歌人（小头像 + 名称，点击打开个人资料） -->
+            <!-- 第三排：点歌人 / 轮播歌单（小头像/歌单封面 + 名称，点击打开资料/歌单） -->
             <div class="flex items-center gap-1.5 min-w-0">
               {#if currentPlay}
                 {@const isSystemFallback =
@@ -3696,19 +3721,60 @@ $effect(() => {
                     />
                     <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
                   </button>
+                {:else if isSystemFallback}
+                  {@const playlistId = currentPlay.track?.sourcePlaylistId || musicState?.fallbackPlaylistId}
+                  {@const playlistTitle = currentPlay.track?.sourcePlaylistTitle || currentPlay.requesterName.replace(/\s*[（(]轮播[）)]$/, "")}
+                  {@const isCollective = playlistId === "pl_collective_favorites"}
+                  {@const playlistCover = currentRotationPlaylistCover}
+                  {#if playlistId}
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-1.5 min-w-0 max-w-[min(16rem,100%)] h-[22px] pl-[3px] pr-2 py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)] hover:bg-(--primary)/20 border-none cursor-pointer transition-colors active:scale-95"
+                      onclick={() => openPlaylistFromPlayer(playlistId)}
+                      title={`查看歌单 ${playlistTitle}`}
+                    >
+                      {#if isCollective}
+                        <div class="w-4 h-4 rounded-full overflow-hidden shrink-0 bg-amber-100 flex items-center justify-center relative select-none">
+                          <svg class="w-2.5 h-2.5 text-amber-500 drop-shadow-[0_0_4px_rgba(245,158,11,0.65)]" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" stroke="currentColor" stroke-width="0.5" stroke-linejoin="round" />
+                          </svg>
+                        </div>
+                      {:else}
+                        <ChatAvatar
+                          src={playlistCover}
+                          name={playlistTitle}
+                          size="2xs"
+                          fallback="♪"
+                        />
+                      {/if}
+                      <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
+                    </button>
+                  {:else}
+                    <span class="inline-flex items-center gap-1.5 min-w-0 max-w-[min(16rem,100%)] h-[22px] pl-[3px] pr-2 py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                      {#if isCollective}
+                        <div class="w-4 h-4 rounded-full overflow-hidden shrink-0 bg-amber-100 flex items-center justify-center relative select-none">
+                          <svg class="w-2.5 h-2.5 text-amber-500" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" stroke="currentColor" stroke-width="0.5" stroke-linejoin="round" />
+                          </svg>
+                        </div>
+                      {:else}
+                        <ChatAvatar
+                          src={playlistCover}
+                          name={playlistTitle}
+                          size="2xs"
+                          fallback="♪"
+                        />
+                      {/if}
+                      <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
+                    </span>
+                  {/if}
                 {:else}
-                  <span class="inline-flex items-center gap-1.5 min-w-0 max-w-[min(12rem,100%)] h-[22px] {isSystemFallback ? 'px-2' : 'pl-[3px] pr-2'} py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
-                    {#if !isSystemFallback}
-                      <ChatAvatar
-                        src={currentRequesterAvatar}
-                        name={currentPlay.requesterName}
-                        size="2xs"
-                      />
-                    {:else}
-                      <svg class="w-3 h-3 text-(--primary) opacity-80 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
-                      </svg>
-                    {/if}
+                  <span class="inline-flex items-center gap-1.5 min-w-0 max-w-[min(12rem,100%)] h-[22px] pl-[3px] pr-2 py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
+                    <ChatAvatar
+                      src={currentRequesterAvatar}
+                      name={currentPlay.requesterName}
+                      size="2xs"
+                    />
                     <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
                   </span>
                 {/if}
@@ -3978,7 +4044,7 @@ $effect(() => {
       </div>
 
       <!-- 歌词滚动 + 即将播放容器（支持 并列 / 纯歌词 / 纯列表 三态切换） -->
-      <div class="flex-1 min-h-0 flex flex-col mx-4">
+      <div class="flex-1 min-h-0 flex flex-col mx-2.5">
         {#if playerPaneMode !== "queue"}
           <div
             class="min-h-0 flex flex-col border-t border-[var(--chat-divider-color)]"
@@ -5488,7 +5554,7 @@ $effect(() => {
             {#if currentPlay?.isFallback}
               <div class="space-y-0.5">
                 <p class="m-0 truncate text-[13px] font-semibold text-[var(--deep-text)]" title={`${currentPlay.track.title} · ${currentPlay.track.artist}`}>{currentPlay.track.title} · {currentPlay.track.artist}</p>
-                <p class="m-0 truncate text-xs text-[var(--chat-meta-color)]">来源：{currentPlay.requesterName.replace(/\s*\(轮播\)$/, "")}</p>
+                <p class="m-0 truncate text-xs text-[var(--chat-meta-color)]">来源：{currentPlay.requesterName.replace(/\s*[（(]轮播[）)]$/, "")}</p>
               </div>
               <p class="m-0 text-[11px] leading-relaxed text-[var(--chat-meta-color)]">待播队列为空时，电台自动在此轮播背景音乐。</p>
             {:else if currentPlay}
