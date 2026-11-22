@@ -1,3 +1,9 @@
+import type {
+	ChatAttachment,
+	ChatAttachmentKind,
+	ChatReplyRef,
+} from "./chatTypes";
+
 export type StickerCategory = "qq" | "emoji" | "sticker";
 
 export interface StickerItem {
@@ -360,10 +366,39 @@ export function parseChatSegments(
 	return segments;
 }
 
+const attachmentPreviewLabels: Record<ChatAttachmentKind, string> = {
+	image: "[图片]",
+	video: "[视频]",
+	audio: "[音频]",
+	file: "[文件]",
+	sticker: "[贴纸]",
+	attachment: "[附件]",
+};
+
+export function getChatAttachmentKind(
+	attachments: ChatAttachment[] = [],
+): ChatAttachmentKind | null {
+	const first = attachments[0];
+	if (!first) return null;
+	const kind = first.isSticker ? "sticker" : first.type;
+	return attachments.every(
+		(item) => (item.isSticker ? "sticker" : item.type) === kind,
+	)
+		? kind
+		: "attachment";
+}
+
+export function getChatReplyAttachmentKind(
+	reply: Pick<ChatReplyRef, "attachmentKind" | "hasImage">,
+): ChatAttachmentKind | null {
+	if (reply.attachmentKind !== undefined) return reply.attachmentKind;
+	return reply.hasImage ? "attachment" : null;
+}
+
 export function formatChatReplyPreview(
 	content: string,
 	stickerMap?: Map<string, StickerItem>,
-	hasImage = false,
+	attachmentKind: ChatAttachmentKind | null | undefined = null,
 	isRecalled = false,
 ): string {
 	if (isRecalled) return "原消息已撤回";
@@ -388,10 +423,8 @@ export function formatChatReplyPreview(
 		})
 		.replace(/\s+/g, " ")
 		.trim();
-	if (!readable) {
-		return hasImage ? "[图片]" : "[消息]";
-	}
-	return hasImage ? `[图片] ${readable}` : readable;
+	const label = attachmentKind ? attachmentPreviewLabels[attachmentKind] : "";
+	return [label, readable].filter(Boolean).join(" ") || "[消息]";
 }
 
 export function formatStickerAttachmentAlt(rawName?: string): string {

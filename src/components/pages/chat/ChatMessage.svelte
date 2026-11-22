@@ -1,10 +1,11 @@
-<script module lang="ts">
-let activeGlobalVoiceStop: (() => void) | null = null;
-</script>
-
 <script lang="ts">
+import { SvelteSet } from "svelte/reactivity";
+import ChatAudioAttachment from "./ChatAudioAttachment.svelte";
+import ChatFileAttachment from "./ChatFileAttachment.svelte";
+import ChatStickerImage from "./ChatStickerImage.svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatImagePreview from "./ChatImagePreview.svelte";
+import ChatVideoPreview from "./ChatVideoPreview.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessageActivityModal from "./ChatMessageActivityModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
@@ -19,6 +20,7 @@ import {
 import type { InterconnectSite } from "./chatConfig";
 import { positionChatFloating } from "./chatFloating";
 import { getChatMessageAttachments } from "./chatMarkdown";
+import { provideChatMediaRetry } from "./chatMediaRetry";
 import type {
 	ChatMessageRecord,
 	ChatReadReceipt,
@@ -28,6 +30,7 @@ import type {
 import LottieSticker from "./LottieSticker.svelte";
 import {
 	formatChatReplyPreview,
+	getChatReplyAttachmentKind,
 	formatStickerAttachmentAlt,
 	parseChatSegments,
 	type StickerItem,
@@ -231,34 +234,15 @@ $effect(() => {
 		window.removeEventListener("keydown", handleEscape);
 	};
 });
-let activeAudioUrl = $state<string | null>(null);
-let audioPlayer = $state<HTMLAudioElement | null>(null);
+const mediaRetries = new SvelteSet<() => void>();
+provideChatMediaRetry((retry) => {
+	mediaRetries.add(retry);
+	return () => { mediaRetries.delete(retry); };
+});
 
-function handleToggleAudio(url: string) {
-	if (activeAudioUrl === url) {
-		audioPlayer?.pause();
-		activeAudioUrl = null;
-		activeGlobalVoiceStop = null;
-	} else {
-		if (activeGlobalVoiceStop) {
-			activeGlobalVoiceStop();
-		}
-		if (audioPlayer) audioPlayer.pause();
-		activeAudioUrl = url;
-		const a = new Audio(url);
-		audioPlayer = a;
-		activeGlobalVoiceStop = () => {
-			a.pause();
-			activeAudioUrl = null;
-		};
-		a.play().catch(() => {});
-		a.onended = () => {
-			if (activeAudioUrl === url) {
-				activeAudioUrl = null;
-				activeGlobalVoiceStop = null;
-			}
-		};
-	}
+function retryMessageMedia(event: MouseEvent) {
+	event.stopPropagation();
+	for (const retry of [...mediaRetries]) retry();
 }
 
 const segments = $derived(
@@ -308,7 +292,7 @@ const replyPreviewText = $derived.by(() => {
 	return formatChatReplyPreview(
 		message.replyTo.content,
 		stickerMap,
-		message.replyTo.hasImage,
+		getChatReplyAttachmentKind(message.replyTo),
 		message.replyTo.isRecalled,
 	);
 });
@@ -787,12 +771,23 @@ function handleBubbleClick(e: MouseEvent) {
   {@const canRecallMsg = Boolean(canRecall && onRecall)}
   {@const canDeleteMsg = Boolean(canDelete && onDelete)}
   {@const hasMoreActions = canCopy || canThreadMsg || canEditMsg || canPinMsg || canViewSource || canRecallMsg || canDeleteMsg}
-  {#if onReaction || onReply || hasMoreActions}
+  {#if onReaction || onReply || hasMoreActions || mediaRetries.size > 0}
     <div
-      class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction || showMoreActions ? 'is-active' : ''}"
+      class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction || showMoreActions || mediaRetries.size > 0 ? 'is-active' : ''} {mediaRetries.size > 0 ? 'has-media-retry' : ''}"
       role="toolbar"
       aria-label="消息快捷操作"
     >
+      {#if mediaRetries.size > 0}
+        <ChatTooltip text="重新加载" class="chat-media-retry-wrap" disabled={showQuickReaction || showMoreActions}>
+          <button type="button" class="chat-action-icon-btn chat-media-retry" aria-label="重新加载" onclick={retryMessageMedia}>
+            <!-- Lucide 0.468.0: rotate-cw -->
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+          </button>
+        </ChatTooltip>
+      {/if}
       <!-- 快捷表情反应 -->
       {#if onReaction}
         <div class="relative inline-flex items-center" bind:this={reactionEl}>
@@ -1045,7 +1040,7 @@ function handleBubbleClick(e: MouseEvent) {
   {#if effectiveSummary && effectiveSummary.count > 0 && onOpenThread}
     {@const latest = effectiveSummary.latestReply}
     {@const latestPreview = latest
-      ? formatChatReplyPreview(latest.content, stickerMap, latest.hasImage, false)
+      ? formatChatReplyPreview(latest.content, stickerMap, getChatReplyAttachmentKind(latest))
       : ""}
     <div class="w-full flex {alignEnd ? 'justify-end' : 'justify-start'} mt-1">
       <button
@@ -1189,75 +1184,27 @@ function handleBubbleClick(e: MouseEvent) {
       {#each safeAttachments as att (att.url)}
         {#if att.type === "image" && att.isSticker}
           <div class="inline-block select-none">
-            <img
+            <ChatStickerImage
               src={att.url}
               loading="lazy"
               alt={formatStickerAttachmentAlt(att.name)}
               title={formatStickerAttachmentAlt(att.name)}
-              decoding="async"
               class="chat-sticker-large single"
             />
           </div>
         {:else if att.type === "image"}
-          <ChatImagePreview src={att.url} alt="聊天图片" metadata={att} />
-        {:else if att.type === "audio"}
-          <div class="chat-voice-msg">
-            <button
-              type="button"
-              class="chat-voice-play-btn"
-              aria-label={activeAudioUrl === att.url ? "暂停" : "播放语音"}
-              onclick={() => handleToggleAudio(att.url)}
-            >
-              {#if activeAudioUrl === att.url}
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="4" width="4" height="16" rx="1"/>
-                  <rect x="14" y="4" width="4" height="16" rx="1"/>
-                </svg>
-              {:else}
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5v14l11-7z"/>
-                </svg>
-              {/if}
-            </button>
-            <div class="flex flex-col min-w-0 flex-1">
-              <span class="text-xs font-semibold truncate">{att.name || "语音留言"}</span>
-              <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">
-                {att.duration ? `${att.duration} 秒` : "音频片段"}
-              </span>
-            </div>
-          </div>
-        {:else if att.type === "video"}
-          <video
+          <ChatImagePreview
             src={att.url}
-            controls
-            preload="metadata"
-            class="chat-msg-video"
-          >
-            <track kind="captions"/>
-          </video>
+            thumbnailSrc={att.thumbnailUrl}
+            alt={att.name || "聊天图片"}
+            metadata={att}
+          />
+        {:else if att.type === "audio"}
+          <ChatAudioAttachment attachment={att} />
+        {:else if att.type === "video"}
+          <ChatVideoPreview src={att.url} />
         {:else if att.type === "file"}
-          <a
-            href={att.url}
-            download={att.name || "下载文件"}
-            target="_blank"
-            rel="noopener noreferrer"
-            class="chat-file-card"
-          >
-            <div class="w-8 h-8 rounded-lg bg-[var(--skin-accent)]/15 text-[var(--skin-accent)] flex items-center justify-center shrink-0">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
-                <polyline points="14 2 14 8 20 8"/>
-              </svg>
-            </div>
-            <div class="flex flex-col min-w-0 flex-1">
-              <span class="text-xs font-medium truncate">{att.name || "文件附件"}</span>
-              {#if att.size}
-                <span class="text-[0.6875rem] text-[var(--chat-meta-color)]">
-                  {att.size > 1024 * 1024 ? `${(att.size / (1024 * 1024)).toFixed(1)} MB` : `${Math.round(att.size / 1024)} KB`}
-                </span>
-              {/if}
-            </div>
-          </a>
+          <ChatFileAttachment attachment={att} />
         {/if}
       {/each}
     </div>
@@ -1407,10 +1354,9 @@ function handleBubbleClick(e: MouseEvent) {
             chatServerUrl={chatServerUrl}
           />
         {:else}
-          <img
+          <ChatStickerImage
             src={seg.url}
             alt={seg.alt}
-            decoding="async"
             class={seg.category === "sticker"
               ? `chat-sticker-large ${stickerSegments.length === 1 ? "single" : ""}`
               : `chat-sticker chat-sticker--${seg.category}`}
@@ -1429,12 +1375,11 @@ function handleBubbleClick(e: MouseEvent) {
     <div class="chat-sticker-only-wrap {alignEnd ? 'justify-end' : 'justify-start'}">
       {#each safeAttachments as att (att.url)}
         <div class="block select-none">
-          <img
+          <ChatStickerImage
             src={att.url}
             alt={formatStickerAttachmentAlt(att.name)}
             title={formatStickerAttachmentAlt(att.name)}
             loading="lazy"
-            decoding="async"
             class="chat-sticker-large {safeAttachments.length === 1 ? 'single' : ''}"
           />
         </div>
@@ -1523,7 +1468,7 @@ function handleBubbleClick(e: MouseEvent) {
         onpointercancel={cancelBubblePress}
         onclick={handleBubbleClick}
       >
-        {#if actionsMounted || showQuickReaction || showMoreActions}
+        {#if actionsMounted || showQuickReaction || showMoreActions || mediaRetries.size > 0}
           {@render renderFloatingActions(true)}
         {/if}
 
@@ -1626,7 +1571,7 @@ function handleBubbleClick(e: MouseEvent) {
             {/each}
           {/if}
           {#if isMentionedMe}
-            <span class="chat-mentioned-tag">被提及</span>
+            <span class="chat-mentioned-tag">提到了你</span>
           {/if}
         </div>
       {/if}
@@ -1643,7 +1588,7 @@ function handleBubbleClick(e: MouseEvent) {
         onpointercancel={cancelBubblePress}
         onclick={handleBubbleClick}
       >
-        {#if actionsMounted || showQuickReaction || showMoreActions}
+        {#if actionsMounted || showQuickReaction || showMoreActions || mediaRetries.size > 0}
           {@render renderFloatingActions(false)}
         {/if}
 

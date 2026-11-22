@@ -63,6 +63,8 @@ import type {
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import {
 	formatChatReplyPreview,
+	getChatAttachmentKind,
+	getChatReplyAttachmentKind,
 	type StickerItem,
 	type StickerPack,
 } from "./stickerLoader";
@@ -837,9 +839,7 @@ const liveThreadSummaryMap = $derived.by(() => {
 							.replace(/\s+/g, " ")
 							.trim()
 							.slice(0, 120),
-						hasImage:
-							Array.isArray(latestLive.attachments) &&
-							latestLive.attachments.length > 0,
+						attachmentKind: getChatAttachmentKind(latestLive.attachments),
 						createdAt: latestLive.createdAt || 0,
 					}
 				: serverSummary.latestReply;
@@ -4046,12 +4046,12 @@ function removePendingImage(index: number) {
               </div>
               <div class="text-xs md:text-[11px] opacity-80 truncate mt-0.5">
                 {rootMsg
-                  ? formatChatReplyPreview(rootMsg.content, stickerMap, rootMsg.attachments.length > 0)
+                  ? formatChatReplyPreview(rootMsg.content, stickerMap, getChatAttachmentKind(rootMsg.attachments))
                   : (latest?.content || "点击查看线程")}
               </div>
               {#if latest}
                 <div class="text-[11px] md:text-[10px] opacity-65 truncate mt-0.5">
-                  最新 {latest.name}：{formatChatReplyPreview(latest.content, stickerMap, latest.hasImage)}
+                  最新 {latest.name}：{formatChatReplyPreview(latest.content, stickerMap, getChatReplyAttachmentKind(latest))}
                 </div>
               {/if}
             </div>
@@ -5502,7 +5502,7 @@ function removePendingImage(index: number) {
               {formatChatReplyPreview(
                 replyingTo.content,
                 stickerMap,
-                replyingTo.attachments.length > 0,
+                getChatAttachmentKind(replyingTo.attachments),
               )}
             </span>
           </div>
@@ -5804,7 +5804,7 @@ function removePendingImage(index: number) {
     {@const previewText = formatChatReplyPreview(
       activeMsg.content,
       stickerMap,
-      (activeMsg.attachments?.length ?? 0) > 0,
+      getChatAttachmentKind(activeMsg.attachments),
     )}
     <dialog
       bind:this={mobileActionDialog}

@@ -80,7 +80,11 @@ export function getChatMessageAttachments(
 	const content = message.content ?? "";
 	const hasMdImg = /!\[[^\]]*\]\((https?:\/\/[^)]+)\)/i.test(content);
 	return raw
-		.map((att) => ({ ...att, url: sanitizeChatUrl(att.url, true) }))
+		.map((att) => ({
+			...att,
+			url: sanitizeChatUrl(att.url, true),
+			thumbnailUrl: sanitizeChatUrl(att.thumbnailUrl, true) || undefined,
+		}))
 		.filter((att) => {
 			if (!att.url) return false;
 			// 1. 如果正文中已经包含了该附件的 URL，去重过滤

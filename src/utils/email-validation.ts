@@ -16,6 +16,7 @@ const UNDELIVERABLE_EXACT_DOMAINS = new Set([
 	"invalid",
 	"users.noreply.github.com",
 	"noreply.github.com",
+	"oauth.local",
 ]);
 
 // RFC 2606 / RFC 6761 保留顶级域后缀
@@ -126,6 +127,17 @@ export function checkEmailDeliverability(
 	// 0. 主流大厂与高校白名单秒过（0ms，绝不误伤）
 	if (isTrustedFastPassDomain(domain)) {
 		return { deliverable: true };
+	}
+
+	if (
+		domain === "oauth.local" ||
+		domain.endsWith(".local") ||
+		trimmed.includes("@oauth.local")
+	) {
+		return {
+			deliverable: false,
+			reason: "第三方快捷登录生成的虚拟占位邮箱，无真实邮件接收服务器",
+		};
 	}
 
 	// 检查已知无 MX 记录或单向替身域名

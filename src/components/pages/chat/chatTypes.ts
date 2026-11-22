@@ -236,6 +236,7 @@ export interface ChatMentionCandidate {
 export interface ImageAttachment {
 	type: "image" | "audio" | "video" | "file";
 	url: string;
+	thumbnailUrl?: string;
 	name?: string;
 	duration?: number;
 	size?: number;
@@ -245,6 +246,10 @@ export interface ImageAttachment {
 }
 
 export type ChatAttachment = ImageAttachment;
+export type ChatAttachmentKind =
+	| ImageAttachment["type"]
+	| "sticker"
+	| "attachment";
 
 export interface ChatPollAnswer {
 	id: string;
@@ -264,6 +269,7 @@ export interface ChatReplyRef {
 	userKey: string;
 	name: string;
 	content: string;
+	attachmentKind?: ChatAttachmentKind | null;
 	hasImage?: boolean;
 	isRecalled?: boolean;
 }
@@ -282,6 +288,7 @@ export interface ChatThreadSummary {
 		name: string;
 		avatar: string;
 		content: string;
+		attachmentKind?: ChatAttachmentKind | null;
 		hasImage?: boolean;
 		createdAt: number;
 	} | null;

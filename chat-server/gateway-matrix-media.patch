@@ -1,0 +1,193 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -8,6 +8,8 @@
+ import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, createReadStream, createWriteStream, statSync, unlinkSync } from 'node:fs';
+ import { join } from 'node:path';
+ import { WebSocketServer, WebSocket } from 'ws';
++import { createMatrixMediaHandler } from './src/matrix-media.mjs';
++import { historicalReplyAttachmentFields, matrixReplyAttachmentFields, replyAttachmentFields } from './src/chat-attachment-kind.mjs';
+ 
+ import { QQMusicProvider } from './src/music/qq-music.mjs';
+ import { KugouMusicProvider, NeteaseMusicProvider } from './src/music/catalog-providers.mjs';
+@@ -2358,7 +2360,7 @@
+     userKey: targetMsg.userKey || '',
+     name: targetMsg.name || '房友',
+     content: (targetMsg.content || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+-    hasImage: Array.isArray(targetMsg.attachments) && targetMsg.attachments.length > 0,
++    ...replyAttachmentFields(targetMsg.isRecalled ? [] : targetMsg.attachments),
+     isRecalled: Boolean(targetMsg.isRecalled)
+   };
+ }
+@@ -2401,7 +2403,8 @@
+     body = body.replace(/^(?:>[^\n]*\r?\n)+\s*/, '').trim();
+   }
+   const msgType = rawEv.content?.msgtype || '';
+-  const hasImage = msgType === 'm.image' || rawEv.type === 'm.sticker';
++  const attachmentFields = matrixReplyAttachmentFields(rawEv);
++  const hasImage = attachmentFields.hasImage;
+   if (hasImage && (!body || body === 'image.png' || /\.(jpg|jpeg|png|webp|gif|avif)$/i.test(body))) {
+     body = '';
+   }
+@@ -2419,7 +2422,7 @@
+       userKey: localSenderKey || (rawEv.sender ? `matrix:${rawEv.sender}` : ''),
+       name: name || '房友',
+       content: body.replace(/\s+/g, ' ').trim().slice(0, 120),
+-      hasImage,
++      ...attachmentFields,
+       isRecalled: Boolean(rawEv.unsigned?.redacted_because)
+     }
+   };
+@@ -2453,7 +2456,7 @@
+         name: m.name || '房友',
+         avatar: m.avatar || '',
+         content: (m.content || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+-        hasImage: Array.isArray(m.attachments) && m.attachments.length > 0,
++        ...replyAttachmentFields(m.attachments),
+         createdAt: m.createdAt || 0
+       };
+     }
+@@ -2523,6 +2526,8 @@
+   'Pragma': 'no-cache',
+   'Expires': '0'
+ };
++
++const handleMatrixMedia = createMatrixMediaHandler({ baseUrl: MATRIX_INTERNAL_URL, token: MATRIX_ADMIN_TOKEN });
+ 
+ const server = createServer(async (req, res) => {
+   res.setHeader('Access-Control-Allow-Origin', '*');
+@@ -4014,53 +4019,9 @@
+     return;
+   }
+ 
+-  // Matrix Media Proxy: GET /api/media/:serverName/:mediaId
+   if (url.pathname.startsWith('/api/media/')) {
+-    const rawPath = url.pathname.slice('/api/media/'.length);
+-    const slashIdx = rawPath.indexOf('/');
+-    if (slashIdx > 0) {
+-      const serverName = decodeURIComponent(rawPath.slice(0, slashIdx));
+-      const mediaId = decodeURIComponent(rawPath.slice(slashIdx + 1));
+-      try {
+-        const mediaUrl = `${MATRIX_INTERNAL_URL}/_matrix/client/v1/media/download/${encodeURIComponent(serverName)}/${encodeURIComponent(mediaId)}`;
+-        const mRes = await fetch(mediaUrl, {
+-          headers: { Authorization: `Bearer ${MATRIX_ADMIN_TOKEN}` },
+-          signal: AbortSignal.timeout(8000)
+-        });
+-        if (!mRes.ok) {
+-          res.writeHead(mRes.status, { 'Content-Type': 'application/json' });
+-          res.end(JSON.stringify({ ok: false, error: 'Media not found or inaccessible' }));
+-          return;
+-        }
+-        const cType = mRes.headers.get('content-type') || 'application/octet-stream';
+-        const arrayBuf = await mRes.arrayBuffer();
+-        let payload = Buffer.from(arrayBuf);
+-        if (cType.includes('image/svg+xml') || payload.slice(0, 100).toString('utf-8').includes('<svg')) {
+-          let svgStr = payload.toString('utf-8');
+-          const svgTagMatch = svgStr.match(/<svg\b([^>]*)>/i);
+-          if (svgTagMatch && !/\bviewBox\s*=/i.test(svgTagMatch[1])) {
+-            const wMatch = svgTagMatch[1].match(/\bwidth\s*=\s*["']?([0-9.]+)(?:px)?["']?/i);
+-            const hMatch = svgTagMatch[1].match(/\bheight\s*=\s*["']?([0-9.]+)(?:px)?["']?/i);
+-            if (wMatch && hMatch) {
+-              svgStr = svgStr.replace(/<svg\b([^>]*)>/i, `<svg${svgTagMatch[1]} viewBox="0 0 ${wMatch[1]} ${hMatch[1]}">`);
+-              payload = Buffer.from(svgStr, 'utf-8');
+-            }
+-          }
+-        }
+-        res.writeHead(200, {
+-          'Content-Type': cType,
+-          'Content-Length': payload.length,
+-          'Cache-Control': 'public, max-age=604800, immutable'
+-        });
+-        res.end(payload);
+-        return;
+-      } catch (err) {
+-        console.error(`[MediaProxy] Error fetching media ${serverName}/${mediaId}:`, err.message);
+-        res.writeHead(502, { 'Content-Type': 'application/json' });
+-        res.end(JSON.stringify({ ok: false, error: 'Proxy error' }));
+-        return;
+-      }
+-    }
++    await handleMatrixMedia(req, res, url.pathname);
++    return;
+   }
+ 
+   // Lottie Sticker JSON Cache Proxy: GET /api/lottie/:name.json
+@@ -4287,15 +4248,23 @@
+ 
+ function publicRoomHistory(roomId) {
+   const records = Object.hasOwn(messagesStore, roomId) ? messagesStore[roomId] : [];
+-  const hidden = new Set(records.filter((message) => message.isRecalled ||
+-    message.status === 'recalled' || message.status === 'deleted').map((message) => message.msgUid));
++  const byId = new Map();
++  const hidden = new Set();
++  for (const message of records) {
++    byId.set(message.msgUid, message);
++    for (const eventId of getAllMatrixEventIds(message)) byId.set(eventId, message);
++    if (message.isRecalled || message.status === 'recalled' || message.status === 'deleted') {
++      hidden.add(message.msgUid);
++    }
++  }
+   return records.filter((message) => !hidden.has(message.msgUid)).map((message) => {
+     const withDimensions = withHistoryImageDimensions(message, historyImageDimensions);
+-    if (!hidden.has(message.replyTo?.msgUid)) return withDimensions;
+-    return {
+-      ...withDimensions,
+-      replyTo: { ...message.replyTo, content: '', hasImage: false, isRecalled: true }
+-    };
++    if (!message.replyTo) return withDimensions;
++    const target = byId.get(message.replyTo.msgUid);
++    const replyTo = message.replyTo.isRecalled || hidden.has(target?.msgUid || message.replyTo.msgUid)
++      ? { ...message.replyTo, content: '', ...replyAttachmentFields([]), isRecalled: true }
++      : { ...message.replyTo, ...historicalReplyAttachmentFields(message.replyTo, target) };
++    return { ...withDimensions, replyTo };
+   });
+ }
+ 
+@@ -5597,14 +5566,7 @@
+         if (replyToUid) {
+           const target = roomMsgsForSend.find((m) => matchMessageById(m, replyToUid));
+           if (target) {
+-            replyTo = {
+-              msgUid: target.msgUid,
+-              userKey: target.userKey || '',
+-              name: target.name || '房友',
+-              content: (target.content || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+-              hasImage: Array.isArray(target.attachments) && target.attachments.length > 0,
+-              isRecalled: Boolean(target.isRecalled)
+-            };
++            replyTo = buildReplyToFromMessage(target);
+           }
+         }
+ 
+@@ -6118,6 +6080,8 @@
+         } else if (replyTarget.matrixEventId) {
+           inReplyToEventId = replyTarget.matrixEventId;
+         }
++      } else if (msg.replyTo.msgUid.startsWith('$')) {
++        inReplyToEventId = msg.replyTo.msgUid;
+       }
+     }
+ 
+@@ -6379,16 +6343,20 @@
+     if (imgUrl.startsWith('mxc://')) {
+       imgUrl = mxcToHttp(imgUrl);
+     }
++    const filename = typeof ev.content?.filename === 'string' ? ev.content.filename : '';
++    const isFilename = filename ? rawBody === filename : /\.(jpg|jpeg|png|webp|gif|avif)$/i.test(rawBody);
++    const thumbnail = ev.content?.info?.thumbnail_url;
++    const thumbnailUrl = typeof thumbnail === 'string' && thumbnail.startsWith('mxc://') ? mxcToHttp(thumbnail) : '';
+     if (imgUrl) {
+       attachments.push({
+         type: 'image',
+         url: imgUrl,
++        ...(filename || isFilename ? { name: filename || rawBody } : {}),
++        ...(thumbnailUrl && thumbnailUrl !== imgUrl ? { thumbnailUrl } : {}),
+         ...imageDimensions(ev.content?.info?.w, ev.content?.info?.h)
+       });
+     }
+-    if (!rawBody || rawBody === 'image.png' || /\.(jpg|jpeg|png|webp|gif|avif)$/i.test(rawBody)) {
+-      rawBody = '';
+-    }
++    if (isFilename) rawBody = '';
+   } else if (msgType === 'm.audio') {
+     let audioUrl = ev.content?.url || '';
+     if (audioUrl.startsWith('mxc://')) audioUrl = mxcToHttp(audioUrl);

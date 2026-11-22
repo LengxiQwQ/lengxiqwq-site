@@ -48,3 +48,9 @@ python3 scripts/backfill-chat-image-dimensions.py /path/to/chat-data-copy \
 网关首次启动在数据目录生成 `web-push-vapid.json`，订阅写入 `web-push-subscriptions.json`。这两个文件随服务保留并按私密数据备份。更换 VAPID 密钥后，已启用的浏览器需要重新订阅。回滚时恢复网关入口并重启，保留数据文件。
 
 定向回归用 `node --test chat-server/test/web-push.test.mjs`。送达验收从「个人资料 → 浏览器推送」启用，在对应浏览器点击「发送测试推送」，并用第二个账号验证关掉本站标签页后仍能收到实际聊天消息。
+
+## Matrix 媒体和回复引用
+
+`gateway-matrix-media.patch` 对应当前 VPS 网关。候选发布目录需包含 `src/matrix-media.mjs` 和 `src/chat-attachment-kind.mjs`。先对当前入口的副本执行 `git apply --check`，应用后用 `node --check server.mjs` 校验。两个模块可用 `node --test chat-server/test/matrix-media.test.mjs` 验证。发布时先更新网关，再更新静态站。历史媒体地址和消息文件无需迁移，旧引用会在读取时从原消息恢复附件类型。
+
+发布验收时，用同一张联邦 PNG 检查消息小图与原图，用同一段联邦 MP4 检查起播和拖动。在网站回复这个视频后，核对网站和 Element 的引用均指向同一条视频。若需回滚，恢复备份中的网关入口和静态站版本。

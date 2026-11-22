@@ -81,6 +81,7 @@ import {
 	buildStickerLookup,
 	loadStickerPacks,
 	type StickerPack,
+	getChatAttachmentKind,
 } from "./stickerLoader";
 
 interface Props {
@@ -2120,7 +2121,7 @@ function connectRoom(roomId: string) {
 								.replace(/\s+/g, " ")
 								.trim()
 								.slice(0, 120),
-							hasImage: updated.attachments.length > 0,
+							attachmentKind: getChatAttachmentKind(updated.attachments),
 						},
 					};
 				});
@@ -2143,6 +2144,7 @@ function connectRoom(roomId: string) {
 											...m.replyTo,
 											userKey: m.replyTo.userKey || "",
 											content: "",
+											attachmentKind: null,
 											hasImage: false,
 											isRecalled: true,
 										},

@@ -98,6 +98,7 @@ function ensureLottieLibrary(): Promise<LottiePlayer> {
 
 <script lang="ts">
 import { normalizeServerUrl } from "./chatClient";
+import { useChatMediaRetry } from "./chatMediaRetry";
 
 interface Props {
 	name: string;
@@ -119,6 +120,12 @@ let containerEl = $state<HTMLDivElement | null>(null);
 let isVisible = false;
 let hasEnteredViewport = $state(false);
 let failed = $state(false);
+const retry = useChatMediaRetry(() => { failed = false; });
+
+function handleLoadError() {
+	failed = true;
+	retry.fail();
+}
 let activeAnim: LottieAnimation | null = null;
 
 const displayAlt = $derived(alt || name);
@@ -176,16 +183,13 @@ $effect(() => {
 				path: jsonUrl,
 			});
 			activeAnim = anim;
+			anim.addEventListener("DOMLoaded", retry.clear);
 			anim.addEventListener("data_failed", () => {
-				if (!disposed) {
-					failed = true;
-				}
+				if (!disposed) handleLoadError();
 			});
 		})
 		.catch(() => {
-			if (!disposed) {
-				failed = true;
-			}
+			if (!disposed) handleLoadError();
 		});
 
 	return () => {

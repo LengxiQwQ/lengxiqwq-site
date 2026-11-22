@@ -2719,7 +2719,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	}
 
 	/* 移动端停用气泡旁迷你悬浮小图标，改由点击气泡弹出底部大操作抽屉 */
-	.chat-msg-floating-actions {
+	.chat-msg-floating-actions:not(.has-media-retry) {
 		display: none !important;
 	}
 
@@ -5228,6 +5228,27 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transform: scale(1.08);
 }
 
+@media (max-width: 767px), (hover: none) and (pointer: coarse) {
+	.chat-msg-floating-actions.has-media-retry {
+		position: static;
+		width: max-content;
+		margin-block-end: 0.25rem;
+	}
+
+	.chat-msg-floating-actions.self.has-media-retry {
+		margin-inline-start: auto;
+	}
+
+	.chat-msg-floating-actions.has-media-retry > :not(.chat-media-retry-wrap) {
+		display: none;
+	}
+
+	.chat-media-retry {
+		width: 2.75rem;
+		height: 2.75rem;
+	}
+}
+
 .chat-quick-reactions-popover {
 	display: inline-flex;
 	flex-wrap: wrap;
@@ -6023,7 +6044,7 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 
 /* 触屏设备（含手机与 iPad Safari）兜底：禁止双击放大、输入框聚焦自动放大，并停用桌面悬停小图标改用大操作菜单 */
 @media (hover: none) and (pointer: coarse) {
-	.chat-msg-floating-actions {
+	.chat-msg-floating-actions:not(.has-media-retry) {
 		display: none !important;
 	}
 }

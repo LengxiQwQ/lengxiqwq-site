@@ -2,6 +2,7 @@
 import type { Token, Tokens } from "marked";
 import ChatCodeBlock from "./ChatCodeBlock.svelte";
 import ChatImagePreview from "./ChatImagePreview.svelte";
+import ChatStickerImage from "./ChatStickerImage.svelte";
 import type { ChatImageDimensions } from "./chatImageLayout";
 import {
 	type ChatMarkdownAst,
@@ -100,12 +101,11 @@ function getInlineChildren(token: Token): Token[] | undefined {
         {@const isSticker = isChatInlineSticker(safeSrc, imgTok.text, stickerMap)}
         {@const cat = isSticker ? resolveInlineStickerCategory(safeSrc, imgTok.text) : null}
         {#if isSticker && (cat === "qq" || cat === "emoji")}
-          <img
+          <ChatStickerImage
             src={safeSrc}
             alt={formatStickerAttachmentAlt(imgTok.text) || "表情"}
             title={formatStickerAttachmentAlt(imgTok.text) || "表情"}
             loading="lazy"
-            decoding="async"
             class="chat-sticker chat-sticker--{cat} chat-sticker--inline select-none"
           />
         {:else}
@@ -133,7 +133,7 @@ function getInlineChildren(token: Token): Token[] | undefined {
                 chatServerUrl={chatServerUrl}
               />
             {:else}
-              <img src={seg.url} alt={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
+              <ChatStickerImage src={seg.url} alt={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
             {/if}
           {:else if seg.kind === "mention"}
             {#if onMentionClick && seg.userKey !== "room"}

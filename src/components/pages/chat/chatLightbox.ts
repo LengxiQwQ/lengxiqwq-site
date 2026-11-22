@@ -238,6 +238,10 @@ export async function openChatImageLightbox(
 			startIndex,
 			Hash: false,
 			closeExisting: true,
+			Carousel: {
+				errorTpl: `<div class="f-carousel__error"><span>图片加载失败</span>
+					<button type="button" class="underline" data-chat-image-retry>重新加载</button></div>`,
+			},
 			Thumbs: {
 				autoStart: false,
 			},
@@ -265,6 +269,14 @@ export async function openChatImageLightbox(
 				minScale: 1,
 			},
 			on: {
+				initLayout: (fb) => {
+					fb.getContainer()?.addEventListener("click", (event) => {
+						if (!(event.target instanceof Element)) return;
+						if (!event.target.closest("[data-chat-image-retry]")) return;
+						const currentSrc = fb.getSlide()?.src;
+						if (currentSrc) void openChatImageLightbox(currentSrc);
+					});
+				},
 				destroy: (fb: { getContainer?: () => HTMLElement | null }) => {
 					try {
 						const container = fb.getContainer?.();
@@ -279,9 +291,7 @@ export async function openChatImageLightbox(
 				},
 			},
 		} as Parameters<typeof Fancybox.show>[1]);
-	} catch {
-		if (currentSeq === openSeq) {
-			window.open(targetUrl, "_blank", "noopener,noreferrer");
-		}
+	} catch (error) {
+		if (currentSeq === openSeq) console.warn("聊天室阅图窗口打开失败", error);
 	}
 }

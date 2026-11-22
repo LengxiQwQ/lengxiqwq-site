@@ -21,7 +21,7 @@ import type {
 	ChatUserDetailSeed,
 	ImageAttachment,
 } from "./chatTypes";
-import { formatChatReplyPreview, type StickerItem } from "./stickerLoader";
+import { formatChatReplyPreview, getChatAttachmentKind, type StickerItem } from "./stickerLoader";
 
 interface Props {
 	open: boolean;
@@ -514,7 +514,7 @@ const threadSubtitle = $derived.by(() => {
       {:else if replyingTarget}
         <div class="chat-thread-composer-banner">
           <span class="truncate">
-            回复 {replyingTarget.name}：{formatChatReplyPreview(replyingTarget.content, stickerMap, replyingTarget.attachments.length > 0)}
+            回复 {replyingTarget.name}：{formatChatReplyPreview(replyingTarget.content, stickerMap, getChatAttachmentKind(replyingTarget.attachments))}
           </span>
           <button
             type="button"
