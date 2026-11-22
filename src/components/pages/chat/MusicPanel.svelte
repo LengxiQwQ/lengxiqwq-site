@@ -15,10 +15,19 @@ function resolveMusicThumbUrl(raw?: string): string {
 		return raw.replace(/\/\d+x\d+bb(\.[a-zA-Z0-9]+)$/, "/100x100bb$1");
 	}
 	if (url.hostname === "y.gtimg.cn") {
-		return raw.replace(/T002R(?:300|500|800)x(?:300|500|800)M000/, "T002R150x150M000");
+		return raw.replace(
+			/T002R(?:300|500|800)x(?:300|500|800)M000/,
+			"T002R150x150M000",
+		);
 	}
-	if (url.hostname === "i.scdn.co" && /^\/image\/ab67616d0000(?:b273|1e02)[a-f0-9]{24}$/i.test(url.pathname)) {
-		url.pathname = url.pathname.replace(/^\/image\/ab67616d0000(?:b273|1e02)/i, "/image/ab67616d00004851");
+	if (
+		url.hostname === "i.scdn.co" &&
+		/^\/image\/ab67616d0000(?:b273|1e02)[a-f0-9]{24}$/i.test(url.pathname)
+	) {
+		url.pathname = url.pathname.replace(
+			/^\/image\/ab67616d0000(?:b273|1e02)/i,
+			"/image/ab67616d00004851",
+		);
 		return url.href;
 	}
 	return raw;
@@ -2463,6 +2472,26 @@ function handleMediaSessionNextTrack() {
 	}
 }
 
+function unregisterMediaSessionHandlers() {
+	if (typeof navigator === "undefined" || !("mediaSession" in navigator))
+		return;
+	const actions: MediaSessionAction[] = [
+		"play",
+		"pause",
+		"stop",
+		"seekbackward",
+		"seekforward",
+		"seekto",
+		"previoustrack",
+		"nexttrack",
+	];
+	for (const action of actions) {
+		try {
+			navigator.mediaSession.setActionHandler(action, null);
+		} catch {}
+	}
+}
+
 function registerMediaSessionHandlers() {
 	if (typeof navigator === "undefined" || !("mediaSession" in navigator))
 		return;
@@ -2895,6 +2924,7 @@ onMount(() => {
 		}
 		if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
 			navigator.mediaSession.playbackState = "none";
+			unregisterMediaSessionHandlers();
 		}
 	};
 });

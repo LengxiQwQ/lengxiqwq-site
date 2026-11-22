@@ -53,6 +53,8 @@ export class RoomAudioPlayer {
 	private waitingTimer: ReturnType<typeof setTimeout> | undefined;
 	private lastSeek = Number.NEGATIVE_INFINITY;
 	private isSeekingInternal = false;
+	private activeTransport: "direct" | "proxy" = "direct";
+	private directFailedAt = 0;
 
 	constructor(
 		private readonly audio: HTMLAudioElement,
@@ -89,6 +91,7 @@ export class RoomAudioPlayer {
 		audio.addEventListener(
 			"loadedmetadata",
 			() => {
+				this.isSeekingInternal = false;
 				if (!this.active) return;
 				reportDuration();
 				this.align(true);
@@ -101,6 +104,7 @@ export class RoomAudioPlayer {
 		audio.addEventListener(
 			"playing",
 			() => {
+				this.isSeekingInternal = false;
 				if (!this.active || audio.paused) return;
 				clearTimeout(this.waitingTimer);
 				this.waitingTimer = undefined;
@@ -160,6 +164,7 @@ export class RoomAudioPlayer {
 		audio.addEventListener(
 			"ended",
 			() => {
+				this.isSeekingInternal = false;
 				const play = this.play;
 				if (this.active && play && audio.ended) {
 					this.callbacks.ended(play.uid);
@@ -171,13 +176,17 @@ export class RoomAudioPlayer {
 		audio.addEventListener(
 			"error",
 			() => {
+				this.isSeekingInternal = false;
 				if (!this.active) return;
 				const play = this.play;
 				if (!play) return;
 				clearTimeout(this.waitingTimer);
 				this.waitingTimer = undefined;
 				const proxy = play.track.proxyUrl;
-				if (proxy && proxy !== audio.getAttribute("src")) {
+				// 熔断保护：当前 direct 失败时，在当前歌曲生命周期内降级走 proxy，并记录时间戳
+				if (proxy && this.activeTransport !== "proxy") {
+					this.activeTransport = "proxy";
+					this.directFailedAt = Date.now();
 					this.start(true);
 					return;
 				}
@@ -197,13 +206,13 @@ export class RoomAudioPlayer {
 				return;
 			if (this.isCurrentAudioSrcValid()) {
 				if (audio.paused && !audio.ended) {
-					this.start(false);
+					this.start();
 				} else {
 					this.openOutput();
 					this.align(false);
 				}
 			} else {
-				this.start(false);
+				this.start();
 			}
 		};
 
@@ -226,29 +235,49 @@ export class RoomAudioPlayer {
 		);
 	}
 
+	private normalizeUrl(url: string | null | undefined): string {
+		if (!url) return "";
+		try {
+			const parsed = new URL(
+				url,
+				typeof window !== "undefined"
+					? window.location.href
+					: "https://lengxiqwq.com",
+			);
+			parsed.hash = "";
+			return parsed.href;
+		} catch {
+			return url.trim();
+		}
+	}
+
 	private isCurrentAudioSrcValid(): boolean {
 		const play = this.play;
 		if (!play) return false;
-		const currentSrc = this.audio.getAttribute("src");
-		if (!currentSrc) return false;
+		const currentRaw =
+			this.audio.currentSrc || this.audio.src || this.audio.getAttribute("src");
+		const current = this.normalizeUrl(currentRaw);
+		if (!current) return false;
 		const validUrls = [
 			play.track.streamUrl,
 			play.track.directUrl,
 			play.track.proxyUrl,
-		].filter((u): u is string => Boolean(u));
-		return validUrls.includes(currentSrc);
+		]
+			.filter((u): u is string => Boolean(u))
+			.map((u) => this.normalizeUrl(u));
+		return validUrls.includes(current);
 	}
 
-	private resolveTargetUrl(preferProxy = false): string | null {
+	private resolveTargetUrl(forceProxy = false): string | null {
 		const play = this.play;
 		if (!play) return null;
-		if (preferProxy) {
-			return (
-				play.track.proxyUrl ||
-				play.track.streamUrl ||
-				play.track.directUrl ||
-				null
-			);
+		// 动态熔断器：若已降级为 proxy，但在 60 秒冷却后自动半开，允许重新探测恢复优质 direct
+		const isWithinFailureCooldown =
+			this.activeTransport === "proxy" &&
+			Date.now() - this.directFailedAt < 60_000;
+		const shouldUseProxy = forceProxy || isWithinFailureCooldown;
+		if (shouldUseProxy && play.track.proxyUrl) {
+			return play.track.proxyUrl;
 		}
 		return (
 			play.track.streamUrl ||
@@ -261,11 +290,17 @@ export class RoomAudioPlayer {
 	private update(status: AudioStatus) {
 		this.status = status;
 		const play = this.play;
-		const source = status === "idle" ? null : this.audio.getAttribute("src");
+		const currentRaw =
+			this.audio.currentSrc || this.audio.src || this.audio.getAttribute("src");
+		const source = status === "idle" ? null : this.normalizeUrl(currentRaw);
+		const proxyNorm = this.normalizeUrl(play?.track.proxyUrl);
+		const directNorm = this.normalizeUrl(
+			play?.track.directUrl || play?.track.streamUrl,
+		);
 		const transport =
-			source && source === play?.track.proxyUrl
+			source && proxyNorm && source === proxyNorm
 				? "proxy"
-				: source && source === (play?.track.directUrl || play?.track.streamUrl)
+				: source && directNorm && source === directNorm
 					? "direct"
 					: undefined;
 		this.callbacks.status(
@@ -348,15 +383,16 @@ export class RoomAudioPlayer {
 		}
 	}
 
-	private start(preferProxy = false) {
+	private start(forceProxy = false) {
 		const play = this.play;
 		if (!play || !this.intent) return;
 		clearTimeout(this.timer);
 		clearTimeout(this.waitingTimer);
 		this.waitingTimer = undefined;
+		this.isSeekingInternal = false;
 		const generation = ++this.generation;
 
-		const targetUrl = this.resolveTargetUrl(preferProxy);
+		const targetUrl = this.resolveTargetUrl(forceProxy);
 		if (!targetUrl) {
 			try {
 				this.audio.pause();
@@ -369,14 +405,17 @@ export class RoomAudioPlayer {
 			return;
 		}
 
-		if (this.audio.getAttribute("src") !== targetUrl) {
+		if (
+			this.normalizeUrl(this.audio.getAttribute("src")) !==
+			this.normalizeUrl(targetUrl)
+		) {
 			this.audio.src = targetUrl;
 		}
 
 		if (!this.active) {
 			this.update("preparing");
 			this.timer = setTimeout(
-				() => this.start(preferProxy),
+				() => this.start(forceProxy),
 				Math.max(0, play.startedAt - this.callbacks.now()),
 			);
 			return;
@@ -402,9 +441,12 @@ export class RoomAudioPlayer {
 					const proxy = play.track.proxyUrl;
 					if (
 						proxy &&
-						!preferProxy &&
-						proxy !== this.audio.getAttribute("src")
+						this.activeTransport !== "proxy" &&
+						this.normalizeUrl(proxy) !==
+							this.normalizeUrl(this.audio.getAttribute("src"))
 					) {
+						this.activeTransport = "proxy";
+						this.directFailedAt = Date.now();
 						this.start(true);
 						return;
 					}
@@ -439,11 +481,24 @@ export class RoomAudioPlayer {
 		this.isSeekingInternal = false;
 		this.release();
 
+		// 新曲目切入，重置传输模式为 direct，优先享受直链优质体验
+		if (!isSamePlay) {
+			this.activeTransport = "direct";
+			this.directFailedAt = 0;
+		} else if (previous?.sourceRevision !== play?.sourceRevision) {
+			// 服务端推送了新的 sourceRevision，重置 direct 允许重试最新直链
+			this.activeTransport = "direct";
+			this.directFailedAt = 0;
+		}
+
 		// 如果切到了不同的歌曲，并且新歌存在有效音源，立即替换 audio.src 并暂停，杜绝旧音频潜伏发声
 		if (!isSamePlay && play) {
 			const targetUrl = this.resolveTargetUrl(false);
 			if (targetUrl) {
-				if (this.audio.getAttribute("src") !== targetUrl) {
+				if (
+					this.normalizeUrl(this.audio.getAttribute("src")) !==
+					this.normalizeUrl(targetUrl)
+				) {
 					this.audio.src = targetUrl;
 				}
 			} else {
@@ -455,7 +510,7 @@ export class RoomAudioPlayer {
 		}
 
 		if (play && this.intent) {
-			this.start(false);
+			this.start();
 		} else {
 			this.update("idle");
 		}
@@ -475,7 +530,33 @@ export class RoomAudioPlayer {
 		) {
 			return;
 		}
-		this.start(false);
+
+		// 核心企业级手势保活（Autoplay Blocked 终结者）：
+		// 当处于提前预调度期（now < startedAt），在同步手势事件中执行静音激活，获取浏览器 User Gesture 授权
+		if (this.callbacks.now() < this.play.startedAt) {
+			const targetUrl = this.resolveTargetUrl();
+			if (
+				targetUrl &&
+				this.normalizeUrl(this.audio.getAttribute("src")) !==
+					this.normalizeUrl(targetUrl)
+			) {
+				this.audio.src = targetUrl;
+			}
+			this.audio.muted = true;
+			void this.audio
+				.play()
+				.then(() => {
+					try {
+						this.audio.pause();
+					} catch {}
+					this.audio.muted = false;
+				})
+				.catch(() => {
+					this.audio.muted = false;
+				});
+		}
+
+		this.start();
 	}
 
 	stop(): void {
