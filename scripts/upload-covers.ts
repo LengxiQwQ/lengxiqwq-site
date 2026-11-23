@@ -47,6 +47,18 @@ function scanImages(dir: string, currentCategory = ""): ImageItem[] {
 	for (const entry of entries) {
 		const fullPath = path.join(dir, entry.name);
 		if (entry.isDirectory()) {
+			// 忽略备份、下架与暂存目录，不参与扫描与随机图库
+			const dirLower = entry.name.toLowerCase();
+			if (
+				entry.name.startsWith("_") ||
+				entry.name.startsWith(".") ||
+				dirLower === "backup" ||
+				dirLower === "disabled" ||
+				dirLower === "暂存" ||
+				dirLower === "排除"
+			) {
+				continue;
+			}
 			const subCategory = currentCategory
 				? `${currentCategory}/${entry.name}`
 				: entry.name;

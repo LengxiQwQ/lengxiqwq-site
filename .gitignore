@@ -45,6 +45,7 @@ package/
 
 # temp covers
 temp-covers/
+temp-covers-backup/
 .temp-*/
 .wrangler/
 
