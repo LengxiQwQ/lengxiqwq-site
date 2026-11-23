@@ -1,6 +1,7 @@
 <script lang="ts">
 import { SvelteSet } from "svelte/reactivity";
 import ChatAudioAttachment from "./ChatAudioAttachment.svelte";
+import ChatArticleCard from "./ChatArticleCard.svelte";
 import ChatFileAttachment from "./ChatFileAttachment.svelte";
 import ChatStickerImage from "./ChatStickerImage.svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
@@ -21,6 +22,11 @@ import type { InterconnectSite } from "./chatConfig";
 import { positionChatFloating } from "./chatFloating";
 import { getChatMessageAttachments } from "./chatMarkdown";
 import { provideChatMediaRetry } from "./chatMediaRetry";
+import {
+	parseLxArticleShare,
+	parseLxMomentShare,
+	type ChatShareData,
+} from "./chatShareProtocol";
 import type {
 	ChatMessageRecord,
 	ChatReadReceipt,
@@ -276,6 +282,10 @@ const isStickerAttachmentOnly = $derived.by(() => {
 		(a) => a.type === "image" && Boolean(a.isSticker),
 	);
 });
+
+const shareData = $derived<ChatShareData | null>(
+	parseLxArticleShare(message.content) ?? parseLxMomentShare(message.content),
+);
 
 const formattedTime = $derived.by(() => {
 	if (!message.createdAt) return "";
@@ -1477,12 +1487,16 @@ function handleBubbleClick(e: MouseEvent) {
         {:else if isStickerAttachmentOnly}
           {@render renderStickerAttachmentOnlyBody(true)}
         {:else}
-          <div class="chat-bubble chat-bubble-self">
-            {@render renderBubbleTail(true)}
+          <div class="chat-bubble chat-bubble-self {shareData ? 'chat-bubble-share' : ''}">
+            {#if !shareData}
+              {@render renderBubbleTail(true)}
+            {/if}
             {#if message.replyTo}
               {@render replyQuoteBlock()}
             {/if}
-            {#if message.content.trim().length > 0}
+            {#if shareData}
+              <ChatArticleCard data={shareData} isSelf={true} />
+            {:else if message.content.trim().length > 0}
               <div class={message.msgType === "emote" ? "italic opacity-90" : message.isEncryptedPlaceholder ? "opacity-75 text-xs" : ""}>
                 {#if message.msgType === "emote"}
                   <span class="font-medium mr-1">* {externalOrigin?.cleanName || message.name}</span>
@@ -1599,7 +1613,7 @@ function handleBubbleClick(e: MouseEvent) {
         {:else}
           <div
             use:trackBubbleBox={isMentionedMe}
-            class="chat-bubble chat-bubble-other {isMentionedMe ? 'chat-bubble-mentioned' : ''} {mentionedBubblePath ? 'chat-bubble-svg-ready' : ''}"
+            class="chat-bubble chat-bubble-other {shareData ? 'chat-bubble-share' : ''} {isMentionedMe ? 'chat-bubble-mentioned' : ''} {mentionedBubblePath ? 'chat-bubble-svg-ready' : ''}"
           >
             {#if mentionedBubblePath}
               <svg
@@ -1612,13 +1626,15 @@ function handleBubbleClick(e: MouseEvent) {
                 <path class="chat-bubble-shadow" transform="translate(0 1)" d={mentionedBubblePath} />
                 <path class="chat-bubble-shape" d={mentionedBubblePath} />
               </svg>
-            {:else}
+            {:else if !shareData}
               {@render renderBubbleTail(false)}
             {/if}
             {#if message.replyTo}
               {@render replyQuoteBlock()}
             {/if}
-            {#if message.content.trim().length > 0}
+            {#if shareData}
+              <ChatArticleCard data={shareData} isSelf={false} />
+            {:else if message.content.trim().length > 0}
               <div class={message.msgType === "emote" ? "italic opacity-90" : message.isEncryptedPlaceholder ? "opacity-75 text-xs" : ""}>
                 {#if message.msgType === "emote"}
                   <span class="font-medium mr-1">* {externalOrigin?.cleanName || message.name}</span>

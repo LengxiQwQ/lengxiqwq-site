@@ -650,6 +650,13 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	cursor: text;
 }
 
+.chat-bubble.chat-bubble-share {
+	padding: 0 !important;
+	background: transparent !important;
+	box-shadow: none !important;
+	border-radius: 1rem !important;
+}
+
 .chat-bubble .chat-md-body,
 .chat-bubble .chat-md-pre-wrap {
 	min-width: 0 !important;
@@ -1222,6 +1229,23 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	min-height: 0;
 	overflow-y: auto;
 	overscroll-behavior: contain;
+	overflow-anchor: none;
+}
+
+.chat-virtual-scroll {
+	overflow-anchor: none;
+	will-change: scroll-position;
+}
+
+/* 侧栏与歌单中的重复行：跳过视口外行的布局与绘制，避免长列表滚动时整屏重排 */
+.chat-virtual-row {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 50px;
+}
+
+.chat-virtual-card {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 58px;
 }
 
 .chat-room-content .chat-room-members {

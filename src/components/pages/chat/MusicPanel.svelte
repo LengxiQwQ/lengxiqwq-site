@@ -32,9 +32,15 @@ function resolveMusicThumbUrl(raw?: string, size = 120): string {
 		);
 		return url.href;
 	}
-	if (url.hostname.endsWith("ytimg.com") || url.hostname.endsWith("googleusercontent.com")) {
-		if (/=w\d+-h\d+/.test(url.href)) {
-			return url.href.replace(/=w\d+-h\d+[^?]*/, `=w${px}-h${px}-s-l90-rj`);
+	if (
+		url.hostname.endsWith("ytimg.com") ||
+		url.hostname.endsWith("googleusercontent.com")
+	) {
+		if (/=[sw]\d+/.test(url.href)) {
+			return url.href.replace(
+				/=[sw]\d+(?:-h\d+)?[^?]*/,
+				`=w${px}-h${px}-s-l90-rj`,
+			);
 		}
 		return `${url.href}=w${px}-h${px}-s-l90-rj`;
 	}
@@ -76,6 +82,7 @@ import type {
 	RoomRotation,
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
+import { createVirtualWindowMemo } from "./virtualWindow";
 import { RoomAudioPlayer, audioStatusLabel, type AudioStatus, type LocalAudioDiagnostic } from "./roomAudioPlayer";
 import type { ChatMusicTrack } from "./musicTypes";
 import {
@@ -467,7 +474,8 @@ const filteredRotationChoices = $derived(
 let rotationScrollTop = $state(0);
 let rotationViewportH = $state(400);
 const ROTATION_ROW_H = 62;
-const VIRTUAL_ROTATION_THRESHOLD = 25;
+const VIRTUAL_ROTATION_THRESHOLD = 12;
+const rotationWindowMemo = createVirtualWindowMemo<PlaylistSummary>();
 let rotationScrollRaf: number | null = null;
 
 function handleRotationScroll(e: Event) {
@@ -487,25 +495,25 @@ const rotationChoicesVirtual = $derived.by(() => {
 	const list = filteredRotationChoices;
 	const len = list.length;
 	if (len <= VIRTUAL_ROTATION_THRESHOLD) {
-		return {
+		return rotationWindowMemo(list, `${len}:0:${len}`, () => ({
 			items: list,
 			start: 0,
 			topSpacerPx: 0,
 			bottomSpacerPx: 0,
-		};
+		}));
 	}
-	const rawStart = Math.floor(rotationScrollTop / ROTATION_ROW_H) - 8;
+	const rawStart = Math.floor(rotationScrollTop / ROTATION_ROW_H) - 6;
 	const STEP = 2;
 	const steppedStart = Math.max(0, Math.floor(rawStart / STEP) * STEP);
-	const visibleCount = Math.ceil(rotationViewportH / ROTATION_ROW_H) + 16 + STEP;
+	const visibleCount = Math.ceil(rotationViewportH / ROTATION_ROW_H) + 12 + STEP;
 	const start = steppedStart;
 	const end = Math.min(len, start + visibleCount);
-	return {
+	return rotationWindowMemo(list, `${len}:${start}:${end}`, () => ({
 		items: list.slice(start, end),
 		start,
 		topSpacerPx: start * ROTATION_ROW_H,
 		bottomSpacerPx: Math.max(0, (len - end) * ROTATION_ROW_H),
-	};
+	}));
 });
 function normalizeRotationPlaylistIds(setting: RoomRotation | null): string[] {
 	if (setting?.mode !== "playlist") return [];
@@ -578,10 +586,13 @@ let isDeletingPlaylistId = $state("");
 let confirmDeleteTimer: number | null = null;
 
 // 歌单与历史列表虚拟滚动状态
-const VIRTUAL_MUSIC_THRESHOLD = 30;
-const VIRTUAL_MUSIC_OVERSCAN = 16;
+const VIRTUAL_MUSIC_THRESHOLD = 12;
+const VIRTUAL_MUSIC_OVERSCAN = 6;
+const playlistWindowMemo = createVirtualWindowMemo<PlaylistTrackItem>();
+const historyWindowMemo = createVirtualWindowMemo<MusicHistoryEntry>();
 let playlistScrollEl: HTMLDivElement | null = $state(null);
 let playlistMetaBoxEl: HTMLDivElement | null = $state(null);
+let playlistMetaHeight = $state(0);
 let isCompactPlaylistHeader = $state(false);
 let playlistScrollTop = $state(0);
 let playlistViewportH = $state(480);
@@ -592,6 +603,7 @@ let historyScrollEl: HTMLDivElement | null = $state(null);
 let historyScrollTop = $state(0);
 let historyViewportH = $state(480);
 let historyScrollRaf: number | null = null;
+let lastHistoryLoadCheck = Number.NEGATIVE_INFINITY;
 
 // 歌词状态
 let lyrics = $state<LyricLine[]>([]);
@@ -1089,16 +1101,15 @@ const currentHistoryHasMore = $derived(
 const historyVirtual = $derived.by(() => {
 	const list = activeHistoryEntries;
 	const len = list.length;
-	const VIRTUAL_HISTORY_THRESHOLD = VIRTUAL_MUSIC_THRESHOLD;
-	if (len <= VIRTUAL_HISTORY_THRESHOLD) {
-		return {
+	const rowH = Math.max(44, playlistRowHeight);
+	if (len <= VIRTUAL_MUSIC_THRESHOLD) {
+		return historyWindowMemo(list, `${len}:0:${len}:${rowH}`, () => ({
 			items: list,
 			start: 0,
 			topSpacerPx: 0,
 			bottomSpacerPx: 0,
-		};
+		}));
 	}
-	const rowH = Math.max(44, playlistRowHeight);
 	const viewH = Math.max(240, historyViewportH);
 	const rawStart = Math.floor(historyScrollTop / rowH) - VIRTUAL_MUSIC_OVERSCAN;
 	const STEP = 4;
@@ -1106,12 +1117,12 @@ const historyVirtual = $derived.by(() => {
 	const visibleCount = Math.ceil(viewH / rowH) + VIRTUAL_MUSIC_OVERSCAN * 2 + STEP;
 	const start = steppedStart;
 	const end = Math.min(len, start + visibleCount);
-	return {
+	return historyWindowMemo(list, `${len}:${start}:${end}:${rowH}`, () => ({
 		items: list.slice(start, end),
 		start,
 		topSpacerPx: start * rowH,
 		bottomSpacerPx: Math.max(0, (len - end) * rowH),
-	};
+	}));
 });
 
 async function loadHistoryPage(
@@ -1245,17 +1256,51 @@ function handleHistoryScroll(): void {
 		historyScrollRaf = null;
 		if (!historyScrollEl) return;
 		historyScrollTop = historyScrollEl.scrollTop;
-		if (historyScrollEl.clientHeight > 0) {
-			historyViewportH = historyScrollEl.clientHeight;
-		}
 
-		// 边滚动边加载：当距离底部小于 260px 时，自动加载下一页 100 首
-		const { scrollTop, scrollHeight, clientHeight } = historyScrollEl;
-		if (scrollHeight - (scrollTop + clientHeight) < 260) {
-			void loadHistoryPage(historyFilterType, true);
+		// 边滚动边加载：当距离底部小于 260px 时，自动加载下一页 100 首。
+		// 读取 scrollHeight 会触发布局，限制为每 150ms 最多检查一次。
+		const now = performance.now();
+		if (now - lastHistoryLoadCheck >= 150) {
+			lastHistoryLoadCheck = now;
+			const { scrollTop, scrollHeight, clientHeight } = historyScrollEl;
+			if (scrollHeight - (scrollTop + clientHeight) < 260) {
+				void loadHistoryPage(historyFilterType, true);
+			}
 		}
 	});
 }
+$effect(() => {
+	const el = playlistScrollEl;
+	if (!el) return;
+	const observer = new ResizeObserver(() => {
+		if (el.clientHeight > 0) playlistViewportH = el.clientHeight;
+	});
+	observer.observe(el);
+	return () => observer.disconnect();
+});
+
+$effect(() => {
+	const el = historyScrollEl;
+	if (!el) return;
+	const observer = new ResizeObserver(() => {
+		if (el.clientHeight > 0) historyViewportH = el.clientHeight;
+	});
+	observer.observe(el);
+	return () => observer.disconnect();
+});
+
+$effect(() => {
+	const el = playlistMetaBoxEl;
+	if (!el) return;
+	const update = () => {
+		playlistMetaHeight = el.offsetHeight;
+	};
+	update();
+	const observer = new ResizeObserver(update);
+	observer.observe(el);
+	return () => observer.disconnect();
+});
+
 const effectiveDuration = $derived.by(() => {
 	if (currentPlay && currentPlay.durationSec > 0) {
 		return currentPlay.durationSec;
@@ -2357,20 +2402,17 @@ const filteredPlaylistTracks = $derived.by<PlaylistTrackItem[]>(() => {
 const playlistVirtual = $derived.by(() => {
 	const list = filteredPlaylistTracks;
 	const len = list.length;
+	const rowH = Math.max(44, playlistRowHeight);
 	if (len <= VIRTUAL_MUSIC_THRESHOLD) {
-		return {
+		return playlistWindowMemo(list, `${len}:0:${len}:${rowH}`, () => ({
 			items: list,
 			start: 0,
 			topSpacerPx: 0,
 			bottomSpacerPx: 0,
-		};
+		}));
 	}
-	const rowH = Math.max(44, playlistRowHeight);
 	const viewH = Math.max(240, playlistViewportH);
-	const metaOffset =
-		isCompactPlaylistHeader && playlistMetaBoxEl
-			? playlistMetaBoxEl.offsetHeight + 6
-			: 0;
+	const metaOffset = isCompactPlaylistHeader ? playlistMetaHeight + 6 : 0;
 	const relScrollTop = Math.max(0, playlistScrollTop - metaOffset);
 	const rawStart = Math.floor(relScrollTop / rowH) - VIRTUAL_MUSIC_OVERSCAN;
 	const STEP = 4;
@@ -2378,12 +2420,12 @@ const playlistVirtual = $derived.by(() => {
 	const visibleCount = Math.ceil(viewH / rowH) + VIRTUAL_MUSIC_OVERSCAN * 2 + STEP;
 	const start = steppedStart;
 	const end = Math.min(len, start + visibleCount);
-	return {
+	return playlistWindowMemo(list, `${len}:${start}:${end}:${rowH}`, () => ({
 		items: list.slice(start, end),
 		start,
 		topSpacerPx: start * rowH,
 		bottomSpacerPx: Math.max(0, (len - end) * rowH),
-	};
+	}));
 });
 
 const activePlaylistId = $derived(selectedPlaylist?.id);
@@ -2405,9 +2447,6 @@ function handlePlaylistScroll(e: Event): void {
 		playlistScrollRaf = null;
 		if (!playlistScrollEl) return;
 		playlistScrollTop = playlistScrollEl.scrollTop;
-		if (playlistScrollEl.clientHeight > 0) {
-			playlistViewportH = playlistScrollEl.clientHeight;
-		}
 	});
 }
 
@@ -3602,7 +3641,7 @@ $effect(() => {
     {@const songLookupKey = song.id || getTrackTitleArtistKey(song.title, song.artist)}
     {@const isToggling = songLookupKey ? favoriteTogglingTrackIds.has(songLookupKey) : false}
     {@const hasSparkle = songLookupKey ? favSparkleTrackIds.has(songLookupKey) : false}
-    <div class="flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+    <div class="chat-virtual-row flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-10 h-10 md:w-8 md:h-8 rounded-lg md:rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
         <span class="text-xs text-(--primary)/70 select-none" aria-hidden="true">♪</span>
         {#if thumbCover}
@@ -4832,7 +4871,7 @@ $effect(() => {
   {:else if activeTab === "playlist"}
     <!-- Tab 3：歌单（精选歌单 / 我的歌单 / 成员歌单 单列滚动） -->
     {#snippet playlistSummaryCard(pl: PlaylistSummary, showOwner = false)}
-      <div class="flex items-center gap-2.5 p-2 rounded-xl border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 hover:bg-[var(--card-bg)]/80 hover:border-(--primary)/30 transition-all shadow-xs">
+      <div class="chat-virtual-card flex items-center gap-2.5 p-2 rounded-xl border border-[var(--chat-divider-color)] bg-[var(--card-bg)]/45 hover:bg-[var(--card-bg)]/80 hover:border-(--primary)/30 transition-all shadow-xs">
         <button
           type="button"
           class="flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-0 cursor-pointer"
@@ -5467,7 +5506,7 @@ $effect(() => {
 
         <div
           bind:this={playlistScrollEl}
-          class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-1.5"
+          class="chat-virtual-scroll flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-1.5"
           onscroll={handlePlaylistScroll}
         >
           {#if isCompactPlaylistHeader}
@@ -5806,7 +5845,7 @@ $effect(() => {
 
     <div
       bind:this={historyScrollEl}
-      class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-1.5"
+      class="chat-virtual-scroll flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-1.5"
       onscroll={handleHistoryScroll}
     >
       {#if activeHistoryEntries.length === 0 && isCurrentHistoryLoading}

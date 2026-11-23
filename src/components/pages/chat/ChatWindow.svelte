@@ -1,5 +1,6 @@
 <script lang="ts">
 import ChatModal from "./ChatModal.svelte";
+import ChatShareModal from "./ChatShareModal.svelte";
 import { flushSync, onMount, tick } from "svelte";
 import { KAOMOJI_PRESETS } from "@/constants/kaomoji";
 import type { InterconnectSite } from "@/types/chatConfig";
@@ -261,6 +262,7 @@ let typingTimer: ReturnType<typeof setTimeout> | null = null;
 let isUploadingImage = $state(false);
 let isUploadingMedia = $state(false);
 let isPreviewingMarkdown = $state(false);
+let showShareModal = $state(false);
 
 const effectiveSubtitle = $derived(roomTopic ? roomTopic : roomSubtitle);
 const localSiteName = $derived(
@@ -3648,6 +3650,18 @@ function handleSend() {
 	void scrollToBottom();
 }
 
+function handleShareBlogContent(payload: string) {
+	if (!currentUser) {
+		onRequireAuth();
+		return;
+	}
+	const replyToUid = replyingTo?.msgUid || "";
+	onSendMessage(payload, [], [], replyToUid || undefined);
+	replyingTo = null;
+	isStickyAtBottom = true;
+	void scrollToBottom();
+}
+
 function toggleMarkdownPreview() {
 	isPreviewingMarkdown = !isPreviewingMarkdown;
 	if (!isPreviewingMarkdown) {
@@ -5747,7 +5761,7 @@ function removePendingImage(index: number) {
           </ChatTooltip>
         </div>
 
-        <div class="flex items-center gap-2.5 shrink-0">
+        <div class="flex items-center gap-1.5 md:gap-2 shrink-0">
           <span class="hidden xl:inline text-[0.6875rem] text-[var(--chat-meta-color)] select-none">
             {#if currentUser}
               Enter 发送 · Shift+Enter 换行 · 支持 Markdown 与粘贴图片
@@ -5755,6 +5769,25 @@ function removePendingImage(index: number) {
               发送消息前需先登录或填写访客信息
             {/if}
           </span>
+          <ChatTooltip text="分享博客文章与说说">
+            <button
+              type="button"
+              class="chat-tool-btn text-[var(--skin-text)] hover:text-[var(--primary)] shrink-0"
+              aria-label="分享博客文章与说说"
+              onclick={() => {
+                if (!currentUser) {
+                  onRequireAuth();
+                  return;
+                }
+                showShareModal = true;
+              }}
+            >
+              <svg class="w-5 h-5 md:w-[1.15rem] md:h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </button>
+          </ChatTooltip>
           <button
             type="button"
             class="chat-send-btn h-9.5! md:h-8! px-4.5! md:px-4! text-[13.5px]! md:text-xs! rounded-xl! md:rounded-lg! shrink-0"
@@ -6125,6 +6158,16 @@ function removePendingImage(index: number) {
         sourceModalMessage = null;
       }}
       onNotify={onNotify}
+    />
+  {/if}
+
+  {#if showShareModal}
+    <ChatShareModal
+      open={showShareModal}
+      onClose={() => {
+        showShareModal = false;
+      }}
+      onShare={handleShareBlogContent}
     />
   {/if}
 </div>

@@ -23,6 +23,7 @@ import type {
 	ChatUserDetailSeed,
 	ConnectionState,
 } from "./chatTypes";
+import { createVirtualWindowMemo } from "./virtualWindow";
 
 interface Props {
 	rooms: ChatRoomMeta[];
@@ -186,10 +187,11 @@ const offlineMembers = $derived.by(() => {
 		.sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0));
 });
 
-const VIRTUAL_OFFLINE_THRESHOLD = 30;
-const VIRTUAL_OFFLINE_OVERSCAN = 14;
+const VIRTUAL_OFFLINE_THRESHOLD = 10;
+const VIRTUAL_OFFLINE_OVERSCAN = 6;
 const VIRTUAL_OFFLINE_STEP = 4;
 const OFFLINE_ROW_H = 50;
+const offlineWindowMemo = createVirtualWindowMemo<ChatMentionCandidate>();
 
 let memberScrollEl: HTMLDivElement | null = $state(null);
 let combinedScrollEl: HTMLDivElement | null = $state(null);
@@ -202,7 +204,8 @@ let memberScrollRaf: number | null = null;
 let spectatorScrollTop = $state(0);
 let spectatorViewportH = $state(320);
 const SPECTATOR_ROW_H = 46;
-const VIRTUAL_SPECTATOR_THRESHOLD = 30;
+const VIRTUAL_SPECTATOR_THRESHOLD = 10;
+const spectatorWindowMemo = createVirtualWindowMemo<ChatSpectatorRecord>();
 let spectatorScrollRaf: number | null = null;
 
 function handleSpectatorScroll(e: Event) {
@@ -218,16 +221,14 @@ function handleSpectatorScroll(e: Event) {
 	});
 }
 
+function measureOfflineOffset() {
+	if (offlineListEl) offlineSectionOffset = offlineListEl.offsetTop;
+}
+
 function syncMemberMetrics() {
 	const scrollEl = combinedScrollEl || memberScrollEl;
 	if (!scrollEl) return;
 	memberScrollTop = scrollEl.scrollTop;
-	if (scrollEl.clientHeight > 0) {
-		memberViewportH = scrollEl.clientHeight;
-	}
-	if (offlineListEl) {
-		offlineSectionOffset = offlineListEl.offsetTop;
-	}
 }
 
 function handleMemberScroll() {
@@ -252,18 +253,40 @@ onMount(() => {
 	};
 });
 
+$effect(() => {
+	rooms.length;
+	siteOnlineMembers.length;
+	externalOnlineMembers.length;
+	observers.length;
+	isCurrentInterconnect;
+	connectionState;
+	offlineListEl;
+	measureOfflineOffset();
+});
+
+$effect(() => {
+	const el = combinedScrollEl;
+	if (!el) return;
+	const observer = new ResizeObserver(() => {
+		if (el.clientHeight > 0) memberViewportH = el.clientHeight;
+		measureOfflineOffset();
+	});
+	observer.observe(el);
+	return () => observer.disconnect();
+});
+
 const offlineVirtual = $derived.by(() => {
 	const list = offlineMembers;
 	const len = list.length;
+	const rowH = OFFLINE_ROW_H;
 	if (len <= VIRTUAL_OFFLINE_THRESHOLD) {
-		return {
+		return offlineWindowMemo(list, `${len}:0:${len}:${rowH}`, () => ({
 			items: list,
 			start: 0,
 			topSpacerPx: 0,
 			bottomSpacerPx: 0,
-		};
+		}));
 	}
-	const rowH = OFFLINE_ROW_H;
 	const viewH = Math.max(240, memberViewportH);
 	const relTop = Math.max(0, memberScrollTop - offlineSectionOffset);
 	const rawStart = Math.floor(relTop / rowH) - VIRTUAL_OFFLINE_OVERSCAN;
@@ -276,36 +299,37 @@ const offlineVirtual = $derived.by(() => {
 		VIRTUAL_OFFLINE_OVERSCAN * 2 +
 		VIRTUAL_OFFLINE_STEP;
 	const end = Math.min(len, start + visibleCount);
-	return {
+	return offlineWindowMemo(list, `${len}:${start}:${end}:${rowH}`, () => ({
 		items: list.slice(start, end),
 		start,
 		topSpacerPx: start * rowH,
 		bottomSpacerPx: Math.max(0, (len - end) * rowH),
-	};
+	}));
 });
 
 const spectatorVirtual = $derived.by(() => {
 	const list = spectatorHistory;
 	const len = list.length;
 	if (len <= VIRTUAL_SPECTATOR_THRESHOLD) {
-		return {
+		return spectatorWindowMemo(list, `${len}:0:${len}`, () => ({
 			items: list,
 			start: 0,
 			topSpacerPx: 0,
 			bottomSpacerPx: 0,
-		};
+		}));
 	}
-	const rawStart = Math.floor(spectatorScrollTop / SPECTATOR_ROW_H) - 10;
+	const rawStart = Math.floor(spectatorScrollTop / SPECTATOR_ROW_H) - 6;
 	const STEP = 4;
 	const start = Math.max(0, Math.floor(rawStart / STEP) * STEP);
-	const visibleCount = Math.ceil(spectatorViewportH / SPECTATOR_ROW_H) + 20 + STEP;
+	const visibleCount =
+		Math.ceil(spectatorViewportH / SPECTATOR_ROW_H) + 12 + STEP;
 	const end = Math.min(len, start + visibleCount);
-	return {
+	return spectatorWindowMemo(list, `${len}:${start}:${end}`, () => ({
 		items: list.slice(start, end),
 		start,
 		topSpacerPx: start * SPECTATOR_ROW_H,
 		bottomSpacerPx: Math.max(0, (len - end) * SPECTATOR_ROW_H),
-	};
+	}));
 });
 
 const connLabel = $derived(
@@ -711,7 +735,7 @@ function formatOfflineTime(ts?: number): string {
           : offlineTime)}
     <button
       type="button"
-      class="chat-user-item group justify-between w-full text-left border-none bg-transparent {isOnline ? '' : 'opacity-75 hover:opacity-100'}"
+      class="chat-virtual-row chat-user-item group justify-between w-full text-left border-none bg-transparent {isOnline ? '' : 'opacity-75 hover:opacity-100'}"
       aria-label={`查看 ${displayName} 的个人资料`}
       onclick={() =>
         onOpenUserProfile?.({
@@ -845,7 +869,7 @@ function formatOfflineTime(ts?: number): string {
       {#if isCurrentUserAdmin}
         <button
           type="button"
-          class="chat-user-item group justify-between w-full text-left border-none bg-transparent cursor-pointer"
+          class="chat-virtual-row chat-user-item group justify-between w-full text-left border-none bg-transparent cursor-pointer"
           aria-label="查看旁观者信息"
           onclick={() =>
             onOpenUserProfile?.({
@@ -896,7 +920,7 @@ function formatOfflineTime(ts?: number): string {
     {#if isCurrentUserAdmin}
     <button
       type="button"
-      class="chat-user-item group justify-between w-full text-left border-none bg-transparent cursor-pointer opacity-70 hover:opacity-100 transition-opacity"
+      class="chat-virtual-row chat-user-item group justify-between w-full text-left border-none bg-transparent cursor-pointer opacity-70 hover:opacity-100 transition-opacity"
       aria-label="查看历史旁观者名片"
       onclick={() =>
         onOpenUserProfile?.({
