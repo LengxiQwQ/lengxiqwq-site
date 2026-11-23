@@ -436,6 +436,20 @@ export class ChatDatabase {
     this.stmtUpdateLogOutcome.run(outcome, uid);
   }
 
+  getMemberTracks(roomId, userKey, beforeId = 0, limit = 50) {
+    const size = Math.min(100, Math.max(1, Number(limit) || 50));
+    const rows = this.db.prepare(`
+      SELECT l.id, l.request_uid AS requestUid, l.outcome, l.requester_key AS requesterKey,
+             l.requester_name AS requesterName, l.requester_avatar AS requesterAvatar,
+             l.requested_at AS requestedAt, t.track_json, t.total_requests AS requestCount
+      FROM music_request_logs l JOIN music_tracks t ON t.id = l.track_id
+      WHERE l.room_id = ? AND l.requester_key = ? AND l.id < ?
+      ORDER BY l.id DESC LIMIT ?
+    `).all(roomId, userKey, beforeId > 0 ? beforeId : Number.MAX_SAFE_INTEGER, size + 1);
+    const tracks = rows.slice(0, size).map(({ track_json, ...log }) => ({ ...log, track: JSON.parse(track_json) }));
+    return { ok: true, tracks, hasMore: rows.length > size, nextBeforeId: tracks.at(-1)?.id || 0 };
+  }
+
   getMusicHistoryPage({ roomId = 'chat', type = 'request', sort = 'recent', requesterKey = '', offset = 0, limit = 100 } = {}) {
     offset = Math.max(0, Number.parseInt(offset, 10) || 0);
     limit = Math.min(100, Math.max(1, Number.parseInt(limit, 10) || 100));

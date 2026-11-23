@@ -52,6 +52,7 @@ import {
 	resolveInitialAuth,
 	syncChatUserToWalineStorage,
 	type ServerPacket,
+	type MusicAudience,
 	saveMemberBadges,
 	searchOnlineMusic,
 } from "./chatClient";
@@ -274,7 +275,7 @@ function clearAllTypingTimers() {
 let readReceipts = $state<Record<string, ChatReadReceipt[]>>({});
 let musicState = $state<RoomMusicState | null>(null);
 let localAudioDiagnostic = $state.raw<LocalAudioDiagnostic | null>(null);
-let musicAudience = $state({ onlineCount: 0, listeningCount: 0 });
+let musicAudience = $state<MusicAudience>({ onlineCount: 0, listeningCount: 0 });
 const songRequests = new Map<
 	string,
 	{
@@ -1647,8 +1648,9 @@ function sampleRoomClock(socket: WebSocket | null, refresh = false) {
 			id: sample.id,
 			musicSyncVersion: 2,
 			musicListening:
-				isListeningIntent && mobilePlaybackStatus.audioStatus !== "blocked",
+				isListeningIntent && !mobilePlaybackStatus.isMuted && mobilePlaybackStatus.audioStatus !== "blocked",
 			musicPlayUid: musicState?.current?.uid || "",
+			musicSourceRevision: musicState?.current?.sourceRevision ?? 0,
 		}),
 	);
 	window.setTimeout(() => {
@@ -3133,6 +3135,7 @@ async function sendSongRequest(
 				id: track.id,
 				provider: track.provider,
 				sourceId: track.sourceId,
+				sourcePlatform: track.sourcePlatform,
 				playlistId: track.playlistId,
 				position: track.position,
 				title: track.title,
@@ -3960,7 +3963,7 @@ onMount(() => {
         musicState={musicState}
         currentUser={currentUser}
         onlineMemberCount={musicAudience.onlineCount || roomOnlineMembers.length}
-        listeningMemberCount={musicAudience.listeningCount}
+        listeningMemberCount={musicAudience.skipAudienceCount ?? musicAudience.listeningCount}
         onlineMembers={roomOnlineMembers}
         mentionMembers={mentionMembers}
         clockOffsetMs={clockOffsetMs}
@@ -3974,7 +3977,7 @@ onMount(() => {
         onOpenUserProfile={handleOpenUserProfile}
         onPlaybackStatusChange={(status) => {
           mobilePlaybackStatus = status;
-          const listening = Boolean(status.listenIntent && status.audioStatus !== "blocked");
+          const listening = Boolean(status.listenIntent && !status.isMuted && status.audioStatus !== "blocked");
           const listenKey = currentRoom + ":" + listening;
           if (ws?.readyState === WebSocket.OPEN && listenKey !== lastListenPacket) {
             ws.send(JSON.stringify({ type: "music:listen", listening }));

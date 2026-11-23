@@ -1,0 +1,211 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -19,5 +19,5 @@
+ import { handleStreamProxyRequest, maintainAudioCache, prefetchAudio } from './src/music/stream-cache.mjs';
+ import { MusicManager } from './src/music/music-manager.mjs';
+-import { normalizeIsrc, normalizeMusicTrack, readPlaylistJson } from './src/music/music-input.mjs';
++import { findPlaylistRequestTrack, normalizeIsrc, normalizeMusicTrack, readPlaylistJson } from './src/music/music-input.mjs';
+ import { escapeHtml, inferMimeType, normalizeSiteBadge, stripSiteSuffix, normalizeDotSpacing, createMatrixPersistence, buildMentionedHtml, KNOWN_MATRIX_RELAY_SENDERS, resolveMatrixRelayMeta } from './src/matrix/matrix-utils.mjs';
+ import { restoreRelayNames } from './src/matrix/restore-relay-names.mjs';
+@@ -1065,4 +1065,9 @@
+ }
+ 
++function favoritesChanged() {
++  refreshSharedFallbacks('pl_collective_favorites');
++  notifyPlaylistUpdates();
++}
++
+ function normalizeFallbackIds(settings) {
+   const raw = Array.isArray(settings?.fallbacks)
+@@ -1081,5 +1086,12 @@
+ function publicRotationPlaylist(id) {
+   if (id === 'pl_collective_favorites') {
+-    const collective = chatDb ? chatDb.getCollectiveFavorites({ limit: 1000 }) : { items: [] };
++    const tracks = [];
++    if (chatDb) {
++      let page;
++      do {
++        page = chatDb.getCollectiveFavorites({ offset: tracks.length, limit: 1000 });
++        tracks.push(...page.items);
++      } while (page.items.length && tracks.length < page.total);
++    }
+     return {
+       id: 'pl_collective_favorites',
+@@ -1089,5 +1101,5 @@
+       isSystemProtected: true,
+       coverUrl: '',
+-      tracks: collective.items || []
++      tracks
+     };
+   }
+@@ -1097,9 +1109,7 @@
+ }
+ 
+-function getPublicRotationTracks(ids = Object.keys(playlistDetailsStore)) {
++function getPublicRotationTracks(playlists) {
+   const tracks = new Map();
+-  for (const id of ids) {
+-    const pl = publicRotationPlaylist(id);
+-    if (!pl) continue;
++  for (const pl of playlists) {
+     const coverUrl = pl.coverUrl || pl.cover || '';
+     for (const track of pl.tracks || []) {
+@@ -1125,13 +1135,9 @@
+   const manager = musicManagers[roomId];
+   const all = setting.mode === 'all';
+-  const selectedPlaylists = setting.mode === 'playlist'
+-    ? setting.playlistIds.map(id => publicRotationPlaylist(id)).filter(Boolean)
+-    : [];
+-  const tracks = all
+-    ? getPublicRotationTracks()
+-    : selectedPlaylists.length
+-      ? getPublicRotationTracks(selectedPlaylists.map(p => p.id))
+-      : [];
+-  const rotationKey = selectedPlaylists.length ? selectedPlaylists.map(p => p.id).join(',') : null;
++  const ids = all ? [...new Set([...Object.keys(playlistDetailsStore), 'pl_collective_favorites'])]
++    : (setting.playlistIds || []);
++  const selectedPlaylists = ids.map(publicRotationPlaylist).filter(list => list?.tracks.length);
++  const tracks = getPublicRotationTracks(selectedPlaylists);
++  const rotationKey = !all && selectedPlaylists.length ? selectedPlaylists.map(p => p.id).join(',') : null;
+   const rotationLabel = all
+     ? '全部公开歌单'
+@@ -1141,8 +1147,5 @@
+         ? `${selectedPlaylists[0].title} 等 ${selectedPlaylists.length} 个歌单`
+         : null;
+-  const allPublicPlaylists = all
+-    ? Object.keys(playlistDetailsStore).map(id => publicRotationPlaylist(id)).filter(Boolean)
+-    : [];
+-  const rotationPlaylistCount = all ? allPublicPlaylists.length : selectedPlaylists.length;
++  const rotationPlaylistCount = selectedPlaylists.length;
+   const keepPlaying = refresh && (all || selectedPlaylists.length > 0) && manager.current?.isFallback && tracks.length;
+   manager.setFallbackPlaylist(
+@@ -1168,6 +1171,11 @@
+   const listeners = new Set(roomClients
+     .filter(client => (client.musicSyncVersion === 2 ? client.musicListening === true : client.isMuted === false))
+-    .map(client => client.user?.userKey || client.socketId));
+-  return { onlineCount: roomClients.length, listeningCount: listeners.size };
++    .map(client => client.user?.userKey || client.observerId));
++  const voters = new Set(roomClients.map(client => client.user?.userKey).filter(Boolean));
++  return {
++    onlineCount: roomClients.length,
++    listeningCount: listeners.size,
++    skipAudienceCount: voters.size >= 2 ? listeners.size : Math.min(2, listeners.size)
++  };
+ }
+ 
+@@ -3859,13 +3867,7 @@
+         return;
+       }
+-      let userKey = caller?.userKey;
+-      let userName = caller?.name;
+-      let userAvatar = caller?.avatar;
+-
+-      if (!userKey && body?.userKey && typeof body.userKey === 'string' && body.userKey.startsWith('guest:')) {
+-        userKey = body.userKey.slice(0, 80);
+-        userName = typeof body.userName === 'string' ? body.userName.slice(0, 40) : '临时成员';
+-        userAvatar = typeof body.userAvatar === 'string' ? body.userAvatar.slice(0, 200) : '';
+-      }
++      const userKey = caller?.userKey;
++      const userName = caller?.name;
++      const userAvatar = caller?.avatar;
+ 
+       if (!userKey) {
+@@ -3881,4 +3883,5 @@
+         userAvatar
+       });
++      if (result.ok) favoritesChanged();
+ 
+       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+@@ -3918,8 +3921,5 @@
+       }
+ 
+-      let userKey = caller?.userKey;
+-      if (!userKey && body?.userKey && typeof body.userKey === 'string' && body.userKey.startsWith('guest:')) {
+-        userKey = body.userKey;
+-      }
++      const userKey = caller?.userKey;
+ 
+       if (!userKey && !caller?.isAdmin) {
+@@ -3931,4 +3931,5 @@
+       if (caller?.isAdmin) {
+         const result = chatDb.removeFavorite({ trackId, userKey: targetUserKey || null, isAdmin: true });
++        favoritesChanged();
+         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+         res.end(JSON.stringify({ ok: true, ...result }));
+@@ -3937,4 +3938,5 @@
+ 
+       const result = chatDb.removeFavorite({ trackId, userKey, isAdmin: false });
++      favoritesChanged();
+       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+       res.end(JSON.stringify({ ok: true, ...result }));
+@@ -4465,5 +4467,6 @@
+         if (ws.currentRoom && MUSIC_ROOMS.includes(ws.currentRoom)) {
+           const mgr = musicManagers[ws.currentRoom];
+-          if (mgr && packet.musicPlayUid !== undefined && packet.musicPlayUid !== (mgr.current?.uid || '')) {
++          if (mgr && packet.musicPlayUid !== undefined && (packet.musicPlayUid !== (mgr.current?.uid || '') ||
++              (mgr.current && Number.isSafeInteger(packet.musicSourceRevision) && packet.musicSourceRevision !== mgr.current.sourceRevision))) {
+             ws.send(JSON.stringify({
+               type: 'music:state',
+@@ -4815,7 +4818,5 @@
+           if (input?.playlistId || input?.provider === 'external') {
+             item = (list && (list.id === 'pl_collective_favorites' || visiblePlaylist(list, actor)))
+-              ? (Number.isSafeInteger(input.position)
+-                  ? list.tracks?.find(song => song.position === input.position)
+-                  : list.tracks?.find(song => (song.matchedTrack?.id && song.matchedTrack.id === input.id) || (song.id && song.id === input.id) || (song.sourceTrackId && song.sourceTrackId === input.sourceId)))
++              ? findPlaylistRequestTrack(list.tracks, input)
+               : null;
+           }
+@@ -4846,5 +4847,5 @@
+               : null;
+             if (!active()) return;
+-            track = resolution ? resolution.playable : normalizeMusicTrack(input);
++            track = resolution ? resolution.playable : (!playlistId ? normalizeMusicTrack(input) : null);
+             if (!track) {
+               const temporary = resolution?.temporaryFailure;
+@@ -4921,5 +4922,5 @@
+           owner: ws,
+           active,
+-          getAudience: () => getRoomMusicAudience(room).listeningCount,
++          getAudience: () => getRoomMusicAudience(room).skipAudienceCount,
+           allowAlternatives: true,
+           hasExpectedPlay: true,
+@@ -4937,5 +4938,7 @@
+         if (packet.type === 'music:listen') {
+           if (ws.musicSyncVersion === 2 && typeof packet.listening === 'boolean') {
++            const changed = ws.musicListening !== packet.listening;
+             ws.musicListening = packet.listening;
++            if (changed) broadcastPresence(ws.currentRoom);
+             if (!packet.listening) targetMgr.recheckReady?.();
+           }
+@@ -4972,5 +4975,5 @@
+             return;
+           }
+-          const { onlineCount, listeningCount } = getRoomMusicAudience(ws.currentRoom);
++          const { onlineCount, skipAudienceCount: listeningCount } = getRoomMusicAudience(ws.currentRoom);
+           result = packet.type === 'music:skip'
+             ? targetMgr.skip(actor, onlineCount, listeningCount)
+@@ -4987,8 +4990,15 @@
+           result = targetMgr.shuffleRotation(actor);
+         } else if (packet.type === 'music:play_queued') {
+-          const { listeningCount } = getRoomMusicAudience(ws.currentRoom);
+-          result = await targetMgr.playQueued(packet.uid, actor, listeningCount, packet.playUid);
++          const { skipAudienceCount: listeningCount } = getRoomMusicAudience(ws.currentRoom);
++          const room = ws.currentRoom;
++          const revision = ws.musicRoomRevision;
++          const active = () => ws.readyState === 1 && ws.currentRoom === room &&
++            ws.musicRoomRevision === revision && ws.user?.userKey === actor.userKey;
++          result = await targetMgr.playQueued(packet.uid, actor, listeningCount, packet.playUid, {
++            active, getAudience: () => getRoomMusicAudience(room).skipAudienceCount
++          });
++          if (!active()) return;
+         } else if (packet.type === 'music:play_rotation') {
+-          const { listeningCount } = getRoomMusicAudience(ws.currentRoom);
++          const { skipAudienceCount: listeningCount } = getRoomMusicAudience(ws.currentRoom);
+           result = await targetMgr.playRotationTrack(packet.trackId || packet.track, actor, listeningCount);
+         }
+@@ -7500,5 +7510,4 @@
+ server.listen(PORT, async () => {
+   console.log(`[ChatServer] Enterprise Dual-Room & Music Matrix Gateway listening on port ${PORT}`);
+-  for (const manager of Object.values(musicManagers)) manager.resume();
+   await primeMatrixRoomMembers();
+   await primeMatrixRoomState();

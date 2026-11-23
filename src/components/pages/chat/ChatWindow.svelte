@@ -529,29 +529,10 @@ const skipVoteBanner = $derived.by(() => {
 			: names.length <= 2
 				? names.join("、")
 				: `${names.slice(0, 2).join("、")} 等`;
-	const isAdmin = Boolean(currentUser?.isAdmin);
-	const isOwnRequest = Boolean(
-		currentUser &&
-			!current.isFallback &&
-			current.requesterKey === currentUser.userKey,
-	);
 	const hasVotedSkip = Boolean(
 		currentUser && current.skipVotes.includes(currentUser.userKey),
 	);
-	const currentRoomObservers = observers.filter(
-		(obs) => !obs.roomId || obs.roomId === roomId,
-	);
-	const activeListeningCount = [
-		...roomOnlineMembers,
-		...currentRoomObservers,
-	].filter((m) => m.isMuted === false).length;
-	const canDirectSkip =
-		Boolean(currentUser) &&
-		(isAdmin ||
-			isOwnRequest ||
-			current.isFallback ||
-			roomOnlineMembers.length <= 2 ||
-			activeListeningCount <= 2);
+	const canDirectSkip = Boolean(currentUser && mobilePlaybackStatus?.canDirectSkip);
 
 	return {
 		voterLabel,

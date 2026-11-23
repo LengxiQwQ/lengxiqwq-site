@@ -412,8 +412,10 @@ export class RoomAudioPlayer {
 			this.audio.src = targetUrl;
 		}
 
+		if (this.audio.error) this.audio.load();
 		if (!this.active) {
 			this.update("preparing");
+			if (play.phase === "transitioning") return;
 			this.timer = setTimeout(
 				() => this.start(forceProxy),
 				Math.max(0, play.startedAt - this.callbacks.now()),
@@ -493,6 +495,7 @@ export class RoomAudioPlayer {
 
 		// 如果切到了不同的歌曲，并且新歌存在有效音源，立即替换 audio.src 并暂停，杜绝旧音频潜伏发声
 		if (!isSamePlay && play) {
+			this.audio.preload = this.intent ? "auto" : "metadata";
 			const targetUrl = this.resolveTargetUrl(false);
 			if (targetUrl) {
 				if (
@@ -518,6 +521,7 @@ export class RoomAudioPlayer {
 
 	listen(): void {
 		this.intent = true;
+		this.audio.preload = "auto";
 		if (!this.play) {
 			this.update("idle");
 			return;
@@ -542,13 +546,14 @@ export class RoomAudioPlayer {
 			) {
 				this.audio.src = targetUrl;
 			}
+			const scheduled = this.play;
 			this.audio.muted = true;
 			void this.audio
 				.play()
 				.then(() => {
-					try {
+					if (this.play === scheduled && this.intent && this.callbacks.now() < scheduled.startedAt) {
 						this.audio.pause();
-					} catch {}
+					}
 					this.audio.muted = false;
 				})
 				.catch(() => {
@@ -561,6 +566,7 @@ export class RoomAudioPlayer {
 
 	stop(): void {
 		this.intent = false;
+		this.audio.preload = "metadata";
 		clearTimeout(this.timer);
 		clearTimeout(this.waitingTimer);
 		this.waitingTimer = undefined;

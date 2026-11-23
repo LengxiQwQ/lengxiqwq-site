@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { MusicManager } from '../src/music/music-manager.mjs';
 import { ChatDatabase } from '../src/db/database.mjs';
 import { MusicRegistry } from '../src/music/registry.mjs';
+import { findPlaylistRequestTrack } from '../src/music/music-input.mjs';
 import { QQMusicProvider } from '../src/music/qq-music.mjs';
 import { NeteaseMusicProvider } from '../src/music/catalog-providers.mjs';
 import { lookupPreferredProviders } from '../src/music/provider-routing.mjs';
@@ -138,10 +139,12 @@ test('late fallback cannot overwrite a user request', async t => {
 
 test('restoring playback keeps the queue and failed source recovery stays in its room', async t => {
   let fail = false;
-  const registry = { isHealthy: async () => false, resolvePlayable: async (item, _origin, _secret, options) =>
-    fail && (item.sourceId === 'first' || item.sourceId === 'second') ? null :
-      { ...playable(item), streamUrl: origin + '/audio/' + item.sourceId + (options?.fresh ? '?renewed' : '') }
-  };
+  let transient = false;
+  const registry = { isHealthy: async () => false, resolvePlayable: async (item, _origin, _secret, options) => {
+    if (transient) throw new Error('supplier timeout');
+    return fail && (item.sourceId === 'first' || item.sourceId === 'second') ? null :
+      { ...playable(item), streamUrl: origin + '/audio/' + item.sourceId + (options?.fresh ? '?renewed' : '') };
+  } };
   const chat = await manager(t, registry);
   const tea = await manager(t, registry, 'interconnect', chat.dataDir);
   await chat.enqueueTrack(track('first'), actor);
@@ -162,10 +165,15 @@ test('restoring playback keeps the queue and failed source recovery stays in its
   assert.equal(chat.current.sourceRevision, 1);
   assert.match(chat.current.track.streamUrl, /\?renewed$/);
   chat.current.lastRecoveryAt = 0;
-  fail = true;
+  transient = true;
   await chat.reportError(uid, 'another-listener');
   assert.equal(chat.current.uid, uid);
   assert.equal(chat.current.sourceRevision, 1);
+  transient = false;
+  fail = true;
+  chat.current.lastRecoveryAt = 0;
+  await chat.reportError(uid, 'third-listener');
+  assert.notEqual(chat.current.uid, uid);
   assert.equal(tea.current.track.sourceId, 'other');
 });
 
@@ -265,6 +273,7 @@ test('cached proxy supports prefix, suffix, clamping, HEAD and invalid range', a
   ]) {
     const response = await fetch(address, { headers: { Range: range }, signal: AbortSignal.timeout(2000) });
     assert.equal(response.status, status);
+    if (status >= 400) assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(response.headers.get('content-range'), contentRange);
     assert.equal((await response.arrayBuffer()).byteLength, length);
   }
@@ -328,7 +337,7 @@ test('a historic implicit fallback does not resume, while an explicitly selected
   restored.setFallbackPlaylist('selected', [track('radio')], 'Selected', { start: false });
   await restored.resume();
   assert.equal(restored.current.track.sourceId, 'radio');
-  assert.equal(restored.current.requesterName, 'Selected (轮播)');
+  assert.equal(restored.current.requesterName, 'Selected（轮播）');
 });
 
 test('shuffle rotation plays sequentially without pure-random duplication, reshuffles on exhaust, and request takes priority', async t => {
@@ -585,7 +594,7 @@ test('playRotationTrack directly switches to chosen rotation track as fallback a
   // 直接替换当前这首歌，立即播放这首歌，且依然是轮播
   assert.equal(mgr.current.track.sourceId, targetSourceId);
   assert.equal(mgr.current.isFallback, true);
-  assert.equal(mgr.current.requesterName, 'TestPlaylist (轮播)');
+  assert.equal(mgr.current.requesterName, 'TestPlaylist（轮播）');
   // 该曲目已从牌堆中移除
   assert.ok(!mgr.rotationDeck.some(t => t.sourceId === targetSourceId));
 });
@@ -1030,4 +1039,108 @@ test('explicitly live album metadata keeps plain-title audio out of studio auto-
   const result = await registry.resolveRotationTrack(original, playable, { alternatives: true });
   assert.equal(result.playable, undefined);
   assert.equal(result.alternatives[0].track.id, mislabeledByTitle.id);
+});
+
+test('dead rotation tail gives a playable song another turn', async t => {
+  const mgr = await manager(t, rotationRegistry([]));
+  const good = track('good'), bad = track('bad');
+  mgr.setFallbackPlaylist('p', [good, bad], 'p', { start: false });
+  mgr.rotationDeck = [good, bad];
+  mgr.resolveRotationSource = async item => item === good ? { playable: playable(item) } : {};
+  await mgr.advanceNext();
+  const first = mgr.current.uid;
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.id, good.id);
+  assert.notEqual(mgr.current.uid, first);
+});
+
+test('a supplier outage keeps accepted requests in order across restart', async t => {
+  let available = true;
+  const registry = { async resolvePlayable(item) {
+    if (!available) throw new Error('temporary upstream failure');
+    return playable(item);
+  } };
+  const mgr = await manager(t, registry);
+  for (const id of ['current', 'first', 'second']) await mgr.enqueueTrack(track(id), actor);
+  available = false;
+  mgr.preparedQueue = null;
+  await mgr.advanceNext();
+  assert.equal(mgr.current, null);
+  assert.deepEqual(mgr.queue.map(item => item.track.sourceId), ['first', 'second']);
+  assert.ok(mgr.queue.every(item => item.sourceRetryAt > Date.now()));
+  assert.deepEqual(mgr.historyLogs.map(item => item.outcome), ['played', 'queued', 'queued']);
+  const restored = await manager(t, registry, 'chat', mgr.dataDir);
+  available = true;
+  for (const item of restored.queue) item.sourceRetryAt = 0;
+  await restored.restorePlayback();
+  assert.equal(restored.current.track.sourceId, 'first');
+  assert.deepEqual(restored.queue.map(item => item.track.sourceId), ['second']);
+});
+
+test('late startup restoration cannot replace an accepted request', async t => {
+  const mgr = await manager(t, {});
+  let release;
+  mgr.savedState = { current: { uid: 'old', track: track('old'), startedAt: Date.now(), durationSec: 180 } };
+  mgr.resolve = () => new Promise(resolve => { release = resolve; });
+  const pending = mgr.restorePlayback();
+  await mgr.enqueueTrack(track('new'), actor, playable(track('new')));
+  release(playable(track('old')));
+  await pending;
+  assert.equal(mgr.current.track.sourceId, 'new');
+});
+
+test('queued cut rechecks room and permissions after slow resolution', async t => {
+  const mgr = await manager(t, { resolvePlayable: async item => playable(item) });
+  await mgr.enqueueTrack(track('first'), actor);
+  await mgr.enqueueTrack(track('second'), actor);
+  const guest = { userKey: 'guest:listener', name: 'other' };
+  for (const active of [true, false]) {
+    mgr.preparedQueue = null;
+    let release;
+    mgr.resolve = () => new Promise(resolve => { release = resolve; });
+    const pending = mgr.playQueued(mgr.queue[0].uid, guest, 2, mgr.current.uid, {
+      active: () => active, getAudience: () => active ? 3 : 2
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    release(playable(track('second')));
+    assert.equal((await pending).ok, false);
+    assert.equal(mgr.current.track.sourceId, 'first');
+    assert.equal(mgr.queue.length, 1);
+  }
+});
+
+test('playlist requests use recording identity after filtering and reordering', () => {
+  const first = track('first'), second = track('second');
+  assert.equal(findPlaylistRequestTrack([first, second], { ...second, position: 1 }), second);
+  const rows = [first, second].map((item, idx) => ({ ...item, position: idx + 1 }));
+  assert.equal(findPlaylistRequestTrack(rows, { ...second, position: 1 }), rows[1]);
+  assert.equal(findPlaylistRequestTrack(rows, { ...track('gone'), position: 1 }), null);
+});
+
+test('manual search keeps the fallback catalog for subsequent pages', async () => {
+  const calls = [];
+  const reg = new MusicRegistry([{ id: 'qq', async search() { calls.push('qq'); throw new Error('outage'); } },
+    { id: 'netease', async search(_q, _limit, page) { calls.push(page); return { tracks: [track(String(page))], hasMore: true }; } }]);
+  assert.equal((await reg.search('song', 10)).tracks[0].sourceId, '1');
+  assert.equal((await reg.search('song', 10, undefined, 2)).tracks[0].sourceId, '2');
+  assert.deepEqual(calls, ['qq', 1, 2]);
+  assert.equal(await reg.isCached({ streamUrl: 'https://example.test/old' }, 'fixture'), false);
+});
+
+test('temporary request failures leave room rotation playable and resume at next cut', async t => {
+  const mgr = await manager(t, { resolvePlayable: async item => playable(item) });
+  await mgr.enqueueTrack(track('current'), actor);
+  await mgr.enqueueTrack(track('queued'), actor);
+  mgr.setFallbackPlaylist('p', [track('radio')], 'p', { start: false });
+  mgr.preparedQueue = null;
+  mgr.musicRegistry.resolvePlayable = async () => { throw new Error('temporary outage'); };
+  mgr.resolveRotationSource = async item => ({ playable: playable(item) });
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.sourceId, 'radio');
+  assert.equal(mgr.queue[0].track.sourceId, 'queued');
+  mgr.queue[0].sourceRetryAt = 0;
+  mgr.musicRegistry.resolvePlayable = async item => playable(item);
+  await mgr.advanceNext();
+  assert.equal(mgr.current.track.sourceId, 'queued');
+  assert.equal(mgr.queue.length, 0);
 });

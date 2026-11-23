@@ -74,6 +74,7 @@ export interface RoomInitPacket {
 export interface MusicAudience {
 	onlineCount: number;
 	listeningCount: number;
+	skipAudienceCount?: number;
 }
 
 export type ServerPacket =

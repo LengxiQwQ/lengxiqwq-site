@@ -225,8 +225,14 @@ export class QQMusicProvider {
         if (response.status === 404) return null;
         throw new Error('resolver HTTP ' + response.status);
       }
-      const data = source.read(await response.json());
-      if (data == null) throw new Error('missing resolver payload');
+      let json;
+      try {
+        json = await response.json();
+      } catch {
+        return null;
+      }
+      const data = source.read(json);
+      if (data == null || typeof data !== 'object') return null;
       if (typeof data.url !== 'string' || !data.url.trim()) return null;
       if (!isAllowedStreamTarget(data.url)) throw new Error('untrusted audio host');
       const mimeType = await probeAudio(data.url);

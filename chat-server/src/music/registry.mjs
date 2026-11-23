@@ -206,6 +206,7 @@ export class MusicRegistry {
     this.resolved = new Map();
     this.resolving = new Map();
     this.trackMatches = new Map();
+    this.searchRoutes = new Map();
     this.matchStore = matchStore;
     for (const p of providers) {
       this.providers.set(p.id, p);
@@ -228,8 +229,32 @@ export class MusicRegistry {
   }
 
   async search(keyword, limit = 30, providerId, page = 1) {
-    const provider = this.providers.get(providerId || this.defaultOrder[0]);
-    return provider ? provider.search(keyword, limit, page) : { tracks: [], hasMore: false };
+    if (providerId) {
+      return this.providers.get(providerId)?.search(keyword, limit, page) ?? { tracks: [], hasMore: false };
+    }
+    const key = JSON.stringify([keyword.trim().toLowerCase(), limit]);
+    const route = this.searchRoutes.get(key);
+    if (page > 1 && route?.expiresAt > Date.now()) {
+      return this.providers.get(route.id).search(keyword, limit, page);
+    }
+    let failure;
+    let answered = false;
+    for (const [id, provider] of this.providers) {
+      let first;
+      try {
+        first = await provider.search(keyword, limit, 1);
+        answered = true;
+      } catch (error) {
+        failure = error;
+        continue;
+      }
+      if (!first.tracks?.length) continue;
+      if (this.searchRoutes.size >= 256) this.searchRoutes.delete(this.searchRoutes.keys().next().value);
+      this.searchRoutes.set(key, { id, expiresAt: Date.now() + 15 * 60_000 });
+      return page === 1 ? first : provider.search(keyword, limit, page);
+    }
+    if (failure && !answered) throw failure;
+    return { tracks: [], hasMore: false };
   }
 
   async resolvePlaylistTrack(item) {
@@ -569,7 +594,6 @@ export class MusicRegistry {
   }
 
   async isCached(track, secret) {
-    if (track.streamUrl && !track.streamUrl.includes('/api/music/stream')) return true;
     try {
       const urlToVerify = track.proxyUrl || track.streamUrl;
       const token = new URL(urlToVerify).searchParams.get('token');

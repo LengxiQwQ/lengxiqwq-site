@@ -29,7 +29,13 @@ exec 9>/opt/chat-server-music-deploy.lock
 flock -n 9
 
 actual_gateway=$(sha256sum "$install_dir/server.mjs" | awk '{print $1}')
-modern_gateway=false
+reliability_base=633f0946a4058562a69b837e16998d69d36c2b08a697020045222415ec3ec077
+reliability_gateway=8105075b69ec202b779ed5866f2e30a50e8f275161e6294b3d3de19a9e5f0f0c
+current_release=false
+if [[ "$actual_gateway" == "$reliability_base" || "$actual_gateway" == "$reliability_gateway" ]]; then
+  current_release=true
+fi
+modern_gateway=$current_release
 case "$actual_gateway" in
   "$multi_source_legacy_gateway"|"$live_recording_base"|"$live_recording_gateway"|"$recording_gateway"|"$live_guest_playlists_gateway"|"$guest_playlists_gateway")
     modern_gateway=true ;;
@@ -57,6 +63,9 @@ cp -a "$release_dir/src" "$candidate/src"
 if [[ "$modern_gateway" == true || "$actual_gateway" == "$rotation_base_gateway" || "$actual_gateway" == "$rotation_gateway" || "$actual_gateway" == "$request_gateway" || "$actual_gateway" == "$random_gateway" || "$actual_gateway" == "$multi_source_gateway" || "$actual_gateway" == "$multi_source_legacy_gateway" ]]; then
   # Use the live audio pipeline and replace only the modules changed by this release.
   music_files=(music-manager.mjs qq-music.mjs registry.mjs audio-source.mjs music-input.mjs catalog-providers.mjs provider-routing.mjs youtube-candidates.mjs)
+  if [[ "$current_release" == true ]]; then
+    music_files+=(stream-cache.mjs stream-signer.mjs stream-timeouts.mjs)
+  fi
   cp -a "$install_dir/src/music/." "$candidate/src/music/"
   for name in "${music_files[@]}"; do
     cp -p "$release_dir/src/music/$name" "$candidate/src/music/$name"
@@ -67,7 +76,13 @@ else
 fi
 (
   cd "$candidate"
-  if [[ "$modern_gateway" == false ]]; then
+  if [[ "$current_release" == true ]]; then
+    if [[ "$actual_gateway" == "$reliability_base" ]]; then
+      git apply --check "$release_dir/music-reliability.patch"
+      git apply "$release_dir/music-reliability.patch"
+    fi
+    [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$reliability_gateway" ]]
+  elif [[ "$modern_gateway" == false ]]; then
     if [[ "$actual_gateway" == "$original_gateway" ]]; then
       git apply --check "$release_dir/gateway-music.patch"
       git apply "$release_dir/gateway-music.patch"
@@ -110,14 +125,14 @@ fi
       [[ $(sha256sum server.mjs | awk '{print $1}') == "$multi_source_legacy_gateway" ]]
     fi
   fi
-  if [[ "$actual_gateway" != "$live_recording_gateway" && "$actual_gateway" != "$recording_gateway" && "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
+  if [[ "$current_release" == false && "$actual_gateway" != "$live_recording_gateway" && "$actual_gateway" != "$recording_gateway" && "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
     git apply --check "$release_dir/recording-match.patch"
     git apply "$release_dir/recording-match.patch"
     expected_recording_gateway=$recording_gateway
     if [[ "$actual_gateway" == "$live_recording_base" ]]; then expected_recording_gateway=$live_recording_gateway; fi
     [[ $(sha256sum server.mjs | awk '{print $1}') == "$expected_recording_gateway" ]]
   fi
-  if [[ "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
+  if [[ "$current_release" == false && "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
     git apply --check "$release_dir/guest-playlists.patch"
     git apply "$release_dir/guest-playlists.patch"
     expected_guest_gateway=$guest_playlists_gateway
@@ -129,7 +144,32 @@ fi
   node --check server.mjs
   for file in src/music/*.mjs; do node --check "$file"; done
 )
-node --test "$release_dir/test/music.test.mjs"
+if [[ "$current_release" == true ]]; then
+  # Reject unreviewed hotfixes, including changes made after an earlier --check.
+  while read -r baseline name; do
+    installed=$(sha256sum "$install_dir/$name" | cut -d' ' -f1)
+    desired=$(sha256sum "$release_dir/$name" | cut -d' ' -f1)
+    if [[ "$installed" != "$baseline" && "$installed" != "$desired" ]]; then
+      echo "Live module changed: $name" >&2
+      exit 1
+    fi
+  done <<'EOF'
+774cffc55044d458a385ce3d97e1c616294353134a6788dfce94fafea2550f5e  src/music/audio-source.mjs
+557560b200a386c4454ac79715fa7ea985245def37ae69dd742d1ae103c506e7  src/music/catalog-providers.mjs
+bc555720af477535bcc90626992dc61b9069862fa63f89b84fa5df243f9b7f55  src/music/music-input.mjs
+0e83493b20e3bece9256b1e20c31a7695e648f70f68e37ffd3fc9e1b8b9bc16f  src/music/music-manager.mjs
+9ab2eaef203a310f53a22c09b681f4f1822964f23cbcdbe90ac0b7451632b357  src/music/provider-routing.mjs
+19884ae43118a0ea424e40fa330f635c9fcab9a5eeffe25e0d059a9d419843ea  src/music/qq-music.mjs
+d59e4fb2d3db60da5ebce920ac05b34858b7e5c5a4b0fde3dfb1dafca01b0bfc  src/music/registry.mjs
+eb01ab315729726f9dac9a65e55ebb4136deb96281da0ead0a020e8ead6ac5f1  src/music/stream-cache.mjs
+313afcc5f408add8cd936d41abc258284960fa2417589d15b1ead3c4254e7c2a  src/music/stream-signer.mjs
+28108dd7a1713ce8a52218aa38f2b5edb7d6f08c1ee98c36a1d03cab61938a58  src/music/stream-timeouts.mjs
+265aa228361fc4586e5c59bebf0ba7d6eca58fb23228ff94d75b88edf90f5b0b  src/music/youtube-candidates.mjs
+d422bbd8fac99044060373b536e0526b374bfab31b01b1e87f80134416b6c92a  src/db/database.mjs
+EOF
+fi
+cp -a "$release_dir/test" "$candidate/test"
+(cd "$candidate" && CHAT_MUSIC_CACHE_DIR="$candidate/audio-cache" node --test test/music.test.mjs)
 if [[ "$1" == "--check" ]]; then
   echo "Candidate checked. No running files changed."
   exit 0
@@ -139,6 +179,9 @@ backup=$(mktemp -d "$install_dir/.music-release.XXXXXXXX")
 echo "Rollback copy: $backup"
 cp -p "$install_dir/server.mjs" "$backup/server.mjs"
 cp -a "$install_dir/src/music" "$backup/music"
+if [[ "$current_release" == true ]]; then
+  cp -p "$install_dir/src/db/database.mjs" "$backup/database.mjs"
+fi
 if [[ "$actual_gateway" == "$original_gateway" ]]; then
   node "$release_dir/capture-playback.mjs" "$install_dir/data"
 fi
@@ -146,6 +189,9 @@ fi
 rollback() {
   local status=$?
   trap - ERR INT TERM
+  if [[ "$current_release" == true ]]; then
+    cp -p "$backup/database.mjs" "$install_dir/src/db/database.mjs"
+  fi
   cp -p "$backup/server.mjs" "$install_dir/server.mjs"
   for name in "${music_files[@]}"; do
     if [[ -f "$backup/music/$name" ]]; then
@@ -159,6 +205,9 @@ rollback() {
   exit "$((status == 0 ? 1 : status))"
 }
 trap rollback ERR INT TERM
+if [[ "$current_release" == true ]]; then
+  install -m 644 "$candidate/src/db/database.mjs" "$install_dir/src/db/database.mjs"
+fi
 for name in "${music_files[@]}"; do
   install -m 644 "$candidate/src/music/$name" "$install_dir/src/music/$name"
 done
