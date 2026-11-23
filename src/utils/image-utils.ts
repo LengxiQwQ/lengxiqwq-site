@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { coverImageConfig } from "../config/coverImageConfig";
 import { siteConfig } from "../config/siteConfig";
 import coversManifestData from "../constants/covers-manifest.json";
@@ -12,6 +14,202 @@ interface CoversManifest {
 
 const coversManifest = coversManifestData as CoversManifest;
 const { randomCoverImage } = coverImageConfig;
+
+/**
+ * 规范化字符串键名，用于跨格式（Astro ID、文件名、标题、Slug）精确匹配文章
+ */
+function normalizeKey(str: string): string {
+	return String(str || "")
+		.toLowerCase()
+		.replace(/\.(md|mdx|markdown)$/i, "")
+		.replace(/[^a-z0-9\u4e00-\u9fa5]/gu, "");
+}
+
+/**
+ * 基于 Mulberry32 的确定性伪随机数发生器
+ */
+function mulberry32(initialSeed: number) {
+	let state = initialSeed;
+	return () => {
+		state += 0x6d2b79f5;
+		let t = state;
+		t = Math.imul(t ^ (t >>> 15), t | 1);
+		t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
+/**
+ * 带种子的 Fisher-Yates 确定性数组洗牌
+ */
+function seededShuffle<T>(array: T[], seedNum: number): T[] {
+	const copy = [...array];
+	const rng = mulberry32(seedNum);
+	for (let i = copy.length - 1; i > 0; i--) {
+		const j = Math.floor(rng() * (i + 1));
+		const temp = copy[i];
+		copy[i] = copy[j];
+		copy[j] = temp;
+	}
+	return copy;
+}
+
+interface PostMetaSummary {
+	rawId: string;
+	title: string;
+	published: number;
+	image?: string;
+}
+
+let cachedAllocationMap: Map<string, string> | null = null;
+
+/**
+ * 扫描文章目录，获取所有文章元信息（用于全局防碰撞唯一随机图分配）
+ */
+function scanAllPostsSummary(): PostMetaSummary[] {
+	const postsDirCandidates = [
+		path.resolve(process.cwd(), "src/content/posts"),
+		path.resolve(process.cwd(), "../lengxiqwq-site-content/content/posts"),
+		path.resolve(process.cwd(), "content/posts"),
+	];
+
+	let postsDir = "";
+	for (const candidate of postsDirCandidates) {
+		if (fs.existsSync(candidate)) {
+			postsDir = candidate;
+			break;
+		}
+	}
+	if (!postsDir) return [];
+
+	const results: PostMetaSummary[] = [];
+	try {
+		const entries = fs.readdirSync(postsDir, { withFileTypes: true });
+		for (const entry of entries) {
+			if (!entry.isFile()) continue;
+			if (!entry.name.endsWith(".md") && !entry.name.endsWith(".mdx")) continue;
+			const fullPath = path.join(postsDir, entry.name);
+			const rawContent = fs.readFileSync(fullPath, "utf8");
+			const rawId = entry.name.replace(/\.(md|mdx)$/, "");
+
+			// 提取 frontmatter
+			const titleMatch = rawContent.match(/^title:\s*"?(.*?)"?$/m);
+			const title = titleMatch ? titleMatch[1].trim() : rawId;
+
+			const pubMatch = rawContent.match(/^published:\s*"?(.*?)"?$/m);
+			const published = pubMatch ? new Date(pubMatch[1].trim()).getTime() : 0;
+
+			const imgMatch = rawContent.match(/^image:\s*"?(.*?)"?$/m);
+			const image = imgMatch ? imgMatch[1].trim() : undefined;
+
+			results.push({ rawId, title, published, image });
+		}
+	} catch {
+		return [];
+	}
+
+	return results;
+}
+
+/**
+ * 全局防碰撞分配器：
+ * 将全站所有文章按发布日期确定性排序，依次从已洗牌的随机图库中分配独占图片。
+ * 彻底杜绝多篇文章“撞图”、重复使用同一张随机封面的问题。
+ */
+function buildUniqueAllocationMap(): Map<string, string> {
+	const map = new Map<string, string>();
+	const allManifestCovers = coversManifest?.all || [];
+	if (allManifestCovers.length === 0) return map;
+
+	const posts = scanAllPostsSummary();
+	if (posts.length === 0) return map;
+
+	// 按发布日期升序排序，日期相同按文件名排序。
+	// 这样新发布的文章永远排在队列末尾，老文章的封面永远保持稳定不漂移！
+	posts.sort((a, b) => {
+		if (a.published !== b.published) return a.published - b.published;
+		return a.rawId.localeCompare(b.rawId);
+	});
+
+	// 找出所有显式使用的自定义封面，避免随机图与之撞车
+	const claimed = new Set<string>();
+	for (const p of posts) {
+		if (
+			p.image &&
+			p.image !== "api" &&
+			p.image !== "none" &&
+			!p.image.startsWith("api:") &&
+			!p.image.startsWith("category:")
+		) {
+			claimed.add(p.image);
+		}
+	}
+
+	const versionNum = Number(randomCoverImage.version ?? 1) || 1;
+	// 采用带版本种子的洗牌算法，改动 version 即可统一整体换一批全新随机图
+	const shuffledCovers = seededShuffle(allManifestCovers, versionNum * 9973);
+	const availableCovers = shuffledCovers.filter((c) => !claimed.has(c));
+	const fallbackPool =
+		availableCovers.length > 0 ? availableCovers : shuffledCovers;
+
+	// 分类随机池
+	const categoryShuffled: Record<string, string[]> = {};
+	if (coversManifest?.categories) {
+		for (const [catName, catList] of Object.entries(
+			coversManifest.categories,
+		)) {
+			categoryShuffled[catName] = seededShuffle(
+				catList,
+				(versionNum + 7) * 9973,
+			);
+		}
+	}
+	const categoryCounters: Record<string, number> = {};
+
+	let globalIndex = 0;
+	for (const p of posts) {
+		let assignedCover = "";
+		if (p.image === "none") {
+			assignedCover = "";
+		} else if (
+			p.image &&
+			p.image !== "api" &&
+			!p.image.startsWith("api:") &&
+			!p.image.startsWith("category:")
+		) {
+			assignedCover = p.image;
+		} else {
+			const cat = getRequestedCategory(p.image);
+			if (cat && categoryShuffled[cat]?.length > 0) {
+				const counter = categoryCounters[cat] ?? 0;
+				const pool = categoryShuffled[cat];
+				assignedCover = pool[counter % pool.length];
+				categoryCounters[cat] = counter + 1;
+			} else {
+				assignedCover = fallbackPool[globalIndex % fallbackPool.length];
+				globalIndex++;
+			}
+		}
+
+		if (assignedCover) {
+			map.set(normalizeKey(p.rawId), assignedCover);
+			map.set(normalizeKey(p.title), assignedCover);
+		}
+	}
+
+	return map;
+}
+
+/**
+ * 从全局唯一分配表中获取文章的独占封面图
+ */
+function getUniqueAllocatedCover(seed?: string): string | null {
+	if (!seed) return null;
+	if (!cachedAllocationMap) {
+		cachedAllocationMap = buildUniqueAllocationMap();
+	}
+	return cachedAllocationMap.get(normalizeKey(seed)) || null;
+}
 
 /**
  * 根据seed生成确定性hash值
@@ -87,12 +285,8 @@ function isRandomCoverImage(image: string | undefined): boolean {
 /**
  * 为 API URL 转换为固定确定性直链（或添加 seed 参数）
  * 彻底解决动态 302 随机图接口每次刷新都随机变图的问题
- * - 支持自建图床模板: 如 https://img.lengxiqwq.com/covers/{index}.webp 或 https://img.lengxiqwq.com/covers?total=20
- * - t.alcy.cc/pc: 350 ~ 550（精选二次元高颜值美少女横屏 WebP 直链）
- * - t.alcy.cc/moe: 1 ~ 107（精选萌系 WebP 直链）
  */
 function resolveDeterministicApiUrl(apiUrl: string, hash: number): string {
-	// 1. 支持包含 {index} 占位符的自建模板直链，例如: https://img.lengxiqwq.com/covers/{index}.webp?total=20
 	if (apiUrl.includes("{index}")) {
 		try {
 			const parsed = new URL(
@@ -113,7 +307,6 @@ function resolveDeterministicApiUrl(apiUrl: string, hash: number): string {
 		}
 	}
 
-	// 2. 支持自建 Cloudflare 图床 covers 路径: 如 https://img.lengxiqwq.com/covers 或 https://img.lengxiqwq.com/covers?total=20
 	if (apiUrl.includes("img.lengxiqwq.com/covers")) {
 		try {
 			const parsed = new URL(
@@ -132,7 +325,6 @@ function resolveDeterministicApiUrl(apiUrl: string, hash: number): string {
 		}
 	}
 
-	// 3. 兼容原有第三方接口
 	if (apiUrl.includes("t.alcy.cc/pc")) {
 		const index = 350 + (hash % 201);
 		return `https://t.alcy.cc/pic/pc/${index}.webp`;
@@ -148,10 +340,9 @@ function resolveDeterministicApiUrl(apiUrl: string, hash: number): string {
  * 处理文章封面图
  * 优先级：
  * 1. image === "none" -> 不显示封面
- * 2. image 指定了分类随机（如 "api:二次元美少女" 或 "二次元美少女"）-> 从该分类中根据文章 hash 固定分配一张
- * 3. image 指定了具体图片直链或本地路径 -> 直接使用该图
- * 4. 全局全库随机（image 为空或 "api"）-> 优先从自建图库全量列表（61张）中根据文章 hash 固定分配一张
- * 5. 兜底回退到第三方 API
+ * 2. image 指定了具体图片直链或本地路径 -> 直接使用该图
+ * 3. 优先使用【全局防碰撞唯一分配器】，从自建图库中为该文章分配独占不重复的封面
+ * 4. 兜底回退到哈希计算或第三方 API
  * @param image - 文章frontmatter中的image字段值
  * @param seed - 用于生成唯一URL的种子（文章id或slug）
  */
@@ -163,9 +354,20 @@ export function processCoverImageSync(
 		return "";
 	}
 
+	// 1. 如果指定了具体图片（非随机指令），直接使用
+	if (image && image !== "api" && getRequestedCategory(image) === null) {
+		return image;
+	}
+
+	// 2. 核心：优先从全局防碰撞分配表中获取零重复封面
+	const uniqueAllocated = getUniqueAllocatedCover(seed);
+	if (uniqueAllocated) {
+		return uniqueAllocated;
+	}
+
 	const hash = getSeedHash(seed);
 
-	// 1. 检查是否请求了特定分类随机
+	// 3. 检查是否请求了特定分类随机兜底
 	const requestedCategory = getRequestedCategory(image);
 	if (requestedCategory && coversManifest?.categories) {
 		const categoryList = coversManifest.categories[requestedCategory];
@@ -174,12 +376,7 @@ export function processCoverImageSync(
 		}
 	}
 
-	// 2. 如果指定了具体图片（非随机指令），直接使用
-	if (image && image !== "api") {
-		return image;
-	}
-
-	// 3. 全局全库随机：优先使用自建 Cloudflare 图库
+	// 4. 全局全库随机兜底
 	if (coversManifest?.all && coversManifest.all.length > 0) {
 		return coversManifest.all[hash % coversManifest.all.length];
 	}
@@ -192,7 +389,7 @@ export function processCoverImageSync(
 		return "";
 	}
 
-	// 始终使用首选API对应的确定性直链，失败时由客户端按顺序尝试后续API
+	// 5. 始终使用首选API对应的确定性直链，失败时由客户端按顺序尝试后续API
 	return resolveDeterministicApiUrl(randomCoverImage.apis[0], hash);
 }
 
@@ -210,28 +407,17 @@ export function getApiUrlList(
 		return [];
 	}
 
-	const hash = getSeedHash(seed);
-	const requestedCategory = getRequestedCategory(image);
-
-	// 若请求分类随机，备选为该分类其他图
-	if (requestedCategory && coversManifest?.categories) {
-		const list = coversManifest.categories[requestedCategory];
-		if (list && list.length > 0) {
-			const p1 = list[hash % list.length];
-			const p2 = list[(hash + 1) % list.length];
-			return [p1, p2].filter(Boolean);
-		}
-	}
-
-	if (image && image !== "api") {
+	if (image && image !== "api" && getRequestedCategory(image) === null) {
 		return [image];
 	}
 
-	// 全量自建图库备选列表
+	const primaryUrl = processCoverImageSync(image, seed);
+	const hash = getSeedHash(seed);
+
+	// 全量自建图库备选列表：主图为防碰撞独占图，备用为偏移量图
 	if (coversManifest?.all && coversManifest.all.length > 0) {
-		const p1 = coversManifest.all[hash % coversManifest.all.length];
-		const p2 = coversManifest.all[(hash + 1) % coversManifest.all.length];
-		return [p1, p2].filter(Boolean);
+		const fallback = coversManifest.all[(hash + 1) % coversManifest.all.length];
+		return [primaryUrl, fallback].filter(Boolean);
 	}
 
 	if (
@@ -239,7 +425,7 @@ export function getApiUrlList(
 		!randomCoverImage.enable ||
 		!randomCoverImage.apis
 	) {
-		return [];
+		return primaryUrl ? [primaryUrl] : [];
 	}
 
 	return randomCoverImage.apis.map((api, index) => {
@@ -290,7 +476,6 @@ export function shouldAddNoReferrer(urlStr: string): boolean {
 	try {
 		const hostname = new URL(urlStr).hostname;
 		return domains.some((pattern) => {
-			// 先完整转义正则元字符，再把用户写的 * 通配符还原为 .*
 			const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 			const regexPattern = escaped.replace(/\\\*/g, ".*");
 			return new RegExp(`^${regexPattern}$`).test(hostname);
