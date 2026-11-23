@@ -623,9 +623,8 @@ export class MusicManager {
   }
 
   searchFallbackResult(temporary) {
-    return { ok: false, code: 'NO_SOURCE', error: temporary
-      ? '原曲音源暂时未响应，要搜索这首歌吗？'
-      : '暂未找到可播放的原曲，要搜索这首歌吗？' };
+    if (temporary) return { ok: false, code: 'SOURCE_TEMPORARY', error: '这次未能取得原曲的播放地址，这次点播未生效。' };
+    return { ok: false, code: 'NO_SOURCE', error: '暂未找到可播放的原曲，要搜索这首歌吗？' };
   }
 
   async enqueueTrack(rawTrack, requester, verifiedSource) {

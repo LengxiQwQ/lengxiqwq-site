@@ -13,7 +13,7 @@ export function isAllowedStreamTarget(value) {
       (host.endsWith('.stream.qqmusic.qq.com') || host.endsWith('.music.tc.qq.com') ||
         host.endsWith('.music.qq.com') || host.endsWith('.music.gtimg.com') ||
         /^m\d+c?\.music\.126\.net$/.test(host) ||
-        /^webfs(?:\.[a-z0-9-]+)?\.kugou\.com$/.test(host));
+        host === 'sharefs.kugou.com' || /^webfs(?:\.[a-z0-9-]+)?\.kugou\.com$/.test(host));
   } catch {
     return false;
   }

@@ -2403,7 +2403,7 @@ function connectRoom(roomId: string) {
 							message,
 						};
 					} else {
-						showNotice(message, "error");
+						showNotice(message, packet.code === "SOURCE_TEMPORARY" ? "default" : "error");
 					}
 				} else {
 					if (pending.fromOffer) clearRotationAction();
@@ -2433,7 +2433,7 @@ function connectRoom(roomId: string) {
 				else if (packet.code === "NO_SOURCE") rotationOfferOpen = true;
 				if (!rotationOfferOpen && !offer && !musicState?.rotationQueue?.some(item =>
 					(item.entryId ?? item.id) === rotationAction?.entryId
-				)) showNotice(packet.error ?? "轮播列表已更新", "error");
+				)) showNotice(packet.error ?? "轮播列表已更新", packet.code === "SOURCE_TEMPORARY" ? "default" : "error");
 				break;
 			}
 			case "music:state": {
@@ -3041,7 +3041,7 @@ function handleTyping(typing: boolean) {
 
 async function handleSearchOnline(
 	keyword: string,
-	options?: { signal?: AbortSignal; page?: number },
+	options?: { signal?: AbortSignal; page?: number; provider?: "qq" | "kugou" },
 ) {
 	return searchOnlineMusic(normalizedChatServer, keyword, options);
 }

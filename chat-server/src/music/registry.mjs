@@ -110,8 +110,22 @@ function sameArtistRoster(original, candidate, artistIds) {
   return remaining.size === 0;
 }
 
+// Imported titles sometimes pair the original with a Latin translation.
+function matchingTitle(a, b) {
+  if (a.titleKey && a.titleKey === b.titleKey) return true;
+  const translated = (full, short) => {
+    const parts = full.title.split(/\s+[-–—]\s+/u);
+    if (parts.length !== 2) return false;
+    const [native, latin] = parts;
+    return /[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}\p{Script=Hangul}]/u.test(native) &&
+      /^[\p{Script=Latin}\p{M}\s'’.-]+$/u.test(latin) && !VERSION_LABEL.test(latin) &&
+      (musicText(native) === short.titleKey || musicText(latin) === short.titleKey);
+  };
+  return translated(a, b) || translated(b, a);
+}
+
 function compareRecording(original, candidate, artistIds) {
-  const titleMatches = Boolean(original.titleKey && original.titleKey === candidate.titleKey);
+  const titleMatches = matchingTitle(original, candidate);
   const artistsMatch = sameArtistRoster(original, candidate, artistIds);
   const relation = titleMatches
     ? (artistsMatch ? 'same_artist_version' : 'same_title')
@@ -375,7 +389,7 @@ export class MusicRegistry {
 
   async resolveRotationTrack(item, resolve, options = {}) {
     const ordered = this.providerOrder(item, options.preferredTrack);
-    const budgetMs = options.budgetMs ?? (options.alternatives ? (ordered.length > 1 ? 6500 : 10_500) : 2800);
+    const budgetMs = options.budgetMs ?? (options.alternatives ? (ordered.length > 1 && !options.exactOnly ? 6500 : 10_500) : 2800);
     if (!ordered.length) return { temporaryFailure: false };
     const deadline = Date.now() + budgetMs;
     const lookup = (id, signal) => this.resolveProviderRecording(item, resolve, id, {
@@ -450,10 +464,20 @@ export class MusicRegistry {
         return null;
       }
     };
+    const checkedOriginals = new Set();
+    const checkOriginal = async (track, maxMs) => {
+      const result = await check(track, maxMs);
+      if (result || !exactOnly || !track || !uncertainSources.has(track.id) ||
+          checkedOriginals.has(track.id) || deadline - Date.now() < 500 || signal?.aborted) return result;
+      checkedOriginals.add(track.id);
+      seen.delete(track.id);
+      uncertainSources.delete(track.id);
+      return check(track, maxMs);
+    };
     const search = async (keyword) => {
       if (!keyword.trim()) return [];
       try {
-        const result = await bounded(() => this.search(keyword, 15, providerId), budgetMs ? 2500 : 4000);
+        const result = await bounded(() => this.search(keyword, providerId === 'kugou' ? 20 : 15, providerId), budgetMs ? 2500 : 4000);
         return result.tracks || [];
       } catch (err) {
         temporaryFailure = true;
@@ -463,13 +487,13 @@ export class MusicRegistry {
     };
     const preference = await check(preferredTrack?.provider === providerId ? preferredTrack : null, 1500);
     if (preference) return { playable: preference, usedPreference: true };
-    const directPlayable = await check(direct, budgetMs ? 3500 : alternatives ? 5600 : 3500);
+    const directPlayable = await checkOriginal(direct, budgetMs ? 3500 : alternatives ? 5600 : 3500);
     if (directPlayable) return { playable: directPlayable, nativeMatch: true };
 
     const matchKey = this.matchStorageKey(item, providerId);
     const cached = this.readMatch(matchKey);
     if (cached?.track?.provider === providerId && cached.expiresAt > Date.now()) {
-      const playable = await check(cached.track, 5600);
+      const playable = await checkOriginal(cached.track, 5600);
       if (playable) return { playable };
       if (!exclude(cached.track) && !uncertainSources.has(cached.track.id)) {
         this.saveMatch(matchKey, null, 0);
@@ -486,11 +510,33 @@ export class MusicRegistry {
       artistNames: item.matchedTrack.artistNames,
       isrc: item.matchedTrack.isrc
     };
-    const rank = (searchTracks) => {
+    const rank = async (searchTracks) => {
       const artistIds = indexArtistNames(searchTracks);
       const tracks = new Map();
       for (const track of [...searchTracks, ...(matched ? [matched] : [])]) {
         if (!tracks.has(track.id) && !exclude(track)) tracks.set(track.id, track);
+      }
+      const provider = this.providers.get(providerId);
+      if (provider?.getArtistAliases && original.artistNames.length) {
+        const ids = new Set();
+        for (const track of tracks.values()) {
+          const candidate = recordingMetadata(track);
+          if (!matchingTitle(original, candidate) || original.versionKey !== candidate.versionKey ||
+              original.artistNames.length !== candidate.artistNames.length ||
+              sameArtistRoster(original, candidate, artistIds) ||
+              Math.abs(original.durationSec - candidate.durationSec) > RECORDING_DURATION_TOLERANCE_SEC) continue;
+          for (const credit of candidate.artistCredits) if (credit.id) ids.add(credit.id);
+        }
+        if (ids.size <= MAX_SOURCE_CHECKS) await Promise.all([...ids].map(async id => {
+          let aliases;
+          try { aliases = await bounded(() => provider.getArtistAliases(id), 1900); }
+          catch { temporaryFailure = true; return; }
+          for (const alias of aliases) {
+            const name = musicText(alias);
+            if (!artistIds.has(name)) artistIds.set(name, id);
+            else if (artistIds.get(name) !== id) artistIds.set(name, null);
+          }
+        }));
       }
       return [...tracks.values()].map(track => ({
         track, ...compareRecording(original, recordingMetadata(track), artistIds)
@@ -498,16 +544,16 @@ export class MusicRegistry {
     };
 
     const primary = await search(titleAndArtists);
-    const primaryRanked = rank(primary);
+    const primaryRanked = await rank(primary);
     const primaryMatches = primaryRanked.filter(option => option.confidence > 0).sort(preferRecording);
     const primaryChoice = clearMatch(primaryMatches, true);
     if (primaryChoice) {
-      const playable = await check(primaryChoice.track);
+      const playable = await checkOriginal(primaryChoice.track, exactOnly ? 6500 : 3500);
       if (playable) return remember(playable);
     }
 
     const titleResults = alternatives && titleAndArtists !== searchTitle ? await search(searchTitle) : [];
-    const ranked = titleResults.length ? rank([...primary, ...titleResults]) : primaryRanked;
+    const ranked = titleResults.length ? await rank([...primary, ...titleResults]) : primaryRanked;
     const recordings = ranked.filter(option => option.confidence > 0).sort(preferRecording);
     const checkedRecordings = (await Promise.all(recordings.slice(0, MAX_SOURCE_CHECKS).map(async option => {
       const track = await check(option.track);

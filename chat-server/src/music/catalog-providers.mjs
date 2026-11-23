@@ -76,15 +76,14 @@ export class KugouMusicProvider {
   name = '酷狗音乐';
 
   async search(keyword, limit = 15, page = 1) {
-    const data = await getJson('https://complexsearch.kugou.com/v2/search/song', {
-      keyword, page, pagesize: limit, clienttime: Date.now(), platform: 'WebFilter',
-      iscorrection: 1, version: 9108
+    const data = await getJson('https://songsearch.kugou.com/song_search_v2', {
+      keyword, page, pagesize: limit, platform: 'WebFilter'
     }, 'https://www.kugou.com/');
     if (data.status !== 1) throw new Error('kugou search returned an error');
     const songs = Array.isArray(data.data?.lists) ? data.data.lists : [];
     const tracks = songs.map(song => catalogTrack({
-      provider: this.id, sourceId: song.FileHash, title: song.SongName,
-      artist: song.SingerName, album: song.AlbumName, durationSec: song.Duration,
+      provider: this.id, sourceId: song.FileHash, title: song.SongName?.replace(/<[^>]+>/g, ''),
+      artist: song.SingerName?.replace(/<[^>]+>/g, ''), album: song.AlbumName, durationSec: song.Duration,
       cover: song.Image?.replace?.('{size}', '400')
     })).filter(Boolean);
     return { tracks, hasMore: Number(data.data?.total) > page * limit };
@@ -92,12 +91,11 @@ export class KugouMusicProvider {
 
   async resolveStream(sourceId) {
     if (!isMusicSourceId(this.id, sourceId)) return null;
-    const data = await getJson('https://www.kugou.com/yy/index.php',
-      { r: 'play/getdata', hash: sourceId }, 'https://www.kugou.com/');
-    if (!data.data?.play_url || data.data.is_free_part === 1) return null;
-    const url = new URL(data.data.play_url);
-    if (!url.hostname.endsWith('.kugou.com')) return null;
-    return checkStream(url.href, this.id);
+    const data = await getJson('https://m.kugou.com/app/i/getSongInfo.php',
+      { cmd: 'playInfo', hash: sourceId }, 'https://www.kugou.com/');
+    if (Number(data.status) !== 1 || !data.url || data.hash?.toUpperCase() !== sourceId.toUpperCase()) return null;
+    const source = await checkStream(data.url, this.id);
+    return source && { ...source, durationSec: Number(data.timeLength) || 0 };
   }
 
   async getLyric() {

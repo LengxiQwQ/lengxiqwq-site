@@ -1159,13 +1159,13 @@ export interface MusicSearchResponse {
 export async function searchOnlineMusic(
 	chatServerUrl: string,
 	keyword: string,
-	options?: { signal?: AbortSignal; limit?: number; page?: number },
+	options?: { signal?: AbortSignal; limit?: number; page?: number; provider?: "qq" | "kugou" },
 ): Promise<MusicSearchResponse> {
 	const base =
 		normalizeServerUrl(chatServerUrl) || "https://chat-server.lengxiqwq.com";
 	const q = keyword.trim();
 	if (!q) return { tracks: [], hasMore: false, page: 1 };
-	const limit = Math.min(30, Math.max(1, options?.limit ?? 30));
+	const limit = Math.min(30, Math.max(1, options?.limit ?? (options?.provider === "kugou" ? 20 : 30)));
 	const page = Math.max(1, options?.page ?? 1);
 
 	const controller = new AbortController();
@@ -1185,7 +1185,7 @@ export async function searchOnlineMusic(
 
 	try {
 		const resp = await fetch(
-			`${base}/api/music/search?q=${encodeURIComponent(q)}&limit=${limit}&page=${page}`,
+			`${base}/api/music/search?q=${encodeURIComponent(q)}&limit=${limit}&page=${page}&provider=${options?.provider ?? "qq"}`,
 			{ signal: controller.signal, cache: "no-store" },
 		);
 		const data = (await resp.json().catch(() => null)) as {

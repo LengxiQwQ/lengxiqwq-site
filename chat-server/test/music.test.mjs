@@ -11,7 +11,7 @@ import { ChatDatabase } from '../src/db/database.mjs';
 import { MusicRegistry } from '../src/music/registry.mjs';
 import { findPlaylistRequestTrack } from '../src/music/music-input.mjs';
 import { QQMusicProvider } from '../src/music/qq-music.mjs';
-import { NeteaseMusicProvider } from '../src/music/catalog-providers.mjs';
+import { KugouMusicProvider, NeteaseMusicProvider } from '../src/music/catalog-providers.mjs';
 import { lookupPreferredProviders } from '../src/music/provider-routing.mjs';
 import { YoutubeCandidates } from '../src/music/youtube-candidates.mjs';
 
@@ -119,7 +119,7 @@ async function manager(t, registry, roomId = 'chat', dataDir, chatDb) {
     dataDir = await mkdtemp(join(tmpdir(), 'music-test-'));
     t.after(() => rm(dataDir, { recursive: true, force: true }));
   }
-  const mgr = new MusicManager({ roomId, dataDir, musicRegistry: registry, serverOrigin: origin, chatDb });
+  const mgr = new MusicManager({ roomId, dataDir, musicRegistry: registry, serverOrigin: origin, signSecret: 'fixture', chatDb });
   t.after(() => {
     for (const timer of [mgr._advanceTimer, mgr._prepareFallbackTimer, mgr._refreshPreparedTimer, mgr._saveTimer]) clearTimeout(timer);
   });
@@ -1192,4 +1192,76 @@ test('manual search fallback keeps a different recording out of the room', async
   assert.equal(result.offer, undefined);
   assert.equal(mgr.current, null);
   assert.equal(mgr.queue.length, 0);
+});
+
+test('imported bilingual titles resolve using verified artist profiles, including a transient source retry', async () => {
+  const id = 'mid:artist';
+  const source = { title: '春の風 - Spring Wind', artist: 'Mira', durationSec: 212 };
+  const correct = recording('studio', { title: '春の風', artist: '美良', durationSec: 212,
+    artistCredits: [{ id, name: '美良' }] });
+  const cover = { ...correct, id: 'qq:cover', sourceId: 'cover', artist: '別人',
+    artistCredits: [{ id: 'mid:other', name: '別人' }] };
+  const provider = { id: 'qq', search: async () => ({ tracks: [cover, correct] }),
+    getArtistAliases: async key => key === id ? ['Mira'] : [] };
+  const registry = new MusicRegistry([provider]);
+  let calls = 0;
+  const found = await registry.resolveRotationTrack(source, async track => {
+    assert.equal(track.id, correct.id);
+    if (++calls === 1) throw new Error('temporary supplier failure');
+    return playable(track);
+  }, { alternatives: true, exactOnly: true });
+  assert.equal(found.playable.id, correct.id);
+  assert.equal(calls, 2);
+  provider.getArtistAliases = async () => ['Mira'];
+  assert.equal((await registry.resolveRotationTrack(source, playable, { alternatives: true, exactOnly: true })).playable, undefined);
+});
+
+test('a QQ artist profile only contributes explicitly labelled aliases and is shared between callers', async t => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    return new Response('<item><key><![CDATA[外文名]]></key><value><![CDATA[Mira、ミラ]]></value></item><item><key><![CDATA[简介]]></key><value><![CDATA[Other Singer]]></value></item>');
+  });
+  const provider = new QQMusicProvider();
+  const [names] = await Promise.all([provider.getArtistAliases('mid:artist'), provider.getArtistAliases('mid:artist')]);
+  assert.deepEqual(names, ['Mira', 'ミラ']);
+  assert.deepEqual(await provider.getArtistAliases('mid:artist'), names);
+  assert.equal(calls, 1);
+});
+
+test('manual playlist fallback selects the matching Kugou recording after QQ misses', async t => {
+  const hash = 'F'.repeat(32);
+  const original = recording('original');
+  const candidate = { ...original, id: 'kugou:' + hash, provider: 'kugou', sourceId: hash };
+  const registry = new MusicRegistry([
+    { id: 'qq', search: async () => ({ tracks: [] }), resolveStream: async () => null },
+    { id: 'kugou', search: async () => ({ tracks: [candidate] }), resolveStream: async () =>
+      ({ url: 'https://sharefs.kugou.com/music.mp3', mimeType: 'audio/mpeg', providerChannel: 'kugou' }) }
+  ]);
+  const mgr = await manager(t, registry);
+  const result = await mgr.enqueueWithAlternatives(original, actor, { owner: {}, active: () => true, searchFallback: true });
+  assert.equal(result.ok, true);
+  assert.equal(mgr.current.track.id, candidate.id);
+});
+
+test('Kugou returns playable audio only for the requested file hash', async t => {
+  const hash = 'A'.repeat(32);
+  let returnedHash = 'B'.repeat(32);
+  let probes = 0;
+  t.mock.method(globalThis, 'fetch', async (value, options) => {
+    const url = new URL(value);
+    if (url.hostname === 'm.kugou.com') {
+      assert.equal(url.searchParams.get('hash'), hash);
+      return Response.json({ status: 1, hash: returnedHash, timeLength: 202, url: 'https://sharefs.kugou.com/file.mp3' });
+    }
+    assert.equal(url.hostname, 'sharefs.kugou.com');
+    assert.equal(options.headers.Range, 'bytes=0-4095');
+    probes++;
+    return new Response(Buffer.from('ID3abcdefghijk'), { status: 206, headers: { 'Content-Range': 'bytes 0-13/100' } });
+  });
+  const provider = new KugouMusicProvider();
+  assert.equal(await provider.resolveStream(hash), null);
+  returnedHash = hash;
+  assert.equal((await provider.resolveStream(hash)).durationSec, 202);
+  assert.equal(probes, 1);
 });

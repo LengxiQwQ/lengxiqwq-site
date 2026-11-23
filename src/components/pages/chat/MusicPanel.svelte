@@ -102,7 +102,7 @@ interface Props {
 	initialListening?: boolean;
 	onSearchOnline: (
 		keyword: string,
-		options?: { signal?: AbortSignal; page?: number },
+		options?: { signal?: AbortSignal; page?: number; provider?: "qq" | "kugou" },
 	) => Promise<{ tracks: ChatMusicTrack[]; hasMore: boolean; page: number }>;
 	onEnqueueTrack: (track: ChatMusicTrack, anchor?: HTMLElement) => Promise<boolean>;
 	onRandomEnqueue: (playlistId: string) => Promise<boolean>;
@@ -315,6 +315,7 @@ let coverLoadFailed = $state(false);
 let searchQuery = $state("");
 let submittedSearchQuery = $state("");
 let searchResults = $state<ChatMusicTrack[]>([]);
+let searchProvider = $state<"qq" | "kugou">("qq");
 let searchPage = $state(1);
 let hasMoreSearchResults = $state(false);
 let isSearching = $state(false);
@@ -2762,7 +2763,7 @@ $effect(() => {
 	lastFallbackSearchSeq = fallbackSearch.seq;
 	searchQuery = fallbackSearch.query;
 	switchMusicTab("search");
-	void runSearch(fallbackSearch.query);
+	void runSearch(fallbackSearch.query, false, "qq");
 });
 
 function submitSearch(bypassCache = false) {
@@ -2775,7 +2776,7 @@ function submitSearch(bypassCache = false) {
 		clearSearch();
 		return;
 	}
-	void runSearch(q, bypassCache);
+	void runSearch(q, bypassCache, q === submittedSearchQuery ? searchProvider : "qq");
 }
 
 function dedupeTracksById(tracks: ChatMusicTrack[]): ChatMusicTrack[] {
@@ -2789,7 +2790,8 @@ function dedupeTracksById(tracks: ChatMusicTrack[]): ChatMusicTrack[] {
 	return result;
 }
 
-async function runSearch(q: string, bypassCache = false) {
+async function runSearch(q: string, bypassCache = false, provider: "qq" | "kugou" = "qq") {
+	searchProvider = provider;
 	searchAbortController?.abort();
 	const controller = new AbortController();
 	searchAbortController = controller;
@@ -2799,7 +2801,7 @@ async function runSearch(q: string, bypassCache = false) {
 	searchPage = 1;
 	isLoadingMore = false;
 
-	const cacheKey = q.toLowerCase();
+	const cacheKey = provider + ":" + q.toLowerCase();
 	const cached = !bypassCache ? searchResultCache.get(cacheKey) : undefined;
 	if (cached && Date.now() - cached.fetchedAt < SEARCH_CACHE_TTL_MS) {
 		searchResults = cached.tracks;
@@ -2812,7 +2814,7 @@ async function runSearch(q: string, bypassCache = false) {
 	hasMoreSearchResults = false;
 	isSearching = true;
 	try {
-		const res = await onSearchOnline(q, { signal: controller.signal, page: 1 });
+		const res = await onSearchOnline(q, { signal: controller.signal, page: 1, provider });
 		if (controller.signal.aborted) return;
 		const tracks = dedupeTracksById(res.tracks);
 		if (searchResultCache.size >= 40) {
@@ -2861,7 +2863,7 @@ async function loadMoreSearchResults() {
 		// Search results can overlap across pages. Advance the upstream page independently.
 		for (let attempt = 0; attempt < 3 && hasMoreSearchResults; attempt += 1) {
 			const requestedPage = searchPage + 1;
-			const res = await onSearchOnline(q, { signal: controller.signal, page: requestedPage });
+			const res = await onSearchOnline(q, { signal: controller.signal, page: requestedPage, provider: searchProvider });
 			if (controller.signal.aborted || submittedSearchQuery !== q) return;
 			if (res.page < requestedPage) {
 				hasMoreSearchResults = false;
@@ -4382,6 +4384,10 @@ $effect(() => {
                 : `房间曲库 (${displayedBrowseTracks.length})`}
             </span>
             {#if submittedSearchQuery}
+              <button type="button" class="ml-auto mr-3 btn-regular rounded-md px-2 py-1 text-xs"
+                onclick={() => void runSearch(submittedSearchQuery, false, searchProvider === "qq" ? "kugou" : "qq")}>
+                {searchProvider === "qq" ? "换个曲库搜" : "返回默认曲库"}
+              </button>
               <button
                 type="button"
                 class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] hover:text-(--primary) bg-transparent border-none p-0 cursor-pointer"

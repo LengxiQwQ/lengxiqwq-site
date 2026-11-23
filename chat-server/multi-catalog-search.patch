@@ -1,0 +1,13 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -987,3 +987,3 @@
+ const musicProviders = [musicProvider];
+-if (process.env.CHAT_MUSIC_ENABLE_KUGOU === '1') musicProviders.push(new KugouMusicProvider());
++if (process.env.CHAT_MUSIC_ENABLE_KUGOU !== '0') musicProviders.push(new KugouMusicProvider());
+ const musicRegistry = new MusicRegistry(musicProviders, { matchStore: chatDb });
+@@ -3817,3 +3817,4 @@
+     try {
+-      const { tracks, hasMore } = await musicRegistry.search(q, limit, undefined, page);
++      const provider = url.searchParams.get('provider') || undefined;
++      const { tracks, hasMore } = await musicRegistry.search(q, limit, provider, page);
+       res.writeHead(200, {

@@ -63,7 +63,34 @@ export class QQMusicProvider {
     this.name = '在线曲库';
     this.cyapiKey = cyapiKey;
     this.searchCache = new Map();
+    this.accountRetryAt = 0;
+    this.artistAliases = new Map();
+    this.pendingArtists = new Map();
     this.inFlightSearches = new Map();
+  }
+
+  async getArtistAliases(id) {
+    if (!/^mid:[a-zA-Z0-9]{1,32}$/.test(id)) return [];
+    const cached = this.artistAliases.get(id);
+    if (cached?.expiresAt > Date.now()) return cached.names;
+    if (this.pendingArtists.has(id)) return this.pendingArtists.get(id);
+    if (this.pendingArtists.size >= 8) return [];
+    const pending = (async () => {
+      const url = new URL('https://c.y.qq.com/splcloud/fcgi-bin/fcg_get_singer_desc.fcg');
+      url.search = new URLSearchParams({ singermid: id.slice(4), utf8: '1', outCharset: 'utf-8', format: 'xml' });
+      const response = await fetch(url, { headers: QQ_HEADERS, signal: AbortSignal.timeout(1800) });
+      if (!response.ok) { await response.body?.cancel(); return []; }
+      const xml = await response.text();
+      const names = [];
+      for (const field of xml.matchAll(/<key>\s*<!\[CDATA\[(?:外文名|英文名|别名|本名)\]\]>\s*<\/key>\s*<value>\s*<!\[CDATA\[([^\]]+)\]\]>/gu)) {
+        names.push(...field[1].split(/[、，,;；/]/u).map(name => name.trim()).filter(Boolean));
+      }
+      if (this.artistAliases.size >= 256) this.artistAliases.delete(this.artistAliases.keys().next().value);
+      this.artistAliases.set(id, { names, expiresAt: Date.now() + 86400_000 });
+      return names;
+    })().finally(() => this.pendingArtists.delete(id));
+    this.pendingArtists.set(id, pending);
+    return pending;
   }
 
   async search(keyword, limit = 30, page = 1) {
@@ -284,10 +311,16 @@ export class QQMusicProvider {
     let temporaryFailure = false;
     let lastFailureReason = '';
     const attempt = source => this.trySource(cleanMid, source).catch(err => {
+      if (source === vkeys128Source && err.isRiskControl) this.accountRetryAt = Date.now() + 30_000;
       temporaryFailure = true;
       lastFailureReason = err?.message || '上游音源服务响应异常';
       return null;
     });
+    if (cyapiSource && Date.now() < this.accountRetryAt) {
+      const source = await this.trySource(cleanMid, cyapiSource);
+      if (!source) throw new Error('Music source temporarily unavailable');
+      return source;
+    }
     const primaryPromise = attempt(vkeys128Source);
     let hedgeTimer;
     const earlyResult = await Promise.race([
