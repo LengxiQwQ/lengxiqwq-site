@@ -28,6 +28,94 @@ function musicText(value) {
   return String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\p{P}\p{Z}\s]+/gu, '');
 }
 
+
+// Selected localized artist credits from MusicBrainz. Keep the source IDs so
+// ambiguous stage names and unrelated acts can be checked when extending it.
+const artistKeys = new Map();
+for (const names of [
+  ["上白石萌音", "Mone Kamishiraishi"], // https://musicbrainz.org/artist/ee56fb00-f5ae-4b39-84be-fbf456106ea2
+  ["『ユイカ』", "Yuika"], // https://musicbrainz.org/artist/6f0d9ace-971c-47df-9e81-cf8ef0655079
+  ["周杰倫", "周杰伦", "Jay Chou", "ジェイ・チョウ", "Zhou Jielun"], // https://musicbrainz.org/artist/a223958d-5c56-4b2c-a30a-87e357bc121b
+  ["Aimer", "エメ"], // https://musicbrainz.org/artist/9388cee2-7d57-4598-905f-106019b267d3
+  ["中島美嘉", "中岛美嘉", "Mika Nakashima", "Nakashima Mika", "なかしまみか"], // https://musicbrainz.org/artist/f8d6e5df-069e-4b8d-9a13-cc7e0a558dd1
+  ["藤井風", "Fujii Kaze"], // https://musicbrainz.org/artist/c3a4aeca-8f02-4d22-b1ff-693434ab09a8
+  ["陳奕迅", "陈奕迅", "Eason Chan", "Chen Yixun"], // https://musicbrainz.org/artist/86119d30-d930-4e65-a97a-e31e22388166
+]) {
+  for (const name of names) artistKeys.set(musicText(name), musicText(names[0]));
+}
+
+function artistKey(name) {
+  const key = musicText(name);
+  return artistKeys.get(key) || key;
+}
+
+// Look up artist metadata only for a plausible cross-script recording. One
+// shared request per name, globally spaced; verified results survive restarts.
+export class ArtistDirectory {
+  constructor(store, request = fetch) {
+    this.store = store;
+    this.request = request;
+    this.nextLookup = 0;
+    this.pending = new Map();
+    this.cache = new Map();
+  }
+
+  async names(name) {
+    const key = 'music:artist-alias:v1:' + musicText(name);
+    const cached = this.cache.get(key) || this.store?.getKv?.(key);
+    if (cached?.expiresAt > Date.now()) return cached.names;
+    if (this.pending.has(key)) return this.pending.get(key);
+    if (Date.now() < this.nextLookup) return [];
+    this.nextLookup = Date.now() + 1100;
+    const lookup = this.lookup(name).then(names => {
+      const entry = { names, expiresAt: Date.now() + (names.length ? STORED_MATCH_TTL_MS : 86400_000) };
+      if (this.cache.size >= 512) this.cache.delete(this.cache.keys().next().value);
+      this.cache.set(key, entry);
+      if (names.length) this.store?.setKv?.(key, entry);
+      return names;
+    }).catch(() => []).finally(() => this.pending.delete(key));
+    this.pending.set(key, lookup);
+    return lookup;
+  }
+
+  async lookup(name) {
+    const url = new URL('https://musicbrainz.org/ws/2/artist/');
+    const escaped = name.replace(/["\\]/gu, '\\$&');
+    url.search = new URLSearchParams({ query: '(artist:"' + escaped + '" OR alias:"' + escaped + '")', fmt: 'json', limit: '5' });
+    const response = await this.request(url, { signal: AbortSignal.timeout(1100),
+      headers: { 'User-Agent': 'LengxiJukebox/1.0 (https://lengxiqwq.com)' } });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error('Artist directory unavailable');
+    }
+    const { artists } = await response.json();
+    const exact = (artists || []).filter(artist => Number(artist.score) === 100);
+    if (exact.length !== 1) return [];
+    const artist = exact[0];
+    const names = [artist.name, ...(artist.aliases || [])
+      .filter(alias => alias.type === 'Artist name' || alias.primary === true)
+      .map(alias => alias.name)].filter(Boolean);
+    return names.some(alias => musicText(alias) === musicText(name)) ? names : [];
+  }
+}
+
+// Allow a small spelling difference only with independent release evidence.
+// Compare letters only so track numbers, mix labels and short names stay distinct.
+function closeSpelling(a, b) {
+  if (!/^[a-z]{5,80}$/u.test(a) || !/^[a-z]{5,80}$/u.test(b)) return false;
+  const limit = Math.min(2, Math.floor(Math.max(a.length, b.length) / 5));
+  if (Math.abs(a.length - b.length) > limit) return false;
+  let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j++) {
+      next.push(Math.min(next[j - 1] + 1, row[j] + 1, row[j - 1] + Number(a[i - 1] !== b[j - 1])));
+    }
+    row = next;
+  }
+  return row[b.length] <= limit;
+}
+
 function splitArtists(value) {
   return String(value ?? '').normalize('NFKC').split(ARTIST_SEPARATOR).map(name => name.trim()).filter(Boolean);
 }
@@ -51,14 +139,14 @@ function recordingMetadata(track) {
   };
   collectVersions();
   const artists = Array.isArray(track.artistNames) && track.artistNames.length
-    ? [...track.artistNames]
+    ? track.artistNames.flatMap(name => String(name).normalize('NFKC').split(/\s*[;、]\s*/u))
     : splitArtists(track.artist);
   title = title.replace(FEATURE_CREDIT, (_match, bracketed, trailing) => {
     artists.push(...splitArtists(bracketed ?? trailing));
     return '';
   }).trim();
   collectVersions();
-  const artistNames = [...new Set(artists.map(musicText).filter(Boolean))].sort();
+  const artistNames = [...new Set(artists.map(artistKey).filter(Boolean))].sort();
   return {
     title,
     titleKey: musicText(title),
@@ -85,7 +173,7 @@ function indexArtistNames(tracks) {
     for (const { id, name, alias } of track.artistCredits) {
       if (!id) continue;
       for (const label of [name, alias]) {
-        const key = musicText(label);
+        const key = artistKey(label);
         if (!key) continue;
         if (!idsByName.has(key)) idsByName.set(key, id);
         else if (idsByName.get(key) !== id) idsByName.set(key, null);
@@ -105,7 +193,7 @@ function sameArtistRoster(original, candidate, artistIds) {
     const id = artistIds.get(name);
     if (!id) return false;
     const credit = candidate.artistCredits.find(artist => artist.id === id);
-    if (!credit || !remaining.delete(musicText(credit.name))) return false;
+    if (!credit || !remaining.delete(artistKey(credit.name))) return false;
   }
   return remaining.size === 0;
 }
@@ -125,8 +213,18 @@ function matchingTitle(a, b) {
 }
 
 function compareRecording(original, candidate, artistIds) {
-  const titleMatches = matchingTitle(original, candidate);
-  const artistsMatch = sameArtistRoster(original, candidate, artistIds);
+  let titleMatches = matchingTitle(original, candidate);
+  let artistsMatch = sameArtistRoster(original, candidate, artistIds);
+  if (original.albumKey && original.albumKey === candidate.albumKey &&
+      original.durationSec > 0 && candidate.durationSec > 0 &&
+      Math.abs(original.durationSec - candidate.durationSec) <= 2 &&
+      original.versionKey === candidate.versionKey) {
+    if (titleMatches && original.artistNames.length === 1 && candidate.artistNames.length === 1) {
+      artistsMatch ||= closeSpelling(original.artistNames[0], candidate.artistNames[0]);
+    } else if (artistsMatch && original.isrc && original.isrc === candidate.isrc) {
+      titleMatches ||= closeSpelling(original.titleKey, candidate.titleKey);
+    }
+  }
   const relation = titleMatches
     ? (artistsMatch ? 'same_artist_version' : 'same_title')
     : (artistsMatch ? 'same_artist_other' : null);
@@ -214,7 +312,7 @@ export function withPlaybackSelection(track, original, mode) {
 }
 
 export class MusicRegistry {
-  constructor(providers = [], { matchStore } = {}) {
+  constructor(providers = [], { matchStore, lookupArtistAliases = false } = {}) {
     this.providers = new Map();
     this.defaultOrder = [];
     this.resolved = new Map();
@@ -222,6 +320,7 @@ export class MusicRegistry {
     this.trackMatches = new Map();
     this.searchRoutes = new Map();
     this.matchStore = matchStore;
+    this.artistDirectory = lookupArtistAliases ? new ArtistDirectory(matchStore) : null;
     for (const p of providers) {
       this.providers.set(p.id, p);
       this.defaultOrder.push(p.id);
@@ -437,7 +536,8 @@ export class MusicRegistry {
     let temporaryFailure = false;
     let lastFailureDetail = '';
     const uncertainSources = new Set();
-    const bounded = async (operation, maxMs) => {
+    const bounded = async (operation, maxMs, stage) => {
+      const started = performance.now();
       const remaining = Math.min(maxMs, deadline - Date.now());
       if (remaining <= 0 || signal?.aborted) throw new Error('Music lookup budget exhausted');
       let timer;
@@ -450,13 +550,15 @@ export class MusicRegistry {
         ]);
       } finally {
         clearTimeout(timer);
+        const elapsedMs = Math.round(performance.now() - started);
+        if (stage && elapsedMs >= 2000) console.info('[MusicLookup]', { provider: providerId, stage, elapsedMs });
       }
     };
     const check = async (track, maxMs = 3500) => {
       if (!track || exclude(track) || seen.has(track.id)) return null;
       seen.add(track.id);
       try {
-        return await bounded(() => resolve(track), maxMs);
+        return await bounded(() => resolve(track), maxMs, 'audio');
       } catch (err) {
         temporaryFailure = true;
         uncertainSources.add(track.id);
@@ -477,7 +579,7 @@ export class MusicRegistry {
     const search = async (keyword) => {
       if (!keyword.trim()) return [];
       try {
-        const result = await bounded(() => this.search(keyword, providerId === 'kugou' ? 20 : 15, providerId), budgetMs ? 2500 : 4000);
+        const result = await bounded(() => this.search(keyword, providerId === 'kugou' ? 20 : 15, providerId), budgetMs ? 2500 : 4000, 'catalog');
         return result.tracks || [];
       } catch (err) {
         temporaryFailure = true;
@@ -532,15 +634,36 @@ export class MusicRegistry {
           try { aliases = await bounded(() => provider.getArtistAliases(id), 1900); }
           catch { temporaryFailure = true; return; }
           for (const alias of aliases) {
-            const name = musicText(alias);
+            const name = artistKey(alias);
             if (!artistIds.has(name)) artistIds.set(name, id);
             else if (artistIds.get(name) !== id) artistIds.set(name, null);
           }
         }));
       }
-      return [...tracks.values()].map(track => ({
-        track, ...compareRecording(original, recordingMetadata(track), artistIds)
-      }));
+      const candidates = [...tracks.values()];
+      const score = track => ({ track, ...compareRecording(original, recordingMetadata(track), artistIds) });
+      const ranked = candidates.map(score);
+      if (!this.artistDirectory || original.artists.length !== 1 || ranked.some(option => option.confidence > 0)) return ranked;
+      const originalName = original.artists[0];
+      const cjk = /[\p{Script=Han}\p{Script=Katakana}\p{Script=Hiragana}\p{Script=Hangul}]/u;
+      const possible = ranked.filter(option => {
+        const candidate = recordingMetadata(option.track);
+        return candidate.artists.length === 1 && cjk.test(originalName) !== cjk.test(candidate.artists[0]) &&
+          matchingTitle(original, candidate) && original.versionKey === candidate.versionKey &&
+          option.durationDiff <= RECORDING_DURATION_TOLERANCE_SEC;
+      });
+      if (!possible.length || deadline - Date.now() < 250 || signal?.aborted) return ranked;
+      let aliases;
+      try { aliases = await bounded(() => this.artistDirectory.names(originalName), 1150); }
+      catch { return ranked; }
+      const known = new Set(aliases.map(artistKey));
+      for (const option of possible) {
+        const candidate = recordingMetadata(option.track);
+        if (!known.has(candidate.artistNames[0])) continue;
+        const mapped = { ...candidate, artistNames: original.artistNames };
+        Object.assign(option, compareRecording(original, mapped, artistIds));
+      }
+      return ranked;
     };
 
     const primary = await search(titleAndArtists);

@@ -6,7 +6,6 @@ import { join } from "node:path";
 import test from "node:test";
 import { MusicClock } from "../../src/components/pages/chat/musicClock.ts";
 import {
-	correctionForDrift,
 	RoomAudioPlayer,
 } from "../../src/components/pages/chat/roomAudioPlayer.ts";
 import { MusicManager } from "./candidate/src/music/music-manager.mjs";
@@ -260,13 +259,6 @@ test("clock ignores wall-clock changes and filters high-latency outliers", () =>
 	assert.equal(c.now(), 100050, "resume discards pre-sleep samples");
 });
 
-test("drift control keeps rate locked at 1.0 (iPad safe) and only seeks when drift >= 2.2s", () => {
-	assert.deepEqual(correctionForDrift(0.08), { seek: false, rate: 1 });
-	assert.deepEqual(correctionForDrift(0.5), { seek: false, rate: 1 });
-	assert.deepEqual(correctionForDrift(1.5), { seek: false, rate: 1 });
-	assert.deepEqual(correctionForDrift(2.5), { seek: true, rate: 1 });
-});
-
 class FakeAudio extends EventTarget {
 	src = "";
 	currentTime = 0;
@@ -282,6 +274,7 @@ class FakeAudio extends EventTarget {
 	loads = 0;
 	plays = 0;
 	reject = false;
+	hasAttribute() { return Boolean(this.src); }
 	getAttribute() {
 		return this.src;
 	}
@@ -304,7 +297,7 @@ class FakeAudio extends EventTarget {
 	}
 }
 
-test("multiple tabs on the same device get distinct _cid stream URLs and align directly to (serverNow - startedAt)/1000", async () => {
+test("independent listeners use the signed stream and align to the same server clock", async () => {
 	const doc = new EventTarget();
 	doc.hidden = false;
 	const win = new EventTarget();
@@ -359,10 +352,8 @@ test("multiple tabs on the same device get distinct _cid stream URLs and align d
 		p2.listen();
 		await Promise.resolve();
 
-		// Crucial: distinct URLs per tab prevent Chromium HttpCache exclusive media lock deadlocks!
-		assert.notEqual(audio1.src, audio2.src);
-		assert.ok(audio1.src.includes("_cid="));
-		assert.ok(audio2.src.includes("_cid="));
+		assert.equal(audio1.src, play.track.streamUrl);
+		assert.equal(audio2.src, play.track.streamUrl);
 
 		// Both tabs immediately align to (10800 - 10000) / 1000 = 0.8s and unmute
 		assert.equal(audio1.currentTime, 0.8);
@@ -473,8 +464,8 @@ test("mid-song listen() seeks before emitting sound (zero 0.0s audio blip) and n
 	let now = 55000; // 45.0s into the song (startedAt = 10000)
 	const audio = new FakeAudio();
 	audio.readyState = 0;
-	let currentTimeAtPlay = -1;
-	let volumeAtPlay = -1;
+	audio.muted = false;
+	let mutedAtPlay;
 	let seekCount = 0;
 	let _ct = 0;
 	Object.defineProperty(audio, "currentTime", {
@@ -492,8 +483,7 @@ test("mid-song listen() seeks before emitting sound (zero 0.0s audio blip) and n
 	let resolvePlay;
 	audio.play = () => {
 		audio.paused = false;
-		currentTimeAtPlay = audio.currentTime;
-		volumeAtPlay = audio.volume;
+		mutedAtPlay = audio.muted;
 		return new Promise((resolve) => {
 			resolvePlay = resolve;
 		});
@@ -519,8 +509,8 @@ test("mid-song listen() seeks before emitting sound (zero 0.0s audio blip) and n
 		});
 		seekCount = 0;
 		player.listen();
-		// While readyState is 0 at play(), volume MUST be held at 0 so frame 0 is never audible!
-		assert.equal(volumeAtPlay, 0);
+		// A listener joining mid-song must stay muted until the initial seek.
+		assert.equal(mutedAtPlay, true);
 
 		// Metadata arrives at t=45.1s while play() is still pending
 		now = 55100;
@@ -528,7 +518,7 @@ test("mid-song listen() seeks before emitting sound (zero 0.0s audio blip) and n
 		audio.dispatchEvent(new Event("loadedmetadata"));
 		assert.equal(audio.currentTime, 45.1);
 		assert.equal(seekCount, 1);
-		assert.equal(audio.volume, 0, "must remain silent while seeking");
+		assert.equal(audio.muted, true, "must remain silent while seeking");
 
 		// Range request completes 700ms later (now = 55800 => target = 45.8s, currentTime = 45.1s, drift = 0.7s)
 		now = 55800;
@@ -719,7 +709,8 @@ test("prepared skips announce one future start while the first-chunk request is 
 	}
 });
 
-test("20 listeners wait for the same deadline and resume in place after muting", async () => {
+test("20 listeners start at the scheduled deadline and resume on the same stream", async t => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
 	let now = 10000;
 	const windowLimit = getMaxListeners(window);
 	const documentLimit = getMaxListeners(document);
@@ -748,23 +739,22 @@ test("20 listeners wait for the same deadline and resume in place after muting",
 		}
 		assert.ok(clients.every(({ audio }) => audio.plays === 0));
 		now = 11200;
-		for (const { audio } of clients) audio.dispatchEvent(new Event("canplay"));
+		t.mock.timers.tick(1200);
 		await Promise.resolve();
 		for (const { audio, player } of clients) {
 			assert.equal(audio.plays, 1);
 			assert.equal(audio.muted, false);
 			assert.equal(audio.currentTime, 0);
 			player.stop();
-			assert.equal(audio.paused, false);
-			assert.equal(audio.muted, true);
+			assert.equal(audio.paused, true);
 		}
 		now += 60000;
 		for (const { audio, player } of clients) {
 			audio.currentTime = 60;
 			player.listen();
 			assert.equal(audio.muted, false);
-			assert.equal(audio.plays, 1);
-			assert.equal(audio.loads, 1);
+			assert.equal(audio.plays, 2);
+			assert.equal(audio.loads, 0);
 		}
 	} finally {
 		for (const { player } of clients) player.destroy();
@@ -773,7 +763,8 @@ test("20 listeners wait for the same deadline and resume in place after muting",
 	}
 });
 
-test("an incomplete native preload is promoted with the same url and no second load", async () => {
+test("a scheduled switch reuses the gesture-activated audio element", async t => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const audio = new FakeAudio();
 	const standby = new FakeAudio();
 	standby.readyState = 2;
@@ -807,22 +798,23 @@ test("an incomplete native preload is promoted with the same url and no second l
 		};
 		player.preloadNext(next);
 		player.setTrack(next);
-		assert.equal(audio.paused, false);
+		assert.equal(audio.paused, true);
 		assert.equal(standby.plays, 0);
 		now = 11200;
-		audio.dispatchEvent(new Event("timeupdate"));
+		t.mock.timers.tick(1200);
 		await Promise.resolve();
-		assert.equal(standby.src, "two");
-		assert.equal(standby.loads, 1);
-		assert.equal(standby.plays, 1);
-		assert.equal(standby.muted, false);
-		assert.equal(audio.paused, true);
+		assert.equal(audio.src, "two");
+		assert.equal(standby.plays, 0);
+		assert.equal(audio.plays, 2);
+		assert.equal(audio.muted, false);
+		assert.equal(audio.paused, false);
 	} finally {
 		player.destroy();
 	}
 });
 
-test("a progressing mid-song download survives twenty seconds without resetting the source", () => {
+test("a progressing download stays on direct audio and a stalled one switches to its proxy", t => {
+	t.mock.timers.enable({ apis: ["setTimeout"] });
 	const original = Object.getOwnPropertyDescriptor(globalThis, "performance");
 	let mono = 1000;
 	Object.defineProperty(globalThis, "performance", {
@@ -846,15 +838,18 @@ test("a progressing mid-song download survives twenty seconds without resetting 
 		player.setTrack({
 			uid: "slow",
 			startedAt: 1000,
-			track: { streamUrl: "slow" },
+			track: { streamUrl: "slow", proxyUrl: "proxy" },
 		});
 		player.listen();
 		for (let second = 1; second <= 20; second++) {
 			mono += 1000;
 			end++;
 			audio.dispatchEvent(new Event("progress"));
+			t.mock.timers.tick(1000);
 		}
-		assert.equal(audio.loads, 1);
+		assert.equal(audio.src, "slow");
+		t.mock.timers.tick(7000);
+		assert.equal(audio.src, "proxy");
 	} finally {
 		player.destroy();
 		Object.defineProperty(globalThis, "performance", original);

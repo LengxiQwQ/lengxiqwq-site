@@ -182,6 +182,7 @@ export type ServerPacket =
 			error?: string;
 			offer?: RotationOffer;
 	  }
+	| { type: "music:request_wait"; roomId: string; requestId: string; waiting: boolean }
 	| {
 			type: "music:request_result";
 			roomId: string;

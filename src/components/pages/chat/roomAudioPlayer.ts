@@ -51,10 +51,10 @@ export class RoomAudioPlayer {
 	private readonly events = new AbortController();
 	private timer: ReturnType<typeof setTimeout> | undefined;
 	private waitingTimer: ReturnType<typeof setTimeout> | undefined;
+	private stallTimer: ReturnType<typeof setTimeout> | undefined;
 	private lastSeek = Number.NEGATIVE_INFINITY;
 	private isSeekingInternal = false;
 	private activeTransport: "direct" | "proxy" = "direct";
-	private directFailedAt = 0;
 
 	constructor(
 		private readonly audio: HTMLAudioElement,
@@ -93,6 +93,7 @@ export class RoomAudioPlayer {
 			() => {
 				this.isSeekingInternal = false;
 				if (!this.active) return;
+				recordMusicEvent("audio-metadata", this.play?.uid);
 				reportDuration();
 				this.align(true);
 			},
@@ -108,6 +109,9 @@ export class RoomAudioPlayer {
 				if (!this.active || audio.paused) return;
 				clearTimeout(this.waitingTimer);
 				this.waitingTimer = undefined;
+				clearTimeout(this.stallTimer);
+				this.stallTimer = undefined;
+				recordMusicEvent("audio-playing", this.play?.uid);
 				reportDuration();
 				this.openOutput();
 			},
@@ -150,7 +154,8 @@ export class RoomAudioPlayer {
 		audio.addEventListener(
 			"waiting",
 			() => {
-				if (!this.active || audio.ended || this.isSeekingInternal) return;
+				if (!this.active || audio.ended) return;
+				this.watchDirectStream();
 				clearTimeout(this.waitingTimer);
 				this.waitingTimer = setTimeout(() => {
 					if (this.active && !audio.ended && this.status !== "loading") {
@@ -186,7 +191,6 @@ export class RoomAudioPlayer {
 				// 熔断保护：当前 direct 失败时，在当前歌曲生命周期内降级走 proxy，并记录时间戳
 				if (proxy && this.activeTransport !== "proxy") {
 					this.activeTransport = "proxy";
-					this.directFailedAt = Date.now();
 					this.start(true);
 					return;
 				}
@@ -271,12 +275,8 @@ export class RoomAudioPlayer {
 	private resolveTargetUrl(forceProxy = false): string | null {
 		const play = this.play;
 		if (!play) return null;
-		// 动态熔断器：若已降级为 proxy，但在 60 秒冷却后自动半开，允许重新探测恢复优质 direct
-		const isWithinFailureCooldown =
-			this.activeTransport === "proxy" &&
-			Date.now() - this.directFailedAt < 60_000;
-		const shouldUseProxy = forceProxy || isWithinFailureCooldown;
-		if (shouldUseProxy && play.track.proxyUrl) {
+		// Keep the working transport until the track or source revision changes.
+		if ((forceProxy || this.activeTransport === "proxy") && play.track.proxyUrl) {
 			return play.track.proxyUrl;
 		}
 		return (
@@ -319,7 +319,7 @@ export class RoomAudioPlayer {
 
 	private openOutput() {
 		const audio = this.audio;
-		if (!this.active || audio.paused || audio.ended) return;
+		if (!this.active || audio.paused || audio.ended || audio.seeking) return;
 		if (audio.muted) {
 			audio.muted = false;
 		}
@@ -354,7 +354,7 @@ export class RoomAudioPlayer {
 			(diff <= SYNC_TOLERANCE_SEC || now - this.lastSeek < SEEK_COOLDOWN_MS)
 		)
 			return;
-		if (diff < 0.25) return;
+		if (diff < 0.5) return;
 		this.lastSeek = now;
 		this.isSeekingInternal = true;
 		try {
@@ -369,7 +369,32 @@ export class RoomAudioPlayer {
 		// Single DOM audio element avoids iOS WebKit audio session drop & untrusted gesture errors.
 	}
 
+	// A stalled CDN may leave play() pending without an error event. Allow
+	// slow downloads to continue while media time or buffered bytes advance.
+	private watchDirectStream() {
+		const proxy = this.play?.track.proxyUrl;
+		if (!proxy || !this.active || this.activeTransport === "proxy" ||
+			this.normalizeUrl(proxy) === this.normalizeUrl(this.audio.src) || this.stallTimer !== undefined) return;
+		const position = this.audio.currentTime;
+		const ranges = this.audio.buffered;
+		const end = ranges.length ? ranges.end(ranges.length - 1) : 0;
+		this.stallTimer = setTimeout(() => {
+			this.stallTimer = undefined;
+			if (!this.active || this.audio.ended) return;
+			const buffered = this.audio.buffered;
+			if (this.audio.currentTime !== position || (buffered.length && buffered.end(buffered.length - 1) > end)) {
+				this.watchDirectStream();
+				return;
+			}
+			this.activeTransport = "proxy";
+			recordMusicEvent("audio-stall-proxy", this.play?.uid);
+			this.start(true);
+		}, 3500);
+	}
+
 	private release() {
+		clearTimeout(this.stallTimer);
+		this.stallTimer = undefined;
 		clearTimeout(this.timer);
 		clearTimeout(this.waitingTimer);
 		this.waitingTimer = undefined;
@@ -386,6 +411,8 @@ export class RoomAudioPlayer {
 	private start(forceProxy = false) {
 		const play = this.play;
 		if (!play || !this.intent) return;
+		clearTimeout(this.stallTimer);
+		this.stallTimer = undefined;
 		clearTimeout(this.timer);
 		clearTimeout(this.waitingTimer);
 		this.waitingTimer = undefined;
@@ -424,21 +451,28 @@ export class RoomAudioPlayer {
 		}
 
 		this.update("loading");
+		this.watchDirectStream();
 
 		if (this.audio.readyState >= 1) {
 			this.align(true);
 		}
 
+		if (this.audio.readyState < 1 && this.callbacks.now() - play.startedAt >= 500) {
+			this.audio.muted = true;
+		}
 		void this.audio
 			.play()
 			.then(() => {
 				if (generation === this.generation) {
+					if (this.audio.currentTime < 0.5 || this.audio.muted) this.align(true);
 					this.openOutput();
 				}
 			})
 			.catch((error: DOMException) => {
-				if (generation !== this.generation || error.name === "AbortError")
-					return;
+				if (generation !== this.generation) return;
+				clearTimeout(this.stallTimer);
+				this.stallTimer = undefined;
+				if (error.name === "AbortError") return;
 				if (this.audio.error) {
 					const proxy = play.track.proxyUrl;
 					if (
@@ -448,7 +482,6 @@ export class RoomAudioPlayer {
 							this.normalizeUrl(this.audio.getAttribute("src"))
 					) {
 						this.activeTransport = "proxy";
-						this.directFailedAt = Date.now();
 						this.start(true);
 						return;
 					}
@@ -486,11 +519,9 @@ export class RoomAudioPlayer {
 		// 新曲目切入，重置传输模式为 direct，优先享受直链优质体验
 		if (!isSamePlay) {
 			this.activeTransport = "direct";
-			this.directFailedAt = 0;
 		} else if (previous?.sourceRevision !== play?.sourceRevision) {
 			// 服务端推送了新的 sourceRevision，重置 direct 允许重试最新直链
 			this.activeTransport = "direct";
-			this.directFailedAt = 0;
 		}
 
 		// 如果切到了不同的歌曲，并且新歌存在有效音源，立即替换 audio.src 并暂停，杜绝旧音频潜伏发声
@@ -567,6 +598,8 @@ export class RoomAudioPlayer {
 	stop(): void {
 		this.intent = false;
 		this.audio.preload = "metadata";
+		clearTimeout(this.stallTimer);
+		this.stallTimer = undefined;
 		clearTimeout(this.timer);
 		clearTimeout(this.waitingTimer);
 		this.waitingTimer = undefined;

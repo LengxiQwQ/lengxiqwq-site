@@ -1095,12 +1095,14 @@ export class MusicManager {
         const batch = entries.slice(i, i + (i === 0 ? 1 : 2));
         i += batch.length;
         budget -= batch.length;
-        const results = await Promise.all(batch.map(probe));
-        if (stale()) return null;
+        // Start both lookups together, but a ready earlier entry need not
+        // wait for the later supplier to time out.
+        const results = batch.map(probe);
         for (const [index, candidate] of batch.entries()) {
+          const result = await results[index];
+          if (stale()) return null;
           const position = deck.indexOf(candidate);
           if (position < 0) continue;
-          const result = results[index];
           if (result?.playable) {
             this.deferredRotation.delete(candidate);
             return {

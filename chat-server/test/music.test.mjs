@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { MusicManager } from '../src/music/music-manager.mjs';
 import { ChatDatabase } from '../src/db/database.mjs';
-import { MusicRegistry } from '../src/music/registry.mjs';
+import { ArtistDirectory, MusicRegistry } from '../src/music/registry.mjs';
 import { findPlaylistRequestTrack } from '../src/music/music-input.mjs';
 import { QQMusicProvider } from '../src/music/qq-music.mjs';
 import { KugouMusicProvider, NeteaseMusicProvider } from '../src/music/catalog-providers.mjs';
@@ -1264,4 +1264,37 @@ test('Kugou returns playable audio only for the requested file hash', async t =>
   returnedHash = hash;
   assert.equal((await provider.resolveStream(hash)).durationSec, 202);
   assert.equal(probes, 1);
+});
+
+test('playlist matches combined credits, localized aliases and corroborated spelling variations', async () => {
+  for (const [artist, credit, matches] of [
+    ['冰镇豆沙君, 理想放逐', '冰镇豆沙君;理想放逐', true],
+    ['Mone Kamishiraishi', '上白石萌音', true], ['JAY. CHOU', '周杰伦', true],
+    ['Sabrina', 'Sabrinna', true], ['Sabrina', 'Different', false], ['XY', 'XZ', false]
+  ]) {
+    const original = { artist, title: 'Song', album: 'Release', durationSec: 201 };
+    const candidate = recording('hit', { ...original, artist: credit, artistNames: [credit] });
+    const registry = new MusicRegistry([{ id: 'qq', search: async () => ({ tracks: [candidate] }) }]);
+    const result = await registry.resolveRotationTrack(original, playable, { exactOnly: true, alternatives: true });
+    assert.equal(Boolean(result.playable), matches, artist);
+  }
+});
+
+test('MusicBrainz localized credits require one exact artist and are reused across requests', async () => {
+  const artist = { name: '星音', score: 100, aliases: [{ type: 'Artist name', name: 'Star Voice' }] };
+  let calls = 0;
+  const directory = new ArtistDirectory(null, async () => {
+    calls++;
+    return Response.json({ artists: [artist] });
+  });
+  const candidate = recording('studio', { title: '空', artist: '星音', durationSec: 208 });
+  const registry = new MusicRegistry([{ id: 'qq', search: async () => ({ tracks: [candidate] }) }]);
+  registry.artistDirectory = directory;
+  const original = { title: '空', artist: 'Star Voice', durationSec: 209 };
+  const result = await registry.resolveRotationTrack(original, playable, { exactOnly: true, alternatives: true });
+  assert.equal(result.playable.id, candidate.id);
+  await directory.names(original.artist);
+  assert.equal(calls, 1);
+  const ambiguous = new ArtistDirectory(null, async () => Response.json({ artists: [artist, artist] }));
+  assert.deepEqual(await ambiguous.names(original.artist), []);
 });

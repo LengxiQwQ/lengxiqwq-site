@@ -34,8 +34,9 @@ reliability_gateway=8105075b69ec202b779ed5866f2e30a50e8f275161e6294b3d3de19a9e5f
 qq_room_base=30ebe9040dd35bb0bec42852ed14a5931fc604207cd56c7a203382cefba49b00
 qq_room_gateway=35a5422eb4cbf1f2360639ef81f1219698075d2a55bd3b60fa60a4eb1b272a86
 multi_catalog_gateway=6100d1faf1fee7d13d72391e841baea1fb37231c440514ef34ccb5be7f293a14
+ordered_gateway=5eb2913d05536a23295993dce9759489c878d23b8dfa0ff04e72bffe9e777c87
 qq_room=false
-if [[ "$actual_gateway" == "$qq_room_base" || "$actual_gateway" == "$qq_room_gateway" || "$actual_gateway" == "$multi_catalog_gateway" ]]; then
+if [[ "$actual_gateway" == "$qq_room_base" || "$actual_gateway" == "$qq_room_gateway" || "$actual_gateway" == "$multi_catalog_gateway" || "$actual_gateway" == "$ordered_gateway" ]]; then
   qq_room=true
 fi
 current_release=false
@@ -87,11 +88,15 @@ fi
     if [[ "$actual_gateway" == "$qq_room_base" ]]; then
       git apply "$release_dir/qq-room-fallback.patch"
     fi
-    if [[ "$actual_gateway" != "$multi_catalog_gateway" ]]; then
+    if [[ "$actual_gateway" != "$multi_catalog_gateway" && "$actual_gateway" != "$ordered_gateway" ]]; then
       [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$qq_room_gateway" ]]
       git apply "$release_dir/multi-catalog-search.patch"
     fi
-    [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$multi_catalog_gateway" ]]
+    if [[ "$actual_gateway" != "$ordered_gateway" ]]; then
+      [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$multi_catalog_gateway" ]]
+      git apply "$release_dir/ordered-requests.patch"
+    fi
+    [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$ordered_gateway" ]]
   elif [[ "$current_release" == true ]]; then
     if [[ "$actual_gateway" == "$reliability_base" ]]; then
       git apply --check "$release_dir/music-reliability.patch"
@@ -170,6 +175,12 @@ if [[ "$current_release" == true ]]; then
         src/music/music-manager.mjs) baseline=4327355a4d809388de23f5da450364bbf3d7cb286b38f51c7a4c05fa819fdfa6 ;;
         src/music/qq-music.mjs) baseline=d219aca66434acfd494214fe8f05abb96264b9f9a297c98717e9e2021c7704c6 ;;
         src/music/registry.mjs) baseline=ca1995ee96985fef5d3ee27df0776c2f3bbd5e68ff4b41f4b7fbae7b8a010061 ;;
+      esac
+    fi
+    if [[ "$actual_gateway" == "$multi_catalog_gateway" ]]; then
+      case "$name" in
+        src/music/registry.mjs) baseline=ff7f3c78577d00a51ba1b65b525665bf382277f033653f70aa4eab8f437a4cf6 ;;
+        src/music/music-manager.mjs) baseline=467a0f2854868eb34e50c363eee17fb61c7bb4c722c064a0f319a62c632bbcd9 ;;
       esac
     fi
     if [[ "$installed" != "$baseline" && "$installed" != "$desired" ]]; then

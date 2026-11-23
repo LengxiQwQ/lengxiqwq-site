@@ -285,6 +285,7 @@ const songRequests = new Map<
 		randomPlaylistId?: string;
 		fromOffer: boolean;
 		finish: (ok: boolean) => void;
+		setWaiting: (waiting: boolean) => void;
 	}
 >();
 let pendingRandomRequestId = $state<string | null>(null);
@@ -2355,6 +2356,11 @@ function connectRoom(roomId: string) {
 				}
 				break;
 			}
+			case "music:request_wait": {
+				const pending = songRequests.get(packet.requestId);
+				if (pending?.room === packet.roomId) pending.setWaiting(packet.waiting);
+				break;
+			}
 			case "music:request_result": {
 				const pending = songRequests.get(packet.requestId);
 				if (!pending || pending.room !== packet.roomId) break;
@@ -3084,17 +3090,22 @@ async function sendSongRequest(
 			if (fromOffer && songOfferOrigin && track) rotationAction = { entryId: track.id, message };
 			else showNotice(message, "error");
 		};
-		const timer = window.setTimeout(() => {
-			finish(false);
-			reportUnsent("点歌未收到回应，请先查看待播队列");
-		}, 15_000);
+		let timer: number | undefined;
+		const setWaiting = (waiting: boolean) => {
+			window.clearTimeout(timer);
+			if (!waiting) timer = window.setTimeout(() => {
+				finish(false);
+				reportUnsent("点歌未收到回应，请先查看待播队列");
+			}, 15_000);
+		};
 		const finish = (ok: boolean) => {
 			window.clearTimeout(timer);
 			songRequests.delete(requestId);
 			if (pendingRandomRequestId === requestId) pendingRandomRequestId = null;
 			resolve(ok);
 		};
-		songRequests.set(requestId, { room, track, anchor, randomPlaylistId, fromOffer, finish });
+		songRequests.set(requestId, { room, track, anchor, randomPlaylistId, fromOffer, finish, setWaiting });
+		setWaiting(false);
 		if (randomPlaylistId) pendingRandomRequestId = requestId;
 		const packet = {
 			type: "music:enqueue",

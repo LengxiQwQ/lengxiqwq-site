@@ -1,0 +1,43 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -987,4 +987,4 @@
+ const musicProviders = [musicProvider];
+ if (process.env.CHAT_MUSIC_ENABLE_KUGOU !== '0') musicProviders.push(new KugouMusicProvider());
+-const musicRegistry = new MusicRegistry(musicProviders, { matchStore: chatDb });
++const musicRegistry = new MusicRegistry(musicProviders, { matchStore: chatDb, lookupArtistAliases: true });
+ const youtubeCandidates = new YoutubeCandidates(process.env.YOUTUBE_DATA_API_KEY);
+@@ -4802,13 +4802,17 @@
+           reply({ ok: false, code: 'AUTH_REQUIRED', error: '请先填写昵称或登录后再点歌' });
+           return;
+         }
+-        if (ws.pendingSongRequest && !actor?.isAdmin) {
+-          reply({ ok: false, error: '上一首点歌还在处理中，请稍候' });
+-          return;
+-        }
+-        ws.pendingSongRequest = true;
+-        const pendingTimer = setTimeout(() => { ws.pendingSongRequest = false; }, 3500);
++        const previous = ws.songRequestTail;
++        let release;
++        const turn = new Promise(resolve => { release = resolve; });
++        ws.songRequestTail = turn;
+         try {
++          if (previous) {
++            if (requestId) ws.send(JSON.stringify({ type: 'music:request_wait', roomId: requestedRoom, requestId, waiting: true }));
++            await previous;
++            if (!active()) return;
++            if (requestId) ws.send(JSON.stringify({ type: 'music:request_wait', roomId: requestedRoom, requestId, waiting: false }));
++          }
+           const input = packet.track;
+           let item;
+           const playlistId = packet.randomPlaylistId ?? input?.playlistId;
+@@ -4896,8 +4900,8 @@
+           console.warn('[MusicRequest]', requestedRoom, err.message);
+           reply({ ok: false, error: '点歌暂时失败，请稍后重试' });
+         } finally {
+-          if (typeof pendingTimer !== 'undefined') clearTimeout(pendingTimer);
+-          ws.pendingSongRequest = false;
++          if (ws.songRequestTail === turn) delete ws.songRequestTail;
++          release();
+         }
+         return;
+       }
