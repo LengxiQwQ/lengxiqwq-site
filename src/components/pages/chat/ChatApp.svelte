@@ -958,8 +958,7 @@ $effect(() => {
 		showAuthModal ||
 		showProfileModal ||
 		showUserDetailModal ||
-		showPollCreateModal ||
-		activityModalState.open
+		showPollCreateModal
 	) {
 		if (mobileDrawer !== "none") {
 			mobileDrawer = "none";
