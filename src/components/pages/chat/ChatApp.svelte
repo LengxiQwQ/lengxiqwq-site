@@ -43,11 +43,14 @@ import {
 	isMentionedForUser,
 	normalizeServerUrl,
 	persistStoredChatUser,
+	persistWalineCommentMeta,
 	readInitialCachedUser,
 	readStoredChatUser,
 	readStoredWalineToken,
 	resolveChatAvatarUrl,
+	resolveCurrentUserEmail,
 	resolveInitialAuth,
+	syncChatUserToWalineStorage,
 	type ServerPacket,
 	saveMemberBadges,
 	searchOnlineMusic,
@@ -938,6 +941,8 @@ $effect(() => {
 function openAuthModal() {
 	showUserDetailModal = false;
 	showProfileModal = false;
+	mobileDrawer = "none";
+	closeSplitRoom();
 	showAuthModal = true;
 }
 
@@ -945,6 +950,8 @@ $effect(() => {
 	if (showAuthModal) {
 		showUserDetailModal = false;
 		showProfileModal = false;
+		mobileDrawer = "none";
+		closeSplitRoom();
 	}
 });
 let userDetailSeed = $state<ChatUserDetailSeed | null>(null);
@@ -1760,6 +1767,9 @@ function connectRoom(roomId: string) {
 				currentUser = packet.self;
 				if (packet.self) {
 					persistStoredChatUser(packet.self);
+					if (packet.self.authType === "waline") {
+						syncChatUserToWalineStorage(packet.self);
+					}
 				} else if (currentAuth) {
 					clearStoredChatUser();
 					if (currentAuth.kind === "waline") {
@@ -1894,6 +1904,9 @@ function connectRoom(roomId: string) {
 				currentUser = packet.user;
 				if (packet.user) {
 					persistStoredChatUser(packet.user);
+					if (packet.user.authType === "waline") {
+						syncChatUserToWalineStorage(packet.user);
+					}
 				} else {
 					clearStoredChatUser();
 				}
@@ -2674,11 +2687,17 @@ function handleAuthenticated(
 	if (user) {
 		currentUser = user;
 		persistStoredChatUser(user);
+		if (user.authType === "waline") {
+			syncChatUserToWalineStorage(user);
+		}
 	} else {
 		const cached = readInitialCachedUser();
 		if (cached) {
 			currentUser = cached;
 			persistStoredChatUser(cached);
+			if (cached.authType === "waline") {
+				syncChatUserToWalineStorage(cached);
+			}
 		}
 	}
 	playlistRefreshSeq += 1;
@@ -2819,6 +2838,29 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 	};
 	currentUser = updatedUser;
 	persistStoredChatUser(updatedUser);
+	if (currentUser.authType === "waline") {
+		syncChatUserToWalineStorage(updatedUser);
+		if (walineToken && walineServerUrl) {
+			void fetch(`${normalizeServerUrl(walineServerUrl)}/api/user`, {
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${walineToken}`,
+				},
+				body: JSON.stringify({
+					display_name: cleanNick,
+					url: cleanUrl,
+					avatar: updatedUser.avatar || "",
+				}),
+			}).catch(() => {});
+		}
+	} else if (currentUser.authType === "guest") {
+		persistWalineCommentMeta({
+			nickname: cleanNick,
+			email: resolveCurrentUserEmail(currentUser),
+			url: cleanUrl,
+		});
+	}
 	if (sendPacket(packet)) {
 		showNotice("个人资料已更新");
 	}
@@ -3735,7 +3777,7 @@ onMount(() => {
         onCloseSplitRoom={isSplitLayout && splitRoomOpen ? () => closeSplitRoom(true) : undefined}
         onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
-        onOpenAuth={() => (showAuthModal = true)}
+        onOpenAuth={openAuthModal}
         onToggleDesktopNotification={handleToggleDesktopNotification}
       />
     </div>
@@ -3834,7 +3876,7 @@ onMount(() => {
           onRecallMessage={handleRecallMessage}
           onDeleteMessage={handleDeleteMessage}
           onNotify={showNotice}
-          onRequireAuth={() => (showAuthModal = true)}
+          onRequireAuth={openAuthModal}
           onMentionUser={handleMentionUser}
           onOpenUserProfile={handleOpenUserProfile}
           otherRoomsUnreadCount={otherRoomsUnreadCount}
@@ -3966,6 +4008,15 @@ onMount(() => {
           });
           showNotice(`已跳过这轮播放《${track.title}》`);
         }}
+        onShuffleRotation={() => {
+          if (!currentUser) {
+            showNotice("当前处于旁观模式，登录后即可重新洗牌", "error");
+            return;
+          }
+          if (sendPacket({ type: "music:shuffle_rotation" })) {
+            showNotice("已重新洗牌轮播队列");
+          }
+        }}
         onPlayQueued={handlePlayQueued}
         onPlayRotationTrack={handlePlayRotationTrack}
         onOpenRotationOffer={openRotationOffer}
@@ -3980,7 +4031,7 @@ onMount(() => {
         onReportError={(playUid, sourceRevision) =>
           sendPacket({ type: "music:report_error", playUid, sourceRevision })
         }
-        onRequestAuth={() => (showAuthModal = true)}
+        onRequestAuth={openAuthModal}
       />
       {/key}
       {:else}

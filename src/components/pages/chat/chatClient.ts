@@ -412,6 +412,33 @@ export function readStoredWalineToken(): string {
 	return "";
 }
 
+export function resolveWorkingAvatarUrl(
+	rawAvatar?: string,
+	email?: string,
+	mailMd5?: string,
+): string {
+	let avatar = (rawAvatar || "").trim();
+	if (avatar.includes("gravatar.com")) {
+		avatar = avatar.replace(
+			/https?:\/\/[a-zA-Z0-9._-]*gravatar\.com/i,
+			"https://cravatar.cn",
+		);
+	}
+	if (avatar) return avatar;
+
+	const cleanEmail = (email || "").trim().toLowerCase();
+	if (cleanEmail) {
+		const qqMatch = cleanEmail.match(/^([1-9]\d{4,10})@qq\.com$/);
+		if (qqMatch) {
+			return `https://q1.qlogo.cn/g?b=qq&nk=${qqMatch[1]}&s=100`;
+		}
+	}
+	if (mailMd5 && /^[a-f0-9]{32}$/i.test(mailMd5.trim())) {
+		return `https://cravatar.cn/avatar/${mailMd5.trim().toLowerCase()}?d=mp`;
+	}
+	return "";
+}
+
 export function persistWalineAuth(userData: {
 	token: string;
 	display_name?: string;
@@ -426,7 +453,29 @@ export function persistWalineAuth(userData: {
 	if (typeof localStorage === "undefined") return;
 	try {
 		const prevValue = localStorage.getItem("WALINE_USER");
-		const serialized = JSON.stringify(userData);
+		let prevUser: Record<string, unknown> = {};
+		if (prevValue) {
+			try {
+				prevUser = JSON.parse(prevValue);
+			} catch {
+				prevUser = {};
+			}
+		}
+		const existingChatAvatar = readStoredChatUser()?.avatar;
+
+		const normalizedAvatar = resolveWorkingAvatarUrl(
+			userData.avatar || existingChatAvatar || (typeof prevUser.avatar === "string" ? prevUser.avatar : ""),
+			userData.email || (typeof prevUser.email === "string" ? prevUser.email : ""),
+			userData.mailMd5 || (typeof prevUser.mailMd5 === "string" ? prevUser.mailMd5 : ""),
+		);
+
+		const normalizedData = {
+			...prevUser,
+			...userData,
+			avatar: normalizedAvatar,
+		};
+
+		const serialized = JSON.stringify(normalizedData);
 		localStorage.setItem("WALINE_USER", serialized);
 		localStorage.setItem("TOKEN", userData.token);
 		if (userData.type === "administrator" || userData.type === "admin") {
@@ -444,6 +493,46 @@ export function persistWalineAuth(userData: {
 		dispatchWalineUserStorageEvent(serialized, prevValue);
 	} catch {
 		// Ignore storage limits
+	}
+}
+
+export function syncChatUserToWalineStorage(user: ChatSessionUser): void {
+	if (typeof localStorage === "undefined" || !user) return;
+	try {
+		const rawWaline = localStorage.getItem("WALINE_USER");
+		let prevUser: Record<string, unknown> = {};
+		if (rawWaline) {
+			try {
+				prevUser = JSON.parse(rawWaline);
+			} catch {
+				prevUser = {};
+			}
+		}
+		const token = readStoredWalineToken() || (typeof prevUser.token === "string" ? prevUser.token : "");
+		if (!token && user.authType !== "waline") return;
+
+		const normalizedAvatar = resolveWorkingAvatarUrl(
+			user.avatar || (typeof prevUser.avatar === "string" ? prevUser.avatar : ""),
+			user.email || (typeof prevUser.email === "string" ? prevUser.email : ""),
+			typeof prevUser.mailMd5 === "string" ? prevUser.mailMd5 : "",
+		);
+
+		const updatedWalineUser = {
+			...prevUser,
+			token: token || prevUser.token,
+			display_name: user.name || prevUser.display_name || "",
+			avatar: normalizedAvatar,
+			url: user.url !== undefined ? user.url : (prevUser.url || ""),
+			type: user.isAdmin ? "administrator" : (prevUser.type || "guest"),
+		};
+
+		const serialized = JSON.stringify(updatedWalineUser);
+		if (serialized !== rawWaline) {
+			localStorage.setItem("WALINE_USER", serialized);
+			dispatchWalineUserStorageEvent(serialized, rawWaline);
+		}
+	} catch {
+		// Ignore
 	}
 }
 

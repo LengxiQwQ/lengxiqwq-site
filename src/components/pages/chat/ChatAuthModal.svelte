@@ -340,7 +340,7 @@ async function handleSplitGuestEnter() {
   topPriority={true}
   {onClose}
 >
-  <div class="px-4 pb-4 pt-3 space-y-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+  <div class="px-4 pb-10 pt-3 space-y-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
     {#if guestBlockedByWaline}
       <!-- 已绑定正式账号：独立紧凑引导视图（无需在底部长列表滚动） -->
       <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2.5">
@@ -507,7 +507,9 @@ async function handleSplitGuestEnter() {
         <button
           type="button"
           aria-expanded={showGuestForm}
-          onclick={() => (showGuestForm = !showGuestForm)}
+          onclick={() => {
+            showGuestForm = !showGuestForm;
+          }}
           class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-(--chat-divider-color) bg-transparent hover:bg-(--btn-regular-bg) text-left cursor-pointer transition-colors"
         >
           <div class="min-w-0">

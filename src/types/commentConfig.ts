@@ -40,6 +40,14 @@ export type CommentConfig = {
 			  }
 		)[];
 		login?: "enable" | "force" | "disable";
+		/**
+		 * 评论者填写的元数据字段列表，默认 ["nick", "mail", "link"]
+		 */
+		meta?: ("nick" | "mail" | "link")[];
+		/**
+		 * 评论者必须填写的元数据字段列表（如 ["nick", "mail"]），设置后将禁止匿名评论，要求访客必须输入昵称和合法邮箱
+		 */
+		requiredMeta?: ("nick" | "mail" | "link")[];
 		visitorCount?: boolean; // 是否统计访问量，true 启用访问量，false 关闭
 		imageUploader?: boolean; // 是否启用评论区图片上传功能，设为 false 可禁用图片上传按钮
 	};

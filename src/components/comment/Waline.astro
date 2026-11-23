@@ -880,6 +880,114 @@ const config = {
 
     let initAttempts = 0;
 
+    function syncWalineUserAvatarAndMeta() {
+      try {
+        const rawWaline = localStorage.getItem("WALINE_USER");
+        if (!rawWaline) return;
+        const user = JSON.parse(rawWaline);
+        if (!user || typeof user !== "object") return;
+
+        let avatar = (user.avatar || "").trim();
+        let changed = false;
+
+        // 1. 如果已有头像指向 gravatar.com，在国内加载失败，自动升级为国内高速镜像 cravatar.cn
+        if (avatar.includes("gravatar.com")) {
+          avatar = avatar.replace(/https?:\/\/[a-zA-Z0-9._-]*gravatar\.com/i, "https://cravatar.cn");
+          user.avatar = avatar;
+          changed = true;
+        }
+
+        // 2. 如果缺少头像，从聊天室已登录会话双向同步
+        if (!avatar) {
+          const rawChat = localStorage.getItem("fireflyChatSessionUser");
+          if (rawChat) {
+            try {
+              const chatUser = JSON.parse(rawChat);
+              if (chatUser && chatUser.avatar && typeof chatUser.avatar === "string" && chatUser.avatar.trim()) {
+                avatar = chatUser.avatar.trim();
+                if (avatar.includes("gravatar.com")) {
+                  avatar = avatar.replace(/https?:\/\/[a-zA-Z0-9._-]*gravatar\.com/i, "https://cravatar.cn");
+                }
+                user.avatar = avatar;
+                changed = true;
+              }
+            } catch (_) {}
+          }
+        }
+
+        // 3. 兜底：若仍无头像但有邮箱或 mailMd5，生成保底头像
+        if (!avatar) {
+          const email = (user.email || "").trim().toLowerCase();
+          const qqMatch = email.match(/^([1-9]\d{4,10})@qq\.com$/);
+          if (qqMatch) {
+            avatar = `https://q1.qlogo.cn/g?b=qq&nk=${qqMatch[1]}&s=100`;
+            user.avatar = avatar;
+            changed = true;
+          } else if (user.mailMd5) {
+            avatar = `https://cravatar.cn/avatar/${user.mailMd5}?d=mp`;
+            user.avatar = avatar;
+            changed = true;
+          }
+        }
+
+        if (changed) {
+          localStorage.setItem("WALINE_USER", JSON.stringify(user));
+        }
+      } catch (_) {}
+    }
+
+    function enhanceWalineAvatars(container) {
+      const root = container || document.getElementById("waline");
+      if (!root) return;
+
+      // 1. 处理已登录顶栏头像
+      const loginAvatarImg = root.querySelector(".wl-login-info .wl-avatar img");
+      if (loginAvatarImg) {
+        let src = loginAvatarImg.getAttribute("src") || "";
+        if (src.includes("gravatar.com")) {
+          src = src.replace(/https?:\/\/[a-zA-Z0-9._-]*gravatar\.com/i, "https://cravatar.cn");
+          loginAvatarImg.src = src;
+        }
+        if (!src || src === "undefined" || src === "null") {
+          try {
+            const rawWaline = localStorage.getItem("WALINE_USER");
+            const rawChat = localStorage.getItem("fireflyChatSessionUser");
+            const u = rawWaline ? JSON.parse(rawWaline) : null;
+            const c = rawChat ? JSON.parse(rawChat) : null;
+            const fallbackSrc = (u && u.avatar) || (c && c.avatar) || "";
+            if (fallbackSrc) {
+              loginAvatarImg.src = fallbackSrc.replace(/https?:\/\/[a-zA-Z0-9._-]*gravatar\.com/i, "https://cravatar.cn");
+            }
+          } catch (_) {}
+        }
+        if (!loginAvatarImg.__errHandlerInstalled) {
+          loginAvatarImg.__errHandlerInstalled = true;
+          loginAvatarImg.addEventListener("error", function () {
+            if (this.src.includes("gravatar.com")) {
+              this.src = this.src.replace(/https?:\/\/[a-zA-Z0-9._-]*gravatar\.com/i, "https://cravatar.cn");
+            }
+          });
+        }
+      }
+
+      // 2. 处理各条评论的卡片头像
+      const commentAvatars = root.querySelectorAll("img.wl-user-avatar");
+      commentAvatars.forEach((img) => {
+        let src = img.getAttribute("src") || "";
+        if (src.includes("gravatar.com")) {
+          img.src = src.replace(/https?:\/\/[a-zA-Z0-9._-]*gravatar\.com/i, "https://cravatar.cn");
+        }
+        if (!img.__errHandlerInstalled) {
+          img.__errHandlerInstalled = true;
+          img.addEventListener("error", function () {
+            if (this.src.includes("gravatar.com")) {
+              this.src = this.src.replace(/https?:\/\/[a-zA-Z0-9._-]*gravatar\.com/i, "https://cravatar.cn");
+            }
+          });
+        }
+      });
+    }
+
     function initWaline() {
       const el = document.getElementById("waline");
       if (!el) {
@@ -912,6 +1020,8 @@ const config = {
       el.innerHTML = "";
       el.setAttribute("data-initialized-path", currentPath);
 
+      syncWalineUserAvatarAndMeta();
+
       const dynamicConfig = {
         ...config,
         el: "#waline",
@@ -923,6 +1033,7 @@ const config = {
         window.__walineInstance = walineLib.init(dynamicConfig);
         renderCustomStickers(el);
         enhanceCommentImages(el);
+        enhanceWalineAvatars(el);
         setupKaomoji(el);
         scrollToHashTarget();
 
@@ -931,6 +1042,7 @@ const config = {
         const ensureKaomoji = () => {
           setupKaomoji(el);
           renderCustomStickers(el);
+          enhanceWalineAvatars(el);
           if (kaomojiAttempts < 10) {
             kaomojiAttempts++;
             setTimeout(ensureKaomoji, 150);
@@ -959,6 +1071,7 @@ const config = {
                 try {
                   renderCustomStickers(el);
                   enhanceCommentImages(el);
+                  enhanceWalineAvatars(el);
                   setupKaomoji(el);
                   updateEmojiPopupStickerState(el);
                   document.dispatchEvent(new CustomEvent("waline:rendered"));
@@ -1011,7 +1124,30 @@ const config = {
           });
           const res = await resp.json().catch(() => null);
           if (resp.ok && res && res.errno === 0 && res.data && res.data.objectId) {
-            const userPayload = { ...res.data, token: urlToken };
+            let avatar = (res.data.avatar || "").trim();
+            if (avatar.includes("gravatar.com")) {
+              avatar = avatar.replace(/https?:\/\/[a-zA-Z0-9._-]*gravatar\.com/i, "https://cravatar.cn");
+            }
+            if (!avatar) {
+              const rawChat = localStorage.getItem("fireflyChatSessionUser");
+              if (rawChat) {
+                try {
+                  const chatUser = JSON.parse(rawChat);
+                  if (chatUser && chatUser.avatar && typeof chatUser.avatar === "string") {
+                    avatar = chatUser.avatar.trim();
+                  }
+                } catch (_) {}
+              }
+            }
+            if (!avatar && res.data.email) {
+              const qqMatch = res.data.email.trim().toLowerCase().match(/^([1-9]\d{4,10})@qq\.com$/);
+              if (qqMatch) {
+                avatar = `https://q1.qlogo.cn/g?b=qq&nk=${qqMatch[1]}&s=100`;
+              } else if (res.data.mailMd5) {
+                avatar = `https://cravatar.cn/avatar/${res.data.mailMd5}?d=mp`;
+              }
+            }
+            const userPayload = { ...res.data, avatar, token: urlToken };
             const serialized = JSON.stringify(userPayload);
             try {
               localStorage.setItem("WALINE_USER", serialized);
@@ -1130,6 +1266,7 @@ const config = {
       const shouldScrollToBox = scrollToBox === true;
       cancelIdlePreload();
       try {
+        syncWalineUserAvatarAndMeta();
         await consumeUrlWalineToken();
         await loadWalineResources();
         initWaline();

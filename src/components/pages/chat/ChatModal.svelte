@@ -78,7 +78,8 @@ let suppressHandleClick = false;
 let isStackedChild = $state(false);
 
 function placeBackdrop(node: HTMLDivElement) {
-	document.getElementById("chat-modal-layer")?.appendChild(node);
+	const layer = document.getElementById("chat-modal-layer") ?? document.body;
+	layer.appendChild(node);
 	return {
 		destroy() {
 			node.remove();
@@ -151,32 +152,6 @@ $effect(() => {
 				nextModal?.querySelector<HTMLElement>(".chat-dialog-card")?.focus({ preventScroll: true });
 			}
 		});
-	};
-});
-
-$effect(() => {
-	const backdrop = backdropEl;
-	const viewport = window.visualViewport;
-	const layer = document.getElementById("chat-modal-layer");
-	if (!backdrop || !viewport || !layer || typeof window.matchMedia !== "function") return;
-	const narrow = window.matchMedia("(width < 768px)");
-	const syncViewport = () => {
-		if (!narrow.matches) return;
-		const bounds = layer.getBoundingClientRect();
-		const top = Math.max(bounds.top, viewport.offsetTop);
-		const bottom = Math.min(bounds.bottom, viewport.offsetTop + viewport.height);
-		if (bottom <= top) return;
-		backdrop.style.setProperty("--chat-sheet-top", `${top - bounds.top}px`);
-		backdrop.style.setProperty("--chat-sheet-viewport", `${bottom - top}px`);
-	};
-	syncViewport();
-	viewport.addEventListener("resize", syncViewport);
-	viewport.addEventListener("scroll", syncViewport);
-	window.addEventListener("resize", syncViewport);
-	return () => {
-		viewport.removeEventListener("resize", syncViewport);
-		viewport.removeEventListener("scroll", syncViewport);
-		window.removeEventListener("resize", syncViewport);
 	};
 });
 

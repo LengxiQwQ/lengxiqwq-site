@@ -109,6 +109,7 @@ interface Props {
 	isRandomizing: boolean;
 	onRemoveQueue: (uid: string) => void;
 	onRemoveRotationTrack?: (track: RotationQueueItem) => void;
+	onShuffleRotation?: () => void;
 	onPlayQueued: (uid: string) => void;
 	onPlayRotationTrack?: (track: RotationQueueItem, anchor?: HTMLElement) => void;
 	onOpenRotationOffer?: () => void;
@@ -192,6 +193,7 @@ const {
 	onPlaybackStatusChange,
 	onAudioDiagnosticChange,
 	onNotify,
+	onShuffleRotation,
 }: Props = $props();
 
 const initVol = untrack(() => {
@@ -272,10 +274,14 @@ const playerPaneModeLabel = $derived(
 			: "播放列表",
 );
 let lyricsScrolling = $state(false);
-let queueScrolling = $state(false);
 let queueTab = $state<"request" | "rotation">("request");
+let hasUserManuallySwitchedQueueTab = $state(false);
+
+function selectQueueTab(tab: "request" | "rotation") {
+	hasUserManuallySwitchedQueueTab = true;
+	queueTab = tab;
+}
 let lyricsScrollHideTimer: number | null = null;
-let queueScrollHideTimer: number | null = null;
 let programmaticLyricScrollUntil = 0;
 let roomElapsed = $state(0);
 
@@ -287,17 +293,6 @@ function triggerLyricsScroll() {
 	lyricsScrollHideTimer = window.setTimeout(() => {
 		lyricsScrolling = false;
 		lyricsScrollHideTimer = null;
-	}, 950);
-}
-
-function triggerQueueScroll() {
-	queueScrolling = true;
-	if (queueScrollHideTimer !== null) {
-		window.clearTimeout(queueScrollHideTimer);
-	}
-	queueScrollHideTimer = window.setTimeout(() => {
-		queueScrolling = false;
-		queueScrollHideTimer = null;
 	}, 950);
 }
 
@@ -724,6 +719,18 @@ const rotationPoolTotal = $derived(musicState?.rotationPoolTotal ?? 0);
 const rotationEmptyMessage = $derived(rotationPoolTotal > 0 && rotationDeckTotal === 0
 	? "本轮已无待播歌曲，下一轮开始时重新洗牌"
 	: "当前未开启歌单轮播或轮播池为空");
+
+// 智能默认队列标签：无点播且有轮播时默认展示轮播，有点播时优先展示点播
+$effect(() => {
+	if (hasUserManuallySwitchedQueueTab) return;
+	const qLen = queue.length;
+	const rLen = rotationQueue.length;
+	if (qLen === 0 && rLen > 0) {
+		queueTab = "rotation";
+	} else if (qLen > 0) {
+		queueTab = "request";
+	}
+});
 const historyRequesters = $derived.by<HistoryRequesterOption[]>(() => {
 	const peopleMap = new Map<
 		string,
@@ -1300,6 +1307,25 @@ function handleRemoveRotationTrackAction(item: RotationQueueItem) {
 	onRemoveRotationTrack?.(item);
 }
 
+let isShufflingRotation = $state(false);
+
+function triggerShuffleRotation() {
+	if (!currentUser) {
+		onNotify?.("当前处于旁观模式，登录后即可重新洗牌");
+		return;
+	}
+	if (rotationQueue.length <= 1) {
+		onNotify?.("当前轮播曲目不足，无需重新洗牌");
+		return;
+	}
+	if (isShufflingRotation) return;
+	isShufflingRotation = true;
+	window.setTimeout(() => {
+		isShufflingRotation = false;
+	}, 650);
+	onShuffleRotation?.();
+}
+
 function canToggleCatalogTrack(song: ChatMusicTrack): boolean {
 	if (!currentUser) return true; // Clicking prompts auth modal via parent
 	if (currentUser.isAdmin) return true;
@@ -1321,6 +1347,14 @@ function playlistAuthKey(auth?: PlaylistAuth): string {
 
 const isWalineLoggedIn = $derived(
 	Boolean(currentUser && currentUser.authType === "waline" && walineToken),
+);
+
+const rotationTooltipText = $derived(
+	isWalineLoggedIn
+		? "歌单轮播设置"
+		: currentUser
+			? "歌单轮播设置（需登录账号）"
+			: "歌单轮播设置（登录后可用）",
 );
 
 function formatPlaylistDate(ts: number): string {
@@ -1939,6 +1973,10 @@ async function loadRotationSettings() {
 
 function openRotationSettings() {
 	if (rotationSaving) return;
+	if (!isWalineLoggedIn) {
+		onNotify?.(currentUser ? "歌单轮播设置仅支持账号登录用户配置" : "当前处于旁观模式，登录后即可配置轮播歌单");
+		return;
+	}
 	rotationDialogRoom = roomId;
 	rotationDialogServer = chatServerUrl;
 	rotationExpanded = true;
@@ -2728,6 +2766,10 @@ $effect(() => {
 });
 
 function submitSearch(bypassCache = false) {
+	if (!currentUser) {
+		onNotify?.("当前处于旁观模式，登录后即可搜索点歌");
+		return;
+	}
 	const q = searchQuery.trim();
 	if (!q) {
 		clearSearch();
@@ -2887,6 +2929,7 @@ async function requestTrack(song: ChatMusicTrack, anchor?: HTMLElement) {
 			for (const k of keysToAdd) next.delete(k);
 			enqueuingTrackIds = next;
 		} else {
+			selectQueueTab("request");
 			window.setTimeout(() => {
 				let changed = false;
 				const next = new Set(enqueuingTrackIds);
@@ -3251,7 +3294,7 @@ $effect(() => {
     }}
     {@const action = rotationAction?.entryId === (item.entryId ?? item.id) ? rotationAction : undefined}
     {@const isCurrent = item.entryId ? currentPlay?.track.id === item.id : isTrackCurrent(toTrack)}
-    <div class="flex items-center gap-2 py-1.5 pl-1.5 pr-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+    <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.pic}
           <img src={resolveMusicThumbUrl(item.pic)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
@@ -3599,7 +3642,7 @@ $effect(() => {
   {/snippet}
 
   {#snippet queuedTrackRow(item: QueueEntry)}
-    <div class="flex items-center gap-2 py-1.5 pl-1.5 pr-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+    <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
       <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.track.cover}
           <img src={resolveMusicThumbUrl(item.track.cover)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
@@ -4026,19 +4069,22 @@ $effect(() => {
                 {/if}
               </ChatTooltip>
             {/if}
-            {#if isWalineLoggedIn}
-              <ChatTooltip text="歌单轮播设置">
-                <button type="button"
-                  class="inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer text-[var(--chat-meta-color)] hover:text-(--primary)"
-                  aria-label="歌单轮播设置"
-                  onclick={openRotationSettings}>
-                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M4 6h10M18 6h2M4 12h2m4 0h10M4 18h8m4 0h4" />
-                    <circle cx="16" cy="6" r="2" /><circle cx="8" cy="12" r="2" /><circle cx="14" cy="18" r="2" />
-                  </svg>
-                </button>
-              </ChatTooltip>
-            {/if}
+            <ChatTooltip text={rotationTooltipText}>
+              <button
+                type="button"
+                class="inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors border-none bg-transparent {isWalineLoggedIn
+                  ? 'cursor-pointer text-[var(--chat-meta-color)] hover:text-(--primary) active:scale-95'
+                  : 'text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!'}"
+                aria-disabled={!isWalineLoggedIn ? "true" : undefined}
+                aria-label={rotationTooltipText}
+                onclick={openRotationSettings}
+              >
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 6h10M18 6h2M4 12h2m4 0h10M4 18h8m4 0h4" />
+                  <circle cx="16" cy="6" r="2" /><circle cx="8" cy="12" r="2" /><circle cx="14" cy="18" r="2" />
+                </svg>
+              </button>
+            </ChatTooltip>
           </div>
         </div>
       </div>
@@ -4127,23 +4173,50 @@ $effect(() => {
                 <button
                   type="button"
                   class="px-2.5 py-0.5 rounded-md transition-all cursor-pointer {queueTab === 'request' ? 'bg-white dark:bg-neutral-800 text-[var(--deep-text)] shadow-xs font-semibold' : 'text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
-                  onclick={() => (queueTab = "request")}
+                  onclick={() => selectQueueTab("request")}
                 >
                   点播
                 </button>
                 <button
                   type="button"
                   class="px-2.5 py-0.5 rounded-md transition-all cursor-pointer {queueTab === 'rotation' ? 'bg-white dark:bg-neutral-800 text-[var(--deep-text)] shadow-xs font-semibold' : 'text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
-                  onclick={() => (queueTab = "rotation")}
+                  onclick={() => selectQueueTab("rotation")}
                 >
                   轮播
                 </button>
               </div>
 
               {#if queueTab === "rotation"}
-                <span class="text-[11px] text-[var(--chat-meta-color)]">
-                  洗牌顺序播放
-                </span>
+                <div class="flex items-center gap-1.5">
+                  <span class="text-[11px] text-[var(--chat-meta-color)]">
+                    洗牌顺序播放
+                  </span>
+                  {#if rotationQueue.length > 0}
+                    <ChatTooltip text={!currentUser ? "重新洗牌（登录后可用）" : "重新洗牌轮播队列"}>
+                      <button
+                        type="button"
+                        disabled={isShufflingRotation}
+                        class="chat-queue-icon-btn w-7! h-7! shrink-0 aspect-square disabled:opacity-40 disabled:cursor-not-allowed!"
+                        aria-label="重新洗牌轮播队列"
+                        onclick={triggerShuffleRotation}
+                      >
+                        <svg
+                          class="w-3.5 h-3.5 {isShufflingRotation ? 'animate-spin' : ''}"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2.1"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                        >
+                          <polyline points="23 4 23 10 17 10" />
+                          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        </svg>
+                      </button>
+                    </ChatTooltip>
+                  {/if}
+                </div>
               {:else if queue.length > 0}
                 <span class="text-[11px] text-[var(--chat-meta-color)]">
                   优先播放点播
@@ -4165,7 +4238,7 @@ $effect(() => {
                       <button
                         type="button"
                         class="mt-1 text-[11.5px] text-(--primary) hover:underline cursor-pointer bg-transparent border-none p-0 inline-flex items-center gap-1"
-                        onclick={() => (queueTab = "rotation")}
+                        onclick={() => selectQueueTab("rotation")}
                       >
                         查看轮播预告 &rarr;
                       </button>
@@ -4178,7 +4251,7 @@ $effect(() => {
                       <button
                         type="button"
                         class="mt-1 text-[11.5px] text-(--primary) hover:underline cursor-pointer bg-transparent border-none p-0 inline-flex items-center gap-1"
-                        onclick={() => (queueTab = "rotation")}
+                        onclick={() => selectQueueTab("rotation")}
                       >
                         查看轮播预告 &rarr;
                       </button>
@@ -4187,8 +4260,7 @@ $effect(() => {
                 </div>
               {:else}
                 <div
-                  class="flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scroll-autohide {queueScrolling ? 'is-scrolling' : ''} space-y-1"
-                  onscroll={triggerQueueScroll}
+                  class="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-1"
                 >
                   {#each queue as item (item.uid)}
                     {@render queuedTrackRow(item)}
@@ -4201,20 +4273,21 @@ $effect(() => {
                   <span class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
                     {rotationEmptyMessage}
                   </span>
-                  {#if isWalineLoggedIn}
-                    <button
-                      type="button"
-                      class="mt-1 px-3 py-1 text-[12px] rounded-lg border border-[var(--primary)]/35 bg-[var(--primary)]/10 text-(--primary) hover:bg-[var(--primary)]/20 transition-all cursor-pointer font-medium"
-                      onclick={openRotationSettings}
-                    >
-                      设置轮播歌单
-                    </button>
-                  {/if}
+                  <button
+                    type="button"
+                    class="mt-1 px-3 py-1 text-[12px] rounded-lg font-medium transition-all {isWalineLoggedIn
+                      ? 'border border-[var(--primary)]/35 bg-[var(--primary)]/10 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer active:scale-95'
+                      : 'border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!'}"
+                    aria-disabled={!isWalineLoggedIn ? "true" : undefined}
+                    aria-label={isWalineLoggedIn ? "设置轮播歌单" : "设置轮播歌单（登录后可用）"}
+                    onclick={openRotationSettings}
+                  >
+                    设置轮播歌单
+                  </button>
                 </div>
               {:else}
                 <div
-                  class="flex-1 min-h-0 overflow-y-auto custom-scrollbar chat-scroll-autohide {queueScrolling ? 'is-scrolling' : ''} space-y-1"
-                  onscroll={triggerQueueScroll}
+                  class="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-1"
                 >
                   {#each rotationQueue as rItem (rItem.entryId ?? rItem.id)}
                     {@render rotationTrackRow(rItem)}
@@ -4230,23 +4303,31 @@ $effect(() => {
     <!-- Tab 2：歌曲 / 歌手搜索与待播队列 -->
     <div class="px-3 pt-2.5 pb-2 shrink-0">
       <div class="flex items-center gap-1.5">
-        <div class="relative flex-1 min-w-0">
+        <div
+          class="relative flex-1 min-w-0"
+          role="presentation"
+          onclick={() => {
+            if (!currentUser) onNotify?.("当前处于旁观模式，登录后即可搜索点歌");
+          }}
+        >
           <svg class="w-3.5 h-3.5 text-[var(--chat-meta-color)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <circle cx="11" cy="11" r="8" />
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
           <input
             type="text"
+            disabled={!currentUser || isSearching}
+            aria-disabled={!currentUser ? "true" : undefined}
             bind:value={searchQuery}
-            placeholder="搜索歌曲 / 歌手"
-            class="chat-music-search is-focus-reveal"
+            placeholder={!currentUser ? "旁观模式不可点歌，登录后开启搜索" : "搜索歌曲 / 歌手"}
+            class="chat-music-search {currentUser ? 'is-focus-reveal' : 'border border-[var(--chat-divider-color)] bg-black/5 dark:bg-white/5 opacity-50 cursor-not-allowed! text-[var(--chat-meta-color)]'}"
             onkeydown={(e) => {
               if (e.key === "Enter" && !e.isComposing) {
                 submitSearch();
               }
             }}
           />
-          {#if searchQuery.trim().length > 0}
+          {#if searchQuery.trim().length > 0 && currentUser}
             <button
               type="button"
               class="absolute right-2.5 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
@@ -4262,9 +4343,18 @@ $effect(() => {
         </div>
         <button
           type="button"
-          class="shrink-0 h-10 md:h-[32px] px-4 md:px-3 rounded-full text-[14px] xl:text-[12px] font-medium border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer"
-          disabled={!searchQuery.trim() || isSearching}
-          onclick={() => submitSearch()}
+          class="shrink-0 h-10 md:h-[32px] px-4 md:px-3 rounded-full text-[14px] xl:text-[12px] font-medium transition-colors {currentUser
+            ? 'border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed'
+            : 'border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!'}"
+          disabled={!currentUser || !searchQuery.trim() || isSearching}
+          aria-disabled={!currentUser ? "true" : undefined}
+          onclick={() => {
+            if (!currentUser) {
+              onNotify?.("当前处于旁观模式，登录后即可搜索点歌");
+              return;
+            }
+            submitSearch();
+          }}
         >
           {isSearching ? "搜索中" : "搜索"}
         </button>
@@ -4275,8 +4365,12 @@ $effect(() => {
       <div>
         {#if !submittedSearchQuery && !isSearching && fallbackTracks.length === 0}
           <div class="text-center py-6 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-1">
-            <p class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)] m-0">输入歌名或歌手后点击「搜索」</p>
-            <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">点歌后全房将同步播放与滚动歌词</p>
+            <p class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)] m-0">
+              {currentUser ? "输入歌名或歌手后点击「搜索」" : "当前处于旁观模式"}
+            </p>
+            <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">
+              {currentUser ? "点歌后全房将同步播放与滚动歌词" : "加入聊天室或登录后即可搜索点歌与大家一起听~"}
+            </p>
           </div>
         {:else}
           <div class="flex items-center justify-between mb-1 px-0.5">
@@ -4372,28 +4466,55 @@ $effect(() => {
       <div class="border-t border-[var(--chat-divider-color)]"></div>
 
       <div>
-        <div class="flex items-center justify-between mb-1.5 px-0.5">
+        <div class="flex items-center justify-between mb-1.5 shrink-0 px-0.5">
           <div class="inline-flex items-center p-0.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 text-[12px]">
             <button
               type="button"
               class="px-2.5 py-0.5 rounded-md transition-all cursor-pointer {queueTab === 'request' ? 'bg-white dark:bg-neutral-800 text-[var(--deep-text)] shadow-xs font-semibold' : 'text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
-              onclick={() => (queueTab = "request")}
+              onclick={() => selectQueueTab("request")}
             >
               点播
             </button>
             <button
               type="button"
               class="px-2.5 py-0.5 rounded-md transition-all cursor-pointer {queueTab === 'rotation' ? 'bg-white dark:bg-neutral-800 text-[var(--deep-text)] shadow-xs font-semibold' : 'text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
-              onclick={() => (queueTab = "rotation")}
+              onclick={() => selectQueueTab("rotation")}
             >
               轮播
             </button>
           </div>
 
           {#if queueTab === "rotation"}
-            <span class="text-[11px] text-[var(--chat-meta-color)]">
-              洗牌顺序播放
-            </span>
+            <div class="flex items-center gap-1.5">
+              <span class="text-[11px] text-[var(--chat-meta-color)]">
+                洗牌顺序播放
+              </span>
+              {#if rotationQueue.length > 0}
+                <ChatTooltip text={!currentUser ? "重新洗牌（登录后可用）" : "重新洗牌轮播队列"}>
+                  <button
+                    type="button"
+                    disabled={isShufflingRotation}
+                    class="chat-queue-icon-btn w-7! h-7! shrink-0 aspect-square disabled:opacity-40 disabled:cursor-not-allowed!"
+                    aria-label="重新洗牌轮播队列"
+                    onclick={triggerShuffleRotation}
+                  >
+                    <svg
+                      class="w-3.5 h-3.5 {isShufflingRotation ? 'animate-spin' : ''}"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.1"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <polyline points="23 4 23 10 17 10" />
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                    </svg>
+                  </button>
+                </ChatTooltip>
+              {/if}
+            </div>
           {:else if queue.length > 0}
             <span class="text-[11px] text-[var(--chat-meta-color)]">
               优先播放点播
@@ -4410,7 +4531,7 @@ $effect(() => {
                   <button
                     type="button"
                     class="text-[12px] text-(--primary) hover:underline cursor-pointer bg-transparent border-none p-0 inline-flex items-center gap-1"
-                    onclick={() => (queueTab = "rotation")}
+                    onclick={() => selectQueueTab("rotation")}
                   >
                     查看轮播预告 &rarr;
                   </button>
@@ -4428,17 +4549,19 @@ $effect(() => {
           {#if rotationQueue.length === 0}
             <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">
               {rotationEmptyMessage}
-              {#if isWalineLoggedIn}
-                <div class="mt-1.5">
-                  <button
-                    type="button"
-                    class="px-3 py-1 text-[12px] rounded-lg border border-[var(--primary)]/35 bg-[var(--primary)]/10 text-(--primary) hover:bg-[var(--primary)]/20 transition-all cursor-pointer font-medium"
-                    onclick={openRotationSettings}
-                  >
-                    设置轮播歌单
-                  </button>
-                </div>
-              {/if}
+              <div class="mt-1.5">
+                <button
+                  type="button"
+                  class="px-3 py-1 text-[12px] rounded-lg font-medium transition-all {isWalineLoggedIn
+                    ? 'border border-[var(--primary)]/35 bg-[var(--primary)]/10 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer active:scale-95'
+                    : 'border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!'}"
+                  aria-disabled={!isWalineLoggedIn ? "true" : undefined}
+                  aria-label={isWalineLoggedIn ? "设置轮播歌单" : "设置轮播歌单（登录后可用）"}
+                  onclick={openRotationSettings}
+                >
+                  设置轮播歌单
+                </button>
+              </div>
             </div>
           {:else}
             <div class="space-y-1">

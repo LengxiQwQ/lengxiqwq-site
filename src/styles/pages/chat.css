@@ -3808,15 +3808,16 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 
 @media (width < 768px) {
 	html[data-chat-page] #chat-modal-layer {
-		top: env(safe-area-inset-top, 0px);
 		--chat-modal-shade: rgb(8 13 23 / 0.4);
 	}
 
 	.chat-modal-backdrop {
-		inset: var(--chat-sheet-top, 0px) 0 auto;
-		height: var(--chat-sheet-viewport, 100%);
+		position: fixed;
+		inset: 0;
+		height: 100%;
+		height: 100dvh;
 		align-items: flex-end;
-		padding: 12px 0 0;
+		padding: env(safe-area-inset-top, 12px) 0 0;
 		overscroll-behavior: contain;
 	}
 
@@ -3842,11 +3843,7 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 	}
 
 	.chat-dialog-card[data-chat-sheet="compact"] {
-		max-height: 85%;
-	}
-
-	.chat-dialog-card[data-chat-sheet="compact"]:has(:is(input, textarea, select):focus) {
-		max-height: 100%;
+		max-height: min(85dvh, 85%);
 	}
 
 	.chat-dialog-card[data-chat-sheet="expandable"] {
@@ -3903,6 +3900,10 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 	.chat-sheet-handle:focus-visible {
 		outline: 2px solid var(--skin-accent);
 		outline-offset: -3px;
+	}
+
+	.chat-dialog-content {
+		scroll-padding-bottom: 1.5rem;
 	}
 
 	.chat-dialog-content .custom-scrollbar {
@@ -6056,9 +6057,14 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 		touch-action: manipulation;
 	}
 
-	/* 仅针对 iPhone 苹果手机设备兜底 16px，iPad 与非苹果触屏（如安卓手机/平板）保留原本紧凑字号 */
-	html[data-is-iphone="true"] :is(#chat-page, #chat-modal-layer) :is(input, textarea, select) {
+	/* 仅针对 iPhone 苹果手机设备兜底 16px，并确保移动端登录框输入时不触发 iOS WebKit 聚焦自动缩放与视口错位 */
+	html[data-is-iphone="true"] :is(#chat-page, #chat-modal-layer) :is(input, textarea, select),
+	:is(#chat-page, #chat-modal-layer) .chat-auth-input {
 		font-size: 16px !important;
+	}
+
+	:is(#chat-page, #chat-modal-layer) .chat-auth-input {
+		scroll-margin-bottom: 1.5rem;
 	}
 }
 

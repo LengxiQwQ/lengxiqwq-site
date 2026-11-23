@@ -139,10 +139,16 @@ const skipTooltipText = $derived.by(() => {
         class="{variant === 'mobile' ? 'text-[12px]' : 'text-[12px] xl:text-[11.5px]'} text-[var(--chat-meta-color)] tabular-nums leading-tight mt-0.5 flex items-center min-w-0 gap-1.5"
       >
         <div class="flex items-center min-w-0 flex-1 overflow-hidden">
-          <span class="text-[var(--deep-text)] truncate shrink min-w-0">
+          <span
+            class="text-[var(--deep-text)] truncate shrink-0 {currentPlay.track.rotationReplacement ? 'max-w-[50%]' : 'max-w-[70%]'}"
+            title={currentPlay.track.title}
+          >
             {currentPlay.track.title}
           </span>
-          <span class="truncate shrink min-w-0 text-[var(--chat-meta-color)]">
+          <span
+            class="truncate shrink min-w-0 text-[var(--chat-meta-color)]"
+            title={currentPlay.track.artist}
+          >
             &nbsp;-&nbsp;{currentPlay.track.artist}
           </span>
           {#if currentPlay.track.rotationReplacement}
