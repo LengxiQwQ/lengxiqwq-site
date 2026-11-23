@@ -1,5 +1,8 @@
 <script lang="ts">
-import type { ChatArticleShareData, ChatMomentShareData } from "./chatShareProtocol";
+import type {
+	ChatArticleShareData,
+	ChatMomentShareData,
+} from "./chatShareProtocol";
 
 interface Props {
 	data: ChatArticleShareData | ChatMomentShareData;
@@ -29,26 +32,26 @@ const hasCover = $derived(Boolean(data.cover && !coverFailed));
   href={data.url}
   target="_blank"
   rel="noopener noreferrer"
-  class="chat-article-card group block select-none overflow-hidden rounded-2xl border transition-all duration-200 min-w-[240px] max-w-[380px] w-full text-left no-underline {isSelf ? 'chat-article-card--self' : 'chat-article-card--peer'}"
+  class="chat-article-card block select-none overflow-hidden rounded-2xl border transition-all duration-200 min-w-[240px] max-w-[380px] w-full text-left {isSelf ? 'chat-article-card--self' : 'chat-article-card--peer'}"
   aria-label={`${badgeLabel}：${title}`}
 >
   {#if hasCover}
-    <div class="relative w-full aspect-2/1 overflow-hidden bg-[var(--btn-plain-bg-hover)]">
+    <div class="relative w-full aspect-2/1 overflow-hidden bg-[var(--btn-plain-bg-hover)] shrink-0">
       <img
         src={data.cover}
         alt=""
         loading="lazy"
         decoding="async"
-        class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+        class="w-full h-full object-cover block"
         onerror={() => {
           coverFailed = true;
         }}
       />
-      <div class="absolute inset-0 bg-gradient-to-t from-black/25 via-transparent to-transparent pointer-events-none opacity-60"></div>
+      <div class="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent pointer-events-none opacity-60"></div>
     </div>
   {/if}
 
-  <div class="p-3 md:p-3.5 flex flex-col gap-1.5 min-w-0">
+  <div class="chat-article-body p-3.5 flex flex-col gap-1.5 min-w-0">
     <div class="flex items-center gap-1.5 min-w-0">
       <span
         class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold tracking-wide shrink-0 {data.kind === 'article'
@@ -73,18 +76,18 @@ const hasCover = $derived(Boolean(data.cover && !coverFailed));
       </span>
 
       {#if data.host}
-        <span class="text-[11px] text-[var(--chat-meta-color)] truncate font-medium ml-auto opacity-80 group-hover:opacity-100 transition-opacity">
+        <span class="chat-article-host text-[11px] truncate font-medium ml-auto opacity-75">
           {data.host}
         </span>
       {/if}
     </div>
 
-    <strong class="text-sm md:text-[14.5px] font-bold leading-snug text-[var(--skin-text)] line-clamp-2 group-hover:text-[var(--primary)] transition-colors">
+    <strong class="chat-article-title text-sm md:text-[14.5px] font-bold leading-snug line-clamp-2 transition-colors">
       {title}
     </strong>
 
     {#if excerpt}
-      <p class="text-xs text-[var(--chat-meta-color)] line-clamp-3 leading-relaxed m-0 break-words">
+      <p class="chat-article-excerpt text-xs line-clamp-3 leading-relaxed m-0 break-words opacity-90">
         {excerpt}
       </p>
     {/if}
@@ -92,22 +95,52 @@ const hasCover = $derived(Boolean(data.cover && !coverFailed));
 </a>
 
 <style>
+  .chat-article-card,
+  .chat-article-card:hover,
+  .chat-article-card:focus,
+  .chat-article-card:visited,
+  .chat-article-card:active {
+    text-decoration: none !important;
+  }
+
+  /* 彻底消除任何继承的下划线 */
+  .chat-article-card :global(*) {
+    text-decoration: none !important;
+  }
+
   .chat-article-card {
-    background-color: var(--chat-bubble-bg);
-    border-color: var(--chat-line-color);
-    box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.05);
+    background-color: var(--skin-surface, #ffffff) !important;
+    border: 1px solid var(--skin-line, rgba(0, 0, 0, 0.12));
+    box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.06);
+    color: var(--skin-text);
   }
 
   .chat-article-card:hover {
     border-color: var(--primary);
-    box-shadow: 0 8px 24px -4px rgba(var(--primary-rgb, 100, 100, 100), 0.15);
+    box-shadow: 0 8px 24px -4px rgba(var(--primary-rgb, 100, 100, 100), 0.18);
+    transform: translateY(-1px);
+  }
+
+  .chat-article-title {
+    color: var(--skin-text);
+  }
+
+  .chat-article-card:hover .chat-article-title {
+    color: var(--primary);
+  }
+
+  .chat-article-excerpt,
+  .chat-article-host {
+    color: var(--chat-meta-color);
   }
 
   :global(.dark) .chat-article-card {
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.25);
+    background-color: var(--skin-surface, #1e1e20) !important;
+    border: 1px solid var(--skin-line, rgba(255, 255, 255, 0.12));
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35);
   }
 
   :global(.dark) .chat-article-card:hover {
-    box-shadow: 0 8px 28px -4px rgba(var(--primary-rgb, 100, 100, 100), 0.25);
+    box-shadow: 0 8px 28px -4px rgba(var(--primary-rgb, 100, 100, 100), 0.3);
   }
 </style>

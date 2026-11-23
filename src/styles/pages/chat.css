@@ -657,6 +657,12 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	border-radius: 1rem !important;
 }
 
+.chat-bubble.chat-bubble-share a,
+.chat-bubble-self.chat-bubble-share a,
+.chat-bubble.chat-bubble-share a * {
+	text-decoration: none !important;
+}
+
 .chat-bubble .chat-md-body,
 .chat-bubble .chat-md-pre-wrap {
 	min-width: 0 !important;
