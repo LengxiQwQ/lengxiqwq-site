@@ -3704,7 +3704,14 @@ html[data-chat-page] #chat-modal-layer {
 	inset: 0;
 	z-index: 1200;
 	pointer-events: none;
+	font-size: 14.5px;
 	transition: backdrop-filter 150ms ease-out, background-color 150ms ease-out;
+}
+
+/* 弹窗全端防过小兜底：严禁出现低于 12px 的微雕文字 */
+#chat-modal-layer .text-\[10px\],
+#chat-modal-layer .text-\[11px\] {
+	font-size: 12px !important;
 }
 
 html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-modal-backdrop:not([data-chat-modal-closing])) {
@@ -3809,6 +3816,7 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 @media (width < 768px) {
 	html[data-chat-page] #chat-modal-layer {
 		--chat-modal-shade: rgb(8 13 23 / 0.4);
+		font-size: 15px;
 	}
 
 	.chat-modal-backdrop {
@@ -3865,7 +3873,99 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 	}
 
 	.chat-dialog-header {
-		padding-block: 4px;
+		padding-block: 8px;
+		padding-inline: 14px;
+	}
+
+	.chat-dialog-header h3 {
+		font-size: 17px !important;
+		font-weight: 700;
+		line-height: 1.35;
+	}
+
+	.chat-dialog-header p {
+		font-size: 13px !important;
+		line-height: 1.4;
+	}
+
+	/* 弹窗小节标题提升 */
+	#chat-modal-layer :is(.chat-settings-section-title, .chat-section-title) {
+		font-size: 14px !important;
+		font-weight: 600;
+	}
+
+	/* 弹窗内微小文字防过小兜底：移动端禁止低于 12px 的微雕文字 */
+	#chat-modal-layer .text-\[10px\],
+	#chat-modal-layer .text-\[11px\] {
+		font-size: 12px !important;
+	}
+
+	/* 移动端弹窗表单控件：基准 16px 杜绝 iOS 自动缩放视口，触摸高度适中 */
+	#chat-modal-layer .chat-auth-input,
+	#chat-modal-layer input:not([type="checkbox"]):not([type="radio"]),
+	#chat-modal-layer select {
+		font-size: 16px !important;
+		min-height: 42px;
+	}
+
+	/* 移动端弹窗操作按钮：舒适触控 */
+	#chat-modal-layer .chat-send-btn {
+		font-size: 14.5px !important;
+		min-height: 42px;
+		font-weight: 600;
+	}
+
+	#chat-modal-layer .btn-regular {
+		font-size: 14px;
+		min-height: 40px;
+	}
+
+	/* 线程回复、源码等弹窗组件尺寸提升 */
+	.chat-thread-root-label {
+		font-size: 13px;
+	}
+
+	.chat-thread-divider-text {
+		font-size: 12.5px;
+	}
+
+	.chat-thread-composer-banner {
+		font-size: 13px;
+		padding: 0.4rem 0.65rem;
+	}
+
+	.chat-thread-textarea {
+		font-size: 16px !important;
+		min-height: 42px;
+	}
+
+	.chat-thread-send-btn {
+		font-size: 14px;
+		height: 42px;
+	}
+
+	.chat-thread-auth-btn {
+		font-size: 14px;
+		padding: 0.75rem 1rem;
+	}
+
+	.chat-source-tab {
+		font-size: 13.5px;
+		padding: 0.45rem 0.8rem;
+	}
+
+	.chat-source-action-btn {
+		font-size: 13px;
+		min-height: 34px;
+	}
+
+	.chat-source-meta-bar {
+		font-size: 12.5px;
+	}
+
+	.chat-json-pre {
+		font-size: 13px;
+		line-height: 1.5;
 	}
 
 	[data-chat-sheet="expandable"] .chat-dialog-header {

@@ -77,7 +77,7 @@ function handleSubmit() {
   <div class="px-4 pb-4 pt-3 space-y-3.5 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
     <!-- 问题 -->
     <div>
-      <label for="chat-poll-q" class="block text-xs font-semibold text-[var(--deep-text)] dark:text-white/90 mb-1.5">
+      <label for="chat-poll-q" class="block text-sm sm:text-xs font-semibold text-[var(--deep-text)] dark:text-white/90 mb-1.5">
         投票问题 <span class="text-red-500">*</span>
       </label>
       <input
@@ -93,16 +93,16 @@ function handleSubmit() {
     <!-- 选项列表 -->
     <div>
       <div class="flex items-center justify-between mb-1.5">
-        <span class="text-xs font-semibold text-[var(--deep-text)] dark:text-white/90">
+        <span class="text-sm sm:text-xs font-semibold text-[var(--deep-text)] dark:text-white/90">
           选项设置 <span class="text-red-500">*</span>
-          <span class="text-[11px] font-normal text-[var(--chat-meta-color)]">
+          <span class="text-xs font-normal text-[var(--chat-meta-color)]">
             ({options.length}/10)
           </span>
         </span>
         {#if options.length < 10}
           <button
             type="button"
-            class="text-xs text-[var(--skin-accent)] hover:underline border-none bg-transparent cursor-pointer font-medium"
+            class="text-sm sm:text-xs text-[var(--skin-accent)] hover:underline border-none bg-transparent cursor-pointer font-medium"
             onclick={addOption}
           >
             + 添加选项
@@ -113,7 +113,7 @@ function handleSubmit() {
       <div class="space-y-2">
         {#each options as opt, idx (idx)}
           <div class="flex items-center gap-1.5">
-            <span class="text-xs text-[var(--chat-meta-color)] w-5 shrink-0 text-center font-mono font-medium">
+            <span class="text-sm sm:text-xs text-[var(--chat-meta-color)] w-5 shrink-0 text-center font-mono font-medium">
               {idx + 1}.
             </span>
             <input
@@ -139,9 +139,9 @@ function handleSubmit() {
     </div>
 
     <!-- 投票模式与设置 -->
-    <div class="rounded-xl bg-[var(--btn-regular-bg)] p-3 space-y-2.5">
+    <div class="rounded-xl bg-[var(--btn-regular-bg)] p-3.5 space-y-2.5">
       <div class="flex items-center justify-between">
-        <span class="text-xs font-medium text-[var(--deep-text)] dark:text-white/90">
+        <span class="text-sm sm:text-xs font-medium text-[var(--deep-text)] dark:text-white/90">
           允许多选
         </span>
         <button
@@ -160,11 +160,11 @@ function handleSubmit() {
       </div>
 
       {#if isMultiple}
-        <div class="flex items-center justify-between pt-1 border-t border-black/5 dark:border-white/10 text-xs">
+        <div class="flex items-center justify-between pt-1 border-t border-black/5 dark:border-white/10 text-sm sm:text-xs">
           <span class="text-[var(--chat-meta-color)]">最多可选项数</span>
           <div class="flex items-center gap-1.5">
             <select
-              class="chat-auth-input py-0.5 px-2 text-xs w-auto"
+              class="chat-auth-input py-0.5 px-2 text-sm sm:text-xs w-auto"
               bind:value={maxSelections}
             >
               {#each Array.from({ length: Math.max(1, options.length - 1) }, (_, i) => i + 2) as count}
@@ -177,21 +177,21 @@ function handleSubmit() {
     </div>
 
     {#if error}
-      <div class="text-xs text-red-500 font-medium">{error}</div>
+      <div class="text-sm sm:text-xs text-red-500 font-medium">{error}</div>
     {/if}
   </div>
 
   <div class="chat-poll-modal-actions flex shrink-0 items-center justify-end gap-2 px-4 pb-4">
     <button
       type="button"
-      class="chat-header-pill-btn h-8! px-3! text-xs! font-medium cursor-pointer"
+      class="chat-header-pill-btn h-10! sm:h-8! px-4! sm:px-3! text-sm! sm:text-xs! font-medium cursor-pointer"
       onclick={onClose}
     >
       取消
     </button>
     <button
       type="button"
-      class="chat-send-btn h-8! px-4! text-xs! font-semibold cursor-pointer"
+      class="chat-send-btn h-10! sm:h-8! px-4.5! sm:px-4! text-sm! sm:text-xs! font-semibold cursor-pointer"
       onclick={handleSubmit}
     >
       发起投票

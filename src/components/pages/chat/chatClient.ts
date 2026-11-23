@@ -44,7 +44,6 @@ export interface StoredGuestMeta {
 
 export interface RoomInitPacket {
 	type: "room:init";
-	youtubeCandidatesEnabled?: boolean;
 	interconnected?: boolean;
 	roomId: string;
 	self: ChatSessionUser | null;

@@ -343,7 +343,7 @@ async function handleSplitGuestEnter() {
   <div class="px-4 pb-10 pt-3 space-y-3 flex-1 min-h-0 overflow-y-auto custom-scrollbar">
     {#if guestBlockedByWaline}
       <!-- 已绑定正式账号：独立紧凑引导视图（无需在底部长列表滚动） -->
-      <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2.5">
+      <div class="rounded-xl bg-(--btn-regular-bg) px-3.5 py-2.5 flex items-center justify-between gap-2.5">
         <div class="flex items-center gap-2.5 min-w-0">
           <ChatAvatar
             src={guestAvatarPreview}
@@ -353,10 +353,10 @@ async function handleSplitGuestEnter() {
             size="sm"
           />
           <div class="min-w-0">
-            <div class="text-xs font-bold text-(--deep-text) truncate">
+            <div class="text-sm font-bold text-(--deep-text) truncate">
               {guestNick.trim() || "已绑定账号"}
             </div>
-            <div class="text-[13px] md:text-[11px] text-(--chat-meta-color) truncate">
+            <div class="text-xs text-(--chat-meta-color) truncate">
               {guestEmail.trim()}
             </div>
           </div>
@@ -368,21 +368,21 @@ async function handleSplitGuestEnter() {
             guestError = "";
             showGuestForm = true;
           }}
-          class="btn-regular h-7 px-2.5 rounded-lg text-[13px] md:text-[11px] font-medium shrink-0 cursor-pointer border-none"
+          class="btn-regular h-8 px-3 rounded-lg text-xs font-medium shrink-0 cursor-pointer border-none"
         >
           修改信息
         </button>
       </div>
 
       <div
-        class="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2.5 space-y-2.5"
+        class="rounded-xl border border-amber-500/35 bg-amber-500/10 px-3.5 py-3 space-y-2.5"
         role="alert"
       >
-        <div class="flex items-center gap-1.5 text-xs font-bold text-amber-700 dark:text-amber-300">
+        <div class="flex items-center gap-1.5 text-sm font-bold text-amber-700 dark:text-amber-300">
           <span class="inline-block w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0"></span>
           <span>检测到已绑定的正式账号</span>
         </div>
-        <p class="text-[13px] md:text-[11px] text-(--deep-text) opacity-90 leading-relaxed m-0">
+        <p class="text-sm sm:text-[13px] text-(--deep-text) opacity-90 leading-relaxed m-0">
           {#if guestBlockedCanSplit}
             该邮箱已绑定 Waline 正式账号。请通过 Waline 账号登录以同步认证头衔与历史记录；若暂不登录，也可以直接进入（将创建独立临时身份，不会与原账号合并）。
           {:else}
@@ -390,13 +390,13 @@ async function handleSplitGuestEnter() {
           {/if}
         </p>
         {#if guestBlockedCanSplit && guestError}
-          <p class="text-[13px] md:text-[11px] text-red-500 leading-relaxed m-0">
+          <p class="text-sm sm:text-xs text-red-500 leading-relaxed m-0">
             {guestError}
           </p>
         {/if}
 
         {#if walineLoginError}
-          <p class="text-[13px] md:text-[11px] text-red-500 leading-relaxed m-0">
+          <p class="text-sm sm:text-xs text-red-500 leading-relaxed m-0">
             {walineLoginError}
           </p>
         {/if}
@@ -406,9 +406,9 @@ async function handleSplitGuestEnter() {
             type="button"
             disabled={walinePopupWaiting || splitGuestLoading}
             onclick={handleOpenWalinePopup}
-            class="chat-send-btn flex-1 h-9! rounded-xl! text-xs! font-semibold disabled:opacity-60"
+            class="chat-send-btn flex-1 h-10! sm:h-9! rounded-xl! text-sm! sm:text-xs! font-semibold disabled:opacity-60"
           >
-            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
               <polyline points="15 3 21 3 21 9" />
               <line x1="10" y1="14" x2="21" y2="3" />
@@ -420,7 +420,7 @@ async function handleSplitGuestEnter() {
               type="button"
               disabled={splitGuestLoading || walinePopupWaiting}
               onclick={handleSplitGuestEnter}
-              class="btn-regular h-9 px-3 rounded-xl text-[13px] md:text-[11px] font-semibold shrink-0 cursor-pointer border-none disabled:opacity-60"
+              class="btn-regular h-10 sm:h-9 px-3.5 rounded-xl text-sm sm:text-xs font-semibold shrink-0 cursor-pointer border-none disabled:opacity-60"
             >
               {splitGuestLoading ? "创建中..." : "直接进入"}
             </button>
@@ -436,7 +436,7 @@ async function handleSplitGuestEnter() {
               onclick={() => {
                 walineLoginError = "";
               }}
-              class="inline-flex items-center gap-1 text-[13px] md:text-[11px] font-medium text-(--chat-accent-text) hover:underline"
+              class="inline-flex items-center gap-1 text-sm sm:text-xs font-medium text-(--chat-accent-text) hover:underline"
             >
               <span>在新标签页中打开 Waline 登录</span>
               <span aria-hidden="true">↗</span>
@@ -446,34 +446,34 @@ async function handleSplitGuestEnter() {
       </div>
     {:else}
       <!-- 主推方式：统一通过新窗口 / 新标签页打开 Waline 登录（严禁站内直输账号密码） -->
-      <div class="rounded-2xl border border-(--primary)/35 bg-(--primary)/8 px-3.5 py-3.5 space-y-3">
+      <div class="rounded-2xl border border-(--primary)/35 bg-(--primary)/8 px-4 py-4 space-y-3">
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-1.5 min-w-0">
-            <span class="text-sm font-bold text-(--deep-text) truncate">
+            <span class="text-[15px] sm:text-sm font-bold text-(--deep-text) truncate">
               Waline 账号登录
             </span>
-            <span class="shrink-0 px-2 py-0.5 rounded-full text-[11px] md:text-[10px] font-bold bg-(--primary) text-white leading-none">
+            <span class="shrink-0 px-2 py-0.5 rounded-full text-xs font-bold bg-(--primary) text-white leading-none">
               推荐
             </span>
           </div>
-          <span class="shrink-0 text-[11px] md:text-[10px] font-medium text-(--chat-accent-text)">
+          <span class="shrink-0 text-xs font-medium text-(--chat-accent-text)">
             评论区互通
           </span>
         </div>
 
-        <p class="text-[13px] md:text-[11px] text-(--deep-text)/80 leading-relaxed m-0">
+        <p class="text-sm sm:text-[13px] text-(--deep-text)/85 leading-relaxed m-0">
           点击下方按钮将打开独立 Waline 窗口完成登录或注册（支持账号密码、GitHub 等方式），即可拥有 <strong class="font-semibold text-(--chat-accent-text)">认证</strong> 标识并解锁个人歌单。
         </p>
 
         {#if walineLoginError}
-          <p class="text-xs text-red-500 m-0 leading-relaxed">{walineLoginError}</p>
+          <p class="text-sm sm:text-xs text-red-500 m-0 leading-relaxed">{walineLoginError}</p>
         {/if}
 
         <button
           type="button"
           disabled={walinePopupWaiting}
           onclick={handleOpenWalinePopup}
-          class="chat-send-btn w-full h-10! rounded-xl! text-[13px]! font-semibold disabled:opacity-60"
+          class="chat-send-btn w-full h-11! rounded-xl! text-sm! sm:text-[13.5px]! font-semibold disabled:opacity-60"
         >
           <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
@@ -484,7 +484,7 @@ async function handleSplitGuestEnter() {
         </button>
 
         {#if walineLoginUrl}
-          <div class="flex items-center justify-between gap-2 text-[13px] md:text-[11px] text-(--chat-meta-color) pt-0.5">
+          <div class="flex items-center justify-between gap-2 text-sm sm:text-xs text-(--chat-meta-color) pt-0.5">
             <span>{walinePopupBlocked ? "弹窗被拦截？" : "未弹出窗口或偏好标签页？"}</span>
             <a
               href={walineLoginUrl}
@@ -510,13 +510,13 @@ async function handleSplitGuestEnter() {
           onclick={() => {
             showGuestForm = !showGuestForm;
           }}
-          class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-(--chat-divider-color) bg-transparent hover:bg-(--btn-regular-bg) text-left cursor-pointer transition-colors"
+          class="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl border border-(--chat-divider-color) bg-transparent hover:bg-(--btn-regular-bg) text-left cursor-pointer transition-colors"
         >
           <div class="min-w-0">
-            <div class="text-[13px] md:text-xs font-medium text-(--chat-meta-color)">
+            <div class="text-sm font-semibold text-(--chat-meta-color)">
               临时访客进入（无需账号）
             </div>
-            <div class="text-[12px] md:text-[10px] text-(--chat-meta-color)/80 truncate mt-0.5">
+            <div class="text-xs text-(--chat-meta-color)/80 truncate mt-0.5">
               仅填昵称与邮箱快速发言，不支持导入与管理个人歌单
             </div>
           </div>
@@ -538,13 +538,13 @@ async function handleSplitGuestEnter() {
       {#if showGuestForm}
         <!-- 次选表单：填写临时访客信息进入 -->
         <form
-          class="space-y-2 pt-0.5"
+          class="space-y-2.5 pt-0.5"
           method="post"
           action="/chat/"
           autocomplete="on"
           onsubmit={handleGuestSubmit}
         >
-          <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-1.5 flex items-center gap-2.5">
+          <div class="rounded-xl bg-(--btn-regular-bg) px-3.5 py-2 flex items-center gap-2.5">
             <ChatAvatar
               src={guestAvatarPreview}
               name={guestNick.trim()}
@@ -553,19 +553,19 @@ async function handleSplitGuestEnter() {
               size="sm"
             />
             <div class="min-w-0 flex-1">
-              <div class="text-xs font-bold text-[var(--deep-text)] truncate">
+              <div class="text-sm font-bold text-[var(--deep-text)] truncate">
                 {guestNick.trim() || "访客名片"}
               </div>
-              <div class="text-[11px] md:text-[10px] text-[var(--chat-meta-color)] truncate">
+              <div class="text-xs text-[var(--chat-meta-color)] truncate">
                 根据邮箱匹配头像 · 与评论区名片同步
               </div>
             </div>
           </div>
 
-          <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div class="rounded-xl bg-(--btn-regular-bg) px-3.5 py-3 space-y-2.5">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <div>
-                <label for="chat-guest-nick" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
+                <label for="chat-guest-nick" class="block text-sm sm:text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                   昵称 <span class="text-red-500">*</span>
                 </label>
                 <input
@@ -582,7 +582,7 @@ async function handleSplitGuestEnter() {
               </div>
 
               <div>
-                <label for="chat-guest-email" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
+                <label for="chat-guest-email" class="block text-sm sm:text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                   邮箱 <span class="text-red-500">*</span>
                 </label>
                 <div class="relative">
@@ -610,7 +610,7 @@ async function handleSplitGuestEnter() {
 
               {#if emailInlineError}
                 <div class="col-span-1 sm:col-span-2 -mt-0.5">
-                  <p class="text-[11px] text-rose-500 flex items-center gap-1.5 leading-snug">
+                  <p class="text-xs text-rose-500 flex items-center gap-1.5 leading-snug">
                     <svg class="w-3.5 h-3.5 shrink-0 text-rose-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                       <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
                     </svg>
@@ -621,7 +621,7 @@ async function handleSplitGuestEnter() {
             </div>
 
             <div>
-              <label for="chat-guest-url" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
+              <label for="chat-guest-url" class="block text-sm sm:text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                 个人主页（可选）
               </label>
               <input
@@ -639,13 +639,13 @@ async function handleSplitGuestEnter() {
           </div>
 
           {#if guestError && guestError !== emailInlineError}
-            <p class="text-xs text-red-500 m-0">{guestError}</p>
+            <p class="text-sm sm:text-xs text-red-500 m-0">{guestError}</p>
           {/if}
 
           <button
             type="submit"
             disabled={guestLoading || emailChecking || Boolean(emailInlineError)}
-            class="btn-regular w-full h-9 rounded-xl text-xs font-medium active:scale-95 transition-all cursor-pointer border-none disabled:opacity-50 disabled:cursor-not-allowed"
+            class="btn-regular w-full h-11 rounded-xl text-sm font-semibold active:scale-95 transition-all cursor-pointer border-none disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {guestLoading ? "正在进入..." : emailChecking ? "正在检测邮箱..." : "以访客身份进入"}
           </button>

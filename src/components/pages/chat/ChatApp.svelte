@@ -1155,10 +1155,6 @@ let rotationOfferOpen = $state(false);
 let songOfferOrigin = $state<ChatMusicTrack | null>(null);
 let fallbackSearch = $state<{ query: string; seq: number } | undefined>(undefined);
 let fallbackSearchSeq = 0;
-let youtubeCandidatesEnabled = $state(false);
-let youtubeCandidates = $state<{ id: string; title: string; channel: string }[]>([]);
-let youtubeStatus = $state("");
-let youtubeRequest: AbortController | null = null;
 let versionAnchor = $state.raw<HTMLElement | undefined>(undefined);
 let versionPopover: HTMLElement | undefined = $state.raw(undefined);
 let rotationRequestId = "";
@@ -1239,10 +1235,6 @@ function clearRotationAction() {
 	rotationOfferOpen = false;
 	versionAnchor = undefined;
 	rotationOfferPlayUid = "";
-	youtubeRequest?.abort();
-	youtubeRequest = null;
-	youtubeCandidates = [];
-	youtubeStatus = "";
 }
 
 function sendRotationRequest(track: RotationQueueItem, choiceId?: string) {
@@ -1344,35 +1336,6 @@ function searchForAnotherVersion() {
 	mobileDrawer = "music";
 	closeSplitRoom();
 	ensureMusicPanelLoaded();
-}
-
-function youtubeSearchUrl(track: RotationQueueItem): string {
-	const query = [track.title, track.artist].filter(Boolean).join(" ");
-	return "https://www.youtube.com/results?" + new URLSearchParams({ search_query: query });
-}
-
-async function findYoutubeCandidates(track: RotationQueueItem | null) {
-	if (!track || !currentAuth || youtubeRequest) return;
-	const request = new AbortController();
-	youtubeRequest = request;
-	youtubeStatus = "正在搜索 YouTube…";
-	youtubeCandidates = [];
-	try {
-		const params = new URLSearchParams({ q: [track.title, track.artist].filter(Boolean).join(" ").slice(0, 120) });
-		const response = await fetch(`${normalizedChatServer}/api/music/youtube-candidates?${params}`, {
-			headers: { Authorization: `Bearer ${currentAuth.token}`, "x-auth-kind": currentAuth.kind },
-			signal: AbortSignal.any([request.signal, AbortSignal.timeout(5000)]),
-		});
-		if (!response.ok) throw new Error("YouTube search failed");
-		const result = await response.json() as { videos?: typeof youtubeCandidates };
-		if (request.signal.aborted) return;
-		youtubeCandidates = Array.isArray(result.videos) ? result.videos.filter(video => /^[A-Za-z0-9_-]{11}$/.test(video.id)) : [];
-		youtubeStatus = youtubeCandidates.length ? "" : "暂未查到视频，可以到 YouTube 继续搜索";
-	} catch {
-		if (!request.signal.aborted) youtubeStatus = "暂时无法获取视频，可以到 YouTube 继续搜索";
-	} finally {
-		if (youtubeRequest === request) youtubeRequest = null;
-	}
 }
 
 function openRotationOffer() {
@@ -1765,7 +1728,6 @@ function connectRoom(roomId: string) {
 
 		switch (packet.type) {
 			case "room:init": {
-				youtubeCandidatesEnabled = packet.youtubeCandidatesEnabled === true;
 				currentUser = packet.self;
 				if (packet.self) {
 					persistStoredChatUser(packet.self);
@@ -4169,30 +4131,6 @@ onMount(() => {
           {:else}
             <button type="button" class="btn-regular rounded-lg px-2.5 py-2 text-xs font-semibold text-[var(--chat-accent-text)]" onclick={() => submitVersionOffer()}>重新查找</button>
           {/if}
-        </div>
-      {/if}
-      {#if !rotationAction?.pending && (rotationAction?.offer || rotationAction?.code === "NO_SOURCE")}
-        <div class="border-t border-[var(--chat-divider-color)] px-3 py-1.5">
-          {#if youtubeCandidatesEnabled && currentUser && !youtubeCandidates.length}
-            <button type="button" disabled={youtubeStatus === "正在搜索 YouTube…"} onclick={() => findYoutubeCandidates(rotationOrigin)}
-              class="btn-regular rounded-md px-2 py-1.5 text-xs font-semibold text-[var(--chat-accent-text)]">查看 YouTube 候选</button>
-          {/if}
-          <a href={youtubeSearchUrl(rotationOrigin)} target="_blank" rel="noopener noreferrer"
-            class="inline-block rounded-md px-2 py-1.5 text-xs font-semibold text-[var(--chat-accent-text)]"
-          >在 YouTube 搜索</a>
-          {#if youtubeStatus}
-            <p class="my-1 text-xs text-[var(--chat-meta-color)]" role="status">{youtubeStatus}</p>
-          {/if}
-          {#each youtubeCandidates as video (video.id)}
-            <a class="flex items-center gap-2 rounded-md py-1 text-xs text-[var(--chat-accent-text)]" target="_blank" rel="noopener noreferrer"
-              href={"https://www.youtube.com/watch?v=" + video.id}>
-              {@render versionCover("https://i.ytimg.com/vi/" + video.id + "/default.jpg")}
-              <span class="min-w-0">
-                <strong class="block truncate">{video.title}</strong>
-                <span class="block truncate">{video.channel} · YouTube</span>
-              </span>
-            </a>
-          {/each}
         </div>
       {/if}
     </div>

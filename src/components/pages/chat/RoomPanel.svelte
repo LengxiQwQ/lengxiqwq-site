@@ -419,7 +419,7 @@ function formatOfflineTime(ts?: number): string {
         </ChatTooltip>
       {/if}
       <span
-        class="chat-connection-status text-[12px] md:text-[0.6875rem] px-2 py-0.5 rounded-full font-medium"
+        class="chat-connection-status text-xs px-2.5 py-0.5 rounded-full font-medium"
         data-state={connectionState}
         role="status"
       >
@@ -479,17 +479,17 @@ function formatOfflineTime(ts?: number): string {
       <div class="flex-1 min-w-0 flex flex-col">
         <span class="chat-room-item-name truncate leading-tight">#{room.name}</span>
         {#if room.subtitle}
-          <span class="text-[12px] md:text-[0.65rem] text-[var(--chat-meta-color)] font-normal truncate leading-tight mt-0.5">
+          <span class="text-xs text-[var(--chat-meta-color)] font-normal truncate leading-tight mt-0.5">
             {room.subtitle}
           </span>
         {/if}
       </div>
       {#if unread > 0}
-        <span class="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[0.625rem] font-bold shrink-0">
+        <span class="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-xs font-bold shrink-0">
           {unread > 99 ? "99+" : unread}
         </span>
       {:else if currentRoom === room.id}
-        <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)]">
+        <span class="text-xs text-[var(--chat-meta-color)]">
           {INTERCONNECT_ROOM_IDS.has(room.id) && totalChatterCount && totalChatterCount > 0
             ? `${totalOnlineCount}/${totalChatterCount}`
             : totalOnlineCount}
@@ -513,7 +513,7 @@ function formatOfflineTime(ts?: number): string {
       <section>
         <div class="chat-section-title flex items-center justify-between pr-1">
           <span>本站在线</span>
-          <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+          <span class="text-xs font-normal text-[var(--chat-meta-color)]">
             {siteOnlineMembers.length + observerCount} 人
           </span>
         </div>
@@ -545,7 +545,7 @@ function formatOfflineTime(ts?: number): string {
         <section class="pt-1 border-t border-[var(--chat-divider-color)]">
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>其他站点</span>
-            <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            <span class="text-xs font-normal text-[var(--chat-meta-color)]">
               {externalOnlineMembers.length} 人
             </span>
           </div>
@@ -563,7 +563,7 @@ function formatOfflineTime(ts?: number): string {
         <section class="pt-1 border-t border-[var(--chat-divider-color)]">
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>离线成员</span>
-            <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            <span class="text-xs font-normal text-[var(--chat-meta-color)]">
               {offlineMembers.length} 人
             </span>
           </div>
@@ -587,7 +587,7 @@ function formatOfflineTime(ts?: number): string {
       <section>
         <div class="chat-section-title flex items-center justify-between pr-1">
           <span>在线成员</span>
-          <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+          <span class="text-xs font-normal text-[var(--chat-meta-color)]">
             {normalOnlineMembers.length + observerCount} 人
           </span>
         </div>
@@ -618,7 +618,7 @@ function formatOfflineTime(ts?: number): string {
         <section class="pt-1 border-t border-[var(--chat-divider-color)]">
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>离线成员</span>
-            <span class="text-[12px] md:text-[0.6875rem] font-normal text-[var(--chat-meta-color)]">
+            <span class="text-xs font-normal text-[var(--chat-meta-color)]">
               {offlineMembers.length} 人
             </span>
           </div>
@@ -714,7 +714,7 @@ function formatOfflineTime(ts?: number): string {
 
         <div class="min-w-0 flex flex-col">
           <div class="flex items-center gap-1.5 min-w-0">
-            <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/90 group-hover:text-[var(--primary)] transition-colors">
+            <span class="truncate text-sm md:text-[13px] font-semibold text-[var(--deep-text)] dark:text-white/90 group-hover:text-[var(--primary)] transition-colors">
               {displayName}
             </span>
             {#if !isExternal}
@@ -730,7 +730,7 @@ function formatOfflineTime(ts?: number): string {
               {/each}
             {/if}
           </div>
-          <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate md:-mt-0.5">
+          <span class="text-xs text-[var(--chat-meta-color)] truncate md:-mt-0.5">
             {subtitle}
           </span>
         </div>
@@ -766,11 +766,11 @@ function formatOfflineTime(ts?: number): string {
 
       <div class="min-w-0 flex flex-col">
         <div class="flex items-center gap-1.5 min-w-0">
-          <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/90 {clickable ? 'group-hover:text-[var(--primary)]' : ''} transition-colors">
+          <span class="truncate text-sm md:text-[13px] font-semibold text-[var(--deep-text)] dark:text-white/90 {clickable ? 'group-hover:text-[var(--primary)]' : ''} transition-colors">
             {displayName}
           </span>
         </div>
-        <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
+        <span class="text-xs text-[var(--chat-meta-color)] truncate -mt-0.5">
           {subtitle}
         </span>
       </div>
@@ -958,7 +958,7 @@ function formatOfflineTime(ts?: number): string {
         </div>
         <div class="flex flex-col min-w-0 flex-1">
           <div class="flex items-center gap-1.5 min-w-0">
-            <span class="text-[14px] md:text-xs font-bold text-[var(--deep-text)] dark:text-white/90 truncate">
+            <span class="text-sm font-bold text-[var(--deep-text)] dark:text-white/90 truncate">
               {currentUser.name}
             </span>
             <span class="chat-role-badge chat-role-badge--{selfBadge.type}">
@@ -972,7 +972,7 @@ function formatOfflineTime(ts?: number): string {
               {/each}
             {/if}
           </div>
-          <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
+          <span class="text-xs text-[var(--chat-meta-color)] truncate">
             {currentUser.status && currentUser.status !== "在线" ? currentUser.status : "点击设置状态..."}
           </span>
         </div>
@@ -993,8 +993,8 @@ function formatOfflineTime(ts?: number): string {
         ?
       </div>
       <div class="flex flex-col min-w-0 flex-1">
-        <span class="text-[13px] md:text-xs font-semibold text-[var(--deep-text)] truncate">未登录（旁观）</span>
-        <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate">登录后即可发言与点歌</span>
+        <span class="text-sm font-semibold text-[var(--deep-text)] truncate">未登录（旁观）</span>
+        <span class="text-xs text-[var(--chat-meta-color)] truncate">登录后即可发言与点歌</span>
       </div>
       <ChatTooltip text={notificationTooltip} position="top" align="right">
         <button

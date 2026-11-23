@@ -254,7 +254,7 @@ const sizeClass = $derived(
               onclick={onBack ?? onClose}
             >
               <svg
-                class="w-4 h-4"
+                class="w-[18px] h-[18px]"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="currentColor"
@@ -269,7 +269,7 @@ const sizeClass = $derived(
           {/if}
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 min-w-0">
-              <h3 class="text-base sm:text-sm font-bold text-[var(--deep-text)] m-0 truncate">
+              <h3 class="text-[17px] sm:text-sm font-bold text-[var(--deep-text)] m-0 truncate">
                 {title}
               </h3>
               {#if headerExtra}
@@ -277,7 +277,7 @@ const sizeClass = $derived(
               {/if}
             </div>
             {#if subtitle}
-              <p class="text-xs sm:text-[11px] text-[var(--chat-meta-color)] mt-0.5 mb-0 truncate">
+              <p class="text-[13px] sm:text-[11.5px] text-[var(--chat-meta-color)] mt-0.5 mb-0 truncate">
                 {subtitle}
               </p>
             {/if}
@@ -290,7 +290,7 @@ const sizeClass = $derived(
           onclick={onClose}
         >
           <svg
-            class="w-4 h-4"
+            class="w-[18px] h-[18px]"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"

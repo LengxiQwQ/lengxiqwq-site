@@ -140,7 +140,7 @@ const config = {
         if (!document.querySelector('link[data-waline-css="true"]')) {
           const link = document.createElement("link");
           link.rel = "stylesheet";
-          link.href = "/assets/vendor/waline/waline.css";
+          link.href = "/assets/vendor/waline/waline.css?v=20261123";
           link.setAttribute("data-waline-css", "true");
           document.head.appendChild(link);
         }
@@ -154,7 +154,7 @@ const config = {
         let script = document.querySelector('script[data-waline-js="true"]');
         if (!script) {
           script = document.createElement("script");
-          script.src = "/assets/vendor/waline/waline.umd.js";
+          script.src = "/assets/vendor/waline/waline.umd.js?v=20261123";
           script.async = true;
           script.setAttribute("data-waline-js", "true");
           script.onload = () => resolve();

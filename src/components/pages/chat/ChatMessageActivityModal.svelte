@@ -256,7 +256,7 @@ const modalSubtitle = $derived.by(() => {
             class="chat-activity-tab-btn {currentTab === tab.id ? 'is-active' : ''}"
             onclick={() => (currentTab = tab.id)}
           >
-            <span class="text-xs leading-none">{tab.label}</span>
+            <span class="text-sm sm:text-xs leading-none">{tab.label}</span>
             <span class="chat-activity-tab-count tabular-nums">{tab.count}</span>
           </button>
         {/each}
@@ -281,28 +281,28 @@ const modalSubtitle = $derived.by(() => {
               </div>
               <div class="flex-1 min-w-0 text-left">
                 <div class="flex items-center gap-1.5 min-w-0">
-                  <span class="text-xs font-semibold text-[var(--skin-text)] truncate">
+                  <span class="text-sm font-semibold text-[var(--skin-text)] truncate">
                     {item.cleanName}
                   </span>
                   {#if item.isMe}
-                    <span class="text-[10px] font-semibold text-[var(--skin-accent)] bg-[var(--skin-accent)]/12 px-1 py-0.5 rounded leading-none shrink-0">
+                    <span class="text-xs font-semibold text-[var(--skin-accent)] bg-[var(--skin-accent)]/12 px-1.5 py-0.5 rounded leading-none shrink-0">
                       你
                     </span>
                   {/if}
                   {#if item.siteName}
-                    <span class="text-[10px] text-[var(--chat-meta-color)] bg-black/5 dark:bg-white/10 px-1 py-0.5 rounded leading-none shrink-0 truncate max-w-[110px]">
+                    <span class="text-xs text-[var(--chat-meta-color)] bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded leading-none shrink-0 truncate max-w-[110px]">
                       {item.siteName}
                     </span>
                   {/if}
                 </div>
                 {#if item.seed.siteUrl || item.seed.url}
-                  <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5 opacity-80">
+                  <div class="text-xs text-[var(--chat-meta-color)] truncate mt-0.5 opacity-80">
                     {item.seed.siteUrl || item.seed.url}
                   </div>
                 {/if}
               </div>
               {#if item.timeStr}
-                <span class="text-[11px] text-[var(--chat-meta-color)] shrink-0 tabular-nums font-mono opacity-75">
+                <span class="text-xs text-[var(--chat-meta-color)] shrink-0 tabular-nums font-mono opacity-75">
                   {item.timeStr}
                 </span>
               {/if}
