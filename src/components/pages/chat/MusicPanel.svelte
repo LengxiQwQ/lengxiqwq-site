@@ -144,6 +144,7 @@ interface Props {
 	}) => void;
 	onAudioDiagnosticChange?: (diagnostic: LocalAudioDiagnostic | null) => void;
 	onNotify?: (message: string) => void;
+	onClose?: () => void;
 }
 
 interface LyricLine {
@@ -194,6 +195,7 @@ const {
 	onAudioDiagnosticChange,
 	onNotify,
 	onShuffleRotation,
+	onClose,
 }: Props = $props();
 
 const initVol = untrack(() => {
@@ -3158,11 +3160,24 @@ $effect(() => {
       onToggleListen={() => toggleListen()}
       onSkipTrack={onSkipTrack}
       onVoteSkip={onVoteSkip}
+      {onClose}
     />
   {:else}
   <!-- 顶栏标题 -->
   <div class="chat-panel-header">
     <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 flex items-center gap-2">
+      {#if onClose}
+        <button
+          type="button"
+          class="chat-tool-btn chat-panel-close-btn shrink-0 md:hidden"
+          aria-label="关闭点歌台"
+          onclick={onClose}
+        >
+          <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      {/if}
       <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M9 18V5l12-2v13" />
         <circle cx="6" cy="18" r="3" />

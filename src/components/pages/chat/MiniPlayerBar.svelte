@@ -23,6 +23,7 @@ interface Props {
 	onToggleListen: () => void;
 	onSkipTrack: () => void;
 	onVoteSkip: () => void;
+	onClose?: () => void;
 }
 
 const {
@@ -44,6 +45,7 @@ const {
 	onToggleListen,
 	onSkipTrack,
 	onVoteSkip,
+	onClose,
 }: Props = $props();
 
 let coverFailed = $state(false);
@@ -108,6 +110,19 @@ const skipTooltipText = $derived.by(() => {
   <div class="chat-mini-progress-bar" aria-hidden="true">
     <div class="chat-mini-progress-fill" style="--pct: {progressRatio};"></div>
   </div>
+
+  {#if variant === "panel" && onClose}
+    <button
+      type="button"
+      class="chat-tool-btn chat-panel-close-btn shrink-0 md:hidden"
+      aria-label="关闭点歌台"
+      onclick={onClose}
+    >
+      <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="m6 6 12 12M18 6 6 18" />
+      </svg>
+    </button>
+  {/if}
 
   <button
     type="button"

@@ -3760,7 +3760,11 @@ onMount(() => {
         roomAvatars={roomAvatars}
         siteAvatar={siteAvatar}
         onRoomSelect={handleRoomSelect}
-        onCloseSplitRoom={isSplitLayout && splitRoomOpen ? () => closeSplitRoom(true) : undefined}
+        onCloseSplitRoom={isSplitLayout && splitRoomOpen
+          ? () => closeSplitRoom(true)
+          : isMobileLayout
+            ? () => { mobileDrawer = "none"; }
+            : undefined}
         onOpenUserProfile={handleOpenUserProfile}
         onOpenProfile={() => (showProfileModal = true)}
         onOpenAuth={openAuthModal}
@@ -3768,7 +3772,10 @@ onMount(() => {
       />
     </div>
 
-    <div class="chat-panel-center relative flex flex-col min-w-0 min-h-0 mobile-active">
+    <div
+      class="chat-panel-center relative flex flex-col min-w-0 min-h-0 mobile-active"
+      inert={isMobileLayout && mobileDrawer !== "none"}
+    >
       <div class="chat-panel chat-panel-center-inner flex-1 min-h-0 w-full">
         <div class="chat-panel-bg-layer" aria-hidden="true">
           {#if panelBgReady && effectivePanelBgUrls.center}
@@ -3958,6 +3965,7 @@ onMount(() => {
         isRandomizing={pendingRandomRequestId !== null}
         onNotify={showNotice}
         onOpenUserProfile={handleOpenUserProfile}
+        onClose={() => { mobileDrawer = "none"; }}
         onPlaybackStatusChange={(status) => {
           mobilePlaybackStatus = status;
           const listening = Boolean(status.listenIntent && !status.isMuted && status.audioStatus !== "blocked");
