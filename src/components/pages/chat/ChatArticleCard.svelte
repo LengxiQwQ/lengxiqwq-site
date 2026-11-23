@@ -36,13 +36,13 @@ const hasCover = $derived(Boolean(data.cover && !coverFailed));
   aria-label={`${badgeLabel}：${title}`}
 >
   {#if hasCover}
-    <div class="relative w-full aspect-2/1 overflow-hidden bg-[var(--btn-plain-bg-hover)] shrink-0">
+    <div class="chat-article-cover relative w-full aspect-2/1 overflow-hidden bg-[var(--btn-plain-bg-hover)] shrink-0">
       <img
         src={data.cover}
         alt=""
         loading="lazy"
         decoding="async"
-        class="w-full h-full object-cover block"
+        class="chat-article-cover-img w-full h-full object-cover block"
         onerror={() => {
           coverFailed = true;
         }}
@@ -113,12 +113,27 @@ const hasCover = $derived(Boolean(data.cover && !coverFailed));
     border: 1px solid var(--skin-line, rgba(0, 0, 0, 0.12));
     box-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.06);
     color: var(--skin-text);
+    /* 彻底杜绝卡片自身位移移动 */
+    transform: none !important;
   }
 
   .chat-article-card:hover {
     border-color: var(--primary);
     box-shadow: 0 8px 24px -4px rgba(var(--primary-rgb, 100, 100, 100), 0.18);
-    transform: translateY(-1px);
+    /* 确保悬停时不产生任何位移 */
+    transform: none !important;
+  }
+
+  /* 封面图片平滑缩放动效（鼠标悬停平滑放大，移开立即缩回） */
+  .chat-article-cover-img {
+    transform: scale(1);
+    transform-origin: center center;
+    transition: transform 300ms cubic-bezier(0.2, 0, 0, 1);
+    will-change: transform;
+  }
+
+  .chat-article-card:hover .chat-article-cover-img {
+    transform: scale(1.06);
   }
 
   .chat-article-title {
