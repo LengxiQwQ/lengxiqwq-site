@@ -6,9 +6,15 @@ const QQ_HEADERS = {
   Referer: 'https://y.qq.com/'
 };
 
+const QQ_COVER_SIZE = 150;
+
+function normalizeQqCover(raw) {
+  return raw.replace(/(T00[12])R\d+x\d+M000/, `$1R${QQ_COVER_SIZE}x${QQ_COVER_SIZE}M000`);
+}
+
 function buildAlbumCoverUrl(albumMid) {
   if (!albumMid) return '';
-  return `https://y.gtimg.cn/music/photo_new/T002R300x300M000${encodeURIComponent(albumMid)}.jpg`;
+  return `https://y.gtimg.cn/music/photo_new/T002R${QQ_COVER_SIZE}x${QQ_COVER_SIZE}M000${encodeURIComponent(albumMid)}.jpg`;
 }
 
 function readArtistCredit(singer) {
@@ -23,10 +29,10 @@ function readArtistCredit(singer) {
 }
 
 function extractCoverUrl(raw) {
-  if (typeof raw === 'string' && raw.startsWith('http')) return raw;
+  if (typeof raw === 'string' && raw.startsWith('http')) return normalizeQqCover(raw);
   if (raw && typeof raw === 'object') {
     for (const key of ['medium', 'large', 'small']) {
-      if (typeof raw[key] === 'string' && raw[key].startsWith('http')) return raw[key];
+      if (typeof raw[key] === 'string' && raw[key].startsWith('http')) return normalizeQqCover(raw[key]);
     }
   }
   return undefined;

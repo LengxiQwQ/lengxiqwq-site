@@ -53,7 +53,7 @@ interface Props {
 		targetUserKey: string,
 		badges: ChatCustomBadge[],
 	) => Promise<boolean> | boolean;
-	onToast?: (message: string) => void;
+	onToast?: (message: string, tone?: "default" | "error" | "success") => void;
 }
 
 const TRACK_PAGE_SIZE = 50;
@@ -1849,45 +1849,47 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 </div>
               </div>
             {:else}
-              {#each displayedTracks as item, idx (item.logId ? `log-${item.logId}` : `local-${idx}-${item.track.id}-${item.requestedAt}`)}
-                <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/70 hover:bg-(--btn-regular-bg) transition-colors">
-                  <span class="w-5 text-center text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums shrink-0">
-                    {idx + 1}
-                  </span>
-                  <div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
-                    {#if item.track.cover}
-                      <img src={item.track.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
-                    {:else}
-                      <span class="text-xs text-(--primary)">♪</span>
+              <div class="space-y-1.5" style="contain: layout style;">
+                {#each displayedTracks as item, idx (item.logId ? `log-${item.logId}` : `local-${idx}-${item.track.id}-${item.requestedAt}`)}
+                  <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/70 hover:bg-(--btn-regular-bg) transition-colors">
+                    <span class="w-5 text-center text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums shrink-0">
+                      {idx + 1}
+                    </span>
+                    <div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+                      {#if item.track.cover}
+                        <img src={item.track.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
+                      {:else}
+                        <span class="text-xs text-(--primary)">♪</span>
+                      {/if}
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-xs font-semibold text-[var(--deep-text)] truncate">
+                        {item.track.title}
+                      </div>
+                      <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
+                        {item.track.artist}
+                        {#if item.requestedAt}
+                          · {formatTrackTime(item.requestedAt)}
+                        {/if}
+                        {#if item.requestCount > 1}
+                          · 点过 {remoteHasMore ? "至少 " : ""}{item.requestCount} 次
+                        {/if}
+                      </div>
+                    </div>
+                    {#if onEnqueueTrack}
+                      <button
+                        type="button"
+                        class="chat-queue-toggle-btn text-[11px]! px-2.5! py-1! shrink-0"
+                        onclick={(event) => {
+                          onEnqueueTrack(item.track, event.currentTarget);
+                        }}
+                      >
+                        + 点歌
+                      </button>
                     {/if}
                   </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="text-xs font-semibold text-[var(--deep-text)] truncate">
-                      {item.track.title}
-                    </div>
-                    <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
-                      {item.track.artist}
-                      {#if item.requestedAt}
-                        · {formatTrackTime(item.requestedAt)}
-                      {/if}
-                      {#if item.requestCount > 1}
-                        · 点过 {remoteHasMore ? "至少 " : ""}{item.requestCount} 次
-                      {/if}
-                    </div>
-                  </div>
-                  {#if onEnqueueTrack}
-                    <button
-                      type="button"
-                      class="chat-queue-toggle-btn text-[11px]! px-2.5! py-1! shrink-0"
-                      onclick={(event) => {
-                        onEnqueueTrack(item.track, event.currentTarget);
-                      }}
-                    >
-                      + 点歌
-                    </button>
-                  {/if}
-                </div>
-              {/each}
+                {/each}
+              </div>
 
               <div class="pt-2 pb-1 flex items-center justify-center">
                 {#if isLoadingMore}
@@ -1927,39 +1929,41 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 </div>
               </div>
             {:else}
-              {#each topTracks as item, idx (`${item.track.id}:${idx}`)}
-                <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/70 hover:bg-(--btn-regular-bg) transition-colors">
-                  <span class="w-5 text-center text-[10px] font-bold tabular-nums shrink-0 {idx < 3 ? 'text-[var(--chat-accent-text)]' : 'text-[var(--chat-meta-color)]'}">
-                    #{idx + 1}
-                  </span>
-                  <div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
-                    {#if item.track.cover}
-                      <img src={item.track.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
-                    {:else}
-                      <span class="text-xs text-(--primary)">♪</span>
+              <div class="space-y-1.5" style="contain: layout style;">
+                {#each topTracks as item, idx (`${item.track.id}:${idx}`)}
+                  <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/70 hover:bg-(--btn-regular-bg) transition-colors">
+                    <span class="w-5 text-center text-[10px] font-bold tabular-nums shrink-0 {idx < 3 ? 'text-[var(--chat-accent-text)]' : 'text-[var(--chat-meta-color)]'}">
+                      #{idx + 1}
+                    </span>
+                    <div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+                      {#if item.track.cover}
+                        <img src={item.track.cover} alt="" loading="lazy" class="w-full h-full object-cover" />
+                      {:else}
+                        <span class="text-xs text-(--primary)">♪</span>
+                      {/if}
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-xs font-semibold text-[var(--deep-text)] truncate">
+                        {item.track.title}
+                      </div>
+                      <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
+                        {item.track.artist} · 点过 {remoteHasMore ? "至少 " : ""}{item.requestCount} 次
+                      </div>
+                    </div>
+                    {#if onEnqueueTrack}
+                      <button
+                        type="button"
+                        class="chat-queue-toggle-btn text-[11px]! px-2.5! py-1! shrink-0"
+                        onclick={(event) => {
+                          onEnqueueTrack(item.track, event.currentTarget);
+                        }}
+                      >
+                        + 点歌
+                      </button>
                     {/if}
                   </div>
-                  <div class="min-w-0 flex-1">
-                    <div class="text-xs font-semibold text-[var(--deep-text)] truncate">
-                      {item.track.title}
-                    </div>
-                    <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
-                      {item.track.artist} · 点过 {remoteHasMore ? "至少 " : ""}{item.requestCount} 次
-                    </div>
-                  </div>
-                  {#if onEnqueueTrack}
-                    <button
-                      type="button"
-                      class="chat-queue-toggle-btn text-[11px]! px-2.5! py-1! shrink-0"
-                      onclick={(event) => {
-                        onEnqueueTrack(item.track, event.currentTarget);
-                      }}
-                    >
-                      + 点歌
-                    </button>
-                  {/if}
-                </div>
-              {/each}
+                {/each}
+              </div>
             {/if}
           {/if}
         </div>

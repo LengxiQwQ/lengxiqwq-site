@@ -10,7 +10,7 @@ interface Props {
 	isInterconnectRoom?: boolean;
 	chatServerUrl?: string;
 	onClose: () => void;
-	onNotify?: (msg: string) => void;
+	onNotify?: (msg: string, tone?: "default" | "error" | "success") => void;
 }
 
 const {

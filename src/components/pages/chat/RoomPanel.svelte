@@ -84,23 +84,12 @@ const observerCount = $derived(observers.length);
 const isCurrentUserAdmin = $derived(Boolean(currentUser?.isAdmin));
 
 let showSpectatorModal = $state(false);
-let spectatorHistoryLimit = $state(15);
 
 $effect(() => {
 	if (!isCurrentUserAdmin) {
 		showSpectatorModal = false;
 	}
 });
-
-$effect(() => {
-	if (showSpectatorModal) {
-		spectatorHistoryLimit = 15;
-	}
-});
-
-const visibleSpectatorHistory = $derived(
-	spectatorHistory.slice(0, spectatorHistoryLimit),
-);
 
 /** 互联房间（跨站联邦聊天）的房间 id */
 const INTERCONNECT_ROOM_IDS = new Set(["interconnect"]);
@@ -127,7 +116,6 @@ const isNotificationActive = $derived(
 );
 
 const notificationTooltip = $derived.by(() => {
-	if (!currentUser) return "登录后可设置";
 	if (desktopNotificationPermission === "denied") {
 		return "通知权限受阻";
 	}
@@ -198,42 +186,47 @@ const offlineMembers = $derived.by(() => {
 		.sort((a, b) => (b.lastSeenAt || 0) - (a.lastSeenAt || 0));
 });
 
-const VIRTUAL_OFFLINE_THRESHOLD = 60;
-const VIRTUAL_OFFLINE_OVERSCAN = 10;
-const VIRTUAL_OFFLINE_STEP = 6;
+const VIRTUAL_OFFLINE_THRESHOLD = 30;
+const VIRTUAL_OFFLINE_OVERSCAN = 14;
+const VIRTUAL_OFFLINE_STEP = 4;
+const OFFLINE_ROW_H = 50;
 
 let memberScrollEl: HTMLDivElement | null = $state(null);
 let combinedScrollEl: HTMLDivElement | null = $state(null);
 let offlineListEl: HTMLDivElement | null = $state(null);
 let memberScrollTop = $state(0);
-let memberViewportH = $state(520);
-let offlineSectionOffset = $state(120);
-let memberRowHeight = $state(48);
+let memberViewportH = $state(600);
+let offlineSectionOffset = $state(0);
 let memberScrollRaf: number | null = null;
 
-function syncMemberScrollMetrics() {
-	const scrollEl =
-		combinedScrollEl &&
-		getComputedStyle(combinedScrollEl).display !== "contents"
-			? combinedScrollEl
-			: memberScrollEl;
+let spectatorScrollTop = $state(0);
+let spectatorViewportH = $state(320);
+const SPECTATOR_ROW_H = 46;
+const VIRTUAL_SPECTATOR_THRESHOLD = 30;
+let spectatorScrollRaf: number | null = null;
+
+function handleSpectatorScroll(e: Event) {
+	const el = e.currentTarget as HTMLElement | null;
+	if (!el) return;
+	if (spectatorScrollRaf !== null) return;
+	spectatorScrollRaf = requestAnimationFrame(() => {
+		spectatorScrollRaf = null;
+		spectatorScrollTop = el.scrollTop;
+		if (el.clientHeight > 0) {
+			spectatorViewportH = el.clientHeight;
+		}
+	});
+}
+
+function syncMemberMetrics() {
+	const scrollEl = combinedScrollEl || memberScrollEl;
 	if (!scrollEl) return;
 	memberScrollTop = scrollEl.scrollTop;
 	if (scrollEl.clientHeight > 0) {
 		memberViewportH = scrollEl.clientHeight;
 	}
 	if (offlineListEl) {
-		offlineSectionOffset = Math.max(
-			0,
-			offlineListEl.getBoundingClientRect().top -
-				scrollEl.getBoundingClientRect().top +
-				scrollEl.scrollTop,
-		);
-	}
-	const nextRowH =
-		typeof window !== "undefined" && window.innerWidth < 768 ? 56 : 48;
-	if (nextRowH !== memberRowHeight) {
-		memberRowHeight = nextRowH;
+		offlineSectionOffset = offlineListEl.offsetTop;
 	}
 }
 
@@ -241,16 +234,20 @@ function handleMemberScroll() {
 	if (memberScrollRaf !== null) return;
 	memberScrollRaf = requestAnimationFrame(() => {
 		memberScrollRaf = null;
-		syncMemberScrollMetrics();
+		syncMemberMetrics();
 	});
 }
 
 onMount(() => {
-	syncMemberScrollMetrics();
+	syncMemberMetrics();
 	return () => {
 		if (memberScrollRaf !== null) {
 			window.cancelAnimationFrame(memberScrollRaf);
 			memberScrollRaf = null;
+		}
+		if (spectatorScrollRaf !== null) {
+			window.cancelAnimationFrame(spectatorScrollRaf);
+			spectatorScrollRaf = null;
 		}
 	};
 });
@@ -266,7 +263,7 @@ const offlineVirtual = $derived.by(() => {
 			bottomSpacerPx: 0,
 		};
 	}
-	const rowH = Math.max(40, memberRowHeight);
+	const rowH = OFFLINE_ROW_H;
 	const viewH = Math.max(240, memberViewportH);
 	const relTop = Math.max(0, memberScrollTop - offlineSectionOffset);
 	const rawStart = Math.floor(relTop / rowH) - VIRTUAL_OFFLINE_OVERSCAN;
@@ -284,6 +281,30 @@ const offlineVirtual = $derived.by(() => {
 		start,
 		topSpacerPx: start * rowH,
 		bottomSpacerPx: Math.max(0, (len - end) * rowH),
+	};
+});
+
+const spectatorVirtual = $derived.by(() => {
+	const list = spectatorHistory;
+	const len = list.length;
+	if (len <= VIRTUAL_SPECTATOR_THRESHOLD) {
+		return {
+			items: list,
+			start: 0,
+			topSpacerPx: 0,
+			bottomSpacerPx: 0,
+		};
+	}
+	const rawStart = Math.floor(spectatorScrollTop / SPECTATOR_ROW_H) - 10;
+	const STEP = 4;
+	const start = Math.max(0, Math.floor(rawStart / STEP) * STEP);
+	const visibleCount = Math.ceil(spectatorViewportH / SPECTATOR_ROW_H) + 20 + STEP;
+	const end = Math.min(len, start + visibleCount);
+	return {
+		items: list.slice(start, end),
+		start,
+		topSpacerPx: start * SPECTATOR_ROW_H,
+		bottomSpacerPx: Math.max(0, (len - end) * SPECTATOR_ROW_H),
 	};
 });
 
@@ -503,8 +524,7 @@ function formatOfflineTime(ts?: number): string {
   <!-- 成员名录：在线成员 + 离线成员 -->
   <div
     bind:this={memberScrollEl}
-    onscroll={handleMemberScroll}
-    class="chat-room-members flex-1 overflow-y-auto custom-scrollbar px-2.5 py-1.5 space-y-3 min-h-0"
+    class="chat-room-members px-2.5 py-1.5 space-y-3"
   >
     {#if isCurrentInterconnect}
       <!-- 互联茶室模式：直接平铺“本站在线”、“其他站点”、“离线成员” -->
@@ -568,17 +588,27 @@ function formatOfflineTime(ts?: number): string {
             </span>
           </div>
 
-          <div bind:this={offlineListEl} class="space-y-1 mt-0.5">
+          <div
+            bind:this={offlineListEl}
+            class="space-y-1 mt-0.5"
+            style="contain: layout style;"
+          >
             {#if offlineVirtual.topSpacerPx > 0}
-              <div style="height: {offlineVirtual.topSpacerPx}px;" aria-hidden="true"></div>
+              <div style="height: {offlineVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
             {/if}
             {#each offlineVirtual.items as member, idx (member.userKey)}
               {@render memberItem(member, false, isExternalMember(member), offlineVirtual.start + idx >= 12)}
             {/each}
             {#if offlineVirtual.bottomSpacerPx > 0}
-              <div style="height: {offlineVirtual.bottomSpacerPx}px;" aria-hidden="true"></div>
+              <div style="height: {offlineVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
             {/if}
           </div>
+
+          {#if offlineMembers.length > VIRTUAL_OFFLINE_THRESHOLD}
+            <div class="py-2 text-center text-[11px] text-[var(--chat-meta-color)]/60">
+              已启用虚拟滚动 · 共 {offlineMembers.length} 位离线成员
+            </div>
+          {/if}
         </section>
       {/if}
 
@@ -623,17 +653,27 @@ function formatOfflineTime(ts?: number): string {
             </span>
           </div>
 
-          <div bind:this={offlineListEl} class="space-y-1 mt-0.5">
+          <div
+            bind:this={offlineListEl}
+            class="space-y-1 mt-0.5"
+            style="contain: layout style;"
+          >
             {#if offlineVirtual.topSpacerPx > 0}
-              <div style="height: {offlineVirtual.topSpacerPx}px;" aria-hidden="true"></div>
+              <div style="height: {offlineVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
             {/if}
             {#each offlineVirtual.items as member, idx (member.userKey)}
               {@render memberItem(member, false, false, offlineVirtual.start + idx >= 12)}
             {/each}
             {#if offlineVirtual.bottomSpacerPx > 0}
-              <div style="height: {offlineVirtual.bottomSpacerPx}px;" aria-hidden="true"></div>
+              <div style="height: {offlineVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
             {/if}
           </div>
+
+          {#if offlineMembers.length > VIRTUAL_OFFLINE_THRESHOLD}
+            <div class="py-2 text-center text-[11px] text-[var(--chat-meta-color)]/60">
+              已启用虚拟滚动 · 共 {offlineMembers.length} 位离线成员
+            </div>
+          {/if}
         </section>
       {/if}
     {/if}
@@ -1024,7 +1064,7 @@ function formatOfflineTime(ts?: number): string {
       size="sm"
       onClose={() => (showSpectatorModal = false)}
     >
-      <div class="p-3 space-y-3 overflow-y-auto custom-scrollbar max-h-[65vh]">
+      <div class="p-3 space-y-3 overflow-y-auto custom-scrollbar max-h-[65vh]" onscroll={handleSpectatorScroll}>
         <section>
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>当前在线旁观</span>
@@ -1052,20 +1092,22 @@ function formatOfflineTime(ts?: number): string {
               {spectatorHistory.length} 条
             </span>
           </div>
-          {#if visibleSpectatorHistory.length > 0}
-            <div class="space-y-1 mt-1">
-              {#each visibleSpectatorHistory as item (item.id + '_' + item.connectedAt)}
+          {#if spectatorHistory.length > 0}
+            <div class="space-y-1 mt-1" style="contain: layout style;">
+              {#if spectatorVirtual.topSpacerPx > 0}
+                <div style="height: {spectatorVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
+              {/if}
+              {#each spectatorVirtual.items as item (item.id + '_' + item.connectedAt)}
                 {@render spectatorHistoryItem(item)}
               {/each}
+              {#if spectatorVirtual.bottomSpacerPx > 0}
+                <div style="height: {spectatorVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
+              {/if}
             </div>
-            {#if spectatorHistory.length > visibleSpectatorHistory.length}
-              <button
-                type="button"
-                class="w-full mt-2 py-1.5 rounded-lg text-xs font-medium text-[var(--chat-accent-text)] bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 border-none cursor-pointer transition-colors"
-                onclick={() => (spectatorHistoryLimit += 15)}
-              >
-                显示更多（还有 {spectatorHistory.length - visibleSpectatorHistory.length} 条）
-              </button>
+            {#if spectatorHistory.length > VIRTUAL_SPECTATOR_THRESHOLD}
+              <div class="py-2 text-center text-[11px] text-[var(--chat-meta-color)]/60">
+                已启用虚拟滚动 · 共 {spectatorHistory.length} 条旁观历史
+              </div>
             {/if}
           {:else}
             <div class="px-2 py-4 text-center text-xs text-[var(--chat-meta-color)]">

@@ -81,9 +81,9 @@ test('NetEase checks that the original CDN file supports seeking and rejects una
   t.mock.method(globalThis, 'fetch', async (input, options) => {
     const url = new URL(input);
     calls.push(url.hostname);
-    if (url.hostname === 'music.163.com') {
-      return new Response(null, { status: 302, headers: { location: url.searchParams.get('id') === '123.mp3'
-        ? 'http://m701.music.126.net/sound.mp3' : 'https://music.163.com/404' } });
+    if (url.hostname === 'api.injahow.cn') {
+      return new Response(null, { status: 302, headers: { location: url.searchParams.get('id') === '123'
+        ? 'https://m701.music.126.net/sound.mp3' : 'https://music.163.com/404' } });
     }
     assert.equal(url.protocol, 'https:');
     assert.equal(options.headers.Range, 'bytes=0-4095');
@@ -91,7 +91,7 @@ test('NetEase checks that the original CDN file supports seeking and rejects una
   });
   assert.equal((await provider.resolveStream('123')).mimeType, 'audio/mpeg');
   assert.equal(await provider.resolveStream('124'), null);
-  assert.deepEqual(calls, ['music.163.com', 'm701.music.126.net', 'music.163.com']);
+  assert.deepEqual(calls, ['api.injahow.cn', 'm701.music.126.net', 'api.injahow.cn']);
 });
 
 test('manual YouTube candidates share a bounded search and only return official video IDs', async t => {
@@ -1299,11 +1299,13 @@ test('MusicBrainz localized credits require one exact artist and are reused acro
   assert.deepEqual(await ambiguous.names(original.artist), []);
 });
 
-test('backup search promotes secure artwork and treats provider throttling as temporary', async t => {
+test('backup search promotes secure artwork and cools down on provider throttling', async t => {
   const provider = new KugouMusicProvider();
   const hash = 'A'.repeat(32);
   let lookups = 0;
-  t.mock.method(globalThis, 'fetch', async url => {
+  t.mock.method(globalThis, 'fetch', async input => {
+    const url = new URL(input);
+    if (url.hostname === 'mobilecdn.kugou.com') return Response.json({ status: 0 });
     if (url.hostname === 'songsearch.kugou.com') return Response.json({ status: 1, data: { total: 8, lists: [
       { FileHash: hash, SongName: 'Song', AlbumImage: 'http://imge.kugou.com/stdmusic/{size}/cover.jpg' }
     ] } });
@@ -1311,10 +1313,10 @@ test('backup search promotes secure artwork and treats provider throttling as te
     return Response.json({ status: 0, error: '您操作太频繁了，请稍后再试' });
   });
   const result = await provider.search('Song', 4, 1);
-  assert.equal(result.tracks[0].cover, 'https://imge.kugou.com/stdmusic/400/cover.jpg');
+  assert.equal(result.tracks[0].cover, 'https://imge.kugou.com/stdmusic/200/cover.jpg');
   assert.equal(result.hasMore, true);
-  await assert.rejects(provider.resolveStream(hash), /繁忙/);
-  await assert.rejects(provider.resolveStream(hash), /繁忙/);
+  assert.equal(await provider.resolveStream(hash), null);
+  assert.equal(await provider.resolveStream(hash), null);
   assert.equal(lookups, 1);
 });
 

@@ -65,6 +65,7 @@ export function isMusicSourceId(provider, sourceId) {
   if (provider === 'qq') return /^[A-Za-z0-9]{1,32}$/.test(sourceId);
   if (provider === 'netease') return /^[1-9]\d{0,17}$/.test(sourceId);
   if (provider === 'kugou') return /^[a-f0-9]{32}$/i.test(sourceId);
+  if (provider === 'youtube') return /^[A-Za-z0-9_-]{11}$/.test(sourceId);
   return false;
 }
 

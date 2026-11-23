@@ -5,7 +5,7 @@ import type { CurrentPlayback } from "./chatTypes";
 import { type AudioStatus, audioStatusLabel } from "./roomAudioPlayer";
 
 interface Props {
-	currentPlay: CurrentPlayback;
+	currentPlay?: CurrentPlayback | null;
 	isListening: boolean;
 	audioStatus?: AudioStatus;
 	elapsedSec: number;
@@ -27,7 +27,7 @@ interface Props {
 }
 
 const {
-	currentPlay,
+	currentPlay = null,
 	isListening,
 	elapsedSec,
 	durationSec,
@@ -51,7 +51,9 @@ const {
 let coverFailed = $state(false);
 
 $effect(() => {
-	currentPlay.uid;
+	if (currentPlay) {
+		currentPlay.uid;
+	}
 	coverFailed = false;
 });
 
@@ -73,9 +75,11 @@ const progressRatio = $derived(
 );
 
 const displayLyric = $derived(
-	currentLyric && currentLyric.trim().length > 0
-		? currentLyric.trim()
-		: currentPlay.track.title,
+	currentPlay
+		? currentLyric && currentLyric.trim().length > 0
+			? currentLyric.trim()
+			: currentPlay.track.title
+		: "当前没有歌曲播放",
 );
 
 const formattedTimeText = $derived(
@@ -83,9 +87,11 @@ const formattedTimeText = $derived(
 );
 
 const formattedStatusOrTime = $derived(
-	audioStatus !== "playing" && audioStatus !== "idle"
-		? audioStatusLabel[audioStatus]
-		: formattedTimeText,
+	currentPlay
+		? audioStatus !== "playing" && audioStatus !== "idle"
+			? audioStatusLabel[audioStatus]
+			: formattedTimeText
+		: "",
 );
 
 const skipTooltipText = $derived.by(() => {
@@ -105,11 +111,13 @@ const skipTooltipText = $derived.by(() => {
 <div
   class={variant === "mobile" ? "chat-mobile-global-player" : "chat-mini-player"}
   role="region"
-  aria-label="当前正在播放"
+  aria-label={currentPlay ? "当前正在播放" : "点歌台快捷栏"}
 >
-  <div class="chat-mini-progress-bar" aria-hidden="true">
-    <div class="chat-mini-progress-fill" style="--pct: {progressRatio};"></div>
-  </div>
+  {#if currentPlay}
+    <div class="chat-mini-progress-bar" aria-hidden="true">
+      <div class="chat-mini-progress-fill" style="--pct: {progressRatio};"></div>
+    </div>
+  {/if}
 
   {#if variant === "panel" && onClose}
     <button
@@ -127,12 +135,14 @@ const skipTooltipText = $derived.by(() => {
   <button
     type="button"
     class="chat-mini-player-info flex items-center gap-2.5 min-w-0 flex-1 text-left bg-transparent border-none p-1 -m-1 rounded-xl hover:bg-black/4 dark:hover:bg-white/6 active:bg-black/6 dark:active:bg-white/10 transition-colors cursor-pointer group"
-    aria-label={"查看 " + currentPlay.track.title + " 歌词与播放详情" + (currentPlay.track.rotationReplacement ? "，替代 " + currentPlay.track.rotationReplacement.title : "")}
-    title="点击打开大播放器与完整歌词"
+    aria-label={currentPlay
+      ? "查看 " + currentPlay.track.title + " 歌词与播放详情" + (currentPlay.track.rotationReplacement ? "，替代 " + currentPlay.track.rotationReplacement.title : "")
+      : "点歌台当前无播放歌曲，点击打开点歌台"}
+    title={currentPlay ? "点击打开大播放器与完整歌词" : "点击打开点歌台"}
     onclick={onOpenLyrics}
   >
     <div class="{variant === 'mobile' ? 'size-8 rounded-md' : 'w-8.5 h-8.5 rounded-lg'} overflow-hidden shrink-0 border border-black/5 dark:border-white/10 bg-(--primary)/12 flex items-center justify-center shadow-xs transition-transform group-hover:scale-102">
-      {#if currentPlay.track.cover && !coverFailed}
+      {#if currentPlay?.track?.cover && !coverFailed}
         <img
           src={currentPlay.track.cover}
           alt=""
@@ -140,7 +150,11 @@ const skipTooltipText = $derived.by(() => {
           onerror={() => (coverFailed = true)}
         />
       {:else}
-        <span class="text-xs text-(--primary)">♪</span>
+        <svg class="size-4 text-(--primary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9 18V5l12-2v13" />
+          <circle cx="6" cy="18" r="3" />
+          <circle cx="18" cy="16" r="3" />
+        </svg>
       {/if}
     </div>
 
@@ -153,53 +167,60 @@ const skipTooltipText = $derived.by(() => {
       <div
         class="{variant === 'mobile' ? 'text-[12px]' : 'text-[12px] xl:text-[11.5px]'} text-[var(--chat-meta-color)] tabular-nums leading-tight mt-0.5 flex items-center min-w-0 gap-1.5"
       >
-        {#if variant === 'mobile'}
-          <!-- 手机版：歌名保留更多（上限达 78%），作者优先截断，空间不足时歌名更完整 -->
-          <div class="flex items-center min-w-0 flex-1 overflow-hidden">
-            <span
-              class="text-[var(--deep-text)] truncate shrink-0 {currentPlay.track.rotationReplacement ? 'max-w-[58%]' : 'max-w-[78%]'}"
-              title={currentPlay.track.title}
-            >
-              {currentPlay.track.title}
-            </span>
-            <span
-              class="truncate min-w-0 flex-1 text-[var(--chat-meta-color)]"
-              title={currentPlay.track.artist}
-            >
-              &nbsp;-&nbsp;{currentPlay.track.artist}
-            </span>
-            {#if currentPlay.track.rotationReplacement}
-              <span class="ml-1 shrink-0 text-[10px] text-[var(--chat-meta-color)]" title={'替代《' + currentPlay.track.rotationReplacement.title + '》'}>替代播放</span>
-            {/if}
-          </div>
+        {#if currentPlay}
+          {#if variant === 'mobile'}
+            <!-- 手机版：歌名保留更多（上限达 78%），作者优先截断，空间不足时歌名更完整 -->
+            <div class="flex items-center min-w-0 flex-1 overflow-hidden">
+              <span
+                class="text-[var(--deep-text)] truncate shrink-0 {currentPlay.track.rotationReplacement ? 'max-w-[58%]' : 'max-w-[78%]'}"
+                title={currentPlay.track.title}
+              >
+                {currentPlay.track.title}
+              </span>
+              <span
+                class="truncate min-w-0 flex-1 text-[var(--chat-meta-color)]"
+                title={currentPlay.track.artist}
+              >
+                &nbsp;-&nbsp;{currentPlay.track.artist}
+              </span>
+              {#if currentPlay.track.rotationReplacement}
+                <span class="ml-1 shrink-0 text-[10px] text-[var(--chat-meta-color)]" title={'替代《' + currentPlay.track.rotationReplacement.title + '》'}>替代播放</span>
+              {/if}
+            </div>
+          {:else}
+            <!-- 桌面端/侧栏版：保持原样不变 -->
+            <div class="flex items-center min-w-0 flex-1 overflow-hidden">
+              <span
+                class="text-[var(--deep-text)] truncate shrink-0 {currentPlay.track.rotationReplacement ? 'max-w-[50%]' : 'max-w-[70%]'}"
+                title={currentPlay.track.title}
+              >
+                {currentPlay.track.title}
+              </span>
+              <span
+                class="truncate shrink min-w-0 text-[var(--chat-meta-color)]"
+                title={currentPlay.track.artist}
+              >
+                &nbsp;-&nbsp;{currentPlay.track.artist}
+              </span>
+              {#if currentPlay.track.rotationReplacement}
+                <span class="ml-1 shrink-0 text-[var(--chat-meta-color)]" title={'替代《' + currentPlay.track.rotationReplacement.title + '》'}>替代播放</span>
+              {/if}
+            </div>
+          {/if}
+          <span class="shrink-0 text-[var(--chat-meta-color)]/85 text-right tabular-nums">
+            {formattedStatusOrTime}
+          </span>
         {:else}
-          <!-- 桌面端/侧栏版：保持原样不变 -->
-          <div class="flex items-center min-w-0 flex-1 overflow-hidden">
-            <span
-              class="text-[var(--deep-text)] truncate shrink-0 {currentPlay.track.rotationReplacement ? 'max-w-[50%]' : 'max-w-[70%]'}"
-              title={currentPlay.track.title}
-            >
-              {currentPlay.track.title}
-            </span>
-            <span
-              class="truncate shrink min-w-0 text-[var(--chat-meta-color)]"
-              title={currentPlay.track.artist}
-            >
-              &nbsp;-&nbsp;{currentPlay.track.artist}
-            </span>
-            {#if currentPlay.track.rotationReplacement}
-              <span class="ml-1 shrink-0 text-[var(--chat-meta-color)]" title={'替代《' + currentPlay.track.rotationReplacement.title + '》'}>替代播放</span>
-            {/if}
-          </div>
+          <span class="truncate text-[var(--chat-meta-color)]">
+            点击打开点歌台去点歌
+          </span>
         {/if}
-        <span class="shrink-0 text-[var(--chat-meta-color)]/85 text-right tabular-nums">
-          {formattedStatusOrTime}
-        </span>
       </div>
     </div>
   </button>
 
-  <div class="flex items-center {variant === 'mobile' ? 'gap-0' : 'gap-1'} shrink-0">
+  {#if currentPlay}
+    <div class="flex items-center {variant === 'mobile' ? 'gap-0' : 'gap-1'} shrink-0">
     <ChatTooltip text={variant === "mobile" ? listenAction : isListening ? "点击静音" : "已静音"}>
       <button
         type="button"
@@ -286,4 +307,20 @@ const skipTooltipText = $derived.by(() => {
       {/if}
     </ChatTooltip>
   </div>
+  {:else}
+    <div class="flex items-center shrink-0 pr-1">
+      <button
+        type="button"
+        class="text-xs px-2.5 py-1 rounded-full bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)]/20 transition-colors font-medium border-none cursor-pointer flex items-center gap-1"
+        aria-label="打开点歌台点歌"
+        onclick={onOpenLyrics}
+      >
+        <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        <span>点歌</span>
+      </button>
+    </div>
+  {/if}
 </div>

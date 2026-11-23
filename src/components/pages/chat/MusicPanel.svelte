@@ -1,5 +1,5 @@
 <script module lang="ts">
-function resolveMusicThumbUrl(raw?: string): string {
+function resolveMusicThumbUrl(raw?: string, size = 120): string {
 	if (!raw) return "";
 	let url: URL;
 	try {
@@ -7,18 +7,36 @@ function resolveMusicThumbUrl(raw?: string): string {
 	} catch {
 		return raw;
 	}
-	if (url.hostname.endsWith(".music.126.net")) {
-		url.searchParams.set("param", "100y100");
+	if (url.protocol === "http:") {
+		url.protocol = "https:";
+	}
+	const px = Math.max(40, Math.min(300, Math.round(size)));
+	if (url.hostname.endsWith(".126.net")) {
+		url.searchParams.set("param", `${px}y${px}`);
 		return url.href;
 	}
 	if (/^is\d+-ssl\.mzstatic\.com$/.test(url.hostname)) {
-		return raw.replace(/\/\d+x\d+bb(\.[a-zA-Z0-9]+)$/, "/100x100bb$1");
+		return url.href.replace(/\/\d+x\d+bb(\.[a-zA-Z0-9]+)$/, `/${px}x${px}bb$1`);
 	}
 	if (url.hostname === "y.gtimg.cn") {
-		return raw.replace(
-			/T002R(?:300|500|800)x(?:300|500|800)M000/,
-			"T002R150x150M000",
+		const qqPx = px <= 200 ? 150 : px <= 300 ? 300 : 500;
+		return url.href.replace(
+			/T00([12])R\d+x\d+M000/,
+			`T00$1R${qqPx}x${qqPx}M000`,
 		);
+	}
+	if (url.hostname.endsWith(".kugou.com")) {
+		url.pathname = url.pathname.replace(
+			/\/stdmusic\/\d+\//,
+			`/stdmusic/${px}/`,
+		);
+		return url.href;
+	}
+	if (url.hostname.endsWith("ytimg.com") || url.hostname.endsWith("googleusercontent.com")) {
+		if (/=w\d+-h\d+/.test(url.href)) {
+			return url.href.replace(/=w\d+-h\d+[^?]*/, `=w${px}-h${px}-s-l90-rj`);
+		}
+		return `${url.href}=w${px}-h${px}-s-l90-rj`;
 	}
 	if (
 		url.hostname === "i.scdn.co" &&
@@ -30,7 +48,7 @@ function resolveMusicThumbUrl(raw?: string): string {
 		);
 		return url.href;
 	}
-	return raw;
+	return url.href;
 }
 </script>
 
@@ -102,7 +120,7 @@ interface Props {
 	initialListening?: boolean;
 	onSearchOnline: (
 		keyword: string,
-		options?: { signal?: AbortSignal; page?: number; provider?: "qq" | "kugou" },
+		options?: { signal?: AbortSignal; page?: number; provider?: "qq" | "netease" | "kugou" | "youtube" },
 	) => Promise<{ tracks: ChatMusicTrack[]; hasMore: boolean; page: number }>;
 	onEnqueueTrack: (track: ChatMusicTrack, anchor?: HTMLElement) => Promise<boolean>;
 	onRandomEnqueue: (playlistId: string) => Promise<boolean>;
@@ -143,7 +161,7 @@ interface Props {
 		currentLyric?: string;
 	}) => void;
 	onAudioDiagnosticChange?: (diagnostic: LocalAudioDiagnostic | null) => void;
-	onNotify?: (message: string) => void;
+	onNotify?: (message: string, tone?: "default" | "error" | "success") => void;
 	onClose?: () => void;
 }
 
@@ -284,6 +302,7 @@ function selectQueueTab(tab: "request" | "rotation") {
 	queueTab = tab;
 }
 let lyricsScrollHideTimer: number | null = null;
+let queueScrollHideTimer: number | null = null;
 let programmaticLyricScrollUntil = 0;
 let roomElapsed = $state(0);
 
@@ -314,16 +333,64 @@ let volume = $state(initVol);
 let coverLoadFailed = $state(false);
 
 // 搜索相关状态
+type SearchProvider = "qq" | "netease" | "kugou" | "youtube";
+
+interface SearchProviderOption {
+	id: SearchProvider;
+	label: string;
+	activeClass: string;
+	inactiveClass: string;
+	isOverseas: boolean;
+}
+
+const SEARCH_PROVIDERS: SearchProviderOption[] = [
+	{
+		id: "qq",
+		label: "音源1",
+		activeClass: "border-[#1ecd96] text-[#1ecd96] bg-[#1ecd96]/15",
+		inactiveClass: "border-[#1ecd96]/45 text-[var(--chat-meta-color)] hover:border-[#1ecd96] hover:text-[#1ecd96] hover:bg-[#1ecd96]/8",
+		isOverseas: false,
+	},
+	{
+		id: "kugou",
+		label: "音源2",
+		activeClass: "border-[#227df7] text-[#227df7] bg-[#227df7]/15",
+		inactiveClass: "border-[#227df7]/45 text-[var(--chat-meta-color)] hover:border-[#227df7] hover:text-[#227df7] hover:bg-[#227df7]/8",
+		isOverseas: false,
+	},
+	{
+		id: "netease",
+		label: "音源3",
+		activeClass: "border-[#ec4141] text-[#ec4141] bg-[#ec4141]/15",
+		inactiveClass: "border-[#ec4141]/45 text-[var(--chat-meta-color)] hover:border-[#ec4141] hover:text-[#ec4141] hover:bg-[#ec4141]/8",
+		isOverseas: false,
+	},
+	{
+		id: "youtube",
+		label: "YouTube Music",
+		activeClass: "border-[#ea3323] text-[#ea3323] bg-[#ea3323]/15",
+		inactiveClass: "border-[#ea3323]/45 text-[var(--chat-meta-color)] hover:border-[#ea3323] hover:text-[#ea3323] hover:bg-[#ea3323]/8",
+		isOverseas: true,
+	},
+];
+
 let searchQuery = $state("");
 let submittedSearchQuery = $state("");
 let searchResults = $state<ChatMusicTrack[]>([]);
-let searchProvider = $state<"qq" | "kugou">("qq");
+let searchProvider = $state<SearchProvider>("qq");
+// 实际产出当前列表的音源；国内音源 0 结果回退到 YouTube 时会与 searchProvider 不同
+let searchResultProvider = $state<SearchProvider>("qq");
 let searchPage = $state(1);
 let hasMoreSearchResults = $state(false);
 let isSearching = $state(false);
 let isLoadingMore = $state(false);
+let searchFallbackNotice = $state("");
 let searchError = $state("");
 let searchAbortController: AbortController | null = null;
+
+const currentProviderOption = $derived(
+	SEARCH_PROVIDERS.find((p) => p.id === searchProvider) || SEARCH_PROVIDERS[0],
+);
 
 // 歌单相关状态
 let featuredCollapsed = $state(false);
@@ -396,6 +463,50 @@ const filteredRotationChoices = $derived(
 			})
 		: rotationChoices,
 );
+
+let rotationScrollTop = $state(0);
+let rotationViewportH = $state(400);
+const ROTATION_ROW_H = 62;
+const VIRTUAL_ROTATION_THRESHOLD = 25;
+let rotationScrollRaf: number | null = null;
+
+function handleRotationScroll(e: Event) {
+	const el = e.currentTarget as HTMLElement | null;
+	if (!el) return;
+	if (rotationScrollRaf !== null) return;
+	rotationScrollRaf = requestAnimationFrame(() => {
+		rotationScrollRaf = null;
+		rotationScrollTop = el.scrollTop;
+		if (el.clientHeight > 0) {
+			rotationViewportH = el.clientHeight;
+		}
+	});
+}
+
+const rotationChoicesVirtual = $derived.by(() => {
+	const list = filteredRotationChoices;
+	const len = list.length;
+	if (len <= VIRTUAL_ROTATION_THRESHOLD) {
+		return {
+			items: list,
+			start: 0,
+			topSpacerPx: 0,
+			bottomSpacerPx: 0,
+		};
+	}
+	const rawStart = Math.floor(rotationScrollTop / ROTATION_ROW_H) - 8;
+	const STEP = 2;
+	const steppedStart = Math.max(0, Math.floor(rawStart / STEP) * STEP);
+	const visibleCount = Math.ceil(rotationViewportH / ROTATION_ROW_H) + 16 + STEP;
+	const start = steppedStart;
+	const end = Math.min(len, start + visibleCount);
+	return {
+		items: list.slice(start, end),
+		start,
+		topSpacerPx: start * ROTATION_ROW_H,
+		bottomSpacerPx: Math.max(0, (len - end) * ROTATION_ROW_H),
+	};
+});
 function normalizeRotationPlaylistIds(setting: RoomRotation | null): string[] {
 	if (setting?.mode !== "playlist") return [];
 	const raw = Array.isArray(setting.playlistIds)
@@ -467,8 +578,8 @@ let isDeletingPlaylistId = $state("");
 let confirmDeleteTimer: number | null = null;
 
 // 歌单与历史列表虚拟滚动状态
-const VIRTUAL_MUSIC_THRESHOLD = 60;
-const VIRTUAL_MUSIC_OVERSCAN = 12;
+const VIRTUAL_MUSIC_THRESHOLD = 30;
+const VIRTUAL_MUSIC_OVERSCAN = 16;
 let playlistScrollEl: HTMLDivElement | null = $state(null);
 let playlistMetaBoxEl: HTMLDivElement | null = $state(null);
 let isCompactPlaylistHeader = $state(false);
@@ -597,11 +708,11 @@ $effect(() => {
 });
 
 async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTrackItem | null): Promise<void> {
-	if (!rawTrack) return;
-	if (!currentUser && !walineToken) {
-		onNotify?.("请先登录账号或登记访客身份后再收藏歌曲~");
+	if (!currentUser) {
+		onRequestAuth?.();
 		return;
 	}
+	if (!rawTrack) return;
 	const track = "id" in rawTrack ? rawTrack : toEnqueueableTrack(rawTrack, selectedPlaylist?.id || "favorites");
 	const trackId = track.id || "";
 	const taKey = getTrackTitleArtistKey(track.title, track.artist);
@@ -634,7 +745,7 @@ async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTra
 			if (track.id) nextIds.add(track.id);
 			if (res.track?.id) nextIds.add(res.track.id);
 			if (taKey) nextTAs.add(taKey);
-			onNotify?.(`已将《${track.title}》收藏到全站共享收藏`);
+			onNotify?.(`已将《${track.title}》收藏到全站共享收藏`, "success");
 
 			// 触发星星爆发动效
 			const nextSparkles = new Set(favSparkleTrackIds);
@@ -659,7 +770,7 @@ async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTra
 			if (track.id) nextIds.delete(track.id);
 			if (res.track?.id) nextIds.delete(res.track.id);
 			if (taKey) nextTAs.delete(taKey);
-			onNotify?.(`已取消收藏《${track.title}》`);
+			onNotify?.(`已取消收藏《${track.title}》`, "success");
 
 			// 取消收藏时立即清除星星动效
 			const nextSparkles = new Set(favSparkleTrackIds);
@@ -688,7 +799,7 @@ async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTra
 			void openPlaylistDetail("pl_collective_favorites", true, undefined, collectiveFilterUserKey);
 		}
 	} catch (err) {
-		onNotify?.(err instanceof Error ? err.message : "收藏操作失败");
+		onNotify?.(err instanceof Error ? err.message : "收藏操作失败", "error");
 	} finally {
 		const resetToggling = new Set(favoriteTogglingTrackIds);
 		resetToggling.delete(lookupKey);
@@ -697,6 +808,10 @@ async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTra
 }
 
 async function toggleFavoriteCurrentTrack(): Promise<void> {
+	if (!currentUser) {
+		onRequestAuth?.();
+		return;
+	}
 	if (!currentPlay?.track || isFavToggling) return;
 	isFavToggling = true;
 	try {
@@ -974,7 +1089,7 @@ const currentHistoryHasMore = $derived(
 const historyVirtual = $derived.by(() => {
 	const list = activeHistoryEntries;
 	const len = list.length;
-	const VIRTUAL_HISTORY_THRESHOLD = 200;
+	const VIRTUAL_HISTORY_THRESHOLD = VIRTUAL_MUSIC_THRESHOLD;
 	if (len <= VIRTUAL_HISTORY_THRESHOLD) {
 		return {
 			items: list,
@@ -986,7 +1101,7 @@ const historyVirtual = $derived.by(() => {
 	const rowH = Math.max(44, playlistRowHeight);
 	const viewH = Math.max(240, historyViewportH);
 	const rawStart = Math.floor(historyScrollTop / rowH) - VIRTUAL_MUSIC_OVERSCAN;
-	const STEP = 6;
+	const STEP = 4;
 	const steppedStart = Math.max(0, Math.floor(rawStart / STEP) * STEP);
 	const visibleCount = Math.ceil(viewH / rowH) + VIRTUAL_MUSIC_OVERSCAN * 2 + STEP;
 	const start = steppedStart;
@@ -1314,11 +1429,11 @@ let isShufflingRotation = $state(false);
 
 function triggerShuffleRotation() {
 	if (!currentUser) {
-		onNotify?.("当前处于旁观模式，登录后即可重新洗牌");
+		onRequestAuth?.();
 		return;
 	}
 	if (rotationQueue.length <= 1) {
-		onNotify?.("当前轮播曲目不足，无需重新洗牌");
+		onNotify?.("当前轮播曲目不足，无需重新洗牌", "default");
 		return;
 	}
 	if (isShufflingRotation) return;
@@ -1352,13 +1467,7 @@ const isWalineLoggedIn = $derived(
 	Boolean(currentUser && currentUser.authType === "waline" && walineToken),
 );
 
-const rotationTooltipText = $derived(
-	isWalineLoggedIn
-		? "歌单轮播设置"
-		: currentUser
-			? "歌单轮播设置（需登录账号）"
-			: "歌单轮播设置（登录后可用）",
-);
+const rotationTooltipText = "歌单轮播设置";
 
 function formatPlaylistDate(ts: number): string {
 	if (!ts) return "";
@@ -1426,7 +1535,7 @@ const pendingPlaylistProgress = new Map<string, {
 let playlistHoverTimer: number | null = null;
 const searchResultCache = new Map<
 	string,
-	{ tracks: ChatMusicTrack[]; hasMore: boolean; fetchedAt: number }
+	{ tracks: ChatMusicTrack[]; hasMore: boolean; provider: SearchProvider; fetchedAt: number }
 >();
 
 function invalidatePlaylistCaches(playlistId?: string): void {
@@ -1795,7 +1904,7 @@ async function openPlaylistDetail(
 		if (requestSeq === playlistDetailRequestSeq && selectedPlaylist?.id === playlistId) {
 			const msg = err instanceof Error ? err.message : "加载歌单详情失败";
 			playlistsError = msg;
-			onNotify?.(msg);
+			onNotify?.(msg, "error");
 		}
 	} finally {
 		if (requestSeq === playlistDetailRequestSeq && selectedPlaylist?.id === playlistId) {
@@ -1860,12 +1969,14 @@ async function handleImportSubmit(overrideOptions?: {
 			saved.updatedExisting
 				? `已同步更新歌单《${saved.playlist.title}》`
 				: `已导入歌单《${saved.playlist.title}》`,
+			"success",
 		);
 		invalidatePlaylistCaches(saved.playlist.id);
 		void loadPlaylists(true);
 		void openPlaylistDetail(saved.playlist.id, true, saved.playlist);
 	} catch (err) {
 		importError = err instanceof Error ? err.message : "歌单导入失败";
+		onNotify?.(importError, "error");
 	} finally {
 		isImportingPlaylist = false;
 	}
@@ -1898,12 +2009,13 @@ async function handleImportUserCandidate(
 		if (parsed.retrievalMessage) {
 			importStatusText = parsed.retrievalMessage;
 		}
-		onNotify?.(`已导入歌单《${saved.playlist.title}》`);
+		onNotify?.(`已导入歌单《${saved.playlist.title}》`, "success");
 		invalidatePlaylistCaches(saved.playlist.id);
 		void loadPlaylists(true);
 		void openPlaylistDetail(saved.playlist.id, true, saved.playlist);
 	} catch (err) {
 		importError = err instanceof Error ? err.message : "拉取选定歌单失败";
+		onNotify?.(importError, "error");
 	} finally {
 		isImportingPlaylist = false;
 	}
@@ -1928,14 +2040,14 @@ async function handleRefreshPlaylist(playlist: PlaylistSummary): Promise<void> {
 			fresh.payload,
 		);
 		if (personalPlaylistAuth !== auth) return;
-		onNotify?.(`已刷新《${updated.title}》（共 ${updated.trackCount} 首）`);
+		onNotify?.(`已刷新《${updated.title}》（共 ${updated.trackCount} 首）`, "success");
 		invalidatePlaylistCaches(playlist.id);
 		void loadPlaylists(true);
 		if (selectedPlaylist?.id === playlist.id) {
 			await openPlaylistDetail(playlist.id, true, updated);
 		}
 	} catch (err) {
-		onNotify?.(err instanceof Error ? err.message : "刷新歌单失败");
+		onNotify?.(err instanceof Error ? err.message : "刷新歌单失败", "error");
 	} finally {
 		isRefreshingPlaylistId = "";
 	}
@@ -1976,8 +2088,8 @@ async function loadRotationSettings() {
 
 function openRotationSettings() {
 	if (rotationSaving) return;
-	if (!isWalineLoggedIn) {
-		onNotify?.(currentUser ? "歌单轮播设置仅支持账号登录用户配置" : "当前处于旁观模式，登录后即可配置轮播歌单");
+	if (!currentUser || !isWalineLoggedIn) {
+		onRequestAuth?.();
 		return;
 	}
 	rotationDialogRoom = roomId;
@@ -2012,7 +2124,7 @@ async function handleSaveRotation() {
 	try {
 		rotation = await saveRoomRotation(chatServerUrl, roomId, { kind: "waline", token: walineToken }, setting);
 		rotationExpanded = false;
-		onNotify?.("已保存本房间的轮播设置");
+		onNotify?.("已保存本房间的轮播设置", "success");
 		await loadPlaylists(true);
 	} catch (error) {
 		rotationError = error instanceof Error ? error.message : "保存失败，请重试";
@@ -2056,18 +2168,20 @@ async function handleTogglePlaylistFlag(
 				updated.isPublic
 					? `已共享《${updated.title}》到共享歌单`
 					: `已取消共享《${updated.title}》`,
+				"success",
 			);
 		} else if (flag === "isFeatured") {
 			onNotify?.(
 				updated.isFeatured
 					? `已将《${updated.title}》设为房间精选`
 					: `已取消《${updated.title}》的房间精选`,
+				"success",
 			);
 		}
 		invalidatePlaylistCaches(playlist.id);
 		await loadPlaylists(true);
 	} catch (err) {
-		onNotify?.(err instanceof Error ? err.message : "更新歌单权限失败");
+		onNotify?.(err instanceof Error ? err.message : "更新歌单权限失败", "error");
 	} finally {
 		isUpdatingFlagsId = "";
 	}
@@ -2099,11 +2213,11 @@ async function handleDeletePlaylist(playlist: PlaylistSummary): Promise<void> {
 			selectedPlaylist = null;
 			playlistTrackFilter = "";
 		}
-		onNotify?.(`已删除歌单《${playlist.title}》`);
+		onNotify?.(`已删除歌单《${playlist.title}》`, "success");
 		invalidatePlaylistCaches(playlist.id);
 		await loadPlaylists(true);
 	} catch (err) {
-		onNotify?.(err instanceof Error ? err.message : "删除歌单失败");
+		onNotify?.(err instanceof Error ? err.message : "删除歌单失败", "error");
 	} finally {
 		isDeletingPlaylistId = "";
 	}
@@ -2119,7 +2233,7 @@ async function handleRandomPlayFromPlaylist(detail: PlaylistDetail): Promise<voi
 		await onRandomEnqueue(detail.id);
 	} catch (error) {
 		console.warn("Unable to request a random song", error);
-		onNotify?.("随机点歌请求未能发出，请重试");
+		onNotify?.("随机点歌请求未能发出，请重试", "error");
 	}
 }
 
@@ -2259,7 +2373,7 @@ const playlistVirtual = $derived.by(() => {
 			: 0;
 	const relScrollTop = Math.max(0, playlistScrollTop - metaOffset);
 	const rawStart = Math.floor(relScrollTop / rowH) - VIRTUAL_MUSIC_OVERSCAN;
-	const STEP = 6;
+	const STEP = 4;
 	const steppedStart = Math.max(0, Math.floor(rawStart / STEP) * STEP);
 	const visibleCount = Math.ceil(viewH / rowH) + VIRTUAL_MUSIC_OVERSCAN * 2 + STEP;
 	const start = steppedStart;
@@ -2544,14 +2658,14 @@ function updateMediaSessionMetadata() {
 	if (!hasJoinedAudio || !currentPlay) return;
 
 	const coverUrl = currentPlay.track.cover
-		? new URL(currentPlay.track.cover, window.location.origin).toString()
+		? resolveMusicThumbUrl(new URL(currentPlay.track.cover, window.location.origin).toString(), 200)
 		: "";
 	navigator.mediaSession.metadata = new MediaMetadata({
 		title: currentPlay.track.title,
 		artist: currentPlay.track.artist,
 		album: `#${roomId} 同步电台 · ${currentPlay.isFallback ? "轮播：" : "点歌："}${currentPlay.requesterName}`,
 		artwork: coverUrl
-			? [{ src: coverUrl, sizes: "300x300", type: "image/jpeg" }]
+			? [{ src: coverUrl, sizes: "200x200", type: "image/jpeg" }]
 			: [],
 	});
 	navigator.mediaSession.playbackState = audioStatus === "playing" ? "playing" : "paused";
@@ -2756,6 +2870,7 @@ function clearSearch() {
 	isSearching = false;
 	isLoadingMore = false;
 	searchError = "";
+	searchFallbackNotice = "";
 }
 
 let lastFallbackSearchSeq = 0;
@@ -2770,7 +2885,7 @@ $effect(() => {
 
 function submitSearch(bypassCache = false) {
 	if (!currentUser) {
-		onNotify?.("当前处于旁观模式，登录后即可搜索点歌");
+		onRequestAuth?.();
 		return;
 	}
 	const q = searchQuery.trim();
@@ -2778,7 +2893,18 @@ function submitSearch(bypassCache = false) {
 		clearSearch();
 		return;
 	}
-	void runSearch(q, bypassCache, q === submittedSearchQuery ? searchProvider : "qq");
+	searchFallbackNotice = "";
+	void runSearch(q, bypassCache, searchProvider);
+}
+
+function switchSearchProvider(provider: SearchProvider) {
+	if (searchProvider === provider) return;
+	searchProvider = provider;
+	searchFallbackNotice = "";
+	const q = searchQuery.trim() || submittedSearchQuery.trim();
+	if (q) {
+		void runSearch(q, false, provider);
+	}
 }
 
 function dedupeTracksById(tracks: ChatMusicTrack[]): ChatMusicTrack[] {
@@ -2792,8 +2918,9 @@ function dedupeTracksById(tracks: ChatMusicTrack[]): ChatMusicTrack[] {
 	return result;
 }
 
-async function runSearch(q: string, bypassCache = false, provider: "qq" | "kugou" = "qq") {
+async function runSearch(q: string, bypassCache = false, provider: SearchProvider = "qq") {
 	searchProvider = provider;
+	searchResultProvider = provider;
 	searchAbortController?.abort();
 	const controller = new AbortController();
 	searchAbortController = controller;
@@ -2808,6 +2935,7 @@ async function runSearch(q: string, bypassCache = false, provider: "qq" | "kugou
 	if (cached && Date.now() - cached.fetchedAt < SEARCH_CACHE_TTL_MS) {
 		searchResults = cached.tracks;
 		hasMoreSearchResults = cached.hasMore;
+		searchResultProvider = cached.provider;
 		isSearching = false;
 		return;
 	}
@@ -2818,21 +2946,49 @@ async function runSearch(q: string, bypassCache = false, provider: "qq" | "kugou
 	try {
 		const res = await onSearchOnline(q, { signal: controller.signal, page: 1, provider });
 		if (controller.signal.aborted) return;
-		const tracks = dedupeTracksById(res.tracks);
+		let tracks = dedupeTracksById(res.tracks).map((t) => ({
+			...t,
+			provider: t.provider || provider,
+		}));
+
+		// Ultimate Fallback: if domestic search returned 0 results, query YouTube Music as fallback
+		let isFallback = false;
+		let fallbackHasMore = false;
+		if (tracks.length === 0 && provider !== "youtube" && !controller.signal.aborted) {
+			try {
+				const ytRes = await onSearchOnline(q, { signal: controller.signal, page: 1, provider: "youtube" });
+				if (!controller.signal.aborted && ytRes.tracks.length > 0) {
+					tracks = dedupeTracksById(ytRes.tracks).map((t) => ({
+						...t,
+						provider: "youtube",
+					}));
+					isFallback = true;
+					fallbackHasMore = ytRes.hasMore;
+					searchResultProvider = "youtube";
+				}
+			} catch {
+				// Fallback error quietly ignored
+			}
+		}
+
+		const resultHasMore = isFallback ? fallbackHasMore : res.hasMore;
+
 		if (searchResultCache.size >= 40) {
 			const oldest = searchResultCache.keys().next().value;
 			if (oldest !== undefined) searchResultCache.delete(oldest);
 		}
 		searchResultCache.set(cacheKey, {
 			tracks,
-			hasMore: res.hasMore,
+			hasMore: resultHasMore,
+			provider: searchResultProvider,
 			fetchedAt: Date.now(),
 		});
 		if (submittedSearchQuery === q) {
 			searchResults = tracks;
 			searchPage = res.page;
-			hasMoreSearchResults = res.hasMore;
+			hasMoreSearchResults = resultHasMore;
 			searchError = "";
+			searchFallbackNotice = isFallback ? "国内音源未检索到相关曲目，已自动通过 YouTube Music 兜底全网检索" : "";
 		}
 	} catch (err) {
 		if (controller.signal.aborted && err instanceof DOMException && err.name === "AbortError") {
@@ -2843,6 +2999,7 @@ async function runSearch(q: string, bypassCache = false, provider: "qq" | "kugou
 		}
 		if (submittedSearchQuery === q) {
 			searchError = err instanceof Error ? err.message : "搜索失败，请稍后重试";
+			searchFallbackNotice = "";
 		}
 	} finally {
 		if (searchAbortController === controller) {
@@ -2855,6 +3012,7 @@ async function runSearch(q: string, bypassCache = false, provider: "qq" | "kugou
 async function loadMoreSearchResults() {
 	const q = submittedSearchQuery;
 	if (!q || isSearching || isLoadingMore || !hasMoreSearchResults) return;
+	const provider = searchResultProvider;
 
 	const controller = new AbortController();
 	searchAbortController = controller;
@@ -2865,14 +3023,16 @@ async function loadMoreSearchResults() {
 		// Search results can overlap across pages. Advance the upstream page independently.
 		for (let attempt = 0; attempt < 3 && hasMoreSearchResults; attempt += 1) {
 			const requestedPage = searchPage + 1;
-			const res = await onSearchOnline(q, { signal: controller.signal, page: requestedPage, provider: searchProvider });
+			const res = await onSearchOnline(q, { signal: controller.signal, page: requestedPage, provider });
 			if (controller.signal.aborted || submittedSearchQuery !== q) return;
 			if (res.page < requestedPage) {
 				hasMoreSearchResults = false;
 				return;
 			}
 			const existingIds = new Set(searchResults.map((track) => track.id));
-			const newTracks = dedupeTracksById(res.tracks).filter((track) => !existingIds.has(track.id));
+			const newTracks = dedupeTracksById(res.tracks)
+				.map((t) => ({ ...t, provider: t.provider || provider }))
+				.filter((track) => !existingIds.has(track.id));
 			searchPage = res.page;
 			hasMoreSearchResults = res.hasMore;
 			if (newTracks.length > 0) {
@@ -3054,6 +3214,9 @@ onMount(() => {
 		}
 		if (historyScrollRaf !== null) {
 			window.cancelAnimationFrame(historyScrollRaf);
+		}
+		if (rotationScrollRaf !== null) {
+			window.cancelAnimationFrame(rotationScrollRaf);
 		}
 		if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
 			navigator.mediaSession.playbackState = "none";
@@ -3723,7 +3886,7 @@ $effect(() => {
             </svg>
             {#if currentPlay?.track.cover && !coverLoadFailed}
               <img
-                src={currentPlay.track.cover}
+                src={resolveMusicThumbUrl(currentPlay.track.cover, 200)}
                 alt={`${currentPlay.track.title} 封面`}
                 class="w-full h-full object-cover relative z-10"
                 onerror={() => (coverLoadFailed = true)}
@@ -3939,11 +4102,11 @@ $effect(() => {
             </ChatTooltip>
 
             <!-- 🌟 收藏当前歌曲星星按钮（带蹦出星星粒子动效） -->
-            <ChatTooltip text="全站收藏">
+            <ChatTooltip text={isCurrentFavorited ? "取消收藏" : "全站收藏"}>
               <div class="relative inline-flex items-center justify-center">
                 <button
                   type="button"
-                  disabled={!currentPlay}
+                  disabled={Boolean(currentUser && !currentPlay)}
                   aria-busy={isFavToggling}
                   class="chat-current-favorite inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer disabled:cursor-not-allowed {isCurrentFavorited ? 'text-amber-400' : 'text-[var(--chat-meta-color)] hover:text-amber-400'}"
                   data-favorited={isCurrentFavorited}
@@ -4017,9 +4180,14 @@ $effect(() => {
             {#if !currentPlay}
               <button
                 type="button"
-                disabled
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!"
+                disabled={Boolean(currentUser)}
+                class="inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent {!currentUser ? 'cursor-pointer text-[var(--chat-meta-color)] hover:text-(--primary)' : 'text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!'}"
                 aria-label="切歌"
+                onclick={() => {
+                  if (!currentUser) {
+                    onRequestAuth?.();
+                  }
+                }}
               >
                 <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <path d="m5 5 10 7-10 7V5Zm14 0v14" />
@@ -4039,7 +4207,18 @@ $effect(() => {
                         ? `同意切歌（已有 ${activeVotes}/${activeThreshold} 票）`
                         : "投票切歌（0/2 票）"}
               <ChatTooltip text={mainSkipTooltipText}>
-                {#if canDirectSkip}
+                {#if !currentUser}
+                  <button
+                    type="button"
+                    class="inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer text-[var(--chat-meta-color)] hover:text-(--primary)"
+                    aria-label="下一曲"
+                    onclick={() => onRequestAuth?.()}
+                  >
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="m5 5 10 7-10 7V5Zm14 0v14" />
+                    </svg>
+                  </button>
+                {:else if canDirectSkip}
                   <button
                     type="button"
                     disabled={isSkippingTrack}
@@ -4089,10 +4268,10 @@ $effect(() => {
             <ChatTooltip text={rotationTooltipText}>
               <button
                 type="button"
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors border-none bg-transparent {isWalineLoggedIn
+                class="inline-flex h-8 w-8 items-center justify-center rounded-lg transition-colors border-none bg-transparent {!currentUser || isWalineLoggedIn
                   ? 'cursor-pointer text-[var(--chat-meta-color)] hover:text-(--primary) active:scale-95'
                   : 'text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!'}"
-                aria-disabled={!isWalineLoggedIn ? "true" : undefined}
+                aria-disabled={currentUser && !isWalineLoggedIn ? "true" : undefined}
                 aria-label={rotationTooltipText}
                 onclick={openRotationSettings}
               >
@@ -4209,7 +4388,7 @@ $effect(() => {
                     洗牌顺序播放
                   </span>
                   {#if rotationQueue.length > 0}
-                    <ChatTooltip text={!currentUser ? "重新洗牌（登录后可用）" : "重新洗牌轮播队列"}>
+                    <ChatTooltip text="重新洗牌轮播队列">
                       <button
                         type="button"
                         disabled={isShufflingRotation}
@@ -4292,11 +4471,11 @@ $effect(() => {
                   </span>
                   <button
                     type="button"
-                    class="mt-1 px-3 py-1 text-[12px] rounded-lg font-medium transition-all {isWalineLoggedIn
+                    class="mt-1 px-3 py-1 text-[12px] rounded-lg font-medium transition-all {!currentUser || isWalineLoggedIn
                       ? 'border border-[var(--primary)]/35 bg-[var(--primary)]/10 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer active:scale-95'
                       : 'border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!'}"
-                    aria-disabled={!isWalineLoggedIn ? "true" : undefined}
-                    aria-label={isWalineLoggedIn ? "设置轮播歌单" : "设置轮播歌单（登录后可用）"}
+                    aria-disabled={currentUser && !isWalineLoggedIn ? "true" : undefined}
+                    aria-label="设置轮播歌单"
                     onclick={openRotationSettings}
                   >
                     设置轮播歌单
@@ -4318,13 +4497,13 @@ $effect(() => {
     </div>
   {:else if activeTab === "search"}
     <!-- Tab 2：歌曲 / 歌手搜索与待播队列 -->
-    <div class="px-3 pt-2.5 pb-2 shrink-0">
+    <div class="px-3 pt-2.5 pb-2 shrink-0 space-y-2">
       <div class="flex items-center gap-1.5">
         <div
           class="relative flex-1 min-w-0"
           role="presentation"
           onclick={() => {
-            if (!currentUser) onNotify?.("当前处于旁观模式，登录后即可搜索点歌");
+            if (!currentUser) onRequestAuth?.();
           }}
         >
           <svg class="w-3.5 h-3.5 text-[var(--chat-meta-color)] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
@@ -4333,11 +4512,11 @@ $effect(() => {
           </svg>
           <input
             type="text"
-            disabled={!currentUser || isSearching}
+            disabled={Boolean(currentUser && isSearching)}
             aria-disabled={!currentUser ? "true" : undefined}
             bind:value={searchQuery}
-            placeholder={!currentUser ? "旁观模式不可点歌，登录后开启搜索" : "搜索歌曲 / 歌手"}
-            class="chat-music-search {currentUser ? 'is-focus-reveal' : 'border border-[var(--chat-divider-color)] bg-black/5 dark:bg-white/5 opacity-50 cursor-not-allowed! text-[var(--chat-meta-color)]'}"
+            placeholder={!currentUser ? "旁观模式不可点歌，登录后开启搜索" : searchProvider === "youtube" ? "在 YouTube Music 搜索歌曲 / 歌手" : "搜索歌曲 / 歌手"}
+            class="chat-music-search {currentUser ? 'is-focus-reveal' : 'border border-[var(--chat-divider-color)] bg-black/5 dark:bg-white/5 cursor-pointer text-[var(--chat-meta-color)]'}"
             onkeydown={(e) => {
               if (e.key === "Enter" && !e.isComposing) {
                 submitSearch();
@@ -4360,14 +4539,14 @@ $effect(() => {
         </div>
         <button
           type="button"
-          class="shrink-0 h-10 md:h-[32px] px-4 md:px-3 rounded-full text-[14px] xl:text-[12px] font-medium transition-colors {currentUser
-            ? 'border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed'
-            : 'border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!'}"
-          disabled={!currentUser || !searchQuery.trim() || isSearching}
+          class="shrink-0 h-10 md:h-[32px] px-4 md:px-3 min-w-[58px] justify-center text-center rounded-full text-[14px] xl:text-[12px] font-medium transition-colors {!currentUser
+            ? 'border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer active:scale-95'
+            : 'border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed'}"
+          disabled={Boolean(currentUser && (!searchQuery.trim() || isSearching))}
           aria-disabled={!currentUser ? "true" : undefined}
           onclick={() => {
             if (!currentUser) {
-              onNotify?.("当前处于旁观模式，登录后即可搜索点歌");
+              onRequestAuth?.();
               return;
             }
             submitSearch();
@@ -4376,17 +4555,53 @@ $effect(() => {
           {isSearching ? "搜索中" : "搜索"}
         </button>
       </div>
+
+      <!-- Source / Provider Switcher Pills Bar -->
+      <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5" role="tablist" aria-label="音源选择">
+        {#each SEARCH_PROVIDERS as provider (provider.id)}
+          {@const isActive = searchProvider === provider.id}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={isActive}
+            class="shrink-0 px-3 py-1 rounded-full text-[12px] xl:text-[11px] font-medium transition-colors cursor-pointer border {provider.isOverseas ? '' : 'min-w-[54px] text-center justify-center'} {isActive
+              ? provider.activeClass
+              : provider.inactiveClass}"
+            onclick={() => switchSearchProvider(provider.id)}
+          >
+            {provider.label}
+          </button>
+        {/each}
+      </div>
     </div>
 
     <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 pb-3 space-y-3">
       <div>
+        {#if searchFallbackNotice}
+          <div class="p-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300 text-xs flex items-center justify-between gap-2 mb-2">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{searchFallbackNotice}</span>
+            </div>
+            <button
+              type="button"
+              class="text-[11px] underline opacity-80 hover:opacity-100 cursor-pointer bg-transparent border-none p-0 text-inherit"
+              onclick={() => { searchFallbackNotice = ""; switchSearchProvider("qq"); }}
+            >
+              返回音源1
+            </button>
+          </div>
+        {/if}
+
         {#if !submittedSearchQuery && !isSearching && fallbackTracks.length === 0}
           <div class="text-center py-6 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-1">
             <p class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)] m-0">
               {currentUser ? "输入歌名或歌手后点击「搜索」" : "当前处于旁观模式"}
             </p>
             <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">
-              {currentUser ? "点歌后全房将同步播放与滚动歌词" : "加入聊天室或登录后即可搜索点歌与大家一起听~"}
+              {currentUser ? "点歌后全房将同步播放与滚动歌词，可随时切换上方音源" : "加入聊天室或登录后即可搜索点歌与大家一起听~"}
             </p>
           </div>
         {:else}
@@ -4395,14 +4610,12 @@ $effect(() => {
               {submittedSearchQuery || isSearching
                 ? isSearching
                   ? "正在搜索..."
-                  : `国内曲库（${searchProvider === "qq" ? "默认" : "备用"}） · 搜索结果 (${displayedBrowseTracks.length})`
+                  : searchFallbackNotice
+                    ? `YouTube Music 兜底 · 搜索结果 (${displayedBrowseTracks.length})`
+                    : `${currentProviderOption.label} · 搜索结果 (${displayedBrowseTracks.length})`
                 : `房间曲库 (${displayedBrowseTracks.length})`}
             </span>
             {#if submittedSearchQuery}
-              <button type="button" class="ml-auto mr-3 btn-regular rounded-md px-2 py-1 text-xs"
-                onclick={() => void runSearch(submittedSearchQuery, false, searchProvider === "qq" ? "kugou" : "qq")}>
-                {searchProvider === "qq" ? "换到国内备用曲库" : "返回国内默认曲库"}
-              </button>
               <button
                 type="button"
                 class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] hover:text-(--primary) bg-transparent border-none p-0 cursor-pointer"
@@ -4416,12 +4629,12 @@ $effect(() => {
           {#if isSearching}
             <div class="text-center py-8 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-1.5">
               <div class="inline-block w-4 h-4 rounded-full border-2 border-[var(--primary)]/30 border-t-[var(--primary)] animate-spin"></div>
-              <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">正在搜索「{submittedSearchQuery}」...</p>
+              <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">正在【{currentProviderOption.label}】搜索「{submittedSearchQuery}」...</p>
             </div>
           {:else if searchError && displayedBrowseTracks.length === 0}
             <div class="text-center py-5 px-3 rounded-xl border border-dashed border-red-400/40 space-y-2">
               <p class="text-[13px] xl:text-[12px] text-red-500 m-0">{searchError}</p>
-              <div class="flex items-center justify-center gap-2">
+              <div class="flex flex-wrap items-center justify-center gap-2">
                 <button
                   type="button"
                   class="px-3 py-1 rounded-full text-[13px] xl:text-[12px] border border-[var(--primary)]/35 bg-[var(--primary)]/12 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer"
@@ -4429,6 +4642,15 @@ $effect(() => {
                 >
                   重试
                 </button>
+                {#each SEARCH_PROVIDERS.filter((p) => p.id !== searchProvider) as alt}
+                  <button
+                    type="button"
+                    class="px-3 py-1 rounded-full text-[13px] xl:text-[12px] border {alt.inactiveClass} cursor-pointer"
+                    onclick={() => switchSearchProvider(alt.id)}
+                  >
+                    换到 {alt.label}
+                  </button>
+                {/each}
                 <button
                   type="button"
                   class="px-3 py-1 rounded-full text-[13px] xl:text-[12px] border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] cursor-pointer"
@@ -4442,18 +4664,31 @@ $effect(() => {
             <div class="text-center py-6 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-2">
               <p class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)] m-0">
                 {submittedSearchQuery
-                  ? searchProvider === "kugou" ? `当前这页暂未找到「${submittedSearchQuery}」的可播版本` : `未找到与「${submittedSearchQuery}」相关的歌曲`
+                  ? `【${currentProviderOption.label}】暂未找到与「${submittedSearchQuery}」相关的歌曲`
                   : "暂无可用曲目"}
               </p>
-              <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">{searchProvider === "kugou" ? (hasMoreSearchResults ? "可以加载更多结果，或换到默认曲库。" : "可以换到默认曲库继续搜索。") : "请检查关键词拼写，或换个歌名 / 歌手试试"}</p>
+              <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">
+                可以尝试切换其他音源继续搜索：
+              </p>
               {#if submittedSearchQuery}
-                <button
-                  type="button"
-                  class="px-3 py-1 rounded-full text-[13px] xl:text-[12px] border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
-                  onclick={clearSearch}
-                >
-                  清空搜索
-                </button>
+                <div class="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  {#each SEARCH_PROVIDERS.filter((p) => p.id !== searchProvider) as alt}
+                    <button
+                      type="button"
+                      class="px-3 py-1 rounded-full text-[12px] font-medium border {alt.inactiveClass} cursor-pointer"
+                      onclick={() => switchSearchProvider(alt.id)}
+                    >
+                      换用 {alt.label}
+                    </button>
+                  {/each}
+                  <button
+                    type="button"
+                    class="px-3 py-1 rounded-full text-[12px] border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] hover:text-(--primary) cursor-pointer"
+                    onclick={clearSearch}
+                  >
+                    清空搜索
+                  </button>
+                </div>
               {/if}
             </div>
           {:else}
@@ -4511,7 +4746,7 @@ $effect(() => {
                 洗牌顺序播放
               </span>
               {#if rotationQueue.length > 0}
-                <ChatTooltip text={!currentUser ? "重新洗牌（登录后可用）" : "重新洗牌轮播队列"}>
+                <ChatTooltip text="重新洗牌轮播队列">
                   <button
                     type="button"
                     disabled={isShufflingRotation}
@@ -4573,11 +4808,11 @@ $effect(() => {
               <div class="mt-1.5">
                 <button
                   type="button"
-                  class="px-3 py-1 text-[12px] rounded-lg font-medium transition-all {isWalineLoggedIn
+                  class="px-3 py-1 text-[12px] rounded-lg font-medium transition-all {!currentUser || isWalineLoggedIn
                     ? 'border border-[var(--primary)]/35 bg-[var(--primary)]/10 text-(--primary) hover:bg-[var(--primary)]/20 cursor-pointer active:scale-95'
                     : 'border border-[var(--chat-divider-color)] bg-transparent text-[var(--chat-meta-color)] opacity-40 cursor-not-allowed!'}"
-                  aria-disabled={!isWalineLoggedIn ? "true" : undefined}
-                  aria-label={isWalineLoggedIn ? "设置轮播歌单" : "设置轮播歌单（登录后可用）"}
+                  aria-disabled={currentUser && !isWalineLoggedIn ? "true" : undefined}
+                  aria-label="设置轮播歌单"
                   onclick={openRotationSettings}
                 >
                   设置轮播歌单
@@ -5267,7 +5502,7 @@ $effect(() => {
             </div>
           {:else}
             {#if playlistVirtual.topSpacerPx > 0}
-              <div style="height: {playlistVirtual.topSpacerPx}px;" aria-hidden="true"></div>
+              <div style="height: {playlistVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
             {/if}
             <div class="space-y-0.5" style="contain: layout style;">
               {#each playlistVirtual.items as item (`${selectedPlaylist.id}-${item.position}`)}
@@ -5284,7 +5519,7 @@ $effect(() => {
               {/each}
             </div>
             {#if playlistVirtual.bottomSpacerPx > 0}
-              <div style="height: {playlistVirtual.bottomSpacerPx}px;" aria-hidden="true"></div>
+              <div style="height: {playlistVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
             {/if}
           {/if}
         </div>
@@ -5622,9 +5857,9 @@ $effect(() => {
         </div>
       {:else}
         {#if historyVirtual.topSpacerPx > 0}
-          <div style="height: {historyVirtual.topSpacerPx}px;" aria-hidden="true"></div>
+          <div style="height: {historyVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
         {/if}
-        <div class="space-y-0.5">
+        <div class="space-y-0.5" style="contain: layout style;">
           {#each historyVirtual.items as entry (`${entry.track.id}-${historyFilterType}-${historySort}-${selectedRequesterKey}`)}
             {@const subtitle = [
               entry.track.artist,
@@ -5642,7 +5877,7 @@ $effect(() => {
           {/each}
         </div>
         {#if historyVirtual.bottomSpacerPx > 0}
-          <div style="height: {historyVirtual.bottomSpacerPx}px;" aria-hidden="true"></div>
+          <div style="height: {historyVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
         {/if}
 
         {#if isCurrentHistoryLoadingMore}
@@ -5833,40 +6068,8 @@ $effect(() => {
             </div>
 
             <fieldset class="flex-1 min-h-0 border-0 p-0 m-0 flex flex-col overflow-hidden" disabled={rotationSaving}>
-              <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2.5 sm:p-3 md:p-4 space-y-1.5 sm:space-y-2">
-                {#each filteredRotationChoices as playlist (playlist.id)}
-                  {@const isSelected = rotationPlaylistIds.includes(playlist.id)}
-                  <label class="group flex items-center gap-2.5 sm:gap-3 p-2 sm:p-2.5 rounded-xl border cursor-pointer transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/30 hover:bg-(--btn-plain-bg-hover)'}">
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onchange={() => toggleRotationPlaylist(playlist.id)}
-                      class="shrink-0 accent-(--primary) w-4 h-4 rounded cursor-pointer"
-                    />
-                    <div class="w-10 h-10 sm:w-11 sm:h-11 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center border border-black/5 dark:border-white/5">
-                      {#if playlist.id === "pl_collective_favorites"}
-                        {@render collectiveCover()}
-                      {:else if playlist.coverUrl}
-                        <img src={resolveMusicThumbUrl(playlist.coverUrl)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" />
-                      {:else}
-                        <svg class="w-5 h-5 text-(--primary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                          <path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>
-                        </svg>
-                      {/if}
-                    </div>
-                    <div class="min-w-0 flex-1">
-                      <span class="block truncate text-[14px] sm:text-[13px] font-semibold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
-                      <div class="flex items-center gap-1.5 mt-0.5 text-xs text-[var(--chat-meta-color)]">
-                        <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-[var(--chat-divider-color)]/70 text-[var(--chat-meta-color)]">
-                          {formatPlatformLabel(playlist.platform)}
-                        </span>
-                        <span>{playlist.trackCount} 首</span>
-                        <span>·</span>
-                        <span class="truncate">{playlist.id === "pl_collective_favorites" ? "全站成员" : playlist.ownerName || "房友"}</span>
-                      </div>
-                    </div>
-                  </label>
-                {:else}
+              <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2.5 sm:p-3 md:p-4 space-y-1.5 sm:space-y-2" onscroll={handleRotationScroll}>
+                {#if filteredRotationChoices.length === 0}
                   <div class="flex flex-col items-center justify-center h-full min-h-[220px] text-center p-6 text-[var(--chat-meta-color)]">
                     {#if rotationPlaylistSearch.trim()}
                       <svg class="w-8 h-8 opacity-40 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -5880,7 +6083,49 @@ $effect(() => {
                       <p class="m-0 text-xs">暂无可选的公开歌单</p>
                     {/if}
                   </div>
-                {/each}
+                {:else}
+                  {#if rotationChoicesVirtual.topSpacerPx > 0}
+                    <div style="height: {rotationChoicesVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
+                  {/if}
+                  <div class="space-y-1.5 sm:space-y-2" style="contain: layout style;">
+                    {#each rotationChoicesVirtual.items as playlist (playlist.id)}
+                      {@const isSelected = rotationPlaylistIds.includes(playlist.id)}
+                      <label class="group flex items-center gap-2.5 sm:gap-3 p-2 sm:p-2.5 rounded-xl border cursor-pointer transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/30 hover:bg-(--btn-plain-bg-hover)'}">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onchange={() => toggleRotationPlaylist(playlist.id)}
+                          class="shrink-0 accent-(--primary) w-4 h-4 rounded cursor-pointer"
+                        />
+                        <div class="w-10 h-10 sm:w-11 sm:h-11 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center border border-black/5 dark:border-white/5">
+                          {#if playlist.id === "pl_collective_favorites"}
+                            {@render collectiveCover()}
+                          {:else if playlist.coverUrl}
+                            <img src={resolveMusicThumbUrl(playlist.coverUrl)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover transition-transform duration-200 group-hover:scale-105" />
+                          {:else}
+                            <svg class="w-5 h-5 text-(--primary)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                              <path d="M9 18V5l10-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>
+                            </svg>
+                          {/if}
+                        </div>
+                        <div class="min-w-0 flex-1">
+                          <span class="block truncate text-[14px] sm:text-[13px] font-semibold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
+                          <div class="flex items-center gap-1.5 mt-0.5 text-xs text-[var(--chat-meta-color)]">
+                            <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-[var(--chat-divider-color)]/70 text-[var(--chat-meta-color)]">
+                              {formatPlatformLabel(playlist.platform)}
+                            </span>
+                            <span>{playlist.trackCount} 首</span>
+                            <span>·</span>
+                            <span class="truncate">{playlist.id === "pl_collective_favorites" ? "全站成员" : playlist.ownerName || "房友"}</span>
+                          </div>
+                        </div>
+                      </label>
+                    {/each}
+                  </div>
+                  {#if rotationChoicesVirtual.bottomSpacerPx > 0}
+                    <div style="height: {rotationChoicesVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
+                  {/if}
+                {/if}
               </div>
             </fieldset>
           {:else if rotationMode === "all"}

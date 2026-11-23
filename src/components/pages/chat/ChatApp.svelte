@@ -309,7 +309,7 @@ const pendingClockPings = new WeakMap<
 let chatAudio: HTMLAudioElement | null = $state(null);
 let noticeText = $state("");
 let noticeVisible = $state(false);
-let noticeTone = $state<"default" | "error">("default");
+let noticeTone = $state<"default" | "error" | "success">("default");
 let targetMessageUid = $state("");
 let showInterconnect = $state(false);
 let activeThreads = $state<ChatActiveThreadItem[]>([]);
@@ -1109,19 +1109,20 @@ function startSkipPending() {
 
 function handleSkipTrack() {
 	if (!currentUser) {
-		showAuthModal = true;
+		openAuthModal();
 		return;
 	}
 	if (isSkippingTrack) return;
 	recordMusicEvent("command-skip", musicState?.current?.uid);
 	if (sendPacket({ type: "music:skip", playUid: musicState?.current?.uid })) {
 		startSkipPending();
+		showNotice("已跳过当前播放", "success");
 	}
 }
 
 function handleVoteSkip() {
 	if (!currentUser) {
-		showAuthModal = true;
+		openAuthModal();
 		return;
 	}
 	if (isSkippingTrack) return;
@@ -1136,16 +1137,23 @@ function handleVoteSkip() {
 		sendPacket({
 			type: "music:vote_skip",
 			playUid: musicState?.current?.uid,
-		}) &&
-		willPass
+		})
 	) {
-		startSkipPending();
+		if (willPass) {
+			startSkipPending();
+			showNotice("投票切歌已通过，正在切歌", "success");
+		} else if (!hasVoted) {
+			showNotice(
+				`已投票切歌（当前 ${(musicState?.voteCount ?? 0) + 1}/${musicState?.voteThreshold ?? 2} 票）`,
+				"default",
+			);
+		}
 	}
 }
 
 function handlePlayQueued(uid: string) {
 	if (!currentUser) {
-		showAuthModal = true;
+		openAuthModal();
 		return;
 	}
 	recordMusicEvent("command-play_queued", musicState?.current?.uid);
@@ -1157,6 +1165,7 @@ function handlePlayQueued(uid: string) {
 		})
 	) {
 		startSkipPending();
+		showNotice("已切换为播放该曲目", "success");
 	}
 }
 
@@ -1250,7 +1259,7 @@ function clearRotationAction() {
 
 function sendRotationRequest(track: RotationQueueItem, choiceId?: string) {
 	if (!currentUser) {
-		showAuthModal = true;
+		openAuthModal();
 		return;
 	}
 	if (rotationRequestId) return;
@@ -1378,13 +1387,15 @@ function placeGlobalToast(node: HTMLDivElement) {
 	};
 }
 
-function showNotice(msg: string, tone?: "default" | "error") {
+function showNotice(msg: string, tone?: "default" | "error" | "success") {
 	noticeText = msg;
 	noticeTone =
 		tone ??
-		(/(失败|不可用|异常|错误|无法|未找到|超时|拒绝|拦截)/.test(msg)
+		(/(失败|不可用|异常|错误|无法|未找到|超时|拒绝|拦截|未授予|无效|不能|失效)/.test(msg)
 			? "error"
-			: "default");
+			: /(成功|已加入|已点播|已收藏|已导入|已刷新|已保存|已删除|已更新|已跳过|已重新洗牌|已开启|已复制|已同步|已移出|已切换)/.test(msg)
+				? "success"
+				: "default");
 	noticeVisible = true;
 	if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 	noticeTimer = window.setTimeout(() => {
@@ -1577,7 +1588,7 @@ async function sendTestPush() {
 
 async function handleToggleDesktopNotification() {
 	if (!currentUser) {
-		showAuthModal = true;
+		openAuthModal();
 		return;
 	}
 	const next = { off: "mention", mention: "all", all: "off" } as const;
@@ -2375,9 +2386,12 @@ function connectRoom(roomId: string) {
 					if (packet.ok) {
 						const status = packet.playImmediately ? "正在播放" : "已加入待播";
 						const song = packet.randomTrack;
-						showNotice(song
-							? `随机抽到《${song.title}》${song.artist ? " · " + song.artist : ""}，${status}${song.replacement ? "（替代《" + song.replacement.title + "》）" : ""}`
-							: `随机点歌成功，${status}`);
+						showNotice(
+							song
+								? `随机抽到《${song.title}》${song.artist ? " · " + song.artist : ""}，${status}${song.replacement ? "（替代《" + song.replacement.title + "》）" : ""}`
+								: `随机点歌成功，${status}`,
+							"success",
+						);
 						if (packet.playImmediately) listenAfterSongRequest(packet.roomId);
 					} else {
 						showNotice(packet.error ?? "这次没抽到可播曲目，可以再抽一次", "error");
@@ -2413,9 +2427,14 @@ function connectRoom(roomId: string) {
 					}
 				} else {
 					if (pending.fromOffer) clearRotationAction();
-					if (packet.playImmediately) listenAfterSongRequest(packet.roomId);
-					if (!packet.playImmediately && packet.position)
-						showNotice(`已加入待播队列，第 ${packet.position} 首`);
+					if (packet.playImmediately) {
+						listenAfterSongRequest(packet.roomId);
+						showNotice(`点歌成功，正在为您播放《${pending.track.title}》`, "success");
+					} else if (packet.position) {
+						showNotice(`点歌成功，已加入待播队列（第 ${packet.position} 首）`, "success");
+					} else {
+						showNotice(`点歌成功，已加入待播队列《${pending.track.title}》`, "success");
+					}
 				}
 				break;
 			}
@@ -2423,7 +2442,9 @@ function connectRoom(roomId: string) {
 				if (packet.roomId !== currentRoom || packet.requestId !== rotationRequestId || !rotationAction) break;
 				clearRotationRequest();
 				if (packet.ok) {
+					const title = rotationOrigin?.title;
 					clearRotationAction();
+					showNotice(title ? `已切换播放《${title}》` : "已切换播放选定曲目", "success");
 					break;
 				}
 				if (packet.code === "AUTH_REQUIRED") openAuthModal();
@@ -3047,7 +3068,7 @@ function handleTyping(typing: boolean) {
 
 async function handleSearchOnline(
 	keyword: string,
-	options?: { signal?: AbortSignal; page?: number; provider?: "qq" | "kugou" },
+	options?: { signal?: AbortSignal; page?: number; provider?: "qq" | "netease" | "kugou" | "youtube" },
 ) {
 	return searchOnlineMusic(normalizedChatServer, keyword, options);
 }
@@ -3873,7 +3894,7 @@ onMount(() => {
           onMentionUser={handleMentionUser}
           onOpenUserProfile={handleOpenUserProfile}
           otherRoomsUnreadCount={otherRoomsUnreadCount}
-          mobilePlaybackStatus={musicPanelRef ? mobilePlaybackStatus : undefined}
+          mobilePlaybackStatus={mobilePlaybackStatus}
           onOpenRoomDrawer={() => (mobileDrawer = "room")}
           splitRoomPanelId={roomPanelId}
           splitRoomOpen={isSplitLayout && splitRoomOpen}
@@ -3965,7 +3986,7 @@ onMount(() => {
         isRandomizing={pendingRandomRequestId !== null}
         onNotify={showNotice}
         onOpenUserProfile={handleOpenUserProfile}
-        onClose={() => { mobileDrawer = "none"; }}
+        onClose={isMobileLayout ? () => { mobileDrawer = "none"; } : undefined}
         onPlaybackStatusChange={(status) => {
           mobilePlaybackStatus = status;
           const listening = Boolean(status.listenIntent && !status.isMuted && status.audioStatus !== "blocked");
@@ -3985,14 +4006,15 @@ onMount(() => {
         onAudioDiagnosticChange={(diagnostic) => { localAudioDiagnostic = diagnostic; }}
         onRemoveQueue={(uid) => {
           if (!currentUser) {
-            showAuthModal = true;
+            openAuthModal();
             return;
           }
           sendPacket({ type: "music:remove", uid });
+          showNotice("已从待播队列中移除", "success");
         }}
         onRemoveRotationTrack={(track) => {
           if (!currentUser) {
-            showAuthModal = true;
+            openAuthModal();
             return;
           }
           sendPacket({
@@ -4000,15 +4022,15 @@ onMount(() => {
             entryId: track.entryId,
             trackId: track.id,
           });
-          showNotice(`已跳过这轮播放《${track.title}》`);
+          showNotice(`已跳过这轮播放《${track.title}》`, "success");
         }}
         onShuffleRotation={() => {
           if (!currentUser) {
-            showNotice("当前处于旁观模式，登录后即可重新洗牌", "error");
+            openAuthModal();
             return;
           }
           if (sendPacket({ type: "music:shuffle_rotation" })) {
-            showNotice("已重新洗牌轮播队列");
+            showNotice("已重新洗牌轮播队列", "success");
           }
         }}
         onPlayQueued={handlePlayQueued}
@@ -4240,7 +4262,7 @@ onMount(() => {
   <!-- 全局底部悬浮提示气泡（挂载至 body 顶层，避免被弹窗/抽屉/壁纸遮挡） -->
   <div
     use:placeGlobalToast
-    class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[2147483647] px-4 py-2.5 rounded-xl text-white text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md transition-all duration-300 max-w-[90vw] text-center border pointer-events-none select-none inline-flex items-center gap-2 {noticeTone === 'error' ? 'bg-red-600/95 dark:bg-red-600/90 border-red-400/50 shadow-red-950/35' : 'bg-black/85 dark:bg-neutral-800/90 border-white/10'} {noticeVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-95'}"
+    class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[2147483647] px-4 py-2.5 rounded-xl text-white text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md transition-all duration-300 max-w-[90vw] text-center border pointer-events-none select-none inline-flex items-center gap-2 {noticeTone === 'error' ? 'bg-red-600/95 dark:bg-red-600/90 border-red-400/50 shadow-red-950/35' : noticeTone === 'success' ? 'bg-emerald-600/95 dark:bg-emerald-600/90 border-emerald-400/50 shadow-emerald-950/35' : 'bg-black/85 dark:bg-neutral-800/90 border-white/10'} {noticeVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-95'}"
     role="status"
     aria-live="polite"
     aria-hidden={!noticeVisible}
@@ -4250,6 +4272,11 @@ onMount(() => {
         <circle cx="12" cy="12" r="10" />
         <line x1="12" y1="8" x2="12" y2="12" />
         <line x1="12" y1="16" x2="12.01" y2="16" />
+      </svg>
+    {:else if noticeTone === "success"}
+      <svg class="w-4 h-4 shrink-0 text-emerald-100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" />
+        <path d="m9 12 2 2 4-4" />
       </svg>
     {/if}
     <span>{noticeText}</span>

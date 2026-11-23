@@ -1160,13 +1160,13 @@ export interface MusicSearchResponse {
 export async function searchOnlineMusic(
 	chatServerUrl: string,
 	keyword: string,
-	options?: { signal?: AbortSignal; limit?: number; page?: number; provider?: "qq" | "kugou" },
+	options?: { signal?: AbortSignal; limit?: number; page?: number; provider?: "qq" | "netease" | "kugou" | "youtube" },
 ): Promise<MusicSearchResponse> {
 	const base =
 		normalizeServerUrl(chatServerUrl) || "https://chat-server.lengxiqwq.com";
 	const q = keyword.trim();
 	if (!q) return { tracks: [], hasMore: false, page: 1 };
-	const limit = Math.min(30, Math.max(1, options?.limit ?? (options?.provider === "kugou" ? 4 : 30)));
+	const limit = Math.min(30, Math.max(1, options?.limit ?? 15));
 	const page = Math.max(1, options?.page ?? 1);
 
 	const controller = new AbortController();

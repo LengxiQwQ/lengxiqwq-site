@@ -143,7 +143,7 @@ interface Props {
 	) => void;
 	onRecallMessage?: (msgUid: string) => void;
 	onDeleteMessage: (msgUid: string) => void;
-	onNotify?: (msg: string) => void;
+	onNotify?: (msg: string, tone?: "default" | "error" | "success") => void;
 	onRequireAuth: () => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onMentionUser: (name: string, userKey?: string) => void;
@@ -4701,16 +4701,6 @@ function removePendingImage(index: number) {
       <div class="chat-mobile-only flex items-center" bind:offsetWidth={mobileHeaderEndWidth}>
         <button
           type="button"
-          class="chat-mobile-header-action"
-          aria-label="打开点歌与听歌抽屉"
-          onclick={() => onOpenMusicDrawer?.()}
-        >
-          <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
-            <path fill="currentColor" d="M7.175 19.825Q6 18.65 6 17t1.175-2.825T10 13q.575 0 1.063.138t.937.412V4q0-.425.288-.712T13 3h4q.425 0 .713.288T18 4v2q0 .425-.288.713T17 7h-3v10q0 1.65-1.175 2.825T10 21t-2.825-1.175" />
-          </svg>
-        </button>
-        <button
-          type="button"
           id="chat-site-navigation-trigger"
           name="Nav Menu"
           class="chat-mobile-site-menu btn-plain scale-animation rounded-lg w-11 h-11 active:scale-90 lg:hidden!"
@@ -4728,31 +4718,29 @@ function removePendingImage(index: number) {
     </div>
   </div>
 
-  <!-- 移动端当前播放横条（置于顶栏下方、置顶消息上方） -->
-    {#if musicState?.current && mobilePlaybackStatus}
-      <div class="chat-mobile-only chat-mobile-player-layer">
-        <MiniPlayerBar
-          currentPlay={musicState.current}
-          isListening={mobilePlaybackStatus.isListening}
-          audioStatus={mobilePlaybackStatus.audioStatus}
-          elapsedSec={mobilePlaybackStatus.elapsedSec}
-          durationSec={mobilePlaybackStatus.durationSec}
-          canDirectSkip={mobilePlaybackStatus.canDirectSkip}
-          isSoloCoolingDown={mobilePlaybackStatus.isSoloCoolingDown}
-          soloCooldownRemainSec={mobilePlaybackStatus.soloCooldownRemainSec}
-          hasVotedSkip={mobilePlaybackStatus.hasVotedSkip}
-          voteCount={musicState.voteCount}
-          voteThreshold={musicState.voteThreshold}
-          isSkippingTrack={isSkippingTrack}
-          currentLyric={mobilePlaybackStatus.currentLyric}
-          variant="mobile"
-          onOpenLyrics={() => onOpenLyricsDrawer?.()}
-          onToggleListen={() => onToggleListen?.()}
-          onSkipTrack={() => onSkipTrack?.()}
-          onVoteSkip={() => onVoteSkip?.()}
-        />
-      </div>
-    {/if}
+  <!-- 移动端当前播放横条（常驻于顶栏下方、置顶消息上方） -->
+  <div class="chat-mobile-only chat-mobile-player-layer">
+    <MiniPlayerBar
+      currentPlay={musicState?.current ?? null}
+      isListening={mobilePlaybackStatus?.isListening ?? false}
+      audioStatus={mobilePlaybackStatus?.audioStatus}
+      elapsedSec={mobilePlaybackStatus?.elapsedSec ?? 0}
+      durationSec={mobilePlaybackStatus?.durationSec ?? 0}
+      canDirectSkip={mobilePlaybackStatus?.canDirectSkip ?? false}
+      isSoloCoolingDown={mobilePlaybackStatus?.isSoloCoolingDown ?? false}
+      soloCooldownRemainSec={mobilePlaybackStatus?.soloCooldownRemainSec ?? 0}
+      hasVotedSkip={mobilePlaybackStatus?.hasVotedSkip ?? false}
+      voteCount={musicState?.voteCount ?? 0}
+      voteThreshold={musicState?.voteThreshold ?? 2}
+      isSkippingTrack={isSkippingTrack}
+      currentLyric={mobilePlaybackStatus?.currentLyric}
+      variant="mobile"
+      onOpenLyrics={() => (musicState?.current ? onOpenLyricsDrawer?.() : onOpenMusicDrawer?.())}
+      onToggleListen={() => onToggleListen?.()}
+      onSkipTrack={() => onSkipTrack?.()}
+      onVoteSkip={() => onVoteSkip?.()}
+    />
+  </div>
 
     <!-- 置顶消息横幅 (Pinned Messages，置于播放器下方) -->
     {#if currentPinnedMsg}

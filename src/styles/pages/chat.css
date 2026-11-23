@@ -1217,21 +1217,15 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
    6. 左侧房间列表与在线成员
    ========================================================================== */
 .chat-room-content {
-	display: contents;
+	display: block;
+	flex: 1 1 0%;
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 
-@media (width < 768px), (width <= 1366px) and (pointer: coarse) {
-	.chat-room-content {
-		display: block;
-		flex: 1 1 0%;
-		min-height: 0;
-		overflow-y: auto;
-		overscroll-behavior: contain;
-	}
-
-	.chat-room-content .chat-room-members {
-		overflow: visible;
-	}
+.chat-room-content .chat-room-members {
+	overflow: visible;
 }
 
 .chat-room-item {
@@ -2476,6 +2470,17 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 .chat-panel-close-btn:focus-visible {
 	outline: 2px solid var(--skin-accent);
 	outline-offset: -2px;
+}
+
+/* 点歌台关闭按钮仅限移动端全屏抽屉视图显示，桌面端绝对不显示 */
+.chat-panel-close-btn {
+	display: none !important;
+}
+
+@media (width < 768px) {
+	.chat-panel-close-btn {
+		display: inline-flex !important;
+	}
 }
 
 @media (width >= 768px) {

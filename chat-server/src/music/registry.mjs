@@ -416,24 +416,28 @@ export class MusicRegistry {
     const cleanStr = (value) => String(value ?? '').normalize('NFKC').toLowerCase().replace(/[\s\-_·.,'"!?！？，。、()（）/&]+/g, '');
     const cleanTitle = cleanStr(item.title);
     const primaryArtist = cleanStr((item.artist || '').split(/[/,&、;；]+/)[0]);
-    const { tracks: matches } = await this.search(item.title + ' ' + (item.artist || ''), 10, 'qq');
-    if (!matches || matches.length === 0) {
-      item._unmatchedAt = Date.now();
-      return null;
-    }
+    const providers = this.providerOrder(item);
+    for (const providerId of providers) {
+      try {
+        const { tracks: matches } = await this.search(item.title + ' ' + (item.artist || ''), 10, providerId);
+        if (!matches || matches.length === 0) continue;
 
-    const match = matches.find((candidate) => {
-      const cTitle = cleanStr(candidate.title);
-      const cArtist = cleanStr(candidate.artist);
-      const titleMatch = Boolean(cleanTitle && cTitle === cleanTitle);
-      const artistMatch = Boolean(primaryArtist && cArtist && (cArtist.includes(primaryArtist) || primaryArtist.includes(cArtist)));
-      const durMatch = !(candidate.durationSec > 0 && item.durationSec > 0) || Math.abs(candidate.durationSec - item.durationSec) <= 10;
-      return titleMatch && artistMatch && durMatch;
-    });
+        const match = matches.find((candidate) => {
+          const cTitle = cleanStr(candidate.title);
+          const cArtist = cleanStr(candidate.artist);
+          const titleMatch = Boolean(cleanTitle && cTitle === cleanTitle);
+          const artistMatch = Boolean(primaryArtist && cArtist && (cArtist.includes(primaryArtist) || primaryArtist.includes(cArtist)));
+          const durMatch = !(candidate.durationSec > 0 && item.durationSec > 0) || Math.abs(candidate.durationSec - item.durationSec) <= 12;
+          return titleMatch && artistMatch && durMatch;
+        });
 
-    if (match) {
-      item.matchedTrack = match;
-      return match;
+        if (match) {
+          item.matchedTrack = match;
+          return match;
+        }
+      } catch {
+        // try next provider
+      }
     }
     item._unmatchedAt = Date.now();
     return null;
@@ -469,12 +473,40 @@ export class MusicRegistry {
   }
 
   providerOrder(item, preferredTrack) {
+    const rawPlatform = String(item?.sourcePlatform || item?.provider || '').trim().toLowerCase();
+    let platformProvider = null;
+    if (['qq', 'qqmusic', 'tencent'].includes(rawPlatform)) {
+      platformProvider = 'qq';
+    } else if (['netease', '163', 'cloudmusic'].includes(rawPlatform)) {
+      platformProvider = 'netease';
+    } else if (['kugou', 'kg'].includes(rawPlatform)) {
+      platformProvider = 'kugou';
+    } else if (['youtube', 'ytmusic', 'youtubemusic', 'yt'].includes(rawPlatform)) {
+      platformProvider = 'youtube';
+    }
+
+    const isOverseasCatalog = ['applemusic', 'apple_music', 'apple', 'itunes', 'spotify'].includes(rawPlatform);
+
+    let priorityOrder;
+    if (isOverseasCatalog) {
+      // Apple Music and Spotify default to YouTube Music, then fallback to domestic (qq, netease, kugou)
+      priorityOrder = ['youtube', 'qq', 'netease', 'kugou'];
+    } else if (platformProvider) {
+      // Prioritize the native platform of the playlist/track, then others
+      const rest = ['qq', 'netease', 'kugou', 'youtube'].filter(id => id !== platformProvider);
+      priorityOrder = [platformProvider, ...rest];
+    } else {
+      // Default order
+      priorityOrder = ['qq', 'netease', 'kugou', 'youtube'];
+    }
+
     const original = normalizeMusicTrack({
-      ...item, provider: item.sourcePlatform || item.provider, sourceId: item.sourceTrackId || item.sourceId
+      ...item, provider: platformProvider || rawPlatform, sourceId: item.sourceTrackId || item.sourceId
     });
-    const possible = [...new Set([preferredTrack?.provider, original?.provider, 'qq', 'kugou', 'netease', ...this.defaultOrder])];
+
+    const possible = [...new Set([preferredTrack?.provider, ...priorityOrder, ...this.defaultOrder])];
     const available = possible.filter(id => this.providers.has(id));
-    if (original || preferredTrack) return available;
+    if (original || preferredTrack || isOverseasCatalog || platformProvider) return available;
     // Reuse a previously verified cross-catalog match before repeating a search.
     const known = available.filter(id => this.readMatch(this.matchStorageKey(item, id))?.expiresAt > Date.now());
     return [...known, ...available.filter(id => !known.includes(id))];
