@@ -1298,3 +1298,48 @@ test('MusicBrainz localized credits require one exact artist and are reused acro
   const ambiguous = new ArtistDirectory(null, async () => Response.json({ artists: [artist, artist] }));
   assert.deepEqual(await ambiguous.names(original.artist), []);
 });
+
+test('backup search promotes secure artwork and treats provider throttling as temporary', async t => {
+  const provider = new KugouMusicProvider();
+  const hash = 'A'.repeat(32);
+  let lookups = 0;
+  t.mock.method(globalThis, 'fetch', async url => {
+    if (url.hostname === 'songsearch.kugou.com') return Response.json({ status: 1, data: { total: 8, lists: [
+      { FileHash: hash, SongName: 'Song', AlbumImage: 'http://imge.kugou.com/stdmusic/{size}/cover.jpg' }
+    ] } });
+    lookups++;
+    return Response.json({ status: 0, error: '您操作太频繁了，请稍后再试' });
+  });
+  const result = await provider.search('Song', 4, 1);
+  assert.equal(result.tracks[0].cover, 'https://imge.kugou.com/stdmusic/400/cover.jpg');
+  assert.equal(result.hasMore, true);
+  await assert.rejects(provider.resolveStream(hash), /繁忙/);
+  await assert.rejects(provider.resolveStream(hash), /繁忙/);
+  assert.equal(lookups, 1);
+});
+
+test('backup search returns an enqueueable recording, omits missing audio and keeps catalog pagination', async t => {
+  const artist = 'Artist';
+  const first = { title: 'Song', artist, album: 'Album', durationSec: 200 };
+  const source = { ...first, provider: 'kugou', sourceId: 'A'.repeat(32), cover: 'https://imge.kugou.com/cover.jpg' };
+  const missing = { ...source, sourceId: 'B'.repeat(32), title: 'Other' };
+  const match = recording('found', first);
+  let resolutions = 0;
+  const registry = new MusicRegistry([
+    { id: 'qq', search: async () => ({ tracks: [match] }), resolveStream: async () => {
+      resolutions++;
+      return { url: 'https://isure.stream.qqmusic.qq.com/audio.mp3', mimeType: 'audio/mpeg' };
+    } },
+    { id: 'kugou', search: async () => ({ tracks: [source, missing], hasMore: true }), resolveStream: async () => null }
+  ]);
+  const page = await registry.searchPlayablePage('Song', 4, 1, origin, 'fixture');
+  assert.deepEqual(page.tracks.map(track => track.id), [match.id]);
+  assert.equal(page.hasMore, true);
+  assert.equal(page.tracks[0].cover, source.cover);
+  assert.equal(page.tracks[0].streamUrl, undefined);
+  const mgr = await manager(t, registry);
+  const result = await mgr.enqueueWithAlternatives(page.tracks[0], actor, { owner: {}, active: () => true, searchFallback: true });
+  assert.equal(result.playImmediately, true);
+  assert.equal(mgr.current.track.id, match.id);
+  assert.equal(resolutions, 1);
+});

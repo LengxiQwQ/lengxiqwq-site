@@ -4395,13 +4395,13 @@ $effect(() => {
               {submittedSearchQuery || isSearching
                 ? isSearching
                   ? "正在搜索..."
-                  : `搜索结果 (${displayedBrowseTracks.length})`
+                  : `国内曲库（${searchProvider === "qq" ? "默认" : "备用"}） · 搜索结果 (${displayedBrowseTracks.length})`
                 : `房间曲库 (${displayedBrowseTracks.length})`}
             </span>
             {#if submittedSearchQuery}
               <button type="button" class="ml-auto mr-3 btn-regular rounded-md px-2 py-1 text-xs"
                 onclick={() => void runSearch(submittedSearchQuery, false, searchProvider === "qq" ? "kugou" : "qq")}>
-                {searchProvider === "qq" ? "换个曲库搜" : "返回默认曲库"}
+                {searchProvider === "qq" ? "换到国内备用曲库" : "返回国内默认曲库"}
               </button>
               <button
                 type="button"
@@ -4442,10 +4442,10 @@ $effect(() => {
             <div class="text-center py-6 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-2">
               <p class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)] m-0">
                 {submittedSearchQuery
-                  ? `未找到与「${submittedSearchQuery}」相关的歌曲`
+                  ? searchProvider === "kugou" ? `当前这页暂未找到「${submittedSearchQuery}」的可播版本` : `未找到与「${submittedSearchQuery}」相关的歌曲`
                   : "暂无可用曲目"}
               </p>
-              <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">请检查关键词拼写，或换个歌名 / 歌手试试</p>
+              <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">{searchProvider === "kugou" ? (hasMoreSearchResults ? "可以加载更多结果，或换到默认曲库。" : "可以换到默认曲库继续搜索。") : "请检查关键词拼写，或换个歌名 / 歌手试试"}</p>
               {#if submittedSearchQuery}
                 <button
                   type="button"

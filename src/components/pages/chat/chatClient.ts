@@ -1166,7 +1166,7 @@ export async function searchOnlineMusic(
 		normalizeServerUrl(chatServerUrl) || "https://chat-server.lengxiqwq.com";
 	const q = keyword.trim();
 	if (!q) return { tracks: [], hasMore: false, page: 1 };
-	const limit = Math.min(30, Math.max(1, options?.limit ?? (options?.provider === "kugou" ? 20 : 30)));
+	const limit = Math.min(30, Math.max(1, options?.limit ?? (options?.provider === "kugou" ? 4 : 30)));
 	const page = Math.max(1, options?.page ?? 1);
 
 	const controller = new AbortController();

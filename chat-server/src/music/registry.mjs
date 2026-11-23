@@ -370,6 +370,22 @@ export class MusicRegistry {
     return { tracks: [], hasMore: false };
   }
 
+  // A catalog hit is metadata. Expose only the same recording with verified
+  // audio, and give enqueue its playable catalog ID so it reuses the lookup.
+  async searchPlayablePage(keyword, limit, page, origin, secret) {
+    const found = await this.search(keyword, limit, 'kugou', page);
+    const results = await Promise.all(found.tracks.slice(0, limit).map(async original => {
+      const result = await this.resolveRotationTrack(original,
+        track => this.resolvePlayable(track, origin, secret),
+        { exactOnly: true, alternatives: true, budgetMs: 4200 });
+      if (!result.playable) return null;
+      return normalizeMusicTrack({ ...result.playable, cover: original.cover || result.playable.cover });
+    }));
+    const unique = new Map();
+    for (const track of results) if (track && !unique.has(track.id)) unique.set(track.id, track);
+    return { tracks: [...unique.values()], hasMore: found.hasMore };
+  }
+
   async resolvePlaylistTrack(item) {
     if (!item || typeof item !== 'object') return null;
     const native = normalizeMusicTrack({

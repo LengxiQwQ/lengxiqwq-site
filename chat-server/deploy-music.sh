@@ -35,8 +35,9 @@ qq_room_base=30ebe9040dd35bb0bec42852ed14a5931fc604207cd56c7a203382cefba49b00
 qq_room_gateway=35a5422eb4cbf1f2360639ef81f1219698075d2a55bd3b60fa60a4eb1b272a86
 multi_catalog_gateway=6100d1faf1fee7d13d72391e841baea1fb37231c440514ef34ccb5be7f293a14
 ordered_gateway=5eb2913d05536a23295993dce9759489c878d23b8dfa0ff04e72bffe9e777c87
+search_gateway=81e6c8faec57c2bd668616f2f31d9a5e822756eef67e9b2082b9c37fcc45361a
 qq_room=false
-if [[ "$actual_gateway" == "$qq_room_base" || "$actual_gateway" == "$qq_room_gateway" || "$actual_gateway" == "$multi_catalog_gateway" || "$actual_gateway" == "$ordered_gateway" ]]; then
+if [[ "$actual_gateway" == "$qq_room_base" || "$actual_gateway" == "$qq_room_gateway" || "$actual_gateway" == "$multi_catalog_gateway" || "$actual_gateway" == "$ordered_gateway" || "$actual_gateway" == "$search_gateway" ]]; then
   qq_room=true
 fi
 current_release=false
@@ -88,15 +89,19 @@ fi
     if [[ "$actual_gateway" == "$qq_room_base" ]]; then
       git apply "$release_dir/qq-room-fallback.patch"
     fi
-    if [[ "$actual_gateway" != "$multi_catalog_gateway" && "$actual_gateway" != "$ordered_gateway" ]]; then
+    if [[ "$actual_gateway" != "$multi_catalog_gateway" && "$actual_gateway" != "$ordered_gateway" && "$actual_gateway" != "$search_gateway" ]]; then
       [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$qq_room_gateway" ]]
       git apply "$release_dir/multi-catalog-search.patch"
     fi
-    if [[ "$actual_gateway" != "$ordered_gateway" ]]; then
+    if [[ "$actual_gateway" != "$ordered_gateway" && "$actual_gateway" != "$search_gateway" ]]; then
       [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$multi_catalog_gateway" ]]
       git apply "$release_dir/ordered-requests.patch"
     fi
-    [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$ordered_gateway" ]]
+    if [[ "$actual_gateway" != "$search_gateway" ]]; then
+      [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$ordered_gateway" ]]
+      git apply "$release_dir/playable-search.patch"
+    fi
+    [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$search_gateway" ]]
   elif [[ "$current_release" == true ]]; then
     if [[ "$actual_gateway" == "$reliability_base" ]]; then
       git apply --check "$release_dir/music-reliability.patch"
@@ -181,6 +186,12 @@ if [[ "$current_release" == true ]]; then
       case "$name" in
         src/music/registry.mjs) baseline=ff7f3c78577d00a51ba1b65b525665bf382277f033653f70aa4eab8f437a4cf6 ;;
         src/music/music-manager.mjs) baseline=467a0f2854868eb34e50c363eee17fb61c7bb4c722c064a0f319a62c632bbcd9 ;;
+      esac
+    fi
+    if [[ "$actual_gateway" == "$ordered_gateway" ]]; then
+      case "$name" in
+        src/music/registry.mjs) baseline=6e27ec7c279edffabde2defae044887126abddeb8b3b70d859eb09b95decdec3 ;;
+        src/music/catalog-providers.mjs) baseline=ec91036960f27ff0a6c2f79063e96ea4aeded2b1455b34b19cb7e508eb0617fd ;;
       esac
     fi
     if [[ "$installed" != "$baseline" && "$installed" != "$desired" ]]; then

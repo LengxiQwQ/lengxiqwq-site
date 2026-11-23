@@ -71,6 +71,19 @@ export class NeteaseMusicProvider {
   }
 }
 
+function kugouCover(song) {
+  for (const raw of [song.Image, song.AlbumImage]) {
+    if (typeof raw !== 'string' || !raw) continue;
+    try {
+      const url = new URL(raw.replace('{size}', '400'), 'https://www.kugou.com');
+      if (!/^https?:$/u.test(url.protocol) || !url.hostname.endsWith('.kugou.com') || !raw.includes('//')) continue;
+      url.protocol = 'https:';
+      return url.href;
+    } catch { continue; }
+  }
+  return '';
+}
+
 export class KugouMusicProvider {
   id = 'kugou';
   name = '酷狗音乐';
@@ -84,15 +97,20 @@ export class KugouMusicProvider {
     const tracks = songs.map(song => catalogTrack({
       provider: this.id, sourceId: song.FileHash, title: song.SongName?.replace(/<[^>]+>/g, ''),
       artist: song.SingerName?.replace(/<[^>]+>/g, ''), album: song.AlbumName, durationSec: song.Duration,
-      cover: song.Image?.replace?.('{size}', '400')
+      cover: kugouCover(song)
     })).filter(Boolean);
     return { tracks, hasMore: Number(data.data?.total) > page * limit };
   }
 
   async resolveStream(sourceId) {
     if (!isMusicSourceId(this.id, sourceId)) return null;
+    if (Date.now() < this.retryAfter) throw new Error('曲库暂时繁忙');
     const data = await getJson('https://m.kugou.com/app/i/getSongInfo.php',
       { cmd: 'playInfo', hash: sourceId }, 'https://www.kugou.com/');
+    if (Number(data.status) !== 1 && /频繁|稍后再试|too many requests/i.test(data.error || '')) {
+      this.retryAfter = Date.now() + 15_000;
+      throw new Error('曲库暂时繁忙');
+    }
     if (Number(data.status) !== 1 || !data.url || data.hash?.toUpperCase() !== sourceId.toUpperCase()) return null;
     const source = await checkStream(data.url, this.id);
     return source && { ...source, durationSec: Number(data.timeLength) || 0 };

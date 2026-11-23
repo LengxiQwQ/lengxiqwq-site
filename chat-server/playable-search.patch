@@ -1,0 +1,25 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -3816,16 +3816,19 @@
+     const page = Math.min(100, Math.max(1, Number.parseInt(url.searchParams.get('page') || '1', 10) || 1));
+     try {
+       const provider = url.searchParams.get('provider') || undefined;
+-      const { tracks, hasMore } = await musicRegistry.search(q, limit, provider, page);
++      const pageSize = provider === 'kugou' ? Math.min(4, limit) : limit;
++      const { tracks, hasMore } = provider === 'kugou'
++        ? await musicRegistry.searchPlayablePage(q, pageSize, page, SERVER_ORIGIN, STREAM_SIGN_SECRET)
++        : await musicRegistry.search(q, pageSize, provider, page);
+       res.writeHead(200, {
+         'Content-Type': 'application/json; charset=utf-8',
+-        'Cache-Control': 'public, max-age=60'
++        'Cache-Control': tracks.length ? 'public, max-age=30' : 'no-store'
+       });
+       res.end(JSON.stringify({
+         ok: true,
+         providers: musicRegistry.listProviders(),
+         page,
+-        limit,
++        limit: pageSize,
+         hasMore: page < 100 && hasMore,
+         tracks
+       }));
