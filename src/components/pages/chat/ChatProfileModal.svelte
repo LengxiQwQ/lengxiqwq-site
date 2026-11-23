@@ -227,9 +227,9 @@ function handleSubmit(e: SubmitEvent) {
             <div class="chat-settings-section-title">
               <span>基本资料</span>
             </div>
-            <div class="rounded-xl bg-(--btn-regular-bg) px-3.5 py-3 space-y-2.5">
+            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
               <div>
-                <label for="profile-modal-nick" class="block text-sm sm:text-xs font-medium text-(--btn-content) opacity-85 mb-1">
+                <label for="profile-modal-nick" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                   展示昵称
                 </label>
                 <input
@@ -243,7 +243,7 @@ function handleSubmit(e: SubmitEvent) {
               </div>
 
               <div>
-                <label for="profile-modal-bio" class="block text-sm sm:text-xs font-medium text-(--btn-content) opacity-85 mb-1">
+                <label for="profile-modal-bio" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                   个性签名（可选，最多 80 字）
                 </label>
                 <input
@@ -263,9 +263,9 @@ function handleSubmit(e: SubmitEvent) {
             <div class="chat-settings-section-title">
               <span>主页与头像</span>
             </div>
-            <div class="rounded-xl bg-(--btn-regular-bg) px-3.5 py-3 space-y-2.5">
+            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
               <div>
-                <label for="profile-modal-url" class="block text-sm sm:text-xs font-medium text-(--btn-content) opacity-85 mb-1">
+                <label for="profile-modal-url" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                   个人主页（可选）
                 </label>
                 <input
@@ -280,12 +280,12 @@ function handleSubmit(e: SubmitEvent) {
 
               <div>
                 <div class="flex items-center justify-between mb-1">
-                  <label for="profile-modal-avatar" class="block text-sm sm:text-xs font-medium text-(--btn-content) opacity-85">
+                  <label for="profile-modal-avatar" class="block text-xs font-medium text-(--btn-content) opacity-85">
                     自定义头像链接（可选）
                   </label>
                   <button
                     type="button"
-                    class="text-xs font-medium text-(--primary) bg-transparent border-none cursor-pointer p-0 hover:underline"
+                    class="text-[11px] font-medium text-(--primary) bg-transparent border-none cursor-pointer p-0 hover:underline"
                     onclick={() => {
                       draftAvatar = "";
                       avatarEdited = true;
@@ -317,7 +317,7 @@ function handleSubmit(e: SubmitEvent) {
               {#if draftStatus}
                 <button
                   type="button"
-                  class="ml-auto min-h-6 text-xs font-normal text-(--primary) hover:underline cursor-pointer"
+                  class="ml-auto min-h-6 text-[11px] font-normal text-(--primary) hover:underline cursor-pointer"
                   onclick={() => (draftStatus = "")}
                 >
                   清除状态
@@ -329,7 +329,7 @@ function handleSubmit(e: SubmitEvent) {
                 {#each CHAT_STATUS_PRESETS as preset (preset)}
                   <button
                     type="button"
-                    class="min-h-0 w-full inline-flex items-center justify-center px-1 text-sm sm:text-xs rounded-lg font-medium active:scale-95 transition-all cursor-pointer border truncate
+                    class="min-h-0 w-full inline-flex items-center justify-center px-1 text-xs rounded-lg font-medium active:scale-95 transition-all cursor-pointer border truncate
                       {draftStatus === preset
                         ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow-xs font-semibold'
                         : 'bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) text-(--btn-content) opacity-80 hover:opacity-100 border-black/5 dark:border-white/10'}"
@@ -347,11 +347,11 @@ function handleSubmit(e: SubmitEvent) {
             <div class="chat-settings-section-title m-0! min-h-6">
               <span>个人设置</span>
             </div>
-            <div class="flex-1 space-y-2.5 rounded-xl bg-(--btn-regular-bg) px-3.5 py-3">
+            <div class="flex-1 space-y-2.5 rounded-xl bg-(--btn-regular-bg) px-3 py-2.5">
               <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm sm:text-xs font-medium text-(--btn-content)">离线 @ 与回复邮件提醒</div>
-                  <div class="text-xs text-(--content-meta) mt-0.5 leading-relaxed">
+                  <div class="text-xs font-medium text-(--btn-content)">离线 @ 与回复邮件提醒</div>
+                  <div class="text-[11px] text-(--content-meta) mt-0.5 leading-relaxed">
                     {#if isIsolatedGuest}
                       独立临时身份未经邮箱所有权验证，已禁用离线邮件提醒，防止误发邮件
                     {:else if isEmailUndeliverable}
@@ -381,9 +381,9 @@ function handleSubmit(e: SubmitEvent) {
                 </button>
               </div>
 
-              <div class="space-y-1.5">
+              <div class="space-y-1">
                 <div class="flex min-h-7 items-center justify-between gap-2">
-                  <div class="text-sm sm:text-xs font-medium text-(--btn-content) flex items-center gap-1.5 whitespace-nowrap">
+                  <div class="text-xs font-medium text-(--btn-content) flex items-center gap-1.5 whitespace-nowrap">
                     <span>浏览器推送</span>
                     <span class="inline-flex size-3 items-center justify-center" role="status">
                       {#if notificationSaving}
@@ -392,7 +392,7 @@ function handleSubmit(e: SubmitEvent) {
                       {/if}
                     </span>
                     {#if desktopNotificationPermission === "denied"}
-                      <span class="text-xs font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20">
+                      <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20">
                         权限受阻
                       </span>
                     {/if}
@@ -401,11 +401,11 @@ function handleSubmit(e: SubmitEvent) {
                     desktopNotificationMode !== "off" && !notificationSaving && !notificationTesting && notificationTestSeconds === 0}
                     <button
                       type="button"
-                      class="min-h-7 shrink-0 whitespace-nowrap text-xs text-(--primary) hover:underline cursor-pointer"
+                      class="min-h-7 shrink-0 whitespace-nowrap text-[11px] text-(--primary) hover:underline cursor-pointer"
                       onclick={() => onTestNotification?.()}
                     >发送测试推送</button>
                   {:else}
-                    <span class="inline-flex min-h-7 shrink-0 items-center whitespace-nowrap text-xs text-(--content-meta)">
+                    <span class="inline-flex min-h-7 shrink-0 items-center whitespace-nowrap text-[11px] text-(--content-meta)">
                       发送测试推送{#if notificationTestSeconds > 0}
                         <span class="ml-0.5 tabular-nums">（{notificationTestSeconds} 秒）</span>
                       {/if}
@@ -413,7 +413,7 @@ function handleSubmit(e: SubmitEvent) {
                   {/if}
                 </div>
                 {#if desktopNotificationPermission === "denied"}
-                  <div class="text-xs text-red-500 dark:text-red-400 leading-tight">
+                  <div class="text-[11px] text-red-500 dark:text-red-400 leading-tight">
                     通知已被拦截，请点击地址栏网站权限图标设为允许
                   </div>
                 {/if}
@@ -421,45 +421,45 @@ function handleSubmit(e: SubmitEvent) {
                 <div class="grid grid-cols-3 gap-0.5 rounded-lg border border-black/5 bg-black/5 p-0.5 dark:border-white/10 dark:bg-white/5">
                   <button
                     type="button"
-                    class="flex min-h-8 sm:min-h-7 items-center justify-center gap-1 rounded-md px-1 text-sm sm:text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
+                    class="flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
                       {desktopNotificationMode === 'off'
                         ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
                         : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
                     aria-pressed={desktopNotificationMode === "off"}
                     onclick={() => handleSelectNotificationMode("off")}
                   >
-                    <Icon icon="mingcute:notification-off-line" class="size-3.5 shrink-0" />
+                    <Icon icon="mingcute:notification-off-line" class="size-3 shrink-0" />
                     <span>关闭</span>
                   </button>
                   <button
                     type="button"
-                    class="flex min-h-8 sm:min-h-7 items-center justify-center gap-1 rounded-md px-1 text-sm sm:text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
+                    class="flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
                       {desktopNotificationMode === 'mention'
                         ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
                         : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
                     aria-pressed={desktopNotificationMode === "mention"}
                     onclick={() => handleSelectNotificationMode("mention")}
                   >
-                    <Icon icon="mingcute:notification-newdot-line" class="size-3.5 shrink-0" />
+                    <Icon icon="mingcute:notification-newdot-line" class="size-3 shrink-0" />
                     <span>仅提及</span>
                   </button>
                   <button
                     type="button"
-                    class="flex min-h-8 sm:min-h-7 items-center justify-center gap-1 rounded-md px-1 text-sm sm:text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
+                    class="flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
                       {desktopNotificationMode === 'all'
                         ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
                         : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
                     aria-pressed={desktopNotificationMode === "all"}
                     onclick={() => handleSelectNotificationMode("all")}
                   >
-                    <Icon icon="mingcute:bell-ringing-line" class="size-3.5 shrink-0" />
+                    <Icon icon="mingcute:bell-ringing-line" class="size-3 shrink-0" />
                     <span>全部消息</span>
                   </button>
                 </div>
                 {#if !isNotificationSupported}
-                  <p class="text-xs text-(--content-meta)">{notificationUnavailable}</p>
+                  <p class="text-[11px] text-(--content-meta)">{notificationUnavailable}</p>
                 {:else if notificationNeedsMigration}
-                  <p class="text-xs text-(--content-meta)">重新选择提醒档位，即可启用离开网页后仍能收到的浏览器推送。</p>
+                  <p class="text-[11px] text-(--content-meta)">重新选择提醒档位，即可启用离开网页后仍能收到的浏览器推送。</p>
                 {/if}
               </div>
             </div>
@@ -472,13 +472,13 @@ function handleSubmit(e: SubmitEvent) {
           {#if onLogout}
             <button
               type="button"
-              class="btn-regular h-10 sm:h-9 px-3.5 rounded-xl text-sm sm:text-xs font-medium inline-flex items-center gap-1.5 text-red-500 hover:text-red-600 hover:bg-red-500/10 active:scale-95 transition-all cursor-pointer border-none shrink-0"
+              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 text-red-500 hover:text-red-600 hover:bg-red-500/10 active:scale-95 transition-all cursor-pointer border-none shrink-0"
               onclick={() => {
                 onLogout();
                 onClose();
               }}
             >
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                 <polyline points="16 17 21 12 16 7" />
                 <line x1="21" y1="12" x2="9" y2="12" />
@@ -492,10 +492,10 @@ function handleSubmit(e: SubmitEvent) {
               href={walineProfileUrl}
               target="_blank"
               rel="noopener noreferrer"
-              class="btn-regular h-10 sm:h-9 px-3.5 rounded-xl text-sm sm:text-xs font-medium inline-flex items-center gap-1.5 no-underline shrink-0"
+              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 no-underline shrink-0"
             >
               <span>{currentUser.authType === "waline" ? "Waline 个人中心" : "前往 Waline 平台"}</span>
-              <span class="text-xs opacity-80">↗</span>
+              <span class="text-[11px] opacity-80">↗</span>
             </a>
           {/if}
         </div>
@@ -503,14 +503,14 @@ function handleSubmit(e: SubmitEvent) {
         <div class="flex items-center gap-2 ml-auto flex-1 sm:flex-initial justify-end">
           <button
             type="button"
-            class="btn-regular flex-1 sm:flex-none md:min-w-24 h-10 sm:h-9 px-4 rounded-xl text-sm sm:text-xs font-medium active:scale-95 transition-all cursor-pointer border-none"
+            class="btn-regular flex-1 sm:flex-none md:min-w-24 h-9 px-4 rounded-xl text-xs font-medium active:scale-95 transition-all cursor-pointer border-none"
             onclick={onClose}
           >
             取消
           </button>
           <button
             type="submit"
-            class="chat-send-btn flex-1 sm:flex-none md:min-w-28 h-10! sm:h-9! px-5! rounded-xl! text-sm! sm:text-xs! font-semibold"
+            class="chat-send-btn flex-1 sm:flex-none md:min-w-28 h-9! px-5! rounded-xl! text-xs!"
           >
             保存资料
           </button>

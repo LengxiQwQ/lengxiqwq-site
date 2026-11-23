@@ -1688,26 +1688,26 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         <!-- 2x2 互动与活跃统计 -->
         <div class="grid grid-cols-2 gap-2">
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
-            <span class="text-xs text-[var(--chat-meta-color)]">聊天发言</span>
-            <span class="text-sm sm:text-xs font-bold text-[var(--deep-text)] tabular-nums">
+            <span class="text-[11px] text-[var(--chat-meta-color)]">聊天发言</span>
+            <span class="text-xs font-bold text-[var(--deep-text)] tabular-nums">
               {profile.stats.messageCount}
             </span>
           </div>
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
-            <span class="text-xs text-[var(--chat-meta-color)]">累计点歌</span>
-            <span class="text-sm sm:text-xs font-bold text-[var(--deep-text)] tabular-nums">
+            <span class="text-[11px] text-[var(--chat-meta-color)]">累计点歌</span>
+            <span class="text-xs font-bold text-[var(--deep-text)] tabular-nums">
               {remoteProfile ? (remoteHasMore ? "统计中" : remoteTracks.length) : profile.stats.songRequestCount}
             </span>
           </div>
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
-            <span class="text-xs text-[var(--chat-meta-color)]">初次来访</span>
-            <span class="text-xs font-bold text-[var(--deep-text)] tabular-nums truncate">
+            <span class="text-[11px] text-[var(--chat-meta-color)]">初次来访</span>
+            <span class="text-[11px] font-bold text-[var(--deep-text)] tabular-nums truncate">
               {formatJoinTime(profile.firstSeenAt)}
             </span>
           </div>
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
-            <span class="text-xs text-[var(--chat-meta-color)]">最近活跃</span>
-            <span class="text-xs font-bold tabular-nums truncate {profileIsOnline ? (profileIsFallback ? 'text-[var(--chat-meta-color)]' : profileIsFocused ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400') : 'text-[var(--deep-text)]'}">
+            <span class="text-[11px] text-[var(--chat-meta-color)]">最近活跃</span>
+            <span class="text-[11px] font-bold tabular-nums truncate {profileIsOnline ? (profileIsFallback ? 'text-[var(--chat-meta-color)]' : profileIsFocused ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400') : 'text-[var(--deep-text)]'}">
               {profileIsOnline ? (profileIsFallback || profileIsFocused ? formatActiveStat(true, profile.lastSeenAt) : "离开") : formatActiveStat(false, profile.lastSeenAt)}
             </span>
           </div>
@@ -1716,14 +1716,14 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         <!-- 常点歌手偏好 -->
         {#if topArtists.length > 0}
           <div class="space-y-1.5">
-            <div class="text-xs font-semibold text-[var(--chat-meta-color)] px-0.5">
+            <div class="text-[11px] font-semibold text-[var(--chat-meta-color)] px-0.5">
               常点歌手
             </div>
             <div class="flex flex-wrap gap-1.5">
               {#each topArtists as item (item.artist)}
-                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-(--btn-regular-bg) text-xs font-medium text-[var(--deep-text)]">
+                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-(--btn-regular-bg) text-[11px] font-medium text-[var(--deep-text)]">
                   <span class="truncate max-w-[9rem]">{item.artist}</span>
-                  <span class="text-xs text-[var(--chat-accent-text)] font-semibold tabular-nums">
+                  <span class="text-[10px] text-[var(--chat-accent-text)] font-semibold tabular-nums">
                     {item.count} 次
                   </span>
                 </span>
@@ -1735,7 +1735,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         <!-- TA 导入的歌单（Waline 已认证用户） -->
         {#if profile.playlists.length > 0}
           <div class="space-y-1.5">
-            <div class="text-xs font-semibold text-[var(--chat-meta-color)] px-0.5">
+            <div class="text-[11px] font-semibold text-[var(--chat-meta-color)] px-0.5">
               导入的歌单
             </div>
             <div class="rounded-xl bg-(--btn-regular-bg) p-1.5 space-y-1">
@@ -1801,10 +1801,10 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
       <div class="w-full md:min-w-0 md:min-h-0 flex flex-col">
         <div class="shrink-0 flex items-center justify-between gap-2 px-3.5 sm:px-4 py-2.5 border-b border-(--chat-divider-color) md:overflow-y-auto custom-scrollbar chat-scrollbar-stable">
           <div class="flex items-center gap-2 min-w-0">
-            <span class="text-sm sm:text-xs font-bold text-[var(--deep-text)]">
+            <span class="text-xs font-bold text-[var(--deep-text)]">
               点过的歌
             </span>
-            <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-(--primary)/12 text-[var(--chat-accent-text)] tabular-nums">
+            <span class="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-(--primary)/12 text-[var(--chat-accent-text)] tabular-nums">
               {tracksLoadFailed ? "统计未完成" : remoteHasMore ? "正在统计" : `共 ${totalSongCount} 首`}
             </span>
           </div>
@@ -1814,7 +1814,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               type="button"
               role="tab"
               aria-selected={trackTab === "recent"}
-              class="px-2.5 py-1 rounded-md text-xs font-medium border-none cursor-pointer transition-colors {trackTab === 'recent' ? 'bg-(--primary) text-white' : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
+              class="px-2 py-0.5 rounded-md text-[11px] font-medium border-none cursor-pointer transition-colors {trackTab === 'recent' ? 'bg-(--primary) text-white' : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
               onclick={() => handleSwitchTrackTab("recent")}
             >
               按时间
@@ -1823,7 +1823,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               type="button"
               role="tab"
               aria-selected={trackTab === "top"}
-              class="px-2.5 py-1 rounded-md text-xs font-medium border-none cursor-pointer transition-colors {trackTab === 'top' ? 'bg-(--primary) text-white' : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
+              class="px-2 py-0.5 rounded-md text-[11px] font-medium border-none cursor-pointer transition-colors {trackTab === 'top' ? 'bg-(--primary) text-white' : 'bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
               onclick={() => handleSwitchTrackTab("top")}
             >
               按次数
@@ -1841,17 +1841,17 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 <div class="w-9 h-9 rounded-full bg-(--primary)/12 flex items-center justify-center text-sm text-(--primary) mb-2">
                   ♪
                 </div>
-                <div class="text-sm sm:text-xs font-medium text-[var(--deep-text)]/80">
+                <div class="text-xs font-medium text-[var(--deep-text)]/80">
                   暂无点歌记录
                 </div>
-                <div class="text-xs text-[var(--chat-meta-color)] mt-0.5">
+                <div class="text-[11px] text-[var(--chat-meta-color)] mt-0.5">
                   TA 还没有在本房间点过歌~
                 </div>
               </div>
             {:else}
               {#each displayedTracks as item, idx (item.logId ? `log-${item.logId}` : `local-${idx}-${item.track.id}-${item.requestedAt}`)}
                 <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/70 hover:bg-(--btn-regular-bg) transition-colors">
-                  <span class="w-5 text-center text-xs font-semibold text-[var(--chat-meta-color)] tabular-nums shrink-0">
+                  <span class="w-5 text-center text-[10px] font-semibold text-[var(--chat-meta-color)] tabular-nums shrink-0">
                     {idx + 1}
                   </span>
                   <div class="w-9 h-9 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
@@ -1862,10 +1862,10 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                     {/if}
                   </div>
                   <div class="min-w-0 flex-1">
-                    <div class="text-sm sm:text-xs font-semibold text-[var(--deep-text)] truncate">
+                    <div class="text-xs font-semibold text-[var(--deep-text)] truncate">
                       {item.track.title}
                     </div>
-                    <div class="text-xs text-[var(--chat-meta-color)] truncate mt-0.5">
+                    <div class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5">
                       {item.track.artist}
                       {#if item.requestedAt}
                         · {formatTrackTime(item.requestedAt)}

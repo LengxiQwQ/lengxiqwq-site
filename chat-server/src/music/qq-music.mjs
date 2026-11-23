@@ -231,6 +231,13 @@ export class QQMusicProvider {
       } catch {
         return null;
       }
+      if (json?.code === 110001 || json?.code === 110002) {
+        const errMsg = `上游账号风控 (${json.message || 'code ' + json.code})`;
+        console.warn('[MusicSource]', source.name, mid, errMsg);
+        const err = new Error(errMsg);
+        err.isRiskControl = true;
+        throw err;
+      }
       const data = source.read(json);
       if (data == null || typeof data !== 'object') return null;
       if (typeof data.url !== 'string' || !data.url.trim()) return null;
@@ -260,23 +267,25 @@ export class QQMusicProvider {
     // Prefer the 128 kbps QQ Music stream from vkeys.
     const vkeys128Source = {
       name: 'vkeys-128',
-      timeoutMs: 2400,
+      timeoutMs: 3000,
       endpoint: 'https://api.vkeys.cn/music/tencent/song/link?quality=6&mid=' + id,
       read: data => data?.data
     };
 
-    // Keep the existing secondary supplier for the same QQ Music track.
+    // Keep the secondary supplier for the same QQ Music track.
     const cyapiSource = this.cyapiKey ? {
       name: 'cyapi',
-      timeoutMs: 3200,
+      timeoutMs: 4500,
       endpoint: 'https://cyapi.top/API/qq_music.php?type=json&quality=128&mid=' + id +
         '&apikey=' + encodeURIComponent(this.cyapiKey),
       read: data => data
     } : null;
 
     let temporaryFailure = false;
-    const attempt = source => this.trySource(cleanMid, source).catch(() => {
+    let lastFailureReason = '';
+    const attempt = source => this.trySource(cleanMid, source).catch(err => {
       temporaryFailure = true;
+      lastFailureReason = err?.message || '上游音源服务响应异常';
       return null;
     });
     const primaryPromise = attempt(vkeys128Source);
@@ -284,7 +293,7 @@ export class QQMusicProvider {
     const earlyResult = await Promise.race([
       primaryPromise,
       new Promise(resolve => {
-        hedgeTimer = setTimeout(() => resolve('HEDGE_TIMEOUT'), 650);
+        hedgeTimer = setTimeout(() => resolve('HEDGE_TIMEOUT'), 300);
       })
     ]);
     clearTimeout(hedgeTimer);
@@ -293,7 +302,7 @@ export class QQMusicProvider {
       return earlyResult;
     }
 
-    // If the preferred supplier is slow or unavailable, race the remaining sources.
+    // If the preferred supplier is slow, wind-controlled, or unavailable, race the remaining sources.
     const candidates = [];
     if (earlyResult === 'HEDGE_TIMEOUT') {
       candidates.push(primaryPromise);
@@ -313,7 +322,7 @@ export class QQMusicProvider {
       );
       if (winner) return winner;
     } catch {
-      if (temporaryFailure) throw new Error('Music source temporarily unavailable');
+      if (temporaryFailure) throw new Error('Music source temporarily unavailable: ' + (lastFailureReason || '上游接口响应异常'));
     }
 
     return null;

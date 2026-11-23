@@ -1,0 +1,18 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -987,3 +987,2 @@
+ const musicProviders = [musicProvider];
+-if (process.env.CHAT_MUSIC_ENABLE_NETEASE !== '0') musicProviders.push(new NeteaseMusicProvider());
+ if (process.env.CHAT_MUSIC_ENABLE_KUGOU === '1') musicProviders.push(new KugouMusicProvider());
+@@ -4842,3 +4841,3 @@
+             result = await manager.enqueueWithAlternatives(original, actor, {
+-              owner: ws, active, offerId: packet.offerId, choiceId: packet.choiceId
++              owner: ws, active, searchFallback: true, offerId: packet.offerId, choiceId: packet.choiceId
+             });
+@@ -4932,5 +4931,6 @@
+           active,
+           getAudience: () => getRoomMusicAudience(room).skipAudienceCount,
+           allowAlternatives: true,
++          searchFallback: true,
+           hasExpectedPlay: true,
+           playUid: packet.playUid,

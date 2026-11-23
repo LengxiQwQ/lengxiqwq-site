@@ -573,7 +573,7 @@ html[data-chat-page][data-chat-density="compact"] #chat-page [data-chat-message-
 }
 
 .chat-connection-status[data-state="connected"] {
-	--chat-connection-color: light-dark(#176246, #89e1b6);
+	--chat-connection-color: var(--skin-accent);
 }
 
 .chat-connection-status[data-state="offline"] {
@@ -3704,14 +3704,7 @@ html[data-chat-page] #chat-modal-layer {
 	inset: 0;
 	z-index: 1200;
 	pointer-events: none;
-	font-size: 14.5px;
 	transition: backdrop-filter 150ms ease-out, background-color 150ms ease-out;
-}
-
-/* 弹窗全端防过小兜底：严禁出现低于 12px 的微雕文字 */
-#chat-modal-layer .text-\[10px\],
-#chat-modal-layer .text-\[11px\] {
-	font-size: 12px !important;
 }
 
 html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-modal-backdrop:not([data-chat-modal-closing])) {
@@ -3878,7 +3871,7 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 	}
 
 	.chat-dialog-header h3 {
-		font-size: 17px !important;
+		font-size: 18px !important;
 		font-weight: 700;
 		line-height: 1.35;
 	}
@@ -3890,8 +3883,8 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 
 	/* 弹窗小节标题提升 */
 	#chat-modal-layer :is(.chat-settings-section-title, .chat-section-title) {
-		font-size: 14px !important;
-		font-weight: 600;
+		font-size: 15px !important;
+		font-weight: 700;
 	}
 
 	/* 弹窗内微小文字防过小兜底：移动端禁止低于 12px 的微雕文字 */

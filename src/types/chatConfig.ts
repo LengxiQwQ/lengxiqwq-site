@@ -56,6 +56,8 @@ export interface InterconnectSite {
 	isSelf?: boolean;
 	/** 可选的旧域名、Matrix 节点域或简称别名（用于统一归属到当前标准站点名） */
 	aliases?: string[];
+	/** 站点主题色（用于互联列表边框、底色高亮与徽章） */
+	color?: string;
 }
 
 export interface ChatConfig {

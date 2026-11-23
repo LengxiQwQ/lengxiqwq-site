@@ -31,8 +31,14 @@ flock -n 9
 actual_gateway=$(sha256sum "$install_dir/server.mjs" | awk '{print $1}')
 reliability_base=633f0946a4058562a69b837e16998d69d36c2b08a697020045222415ec3ec077
 reliability_gateway=8105075b69ec202b779ed5866f2e30a50e8f275161e6294b3d3de19a9e5f0f0c
+qq_room_base=30ebe9040dd35bb0bec42852ed14a5931fc604207cd56c7a203382cefba49b00
+qq_room_gateway=35a5422eb4cbf1f2360639ef81f1219698075d2a55bd3b60fa60a4eb1b272a86
+qq_room=false
+if [[ "$actual_gateway" == "$qq_room_base" || "$actual_gateway" == "$qq_room_gateway" ]]; then
+  qq_room=true
+fi
 current_release=false
-if [[ "$actual_gateway" == "$reliability_base" || "$actual_gateway" == "$reliability_gateway" ]]; then
+if [[ "$qq_room" == true || "$actual_gateway" == "$reliability_base" || "$actual_gateway" == "$reliability_gateway" ]]; then
   current_release=true
 fi
 modern_gateway=$current_release
@@ -76,7 +82,12 @@ else
 fi
 (
   cd "$candidate"
-  if [[ "$current_release" == true ]]; then
+  if [[ "$qq_room" == true ]]; then
+    if [[ "$actual_gateway" == "$qq_room_base" ]]; then
+      git apply "$release_dir/qq-room-fallback.patch"
+    fi
+    [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$qq_room_gateway" ]]
+  elif [[ "$current_release" == true ]]; then
     if [[ "$actual_gateway" == "$reliability_base" ]]; then
       git apply --check "$release_dir/music-reliability.patch"
       git apply "$release_dir/music-reliability.patch"
@@ -149,6 +160,12 @@ if [[ "$current_release" == true ]]; then
   while read -r baseline name; do
     installed=$(sha256sum "$install_dir/$name" | cut -d' ' -f1)
     desired=$(sha256sum "$release_dir/$name" | cut -d' ' -f1)
+    if [[ "$qq_room" == true ]]; then
+      case "$name" in
+        src/music/music-manager.mjs) baseline=97526a13cb9ca59b975fc38a31e1084a2057d7ab1d07d9da7c0a3f7141d624c5 ;;
+        src/music/registry.mjs) baseline=74469f5cae271837517deb3923deccc2f81ccc0e4f897d054a619b54e446165e ;;
+      esac
+    fi
     if [[ "$installed" != "$baseline" && "$installed" != "$desired" ]]; then
       echo "Live module changed: $name" >&2
       exit 1

@@ -1065,6 +1065,9 @@ test('a supplier outage keeps accepted requests in order across restart', async 
   available = false;
   mgr.preparedQueue = null;
   await mgr.advanceNext();
+  assert.equal(mgr.current.track.sourceId, 'current');
+  mgr.current.startedAt = Date.now() - (mgr.current.durationSec + 1) * 1000;
+  await mgr.advanceNext();
   assert.equal(mgr.current, null);
   assert.deepEqual(mgr.queue.map(item => item.track.sourceId), ['first', 'second']);
   assert.ok(mgr.queue.every(item => item.sourceRetryAt > Date.now()));
@@ -1142,5 +1145,51 @@ test('temporary request failures leave room rotation playable and resume at next
   mgr.musicRegistry.resolvePlayable = async item => playable(item);
   await mgr.advanceNext();
   assert.equal(mgr.current.track.sourceId, 'queued');
+  assert.equal(mgr.queue.length, 0);
+});
+
+test('optimistic enqueue accepts songs into queue during temporary upstream resolution failure while playing', async t => {
+  const mgr = await manager(t, { resolvePlayable: async item => playable(item) });
+  await mgr.enqueueTrack(track('current'), actor);
+  assert.equal(mgr.current.track.sourceId, 'current');
+
+  // Next point request encounters a temporary upstream outage
+  mgr.resolveRotationSource = async () => ({ temporaryFailure: true, error: 'upstream timeout' });
+  const requested = { id: 'qq:pending_song', title: 'Pending Song', artist: 'Artist' };
+  const res = await mgr.enqueueWithAlternatives(requested, actor, { owner: {}, active: () => true });
+  assert.equal(res.ok, true);
+  assert.equal(res.position, 1);
+  assert.equal(mgr.queue[0].track.title, 'Pending Song');
+});
+
+test('shuffleRotation succeeds gracefully without error when rotation deck has fewer than two tracks', async t => {
+  const mgr = await manager(t, { resolvePlayable: async item => playable(item) });
+  mgr.rotationDeck = [track('only_one')];
+  const res = mgr.shuffleRotation(actor);
+  assert.equal(res.ok, true);
+});
+
+test('admin can re-enqueue tracks and is not blocked by duplicate restrictions', async t => {
+  const mgr = await manager(t, { resolvePlayable: async item => playable(item) });
+  const adminActor = { ...actor, isAdmin: true };
+  const song = track('repeat');
+  await mgr.enqueueTrack(song, adminActor);
+  assert.equal(mgr.current.track.sourceId, 'repeat');
+
+  const second = await mgr.enqueueTrack(song, adminActor);
+  assert.equal(second.ok, true);
+  assert.equal(second.position, 1);
+});
+
+test('manual search fallback keeps a different recording out of the room', async t => {
+  const original = recording('original');
+  const other = recording('cover', { artist: 'Different artist' });
+  const mgr = await manager(t, rotationRegistry([other], new Set(['original'])));
+  const result = await mgr.enqueueWithAlternatives(original, actor, {
+    owner: {}, active: () => true, searchFallback: true
+  });
+  assert.equal(result.code, 'NO_SOURCE');
+  assert.equal(result.offer, undefined);
+  assert.equal(mgr.current, null);
   assert.equal(mgr.queue.length, 0);
 });

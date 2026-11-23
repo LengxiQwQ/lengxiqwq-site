@@ -954,6 +954,17 @@ $effect(() => {
 		mobileDrawer = "none";
 		closeSplitRoom();
 	}
+	if (
+		showAuthModal ||
+		showProfileModal ||
+		showUserDetailModal ||
+		showPollCreateModal ||
+		activityModalState.open
+	) {
+		if (mobileDrawer !== "none") {
+			mobileDrawer = "none";
+		}
+	}
 });
 let userDetailSeed = $state<ChatUserDetailSeed | null>(null);
 let externalPlaylistRequest = $state<

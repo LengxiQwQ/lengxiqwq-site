@@ -131,30 +131,52 @@ const skipTooltipText = $derived.by(() => {
 
     <div class="min-w-0 flex-1">
       <div
-        class="{variant === 'mobile' ? 'text-[12px]' : 'text-[12px] xl:text-[11.5px]'} font-bold text-[var(--deep-text)] truncate leading-snug"
+        class="{variant === 'mobile' ? 'text-[12.5px]' : 'text-[12px] xl:text-[11.5px]'} font-bold text-[var(--deep-text)] truncate leading-snug"
       >
         {displayLyric}
       </div>
       <div
         class="{variant === 'mobile' ? 'text-[12px]' : 'text-[12px] xl:text-[11.5px]'} text-[var(--chat-meta-color)] tabular-nums leading-tight mt-0.5 flex items-center min-w-0 gap-1.5"
       >
-        <div class="flex items-center min-w-0 flex-1 overflow-hidden">
-          <span
-            class="text-[var(--deep-text)] truncate shrink-0 {currentPlay.track.rotationReplacement ? 'max-w-[50%]' : 'max-w-[70%]'}"
-            title={currentPlay.track.title}
-          >
-            {currentPlay.track.title}
-          </span>
-          <span
-            class="truncate shrink min-w-0 text-[var(--chat-meta-color)]"
-            title={currentPlay.track.artist}
-          >
-            &nbsp;-&nbsp;{currentPlay.track.artist}
-          </span>
-          {#if currentPlay.track.rotationReplacement}
-            <span class="ml-1 shrink-0 text-[var(--chat-meta-color)]" title={'替代《' + currentPlay.track.rotationReplacement.title + '》'}>替代播放</span>
-          {/if}
-        </div>
+        {#if variant === 'mobile'}
+          <!-- 手机版：歌名保留更多（上限达 78%），作者优先截断，空间不足时歌名更完整 -->
+          <div class="flex items-center min-w-0 flex-1 overflow-hidden">
+            <span
+              class="text-[var(--deep-text)] truncate shrink-0 {currentPlay.track.rotationReplacement ? 'max-w-[58%]' : 'max-w-[78%]'}"
+              title={currentPlay.track.title}
+            >
+              {currentPlay.track.title}
+            </span>
+            <span
+              class="truncate min-w-0 flex-1 text-[var(--chat-meta-color)]"
+              title={currentPlay.track.artist}
+            >
+              &nbsp;-&nbsp;{currentPlay.track.artist}
+            </span>
+            {#if currentPlay.track.rotationReplacement}
+              <span class="ml-1 shrink-0 text-[10px] text-[var(--chat-meta-color)]" title={'替代《' + currentPlay.track.rotationReplacement.title + '》'}>替代播放</span>
+            {/if}
+          </div>
+        {:else}
+          <!-- 桌面端/侧栏版：保持原样不变 -->
+          <div class="flex items-center min-w-0 flex-1 overflow-hidden">
+            <span
+              class="text-[var(--deep-text)] truncate shrink-0 {currentPlay.track.rotationReplacement ? 'max-w-[50%]' : 'max-w-[70%]'}"
+              title={currentPlay.track.title}
+            >
+              {currentPlay.track.title}
+            </span>
+            <span
+              class="truncate shrink min-w-0 text-[var(--chat-meta-color)]"
+              title={currentPlay.track.artist}
+            >
+              &nbsp;-&nbsp;{currentPlay.track.artist}
+            </span>
+            {#if currentPlay.track.rotationReplacement}
+              <span class="ml-1 shrink-0 text-[var(--chat-meta-color)]" title={'替代《' + currentPlay.track.rotationReplacement.title + '》'}>替代播放</span>
+            {/if}
+          </div>
+        {/if}
         <span class="shrink-0 text-[var(--chat-meta-color)]/85 text-right tabular-nums">
           {formattedStatusOrTime}
         </span>

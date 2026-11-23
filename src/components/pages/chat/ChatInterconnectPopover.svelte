@@ -14,6 +14,11 @@ const { open, sites = [], onClose }: Props = $props();
 
 let popoverEl: HTMLDivElement | null = $state(null);
 
+function getSiteTheme(site: InterconnectSite): string {
+	if (site.isSelf) return "var(--primary)";
+	return site.color || "var(--primary)";
+}
+
 function positionInterconnect(node: HTMLElement) {
 	const anchors = node.parentElement?.querySelectorAll<HTMLElement>(
 		"[data-chat-interconnect-anchor]",
@@ -121,8 +126,8 @@ onMount(() => {
       </div>
     </div>
 
-    <!-- 简明说明（拒绝花里胡哨，讲人话） -->
-    <div class="px-1 text-xs text-[var(--chat-meta-color)] leading-relaxed mb-3">
+    <!-- 简明说明 -->
+    <div class="px-1 text-xs text-[var(--chat-meta-color)] leading-relaxed mb-2.5">
       以下这些博客是和本站聊天互相连通的哦，也可以去他们的小站坐坐：
     </div>
 
@@ -135,12 +140,14 @@ onMount(() => {
       {:else}
         {#each sites as site (site.url || site.name)}
           {@const href = site.url || ""}
+          {@const siteTheme = getSiteTheme(site)}
           {#if href}
             <a
               {href}
               target={site.isSelf ? undefined : "_blank"}
               rel={site.isSelf ? undefined : "noopener noreferrer"}
-              class="group rounded-xl bg-black/4 dark:bg-white/5 border border-black/5 dark:border-white/10 px-2.5 py-2 flex items-center gap-2.5 transition-all hover:bg-black/7 dark:hover:bg-white/9 hover:border-black/10 dark:hover:border-white/15 cursor-pointer no-underline text-inherit min-w-0"
+              class="group interconnect-site-card"
+              style="--site-theme: {siteTheme};"
               aria-label={site.isSelf ? "前往本站主页" : `前往 ${site.owner || site.name} 的茶室`}
             >
               <ChatAvatar
@@ -149,11 +156,15 @@ onMount(() => {
               />
               <div class="min-w-0 flex-1 flex flex-col justify-center">
                 <div class="flex items-center gap-1.5 min-w-0">
-                  <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate group-hover:text-[var(--primary)] transition-colors">
+                  <span
+                    class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate group-hover:text-[var(--site-theme)] transition-colors"
+                  >
                     {site.name || site.owner}
                   </span>
                   {#if site.isSelf}
-                    <span class="shrink-0 text-[10px] font-medium px-1 py-0.2 rounded bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] leading-tight">
+                    <span
+                      class="shrink-0 text-[10px] font-medium px-1 py-0.2 rounded bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] leading-tight"
+                    >
                       本站
                     </span>
                   {/if}
@@ -164,9 +175,17 @@ onMount(() => {
                   </span>
                 {/if}
               </div>
+              <svg class="w-3 h-3 shrink-0 opacity-20 group-hover:opacity-70 transition-opacity text-[var(--site-theme)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                <polyline points="15 3 21 3 21 9" />
+                <line x1="10" y1="14" x2="21" y2="3" />
+              </svg>
             </a>
           {:else}
-            <div class="rounded-xl bg-black/4 dark:bg-white/5 border border-black/5 dark:border-white/10 px-2.5 py-2 flex items-center gap-2.5 min-w-0">
+            <div
+              class="interconnect-site-card"
+              style="--site-theme: {siteTheme};"
+            >
               <ChatAvatar
                 src={site.avatar}
                 name={site.owner || site.name}
@@ -188,3 +207,38 @@ onMount(() => {
     </div>
   </div>
 {/if}
+
+<style>
+.interconnect-site-card {
+	--site-theme-fallback: var(--primary);
+	--site-cur: var(--site-theme, var(--site-theme-fallback));
+	position: relative;
+	border-radius: 0.75rem;
+	padding: 0.5rem 0.65rem;
+	display: flex;
+	align-items: center;
+	gap: 0.65rem;
+	text-decoration: none;
+	color: inherit;
+	min-width: 0;
+	cursor: pointer;
+	border: 1px dashed color-mix(in srgb, var(--site-cur) 38%, rgba(0, 0, 0, 0.12));
+	background: color-mix(in srgb, var(--site-cur) 3%, rgba(0, 0, 0, 0.02));
+	transition: all 0.18s ease;
+}
+
+:global(.dark) .interconnect-site-card {
+	border-color: color-mix(in srgb, var(--site-cur) 42%, rgba(255, 255, 255, 0.14));
+	background: color-mix(in srgb, var(--site-cur) 4%, rgba(255, 255, 255, 0.02));
+}
+
+.interconnect-site-card:hover {
+	border-color: color-mix(in srgb, var(--site-cur) 75%, transparent);
+	background: color-mix(in srgb, var(--site-cur) 8%, rgba(0, 0, 0, 0.03));
+}
+
+:global(.dark) .interconnect-site-card:hover {
+	border-color: color-mix(in srgb, var(--site-cur) 80%, transparent);
+	background: color-mix(in srgb, var(--site-cur) 9%, rgba(255, 255, 255, 0.04));
+}
+</style>

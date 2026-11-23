@@ -7,7 +7,7 @@ import { lookupPreferredProviders } from './provider-routing.mjs';
 
 const RESOLVED_CACHE_TTL_MS = 30 * 60_000; // 30 minutes (QQ Music vkey TTL is 2+ hours)
 const PARTNER_STREAM_TTL_MS = 10 * 60_000;
-const FAILED_CACHE_TTL_MS = 15 * 60_000; // 15 minutes negative cache for unplayable tracks
+const FAILED_CACHE_TTL_MS = 15_000; // A supplier miss may recover on the next request.
 const UNMATCHED_PLAYLIST_TTL_MS = 30 * 60_000;
 
 const ROTATION_RELATIONS = ['same_artist_version', 'same_title', 'same_artist_other'];
@@ -147,7 +147,7 @@ function preferRecording(a, b) {
 
 function preferRotationAlternative(original, a, b) {
   const score = option => option.versionKey === original.versionKey ? 2 :
-    (!option.versionKey && !original.versionKey.startsWith('live') ? 1 : 0);
+    (!option.versionKey && !original.versionKey?.startsWith('live') ? 1 : 0);
   return score(b) - score(a) || Number(b.albumMatch) - Number(a.albumMatch) ||
     (a.durationDiff === b.durationDiff ? 0 : a.durationDiff - b.durationDiff);
 }
@@ -410,7 +410,7 @@ export class MusicRegistry {
   }
 
   async resolveProviderRecording(item, resolve, providerId, {
-    alternatives = false, autoSelectAlternative = false, exclude = () => false, budgetMs, preferredTrack, random = false, deadline, signal
+    alternatives = false, autoSelectAlternative = false, exactOnly = false, exclude = () => false, budgetMs, preferredTrack, random = false, deadline, signal
   }) {
     const platform = item.sourcePlatform || item.provider;
     const sourceId = item.sourceTrackId || item.sourceId ||
@@ -421,6 +421,7 @@ export class MusicRegistry {
       : null;
     const seen = new Set();
     let temporaryFailure = false;
+    let lastFailureDetail = '';
     const uncertainSources = new Set();
     const bounded = async (operation, maxMs) => {
       const remaining = Math.min(maxMs, deadline - Date.now());
@@ -437,36 +438,38 @@ export class MusicRegistry {
         clearTimeout(timer);
       }
     };
-    const check = async (track, maxMs = 2000) => {
+    const check = async (track, maxMs = 3500) => {
       if (!track || exclude(track) || seen.has(track.id)) return null;
       seen.add(track.id);
       try {
         return await bounded(() => resolve(track), maxMs);
-      } catch {
+      } catch (err) {
         temporaryFailure = true;
         uncertainSources.add(track.id);
+        lastFailureDetail = err?.message || '音源检查超时';
         return null;
       }
     };
     const search = async (keyword) => {
       if (!keyword.trim()) return [];
       try {
-        const result = await bounded(() => this.search(keyword, 15, providerId), budgetMs ? 1800 : 4000);
+        const result = await bounded(() => this.search(keyword, 15, providerId), budgetMs ? 2500 : 4000);
         return result.tracks || [];
-      } catch {
+      } catch (err) {
         temporaryFailure = true;
+        lastFailureDetail = err?.message || '搜索上游响应超时';
         return [];
       }
     };
-    const preference = await check(preferredTrack?.provider === providerId ? preferredTrack : null, 1300);
+    const preference = await check(preferredTrack?.provider === providerId ? preferredTrack : null, 1500);
     if (preference) return { playable: preference, usedPreference: true };
-    const directPlayable = await check(direct, budgetMs ? 1900 : alternatives ? 5600 : 2300);
+    const directPlayable = await check(direct, budgetMs ? 3500 : alternatives ? 5600 : 3500);
     if (directPlayable) return { playable: directPlayable, nativeMatch: true };
 
     const matchKey = this.matchStorageKey(item, providerId);
     const cached = this.readMatch(matchKey);
     if (cached?.track?.provider === providerId && cached.expiresAt > Date.now()) {
-      const playable = await check(cached.track, 1300);
+      const playable = await check(cached.track, 5600);
       if (playable) return { playable };
       if (!exclude(cached.track) && !uncertainSources.has(cached.track.id)) {
         this.saveMatch(matchKey, null, 0);
@@ -515,7 +518,7 @@ export class MusicRegistry {
       !recordings.some(option => uncertainSources.has(option.track.id));
     const choice = clearMatch(checkedRecordings, completeCheck);
     if (choice) return remember(choice.track);
-    if (!alternatives || random) return { temporaryFailure };
+    if (exactOnly || !alternatives || random) return { temporaryFailure, error: lastFailureDetail };
 
     const remaining = ranked
       .filter(option => option.relation && !seen.has(option.track.id) &&
@@ -532,7 +535,8 @@ export class MusicRegistry {
     return {
       alternatives: [...distinctRecordings.map(({ track, relation }) => ({ track, relation })), ...checked.filter(Boolean)]
         .slice(0, autoSelectAlternative ? Infinity : 3),
-      temporaryFailure
+      temporaryFailure,
+      error: lastFailureDetail
     };
   }
 
