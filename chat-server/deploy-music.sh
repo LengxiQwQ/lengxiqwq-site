@@ -194,6 +194,13 @@ if [[ "$current_release" == true ]]; then
         src/music/catalog-providers.mjs) baseline=ec91036960f27ff0a6c2f79063e96ea4aeded2b1455b34b19cb7e508eb0617fd ;;
       esac
     fi
+    if [[ "$actual_gateway" == "$search_gateway" ]]; then
+      case "$name" in
+        src/music/qq-music.mjs) baseline=29aadf76ef864c17a39ebd8920e80225f950a0a19296b294c341b6897cedc310 ;;
+        src/music/registry.mjs) baseline=7944cf94f7065e2da3ce7187729be9d383a56816fc38b271392f90cb8b2bb201 ;;
+        src/music/catalog-providers.mjs) baseline=5ca262ad09d6a0e020bcd99640e4ad6563ead4f3178ef0a9f4d51df67699803d ;;
+      esac
+    fi
     if [[ "$installed" != "$baseline" && "$installed" != "$desired" ]]; then
       echo "Live module changed: $name" >&2
       exit 1

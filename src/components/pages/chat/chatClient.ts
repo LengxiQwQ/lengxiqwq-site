@@ -1172,7 +1172,7 @@ export async function searchOnlineMusic(
 	const controller = new AbortController();
 	const timeoutId = window.setTimeout(
 		() => controller.abort("timeout"),
-		10_000,
+		options?.provider === "kugou" ? 13_000 : 10_000,
 	);
 	const onExternalAbort = () => controller.abort(options?.signal?.reason);
 	if (options?.signal) {

@@ -107,7 +107,7 @@ export class KugouMusicProvider {
     if (Date.now() < this.retryAfter) throw new Error('曲库暂时繁忙');
     const data = await getJson('https://m.kugou.com/app/i/getSongInfo.php',
       { cmd: 'playInfo', hash: sourceId }, 'https://www.kugou.com/');
-    if (Number(data.status) !== 1 && /频繁|稍后再试|too many requests/i.test(data.error || '')) {
+    if (Number(data.status) !== 1 && (Number(data.errcode) === 1002 || /频繁|稍后再试|too many requests/i.test(data.error || ''))) {
       this.retryAfter = Date.now() + 15_000;
       throw new Error('曲库暂时繁忙');
     }

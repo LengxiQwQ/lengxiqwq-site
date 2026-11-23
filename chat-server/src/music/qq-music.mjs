@@ -252,15 +252,9 @@ export class QQMusicProvider {
         if (response.status === 404) return null;
         throw new Error('resolver HTTP ' + response.status);
       }
-      let json;
-      try {
-        json = await response.json();
-      } catch {
-        return null;
-      }
+      const json = await response.json();
       if (json?.code === 110001 || json?.code === 110002) {
         const errMsg = `上游账号风控 (${json.message || 'code ' + json.code})`;
-        console.warn('[MusicSource]', source.name, mid, errMsg);
         const err = new Error(errMsg);
         err.isRiskControl = true;
         throw err;
@@ -279,7 +273,7 @@ export class QQMusicProvider {
         providerChannel: source.name
       };
     } catch (error) {
-      if (mid && mid !== '0') {
+      if (!error.isRiskControl && mid && mid !== '0') {
         console.warn('[MusicSource]', source.name, mid, error.message);
       }
       throw error;
@@ -302,7 +296,7 @@ export class QQMusicProvider {
     // Keep the secondary supplier for the same QQ Music track.
     const cyapiSource = this.cyapiKey ? {
       name: 'cyapi',
-      timeoutMs: 4500,
+      timeoutMs: 6500,
       endpoint: 'https://cyapi.top/API/qq_music.php?type=json&quality=128&mid=' + id +
         '&apikey=' + encodeURIComponent(this.cyapiKey),
       read: data => data
@@ -311,12 +305,16 @@ export class QQMusicProvider {
     let temporaryFailure = false;
     let lastFailureReason = '';
     const attempt = source => this.trySource(cleanMid, source).catch(err => {
-      if (source === vkeys128Source && err.isRiskControl) this.accountRetryAt = Date.now() + 30_000;
+      if (source === vkeys128Source && err.isRiskControl && Date.now() >= this.accountRetryAt) {
+        this.accountRetryAt = Date.now() + 60_000;
+        console.warn('[MusicSource] vkeys-128 上游账号暂时受限，一分钟后重试');
+      }
       temporaryFailure = true;
       lastFailureReason = err?.message || '上游音源服务响应异常';
       return null;
     });
-    if (cyapiSource && Date.now() < this.accountRetryAt) {
+    if (Date.now() < this.accountRetryAt) {
+      if (!cyapiSource) throw new Error('Music source temporarily unavailable');
       const source = await this.trySource(cleanMid, cyapiSource);
       if (!source) throw new Error('Music source temporarily unavailable');
       return source;

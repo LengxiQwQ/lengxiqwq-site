@@ -377,7 +377,7 @@ export class MusicRegistry {
     const results = await Promise.all(found.tracks.slice(0, limit).map(async original => {
       const result = await this.resolveRotationTrack(original,
         track => this.resolvePlayable(track, origin, secret),
-        { exactOnly: true, alternatives: true, budgetMs: 4200 });
+        { exactOnly: true, alternatives: true, budgetMs: 9000 });
       if (!result.playable) return null;
       return normalizeMusicTrack({ ...result.playable, cover: original.cover || result.playable.cover });
     }));
@@ -570,7 +570,7 @@ export class MusicRegistry {
         if (stage && elapsedMs >= 2000) console.info('[MusicLookup]', { provider: providerId, stage, elapsedMs });
       }
     };
-    const check = async (track, maxMs = 3500) => {
+    const check = async (track, maxMs = exactOnly ? 7500 : 3500) => {
       if (!track || exclude(track) || seen.has(track.id)) return null;
       seen.add(track.id);
       try {
@@ -605,13 +605,13 @@ export class MusicRegistry {
     };
     const preference = await check(preferredTrack?.provider === providerId ? preferredTrack : null, 1500);
     if (preference) return { playable: preference, usedPreference: true };
-    const directPlayable = await checkOriginal(direct, budgetMs ? 3500 : alternatives ? 5600 : 3500);
+    const directPlayable = await checkOriginal(direct, exactOnly ? 7500 : budgetMs ? 3500 : alternatives ? 5600 : 3500);
     if (directPlayable) return { playable: directPlayable, nativeMatch: true };
 
     const matchKey = this.matchStorageKey(item, providerId);
     const cached = this.readMatch(matchKey);
     if (cached?.track?.provider === providerId && cached.expiresAt > Date.now()) {
-      const playable = await checkOriginal(cached.track, 5600);
+      const playable = await checkOriginal(cached.track, exactOnly ? 7500 : 5600);
       if (playable) return { playable };
       if (!exclude(cached.track) && !uncertainSources.has(cached.track.id)) {
         this.saveMatch(matchKey, null, 0);
@@ -687,7 +687,7 @@ export class MusicRegistry {
     const primaryMatches = primaryRanked.filter(option => option.confidence > 0).sort(preferRecording);
     const primaryChoice = clearMatch(primaryMatches, true);
     if (primaryChoice) {
-      const playable = await checkOriginal(primaryChoice.track, exactOnly ? 6500 : 3500);
+      const playable = await checkOriginal(primaryChoice.track, exactOnly ? 7500 : 3500);
       if (playable) return remember(playable);
     }
 

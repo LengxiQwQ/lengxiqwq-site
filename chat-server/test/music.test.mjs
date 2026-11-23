@@ -1343,3 +1343,52 @@ test('backup search returns an enqueueable recording, omits missing audio and ke
   assert.equal(mgr.current.track.id, match.id);
   assert.equal(resolutions, 1);
 });
+
+test('backup search keeps a verified recording when its QQ supplier takes five seconds', async t => {
+  const original = { title: 'Song', artist: 'Artist', album: 'Album', durationSec: 200 };
+  const backup = { ...original, provider: 'kugou', sourceId: 'A'.repeat(32) };
+  const candidate = recording('slow', original);
+  const qq = new QQMusicProvider('fixture');
+  t.mock.method(qq, 'search', async () => ({ tracks: [candidate] }));
+  let primaryCalls = 0;
+  t.mock.method(globalThis, 'fetch', async (input, options) => {
+    switch (new URL(input).hostname) {
+      case 'api.vkeys.cn':
+        primaryCalls++;
+        return Response.json({ code: 110001, message: 'temporary account limit' });
+      case 'cyapi.top':
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(resolve, 5000);
+          options.signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(options.signal.reason);
+          }, { once: true });
+        });
+        return Response.json({ url: 'https://ws.stream.qqmusic.qq.com/song' });
+      case 'ws.stream.qqmusic.qq.com':
+        return new Response(Buffer.from('ID3abcdefghijk'), { status: 206, headers: { 'Content-Range': 'bytes 0-13/100' } });
+      default: throw new Error('unexpected test host');
+    }
+  });
+  const registry = new MusicRegistry([qq, { id: 'kugou', search: async () => ({ tracks: [backup] }),
+    resolveStream: async () => { throw new Error('temporary catalog limit'); } }]);
+  const results = await registry.searchPlayablePage('Song', 4, 1, origin, 'fixture');
+  assert.deepEqual(results.tracks.map(track => track.id), [candidate.id]);
+  const resolved = await registry.resolvePlayable(results.tracks[0], origin, 'fixture');
+  assert.equal(resolved.audioSource.channel, 'cyapi');
+  assert.equal(primaryCalls, 1);
+});
+
+test('a temporary supplier response is not cached as a missing recording', async t => {
+  const qq = new QQMusicProvider();
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    return new Response('temporarily unavailable', { status: 200 });
+  });
+  const registry = new MusicRegistry([qq]);
+  for (let i = 0; i < 2; i++) {
+    await assert.rejects(registry.resolvePlayable(track('id'), origin, 'fixture'), /temporarily unavailable/);
+  }
+  assert.equal(calls, 2);
+});
