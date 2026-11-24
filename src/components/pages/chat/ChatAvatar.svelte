@@ -155,7 +155,7 @@ function downscaleAvatarToBlobUrl(
 </script>
 
 <script lang="ts">
-import { getAvatarInitials, resolveChatAvatarUrl } from "./chatClient";
+import { getAvatarInitials, getDiceBearGlassAvatar, resolveChatAvatarUrl } from "./chatClient";
 
 type AvatarSize = "2xs" | "xs" | "sm" | "md" | "lg";
 
@@ -190,6 +190,8 @@ let imgLoaded = $state(false);
 let downscaledSrc = $state("");
 let disableCorsForCurrent = $state(false);
 let useAlternate = $state(false);
+let diceBearError = $state(false);
+let diceBearLoaded = $state(false);
 
 const primaryUrl = $derived(resolveChatAvatarUrl(src));
 const alternateUrl = $derived(resolveChatAvatarUrl(alternateSrc));
@@ -198,6 +200,9 @@ const resolvedSrc = $derived(
 		? alternateUrl
 		: primaryUrl,
 );
+
+const diceBearSeed = $derived(name || fallback || "spectator");
+const diceBearUrl = $derived(getDiceBearGlassAvatar(diceBearSeed));
 
 $effect(() => {
 	void primaryUrl;
@@ -211,6 +216,12 @@ $effect(() => {
 	disableCorsForCurrent = false;
 	downscaledSrc = size === "lg" ? "" : getDownscaledAvatarUrl(cur);
 	imgLoaded = Boolean(cur && loadedAvatarUrls.has(cur));
+});
+
+$effect(() => {
+	const dbUrl = diceBearUrl;
+	diceBearError = Boolean(dbUrl && failedAvatarUrls.has(dbUrl));
+	diceBearLoaded = Boolean(dbUrl && loadedAvatarUrls.has(dbUrl));
 });
 
 const useCors = $derived(!downscaledSrc && !disableCorsForCurrent && canCorsDownscaleAvatar(resolvedSrc));
@@ -249,7 +260,21 @@ function handleAvatarError(): void {
 	imgError = true;
 }
 
-const showImage = $derived(Boolean(resolvedSrc) && !imgError);
+function handleDiceBearLoad(): void {
+	if (!diceBearUrl) return;
+	markAvatarLoaded(diceBearUrl);
+	diceBearLoaded = true;
+}
+
+function handleDiceBearError(): void {
+	if (diceBearUrl) {
+		markAvatarFailed(diceBearUrl);
+	}
+	diceBearLoaded = false;
+	diceBearError = true;
+}
+
+const showCustomImage = $derived(Boolean(resolvedSrc) && !imgError);
 const initials = $derived(getAvatarInitials(name, fallback));
 const isMultiChar = $derived(Array.from(initials).length >= 2);
 
@@ -281,7 +306,7 @@ const textSizeClass = $derived.by(() => {
 });
 
 const fallbackBgClass = $derived(
-	size === "2xs" || size === "xs" || size === "lg" ? "bg-(--primary)/15" : "",
+	size === "2xs" || size === "xs" || size === "lg" ? "bg-(--primary)/15" : "bg-black/5 dark:bg-white/10",
 );
 
 const fallbackTextColorClass = $derived(
@@ -291,7 +316,7 @@ const fallbackTextColorClass = $derived(
 );
 </script>
 
-{#if showImage}
+{#if showCustomImage}
   {#if imgLoaded}
     <img
       src={downscaledSrc || resolvedSrc}
@@ -307,11 +332,22 @@ const fallbackTextColorClass = $derived(
     />
   {:else}
     <span class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden {extraClass}">
-      <span
-        class="absolute inset-0 {fallbackBgClass} {textSizeClass} {fallbackTextColorClass} inline-flex items-center justify-center font-bold leading-none select-none"
-      >
-        {initials}
-      </span>
+      {#if !diceBearError}
+        <img
+          src={diceBearUrl}
+          alt=""
+          loading="eager"
+          decoding="async"
+          aria-hidden="true"
+          class="absolute inset-0 w-full h-full object-cover {grayscale ? 'grayscale-[35%]' : ''}"
+        />
+      {:else}
+        <span
+          class="absolute inset-0 {fallbackBgClass} {textSizeClass} {fallbackTextColorClass} inline-flex items-center justify-center font-bold leading-none select-none"
+        >
+          {initials}
+        </span>
+      {/if}
       <img
         src={downscaledSrc || resolvedSrc}
         loading={lazy ? "lazy" : "eager"}
@@ -323,6 +359,39 @@ const fallbackTextColorClass = $derived(
         class="relative w-full h-full object-cover opacity-0 transition-opacity duration-150 {grayscale ? 'grayscale-[35%]' : ''}"
         onload={(event) => handleAvatarLoad(event.currentTarget)}
         onerror={handleAvatarError}
+      />
+    </span>
+  {/if}
+{:else if !diceBearError}
+  {#if diceBearLoaded}
+    <img
+      src={diceBearUrl}
+      loading={lazy ? "lazy" : "eager"}
+      fetchpriority={lazy ? "low" : undefined}
+      decoding="async"
+      referrerpolicy="no-referrer"
+      alt={alt || name}
+      class="{boxClass} object-cover shrink-0 {grayscale ? 'grayscale-[35%]' : ''} {extraClass}"
+      onload={handleDiceBearLoad}
+      onerror={handleDiceBearError}
+    />
+  {:else}
+    <span class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden {extraClass}">
+      <span
+        class="absolute inset-0 {fallbackBgClass} {textSizeClass} {fallbackTextColorClass} inline-flex items-center justify-center font-bold leading-none select-none"
+      >
+        {initials}
+      </span>
+      <img
+        src={diceBearUrl}
+        loading={lazy ? "lazy" : "eager"}
+        fetchpriority={lazy ? "low" : undefined}
+        decoding="async"
+        referrerpolicy="no-referrer"
+        alt={alt || name}
+        class="relative w-full h-full object-cover opacity-0 transition-opacity duration-150 {grayscale ? 'grayscale-[35%]' : ''}"
+        onload={handleDiceBearLoad}
+        onerror={handleDiceBearError}
       />
     </span>
   {/if}

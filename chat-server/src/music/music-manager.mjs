@@ -659,6 +659,21 @@ export class MusicManager {
       } else {
         playable = await this.resolve(rawTrack);
       }
+      // If native provider has no available full stream (e.g. NetEase VIP 30s preview limit),
+      // seamlessly resolve the full version from other available providers (QQ Music VIP / Kugou VIP / YouTube)!
+      if (!playable) {
+        try {
+          const cross = await this.resolveRotationSource(rawTrack, {
+            budgetMs: 4500,
+            autoSelectAlternative: true
+          });
+          if (cross?.playable) {
+            playable = cross.playable;
+          }
+        } catch (err) {
+          console.warn('[Music] cross-provider fallback failed for', rawTrack.id, err.message);
+        }
+      }
     }
 
     if (playable && !verifiedSource && !playable.playbackSelection && !rawTrack.rotationReplacement) {
@@ -1238,6 +1253,10 @@ export class MusicManager {
         playable = await this.usePrepared(prepared) || await this.resolve(next.track, {
           rejectTransient: true, fresh: Boolean(prepared?.checkedAt || next.sourceRetryAt)
         });
+        if (!playable) {
+          const cross = await this.resolveRotationSource(next.track, { budgetMs: 4500, autoSelectAlternative: true }).catch(() => null);
+          playable = cross?.playable || null;
+        }
       } catch {
         if (generation !== this.generation) return;
         if (!this.queue.includes(next)) continue;

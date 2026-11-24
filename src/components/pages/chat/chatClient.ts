@@ -1,4 +1,6 @@
+import { interconnectSites as defaultInterconnectSites } from "@/config/interconnectConfig";
 import type { InterconnectSite } from "@/types/chatConfig";
+import { extractCleanHostname } from "@/utils/interconnect";
 import {
 	type ChatImageDimensions,
 	validateChatImageDimensions,
@@ -22,6 +24,7 @@ import type {
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
 
+export { getDiceBearGlassAvatar } from "@/utils/avatar-utils";
 export {
 	checkEmailDeliverability,
 	checkGuestRegistrationEmail,
@@ -1511,20 +1514,21 @@ function rewriteDefaultAvatarQuery(rawUrl: string): string {
 			const defaultParam = (
 				parsed.searchParams.get("default") || ""
 			).toLowerCase();
-			if (
-				dParam === "mp" ||
-				dParam === "mm" ||
-				dParam === "mystery" ||
-				(!dParam && !defaultParam)
-			) {
+			const isUnwantedPattern = (val: string) =>
+				val === "mp" ||
+				val === "mm" ||
+				val === "mystery" ||
+				val === "identicon" ||
+				val === "retro" ||
+				val === "monsterid" ||
+				val === "wavatar" ||
+				val === "robohash";
+
+			if (isUnwantedPattern(dParam) || (!dParam && !defaultParam)) {
 				parsed.searchParams.set("d", "404");
 				return parsed.toString();
 			}
-			if (
-				defaultParam === "mp" ||
-				defaultParam === "mm" ||
-				defaultParam === "mystery"
-			) {
+			if (isUnwantedPattern(defaultParam)) {
 				parsed.searchParams.set("default", "404");
 				return parsed.toString();
 			}
@@ -1532,7 +1536,7 @@ function rewriteDefaultAvatarQuery(rawUrl: string): string {
 		return trimmed;
 	} catch {
 		return trimmed.replace(
-			/([?&](?:d|default)=)(?:mp|mm|mystery)(?=&|$)/gi,
+			/([?&](?:d|default)=)(?:mp|mm|mystery|identicon|retro|monsterid|wavatar|robohash)(?=&|$)/gi,
 			"$1404",
 		);
 	}
@@ -1674,28 +1678,56 @@ export interface ExternalOriginInfo {
 	host: string;
 }
 
-export function isExternalMatrixIdentity(entry: {
-	source?: string;
-	userKey?: string;
-	badge?: string;
-	site?: string;
-}): boolean {
+function getKnownInterconnectBadges(
+	sites: InterconnectSite[] = defaultInterconnectSites,
+): Set<string> {
+	const badges = new Set<string>();
+	for (const s of sites) {
+		if (s.name) badges.add(s.name.trim().toLowerCase());
+		if (s.badge) badges.add(s.badge.trim().toLowerCase());
+		if (Array.isArray(s.aliases)) {
+			for (const a of s.aliases) {
+				const trimmed = a.trim().toLowerCase();
+				if (trimmed) badges.add(trimmed);
+			}
+		}
+	}
+	return badges;
+}
+
+const defaultKnownBadges = getKnownInterconnectBadges(defaultInterconnectSites);
+
+export function isExternalMatrixIdentity(
+	entry: {
+		source?: string;
+		userKey?: string;
+		badge?: string;
+		site?: string;
+	},
+	customSites?: InterconnectSite[],
+): boolean {
 	if (!entry) return false;
 	const key = (entry.userKey || "").trim();
 	const badge = (entry.badge || "").trim();
 	const site = (entry.site || "").trim();
-	return (
+	const badgeLower = badge.toLowerCase();
+
+	if (
 		entry.source === "matrix" ||
 		key.startsWith("matrix:") ||
 		(key.startsWith("@") && key.includes(":")) ||
-		Boolean(site) ||
-		badge === "互联茶友" ||
-		badge === "Detached" ||
-		badge === "听雨" ||
-		badge === "GBK" ||
-		badge === "Somoe" ||
-		badge === "Aiovtue"
-	);
+		site ||
+		badge === "互联茶友"
+	) {
+		return true;
+	}
+
+	if (!badge) return false;
+	if (customSites && customSites.length > 0) {
+		const customBadges = getKnownInterconnectBadges(customSites);
+		if (customBadges.has(badgeLower)) return true;
+	}
+	return defaultKnownBadges.has(badgeLower);
 }
 
 function hasAsciiControlChars(value: string): boolean {
@@ -1751,29 +1783,56 @@ function matchSiteByHostname(
 	rawHost: string,
 	sites: InterconnectSite[],
 ): InterconnectSite | undefined {
-	const clean = rawHost.trim().toLowerCase();
+	const clean = extractCleanHostname(rawHost);
 	if (!clean) return undefined;
 	for (const site of sites) {
 		if (site.isSelf && clean.includes("lengxiqwq.com")) {
 			return site;
 		}
-		const siteHost = extractHostname(site.url);
-		if (siteHost) {
-			if (clean.includes(siteHost) || siteHost.includes(clean)) {
+		// 1. 优先精准匹配 homeserver 域名（Matrix 原生节点）
+		if (site.homeserver) {
+			const hsHost = extractCleanHostname(site.homeserver);
+			if (
+				hsHost &&
+				(clean === hsHost ||
+					clean.endsWith(`.${hsHost}`) ||
+					hsHost.endsWith(`.${clean}`))
+			) {
+				return site;
+			}
+		}
+		// 2. 匹配 siteUrl 与 chatUrl 域名
+		const siteUrlHost = extractCleanHostname(site.siteUrl || site.url);
+		if (siteUrlHost) {
+			if (
+				clean === siteUrlHost ||
+				clean.includes(siteUrlHost) ||
+				siteUrlHost.includes(clean)
+			) {
 				return site;
 			}
 			const hostParts = clean.split(".").slice(-2).join(".");
-			const siteParts = siteHost.split(".").slice(-2).join(".");
+			const siteParts = siteUrlHost.split(".").slice(-2).join(".");
 			if (hostParts && hostParts === siteParts) {
 				return site;
 			}
 		}
+		const chatUrlHost = extractCleanHostname(site.chatUrl);
+		if (
+			chatUrlHost &&
+			(clean === chatUrlHost || clean.includes(chatUrlHost))
+		) {
+			return site;
+		}
+		// 3. 匹配 aliases 别名
 		if (Array.isArray(site.aliases)) {
 			for (const alias of site.aliases) {
 				const cleanAlias = alias.trim().toLowerCase();
 				if (
 					cleanAlias &&
-					(clean.includes(cleanAlias) || cleanAlias.includes(clean))
+					(clean === cleanAlias ||
+						clean.includes(cleanAlias) ||
+						cleanAlias.includes(clean))
 				) {
 					return site;
 				}
@@ -1791,15 +1850,21 @@ function matchSiteByHint(
 	if (!clean) return undefined;
 	for (const s of sites) {
 		const name = (s.name || "").toLowerCase();
+		const badge = (s.badge || "").toLowerCase();
 		const owner = (s.owner || "").toLowerCase();
-		const siteHost = extractHostname(s.url);
+		const hsHost = extractCleanHostname(s.homeserver);
+		const siteHost = extractCleanHostname(s.siteUrl || s.url);
+		const chatHost = extractCleanHostname(s.chatUrl);
 		const aliases = Array.isArray(s.aliases)
 			? s.aliases.map((a) => a.trim().toLowerCase()).filter(Boolean)
 			: [];
 		if (
 			(name && (name.includes(clean) || clean.includes(name))) ||
+			(badge && (badge.includes(clean) || clean.includes(badge))) ||
 			(owner && (owner.includes(clean) || clean.includes(owner))) ||
+			(hsHost && (hsHost.includes(clean) || clean.includes(hsHost))) ||
 			(siteHost && (siteHost.includes(clean) || clean.includes(siteHost))) ||
+			(chatHost && (chatHost.includes(clean) || clean.includes(chatHost))) ||
 			aliases.some((a) => a.includes(clean) || clean.includes(a))
 		) {
 			return s;
@@ -1820,7 +1885,7 @@ function matchSiteByUrl(
 	) {
 		return undefined;
 	}
-	const targetHost = extractHostname(trimmed);
+	const targetHost = extractCleanHostname(trimmed);
 	return targetHost ? matchSiteByHostname(targetHost, sites) : undefined;
 }
 
@@ -1959,10 +2024,11 @@ export function resolveExternalOrigin(
 		(!member.url?.includes("matrix.to/") ? extractHostname(member.url) : "") ||
 		host;
 
-	// 优先使用对方原本自带的站点后缀；没有时才使用匹配/探测到的站点名称或域名兜底
+	// 优先使用匹配到的官方标准站点标签或名称；没有时才使用对方原本自带的站点后缀或域名兜底
 	const siteName =
-		siteFromSuffix ||
+		matchedSite?.badge ||
 		matchedSite?.name ||
+		siteFromSuffix ||
 		unknownServerHost ||
 		explicitSite ||
 		explicitBadge ||

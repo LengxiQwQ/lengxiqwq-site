@@ -1,12 +1,10 @@
+import { getDiceBearGlassAvatar } from "@/utils/avatar-utils";
 import {
 	type DynamicCommentItem,
 	fetchDynamicComments,
 } from "@/utils/dynamic-comments-adapter";
 
 const PREVIEW_LIMIT = 4;
-
-const DEFAULT_AVATAR =
-	"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2394a3b8'%3E%3Cpath d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3E%3C/svg%3E";
 
 const SVG_CHAT =
 	'<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M4 18q-.825 0-1.412-.587T2 16V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18H6.8L4 20.8V18Zm1.15-2H20V4H4v13.15L5.15 16ZM4 16V4v12Z"/></svg>';
@@ -161,10 +159,13 @@ export function registerDynamicInlineComments(): void {
 						: '<span class="dynamic-comment-author-name">';
 					const authorLinkEnd = item.link ? "</a>" : "</span>";
 
+					const fallbackAvatar = getDiceBearGlassAvatar(item.nick || "guest");
+					const avatarSrc = item.avatar || fallbackAvatar;
+
 					return `
 						<div class="dynamic-comment-row" data-comment-id="${item.id}">
 							<div class="dynamic-comment-avatar">
-								<img src="${item.avatar || DEFAULT_AVATAR}" alt="${item.nick}" loading="lazy" onerror="this.src='${DEFAULT_AVATAR}'" />
+								<img src="${avatarSrc}" alt="${item.nick}" loading="lazy" onerror="this.src='${fallbackAvatar}'" />
 							</div>
 							<div class="dynamic-comment-main">
 								<div class="dynamic-comment-head">

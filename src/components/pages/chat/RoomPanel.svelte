@@ -813,15 +813,14 @@ function formatOfflineTime(ts?: number): string {
     </button>
   {/snippet}
 
-  {#snippet observerItemInner(displayName: string, subtitle: string, isFocused: boolean, muted: boolean, clickable: boolean)}
+  {#snippet observerItemInner(displayName: string, subtitle: string, isFocused: boolean, muted: boolean, clickable: boolean, obs?: ChatOnlineMember | null)}
     <div class="flex items-center gap-2.5 min-w-0 flex-1">
       <div class="relative shrink-0">
-        <div class="chat-avatar-sm flex items-center justify-center bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)] {clickable ? 'group-hover:text-(--primary)' : ''} transition-colors rounded-full">
-          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-        </div>
+        <ChatAvatar
+          src={obs?.avatar}
+          name={obs?.userKey || obs?.name || displayName}
+          size="sm"
+        />
         <span
           aria-label={isFocused ? "在线" : "离开"}
           class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
@@ -896,11 +895,11 @@ function formatOfflineTime(ts?: number): string {
               totalDurationFormatted: obs.totalDurationFormatted,
             })}
         >
-          {@render observerItemInner(displayName, subtitle, isFocused, muted, true)}
+          {@render observerItemInner(displayName, subtitle, isFocused, muted, true, obs)}
         </button>
       {:else}
         <div class="chat-user-item justify-between w-full text-left select-none cursor-default">
-          {@render observerItemInner(displayName, subtitle, isFocused, muted, false)}
+          {@render observerItemInner(displayName, subtitle, isFocused, muted, false, obs)}
         </div>
       {/if}
     {/if}
@@ -952,12 +951,12 @@ function formatOfflineTime(ts?: number): string {
     >
       <div class="flex items-center gap-2.5 min-w-0 flex-1">
         <div class="relative shrink-0">
-          <div class="chat-avatar-sm flex items-center justify-center bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)] opacity-60 rounded-full">
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-              <circle cx="12" cy="12" r="3" />
-            </svg>
-          </div>
+          <ChatAvatar
+            src=""
+            name={`spectator-${item.id || item.userKey || "history"}`}
+            size="sm"
+            class="opacity-75"
+          />
           <span class="w-2 h-2 rounded-full bg-neutral-400 absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"></span>
         </div>
 
@@ -1053,9 +1052,7 @@ function formatOfflineTime(ts?: number): string {
         </button>
       </ChatTooltip>
     {:else}
-      <div class="chat-avatar flex items-center justify-center text-sm font-bold text-[var(--chat-meta-color)] shrink-0">
-        ?
-      </div>
+      <ChatAvatar src="" name="旁观" size="md" />
       <div class="flex flex-col min-w-0 flex-1">
         <span class="text-[13px] md:text-xs font-semibold text-[var(--deep-text)] truncate">未登录（旁观）</span>
         <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate">登录后即可发言与点歌</span>

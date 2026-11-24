@@ -13,7 +13,7 @@ export function isAllowedStreamTarget(value) {
       (host.endsWith('.stream.qqmusic.qq.com') || host.endsWith('.music.tc.qq.com') ||
         host.endsWith('.music.qq.com') || host.endsWith('.music.gtimg.com') ||
         host.endsWith('.music.126.net') || host.endsWith('.126.net') ||
-        host === 'sharefs.kugou.com' || /^webfs(?:\.[a-z0-9-]+)?\.kugou\.com$/.test(host));
+        host.endsWith('.kugou.com'));
   } catch {
     return false;
   }
@@ -48,15 +48,23 @@ export function identifyAudio(bytes) {
   return null;
 }
 
-export async function probeAudio(url, { signal, requireRange = false } = {}) {
+export async function probeAudio(url, { signal, requireRange = false, minTotalBytes = 0 } = {}) {
   const response = await fetchAudio(url, {
     range: 'bytes=0-4095',
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(2200)]) : AbortSignal.timeout(2200)
   });
+  const contentRange = response.headers.get('content-range') || '';
   if (!response.ok || !response.body || (requireRange && response.status !== 206) ||
-      (response.status === 206 && !/^bytes 0-\d+\/\d+$/.test(response.headers.get('content-range') || ''))) {
+      (response.status === 206 && !/^bytes 0-\d+\/\d+$/.test(contentRange))) {
     await response.body?.cancel();
     throw new Error('audio probe HTTP ' + response.status);
+  }
+  if (minTotalBytes > 0 && response.status === 206) {
+    const totalBytes = Number(contentRange.split('/')[1]);
+    if (Number.isFinite(totalBytes) && totalBytes < minTotalBytes) {
+      await response.body?.cancel();
+      throw new Error('audio stream too short (' + totalBytes + ' bytes < ' + minTotalBytes + ')');
+    }
   }
   const reader = response.body.getReader();
   let prefix = Buffer.alloc(0);

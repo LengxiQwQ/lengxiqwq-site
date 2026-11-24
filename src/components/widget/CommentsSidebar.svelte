@@ -8,6 +8,7 @@ import { onMount } from "svelte";
 import I18nKey from "@/i18n/i18nKey";
 import { i18n } from "@/i18n/translation";
 import type { CommentConfig } from "@/types/commentConfig";
+import { getDiceBearGlassAvatar } from "@/utils/avatar-utils";
 import { formatRelativeTime } from "@/utils/date-utils";
 import {
 	fetchRecentComments,
@@ -136,8 +137,13 @@ function handleCommentClick(e: MouseEvent, entry: RecentCommentEntry) {
 
 function handleAvatarError(e: Event) {
 	const target = e.currentTarget as HTMLImageElement;
-	if (target && target.src !== DEFAULT_AVATAR) {
-		target.src = DEFAULT_AVATAR;
+	if (target) {
+		const fallback = getDiceBearGlassAvatar(target.alt || "guest");
+		if (target.src !== fallback && target.src !== DEFAULT_AVATAR) {
+			target.src = fallback;
+		} else if (target.src !== DEFAULT_AVATAR) {
+			target.src = DEFAULT_AVATAR;
+		}
 	}
 }
 </script>
@@ -170,7 +176,7 @@ function handleAvatarError(e: Event) {
 				<!-- 评论者头像（无角标圆点，纯净圆形） -->
 				<div class="shrink-0">
 					<img
-						src={entry.avatar || DEFAULT_AVATAR}
+						src={entry.avatar || getDiceBearGlassAvatar(entry.nick || "guest")}
 						alt={entry.nick}
 						class="size-8 rounded-full object-cover ring-1 ring-black/5 dark:ring-white/10"
 						loading="lazy"

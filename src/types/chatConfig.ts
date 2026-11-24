@@ -47,17 +47,45 @@ export interface ChatRoomMeta {
 	avatar?: string;
 }
 
-export interface InterconnectSite {
+/**
+ * 互联茶室站点基础配置（用于独立配置文件 config/interconnectConfig.ts）
+ */
+export interface InterconnectSiteConfig {
+	/** 站点正式名称（展示在互联名录、来源标签、个人资料卡片） */
 	name: string;
+	/** 站点主页地址（用于个人资料跳转“访问主页”，如 https://blog.mibase.top） */
+	siteUrl: string;
+	/** 站点公开聊天室地址（用于互联名录直接前往，留空时回退为 siteUrl） */
+	chatUrl?: string;
+	/** 兼容旧代码字段（等同于 chatUrl || siteUrl） */
+	url?: string;
+	/**
+	 * Matrix Homeserver 地址或域名（核心识别凭据，如 "matrix.mibase.top" 或完整 URL）
+	 * 系统会自动提取域名，并将所有来自该 Matrix 服务器的用户精准归属到此站点
+	 */
+	homeserver?: string;
+	/** 站长/主理人昵称（展示在资料卡片与列表中） */
 	owner: string;
+	/** 站点或站长头像 URL */
 	avatar?: string;
-	url: string;
+	/** 站点一句话介绍/标语 */
 	desc?: string;
-	isSelf?: boolean;
-	/** 可选的旧域名、Matrix 节点域或简称别名（用于统一归属到当前标准站点名） */
-	aliases?: string[];
-	/** 站点主题色（用于互联列表边框、底色高亮与徽章） */
+	/** 站点来源标签/徽章文案（未填时默认使用 name） */
+	badge?: string;
+	/** 站点主题色（用于标签边框、阴影与高亮，十六进制色值） */
 	color?: string;
+	/** 可选的历史域名、Matrix 节点域或简称别名（用于额外识别归属） */
+	aliases?: string[];
+	/** 是否为当前本站（通常仅第一项为 true） */
+	isSelf?: boolean;
+}
+
+/**
+ * 互联茶室站点运行时对象（保持向后完全兼容现有组件）
+ */
+export interface InterconnectSite extends InterconnectSiteConfig {
+	/** 保证 url 必填，方便现有直接读取 site.url 的组件 */
+	url: string;
 }
 
 export interface ChatConfig {

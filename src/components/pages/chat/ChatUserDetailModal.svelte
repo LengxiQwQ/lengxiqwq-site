@@ -1044,25 +1044,32 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             </div>
           </div>
 
-          {#if matchedSite?.url}
-            <a
-              href={matchedSite.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="chat-btn-ghost px-2.5 py-1 text-xs shrink-0 text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20 rounded-lg no-underline font-medium transition-colors"
-            >
-              前往站点 ↗
-            </a>
-          {:else if seed.url}
-            <a
-              href={seed.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="chat-btn-ghost px-2.5 py-1 text-xs shrink-0 text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20 rounded-lg no-underline font-medium transition-colors"
-            >
-              访问主页 ↗
-            </a>
-          {/if}
+          <div class="flex items-center gap-1.5 shrink-0">
+            {#if matchedSite?.siteUrl || seed.url}
+              <a
+                href={matchedSite?.siteUrl || seed.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="chat-btn-ghost px-2.5 py-1 text-xs shrink-0 text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20 rounded-lg no-underline font-medium transition-colors inline-flex items-center gap-0.5"
+                title="访问对方网站主页"
+              >
+                <span>访问主页</span>
+                <span class="text-[10px] opacity-70">↗</span>
+              </a>
+            {/if}
+            {#if matchedSite?.chatUrl && matchedSite.chatUrl !== matchedSite.siteUrl}
+              <a
+                href={matchedSite.chatUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="chat-btn-ghost px-2.5 py-1 text-xs shrink-0 text-[var(--chat-meta-color)] hover:text-[var(--chat-accent-text)] bg-black/5 dark:bg-white/10 hover:bg-(--primary)/15 rounded-lg no-underline font-medium transition-colors inline-flex items-center gap-0.5"
+                title="前往对方公开茶室"
+              >
+                <span>前往茶室</span>
+                <span class="text-[10px] opacity-70">↗</span>
+              </a>
+            {/if}
+          </div>
         </div>
       </div>
 
@@ -1165,12 +1172,11 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
       <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-2.5">
         <div class="flex items-center gap-3">
           <div class="relative shrink-0">
-            <div class="w-12 h-12 rounded-full {isOnline ? 'bg-(--primary)/15 text-[var(--chat-accent-text)]' : 'bg-black/5 dark:bg-white/10 text-[var(--chat-meta-color)] opacity-75'} flex items-center justify-center font-bold text-lg shadow-xs">
-              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            </div>
+            <ChatAvatar
+              src={seed.avatar}
+              name={seed.userKey || seed.name || "旁观者"}
+              size="lg"
+            />
             {#if isOnline}
               <span
                 class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"

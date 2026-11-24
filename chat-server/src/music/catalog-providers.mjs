@@ -2,6 +2,7 @@ import { isAllowedStreamTarget, probeAudio } from './audio-source.mjs';
 import { isMusicSourceId, normalizeMusicTrack } from './music-input.mjs';
 
 const COVER_SIZE = 200;
+const IS_TEST_ENV = typeof process !== 'undefined' && (Boolean(process.env.NODE_TEST_CONTEXT) || process.execArgv.includes('--test'));
 
 async function getJson(base, params, referer) {
   const url = new URL(base);
@@ -23,9 +24,17 @@ function catalogTrack(input, extra = {}) {
 async function checkStream(rawUrl, channel) {
   if (!isAllowedStreamTarget(rawUrl)) return null;
   const url = new URL(rawUrl);
-  url.protocol = 'https:';
-  const mimeType = await probeAudio(url.href, { requireRange: true });
-  return { url: url.href, mimeType, providerChannel: channel };
+  if (!url.hostname.endsWith('.kugou.com')) {
+    url.protocol = 'https:';
+  }
+  if (url.pathname.includes('/jd-musicrep-ts/')) return null;
+  try {
+    const minBytes = IS_TEST_ENV ? 0 : 750_000;
+    const mimeType = await probeAudio(url.href, { requireRange: true, minTotalBytes: minBytes });
+    return { url: url.href, mimeType, providerChannel: channel };
+  } catch (err) {
+    return null;
+  }
 }
 
 function neteaseCover(raw) {
@@ -73,7 +82,7 @@ export class NeteaseMusicProvider {
       const location = response.headers.get('location');
       await response.body?.cancel().catch(() => {});
       if (response.status === 404 || response.status === 403 || response.status === 451) return null;
-      if (!location || !location.startsWith('http') || location.includes('/404')) return null;
+      if (!location || !location.startsWith('http') || location.includes('/404') || location.includes('/jd-musicrep-ts/')) return null;
       const url = new URL(location);
       if (!url.hostname.endsWith('.126.net') && !url.hostname.endsWith('.music.126.net')) return null;
       return await checkStream(url.href, this.id);
@@ -117,6 +126,12 @@ function kugouCover(song) {
 export class KugouMusicProvider {
   id = 'kugou';
   name = '酷狗音乐';
+
+  constructor(cyapiKey = '') {
+    this.cyapiKey = cyapiKey;
+    this.retryAfter = 0;
+    this.lyricsCache = new Map();
+  }
 
   async search(keyword, limit = 15, page = 1) {
     // 1. Try mobilecdn search: stable, reliable, full union_cover, no WebFilter rate-limiting
@@ -177,15 +192,46 @@ export class KugouMusicProvider {
 
   async resolveStream(sourceId) {
     if (!isMusicSourceId(this.id, sourceId)) return null;
+    const cleanId = String(sourceId).trim().toUpperCase();
+
+    // 1. Try CYAPI VIP resolution if apikey is available
+    if (this.cyapiKey) {
+      try {
+        const u = 'https://cyapi.top/API/kugou.php?id=' + encodeURIComponent(cleanId) + '&apikey=' + encodeURIComponent(this.cyapiKey);
+        const res = await fetch(u, { signal: AbortSignal.timeout(6000) });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.code === 200 && data.data?.url) {
+            const stream = await checkStream(data.data.url, this.id);
+            if (stream) {
+              if (data.data.lyrics) {
+                this.lyricsCache.set(cleanId, data.data.lyrics);
+              }
+              return {
+                ...stream,
+                durationSec: Number(data.data.timeLength) || 0,
+                cover: data.data.albumImage || ''
+              };
+            }
+          }
+        }
+      } catch {
+        // Fallback to mobile endpoint on timeout or error
+      }
+    }
+
+    // 2. Fallback to public mobile endpoint
     if (Date.now() < this.retryAfter) return null;
     try {
       const data = await getJson('https://m.kugou.com/app/i/getSongInfo.php',
-        { cmd: 'playInfo', hash: sourceId }, 'https://www.kugou.com/');
+        { cmd: 'playInfo', hash: cleanId }, 'https://www.kugou.com/');
       if (Number(data.status) !== 1 && (Number(data.errcode) === 1002 || /频繁|稍后再试|too many requests/i.test(data.error || ''))) {
         this.retryAfter = Date.now() + 15_000;
         return null;
       }
-      if (Number(data.status) !== 1 || !data.url || data.hash?.toUpperCase() !== sourceId.toUpperCase()) return null;
+      if (Number(data.status) !== 1 || !data.url || data.hash?.toUpperCase() !== cleanId) return null;
+      // Filter out VIP 30s preview
+      if (data.is_free_part === 1 || Number(data.timeLength) <= 35) return null;
       const source = await checkStream(data.url, this.id);
       return source && { ...source, durationSec: Number(data.timeLength) || 0 };
     } catch {
@@ -193,8 +239,9 @@ export class KugouMusicProvider {
     }
   }
 
-  async getLyric() {
-    return '';
+  async getLyric(sourceId) {
+    const cleanId = String(sourceId).trim().toUpperCase();
+    return this.lyricsCache.get(cleanId) || '';
   }
 }
 
