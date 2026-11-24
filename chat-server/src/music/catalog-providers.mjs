@@ -467,7 +467,13 @@ export class YoutubeMusicProvider {
       const { stdout } = await execFileAsync(ytDlpPath, args, { timeout: 8500 });
       const streamUrl = stdout.trim().split('\n').pop()?.trim();
       if (streamUrl && isAllowedStreamTarget(streamUrl)) {
-        return await checkStream(streamUrl, this.id);
+        let checked = await checkStream(streamUrl, this.id);
+        if (!checked) {
+          // YouTube edge CDN enforces a ~3-second token activation delay for newly generated videoplayback streams
+          await new Promise(r => setTimeout(r, 3100));
+          checked = await checkStream(streamUrl, this.id);
+        }
+        return checked;
       }
     } catch {
       // Resolution failed, timed out, or restricted
