@@ -1161,6 +1161,49 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transform: scale(0.92);
 }
 
+/* 图片画质切换（压缩 JPG / 原图），桌面端工具条 */
+.chat-quality-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.28rem;
+	height: 2rem;
+	padding: 0 0.5rem;
+	border-radius: 8px;
+	border: 1px solid var(--chat-divider-color);
+	background: transparent;
+	color: var(--skin-text-dim);
+	font-size: 0.6875rem;
+	font-weight: 600;
+	line-height: 1;
+	white-space: nowrap;
+	cursor: pointer;
+	transition:
+		background-color 140ms ease,
+		color 140ms ease,
+		border-color 140ms ease;
+}
+
+.chat-quality-btn:hover {
+	background: var(--btn-plain-bg-hover);
+	color: var(--skin-text);
+}
+
+.chat-quality-btn.is-original {
+	color: var(--skin-accent);
+	border-color: color-mix(in oklab, var(--skin-accent) 45%, transparent);
+	background: var(--skin-accent-soft);
+}
+
+/* 附件预览条右侧的体积说明（如 8.2 MB → 640 KB） */
+.chat-upload-note {
+	font-size: 0.6875rem;
+	line-height: 1.2;
+	color: var(--chat-meta-color);
+	font-variant-numeric: tabular-nums;
+	user-select: none;
+}
+
 /* 经典 Custom Toolbox 发送按钮 */
 .chat-send-btn {
 	display: inline-flex;

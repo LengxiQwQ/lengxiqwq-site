@@ -35,6 +35,13 @@ import {
 } from "./chatClient";
 import { positionChatFloating } from "./chatFloating";
 import {
+	type ChatImageQuality,
+	formatChatFileSize,
+	loadChatImageQuality,
+	prepareChatImageForSend,
+	saveChatImageQuality,
+} from "./chatImageCompress";
+import {
 	type ChatDraft,
 	deleteChatMentionBeforeCaret,
 	getChatMentionQuery,
@@ -299,6 +306,8 @@ const currentPinnedMsg = $derived.by(() => {
 	return pinnedMessages[safeIndex] ?? pinnedMessages[0];
 });
 let uploadError = $state("");
+let uploadNote = $state("");
+let imageQuality = $state<ChatImageQuality>("compressed");
 let isDraggingFiles = $state(false);
 let dragCounter = 0;
 let inputDragActive = $state(false);
@@ -2675,6 +2684,7 @@ function resolveMusicNoticeAvatar(
 
 
 onMount(() => {
+	imageQuality = loadChatImageQuality();
 	setChatLightboxSourceProvider(collectChatImageSources);
 
 	// 预热外部贴纸与动效 CDN 连接（DNS + TLS 提前握手，消除网络初次冷启动延迟）
@@ -3829,6 +3839,7 @@ function handleSend() {
 		clearInput();
 		loadRoomDraft(roomId);
 		pendingImages = [];
+		uploadNote = "";
 		replyingTo = null;
 		return;
 	}
@@ -3841,6 +3852,7 @@ function handleSend() {
 	isPreviewingMarkdown = false;
 	replyingTo = null;
 	uploadError = "";
+	uploadNote = "";
 	activePopover = "none";
 	unreadBarDismissed = true;
 	unfocusedBanner = null;
@@ -3943,6 +3955,78 @@ function handleKeydown(e: KeyboardEvent) {
 	}
 }
 
+function toggleImageQuality() {
+	imageQuality = imageQuality === "compressed" ? "original" : "compressed";
+	saveChatImageQuality(imageQuality);
+	uploadError = "";
+}
+
+function describeUploadBatch(batch: {
+	count: number;
+	original: number;
+	output: number;
+}): string {
+	if (batch.count === 0) return "";
+	if (imageQuality === "original") {
+		return `原图 ${batch.count} 张 · ${formatChatFileSize(batch.output)}`;
+	}
+	if (batch.original <= batch.output) {
+		return `图片 ${batch.count} 张 · ${formatChatFileSize(batch.output)}`;
+	}
+	return `图片 ${batch.count} 张 · ${formatChatFileSize(batch.original)} → ${formatChatFileSize(batch.output)}`;
+}
+
+async function uploadImageAttachment(
+	file: File,
+	prefer: "waline" | "chat",
+): Promise<{
+	attachment: ImageAttachment;
+	originalSize: number;
+	outputSize: number;
+}> {
+	const prepared = await prepareChatImageForSend(file, imageQuality);
+	const chatBase = (chatServerUrl || "https://chat-server.lengxiqwq.com").trim();
+
+	// 粘贴/拖拽走 Waline（R2 + CDN），但原图超过 5MB 时只能回落到聊天网关
+	const useWaline =
+		prefer === "waline" &&
+		Boolean(walineServerUrl) &&
+		prepared.file.size <= 5 * 1024 * 1024;
+
+	if (useWaline) {
+		const { url } = await uploadChatImage(prepared.file, walineServerUrl);
+		return {
+			attachment: {
+				type: "image",
+				url,
+				name: prepared.file.name,
+				size: prepared.size,
+				width: prepared.width,
+				height: prepared.height,
+			},
+			originalSize: prepared.originalSize,
+			outputSize: prepared.size,
+		};
+	}
+
+	if (!chatBase) {
+		throw new Error("未配置图片上传服务");
+	}
+	const res = await uploadChatMedia(prepared.file, chatBase, walineToken);
+	return {
+		attachment: {
+			type: "image",
+			url: res.url,
+			name: res.name || prepared.file.name,
+			size: res.size || prepared.size,
+			width: prepared.width,
+			height: prepared.height,
+		},
+		originalSize: prepared.originalSize,
+		outputSize: res.size || prepared.size,
+	};
+}
+
 async function processImageFiles(files: FileList | File[]) {
 	if (!currentUser) {
 		onRequireAuth();
@@ -3969,12 +4053,18 @@ async function processImageFiles(files: FileList | File[]) {
 	}
 
 	uploadError = "";
+	uploadNote = "";
 	isUploadingImage = true;
+	const batch = { count: 0, original: 0, output: 0 };
 	try {
 		for (const file of list.slice(0, remaining)) {
-			const image = await uploadChatImage(file, walineServerUrl);
-			pendingImages = [...pendingImages, { type: "image", ...image }];
+			const result = await uploadImageAttachment(file, "waline");
+			pendingImages = [...pendingImages, result.attachment];
+			batch.count += 1;
+			batch.original += result.originalSize;
+			batch.output += result.outputSize;
 		}
+		uploadNote = describeUploadBatch(batch);
 	} catch (err) {
 		uploadError = err instanceof Error ? err.message : "图片上传失败";
 	} finally {
@@ -4007,12 +4097,19 @@ async function processMediaFiles(files: FileList | File[]) {
 	}
 
 	uploadError = "";
+	uploadNote = "";
 	isUploadingMedia = true;
+	const chatBase = chatServerUrl || "https://chat-server.lengxiqwq.com";
+	const batch = { count: 0, original: 0, output: 0 };
 	try {
 		for (const file of list.slice(0, remaining)) {
+			const isImage = file.type.startsWith("image/");
+			const prepared = isImage
+				? await prepareChatImageForSend(file, imageQuality)
+				: null;
 			const res = await uploadChatMedia(
-				file,
-				chatServerUrl || "https://chat-server.lengxiqwq.com",
+				prepared?.file ?? file,
+				chatBase,
 				walineToken,
 			);
 			pendingImages = [
@@ -4020,11 +4117,19 @@ async function processMediaFiles(files: FileList | File[]) {
 				{
 					type: res.type,
 					url: res.url,
-					name: res.name,
-					size: res.size,
+					name: prepared?.file.name || res.name,
+					size: res.size || prepared?.size,
+					width: prepared?.width,
+					height: prepared?.height,
 				},
 			];
+			if (prepared) {
+				batch.count += 1;
+				batch.original += prepared.originalSize;
+				batch.output += prepared.size;
+			}
 		}
+		uploadNote = describeUploadBatch(batch);
 	} catch (err) {
 		uploadError = err instanceof Error ? err.message : "附件上传失败";
 	} finally {
@@ -4147,6 +4252,9 @@ onMount(() => {
 
 function removePendingImage(index: number) {
 	pendingImages = pendingImages.filter((_, i) => i !== index);
+	if (pendingImages.length === 0) {
+		uploadNote = "";
+	}
 }
 </script>
 
@@ -4741,6 +4849,34 @@ function removePendingImage(index: number) {
             {#if threadInMore || mentionsInMore || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore)}
               <div class="mx-2 my-0.5 border-t border-[var(--skin-line)]"></div>
             {/if}
+
+            <button
+              type="button"
+              role="menuitem"
+              class="chat-mobile-more-item"
+              onclick={() => {
+                toggleImageQuality();
+                closeAllHeaderMenus();
+                onNotify?.(
+                  imageQuality === "compressed"
+                    ? "图片发送画质：压缩 JPG"
+                    : "图片发送画质：原图（不压缩）",
+                );
+              }}
+            >
+              <span class="flex items-center gap-2.5">
+                <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M9 3v4a2 2 0 0 1-2 2H3" />
+                  <path d="M15 21v-4a2 2 0 0 1 2-2h4" />
+                  <path d="M3 15h4a2 2 0 0 1 2 2v4" />
+                  <path d="M21 9h-4a2 2 0 0 1-2-2V3" />
+                </svg>
+                <span>图片发送画质</span>
+              </span>
+              <span class="chat-mobile-more-count">
+                {imageQuality === "compressed" ? "压缩" : "原图"}
+              </span>
+            </button>
 
             <button
               type="button"
@@ -5849,6 +5985,9 @@ function removePendingImage(index: number) {
           {#if uploadError}
             <span class="text-xs text-red-500">{uploadError}</span>
           {/if}
+          {#if uploadNote && !uploadError && !isUploadingImage && !isUploadingMedia}
+            <span class="chat-upload-note">{uploadNote}</span>
+          {/if}
         </div>
       {/if}
 
@@ -6007,6 +6146,44 @@ function removePendingImage(index: number) {
               <svg class="w-5 h-5 md:w-[1.15rem] md:h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
+            </button>
+          </ChatTooltip>
+
+          <!-- 图片画质切换：压缩 JPG（默认）/ 原图 -->
+          <ChatTooltip
+            class="chat-desktop-only"
+            text={imageQuality === "compressed"
+              ? "图片画质：压缩 JPG（点击改为原图）"
+              : "图片画质：原图（点击改为压缩）"}
+            align="left"
+          >
+            <button
+              type="button"
+              class="chat-quality-btn {imageQuality === "original" ? 'is-original' : ''}"
+              aria-label={imageQuality === "compressed"
+                ? "图片画质：压缩 JPG，点击改为原图"
+                : "图片画质：原图，点击改为压缩"}
+              aria-pressed={imageQuality === "original"}
+              onclick={toggleImageQuality}
+            >
+              {#if imageQuality === "compressed"}
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M9 3v4a2 2 0 0 1-2 2H3" />
+                  <path d="M15 21v-4a2 2 0 0 1 2-2h4" />
+                  <path d="M3 15h4a2 2 0 0 1 2 2v4" />
+                  <path d="M21 9h-4a2 2 0 0 1-2-2V3" />
+                </svg>
+                <span>压缩</span>
+              {:else}
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M3 8V5a2 2 0 0 1 2-2h3" />
+                  <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+                  <path d="M21 16v3a2 2 0 0 1-2 2h-3" />
+                  <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+                  <circle cx="12" cy="12" r="2.4" />
+                </svg>
+                <span>原图</span>
+              {/if}
             </button>
           </ChatTooltip>
 
