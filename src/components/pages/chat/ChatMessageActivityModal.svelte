@@ -3,12 +3,17 @@ import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import { isExternalMatrixIdentity, resolveExternalOrigin } from "./chatClient";
+import {
+	type ReactionDisplayInfo,
+	resolveReactionDisplay,
+} from "./chatReactions";
 import type {
 	ChatMessageRecord,
 	ChatReadReceipt,
 	ChatUserDetailProfile,
 	ChatUserDetailSeed,
 } from "./chatTypes";
+import type { StickerItem } from "./stickerLoader";
 
 interface Props {
 	open: boolean;
@@ -19,6 +24,8 @@ interface Props {
 	userProfileMap?: Map<string, ChatUserDetailProfile>;
 	userNameMap?: Map<string, string>;
 	interconnectSites?: InterconnectSite[];
+	chatServerUrl?: string;
+	stickerMap?: Map<string, StickerItem>;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onClose: () => void;
 }
@@ -32,6 +39,8 @@ const {
 	userProfileMap = new Map(),
 	userNameMap = new Map(),
 	interconnectSites = [],
+	chatServerUrl,
+	stickerMap,
 	onOpenUserProfile,
 	onClose,
 }: Props = $props();
@@ -190,14 +199,25 @@ const reactionEntries = $derived.by<[string, ActivityUserItem[]][]>(() => {
 });
 
 const availableTabs = $derived.by<
-	{ id: string; label: string; count: number }[]
+	{ id: string; label: string; count: number; display: ReactionDisplayInfo }[]
 >(() => {
-	const list: { id: string; label: string; count: number }[] = [];
+	const list: {
+		id: string;
+		label: string;
+		count: number;
+		display: ReactionDisplayInfo;
+	}[] = [];
 	if (resolvedReaders.length > 0) {
-		list.push({ id: "read", label: "已读", count: resolvedReaders.length });
+		list.push({
+			id: "read",
+			label: "已读",
+			count: resolvedReaders.length,
+			display: { type: "text", text: "已读", alt: "已读" },
+		});
 	}
 	for (const [emoji, users] of reactionEntries) {
-		list.push({ id: emoji, label: emoji, count: users.length });
+		const display = resolveReactionDisplay(emoji, chatServerUrl, stickerMap);
+		list.push({ id: emoji, label: emoji, count: users.length, display });
 	}
 	return list;
 });
@@ -233,6 +253,10 @@ const modalSubtitle = $derived.by(() => {
 	if (currentTab === "read") {
 		return `共 ${resolvedReaders.length} 人已读`;
 	}
+	const matchTab = availableTabs.find((t) => t.id === currentTab);
+	if (matchTab?.display.type === "image") {
+		return `${matchTab.display.alt} · 共 ${activeUsers.length} 人回应`;
+	}
 	return `${currentTab} · 共 ${activeUsers.length} 人回应`;
 });
 </script>
@@ -255,8 +279,27 @@ const modalSubtitle = $derived.by(() => {
             aria-selected={currentTab === tab.id}
             class="chat-activity-tab-btn {currentTab === tab.id ? 'is-active' : ''}"
             onclick={() => (currentTab = tab.id)}
+            aria-label={tab.display.alt}
           >
-            <span class="text-xs leading-none">{tab.label}</span>
+            {#if tab.display.type === "image"}
+              <img
+                src={tab.display.url}
+                alt={tab.display.alt}
+                class="w-3.5 h-3.5 object-contain inline-block shrink-0 rounded-xs"
+                loading="lazy"
+                decoding="async"
+                onerror={(e) => {
+                  const img = e.currentTarget as HTMLImageElement;
+                  if (tab.display.fallbackUrl && img.src !== tab.display.fallbackUrl) {
+                    img.src = tab.display.fallbackUrl;
+                  } else {
+                    img.style.display = "none";
+                  }
+                }}
+              />
+            {:else}
+              <span class="text-xs leading-none">{tab.display.text}</span>
+            {/if}
             <span class="chat-activity-tab-count tabular-nums">{tab.count}</span>
           </button>
         {/each}

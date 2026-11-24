@@ -7,6 +7,7 @@ import ChatFileAttachment from "./ChatFileAttachment.svelte";
 import ChatImagePreview from "./ChatImagePreview.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessageActivityModal from "./ChatMessageActivityModal.svelte";
+import ChatStickerPicker from "./ChatStickerPicker.svelte";
 import ChatStickerImage from "./ChatStickerImage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import ChatVideoPreview from "./ChatVideoPreview.svelte";
@@ -22,6 +23,10 @@ import type { InterconnectSite } from "./chatConfig";
 import { positionChatFloating } from "./chatFloating";
 import { getChatMessageAttachments } from "./chatMarkdown";
 import { provideChatMediaRetry } from "./chatMediaRetry";
+import {
+	QUICK_REACTION_PRESETS,
+	resolveReactionDisplay,
+} from "./chatReactions";
 import {
 	type ChatShareData,
 	parseLxArticleShare,
@@ -40,6 +45,7 @@ import {
 	getChatReplyAttachmentKind,
 	parseChatSegments,
 	type StickerItem,
+	type StickerPack,
 } from "./stickerLoader";
 
 interface Props {
@@ -58,6 +64,7 @@ interface Props {
 	canEdit?: boolean;
 	canDelete?: boolean;
 	stickerMap: Map<string, StickerItem>;
+	stickerPacks?: StickerPack[];
 	chatServerUrl?: string;
 	interconnectSites?: InterconnectSite[];
 	userNameMap?: Map<string, string>;
@@ -106,6 +113,7 @@ const {
 	canEdit = false,
 	canDelete = false,
 	stickerMap,
+	stickerPacks = [],
 	chatServerUrl,
 	interconnectSites = [],
 	userNameMap = new Map(),
@@ -129,11 +137,44 @@ const {
 }: Props = $props();
 
 let showQuickReaction = $state(false);
+let quickReactionReady = $state(false);
+let prepareReactionPicker = $state(false);
+let showReactionPicker = $state(false);
 let showMoreActions = $state(false);
 let actionsMounted = $state(false);
 let copySuccess = $state(false);
 let reactionEl = $state<HTMLElement | null>(null);
+let quickReactionBar = $state<HTMLDivElement | null>(null);
+let reactionMoreButton = $state<HTMLButtonElement | null>(null);
 let moreActionsEl = $state<HTMLElement | null>(null);
+
+function closeReactionMenus() {
+	showReactionPicker = false;
+	showQuickReaction = false;
+	quickReactionReady = false;
+	prepareReactionPicker = false;
+}
+
+$effect(() => {
+	if (!quickReactionReady) return;
+	// Let the quick bar paint before preparing the hidden, positioned picker.
+	let frame = requestAnimationFrame(() => {
+		frame = requestAnimationFrame(() => {
+			prepareReactionPicker = true;
+		});
+	});
+	return () => cancelAnimationFrame(frame);
+});
+
+function closeReactionPicker() {
+	showReactionPicker = false;
+	if (showQuickReaction) reactionMoreButton?.focus({ preventScroll: true });
+}
+
+function showReactionPopover(node: HTMLDivElement) {
+	// Keep the picker in DOM order for focus and outside-click handling.
+	node.showPopover?.();
+}
 
 async function handleCopy(e: MouseEvent) {
 	e.stopPropagation();
@@ -205,21 +246,19 @@ const mentionedBubblePath = $derived.by(() => {
 });
 
 $effect(() => {
-	if (!showQuickReaction && !showMoreActions) return;
+	if (!showQuickReaction && !showMoreActions && !showReactionPicker) return;
 	function handleOutside(e: PointerEvent) {
 		const target = e.target as Node | null;
+		if (!target || !document.body.contains(target)) return;
 		if (
-			showQuickReaction &&
-			reactionEl &&
-			target &&
-			!reactionEl.contains(target)
+			(showQuickReaction || showReactionPicker) &&
+			!reactionEl?.contains(target)
 		) {
-			showQuickReaction = false;
+			closeReactionMenus();
 		}
 		if (
 			showMoreActions &&
 			moreActionsEl &&
-			target &&
 			!moreActionsEl.contains(target)
 		) {
 			showMoreActions = false;
@@ -230,7 +269,7 @@ $effect(() => {
 		const active = showMoreActions ? moreActionsEl : reactionEl;
 		const restoreFocus = active?.contains(document.activeElement);
 		showMoreActions = false;
-		showQuickReaction = false;
+		closeReactionMenus();
 		if (restoreFocus) active?.querySelector("button")?.focus({ preventScroll: true });
 	}
 	window.addEventListener("pointerdown", handleOutside, { capture: true });
@@ -796,7 +835,7 @@ function handleBubbleClick(e: MouseEvent) {
   {@const hasMoreActions = canCopy || canThreadMsg || canEditMsg || canPinMsg || canViewSource || canRecallMsg || canDeleteMsg}
   {#if onReaction || onReply || hasMoreActions || mediaRetries.size > 0}
     <div
-      class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction || showMoreActions || mediaRetries.size > 0 ? 'is-active' : ''} {mediaRetries.size > 0 ? 'has-media-retry' : ''}"
+      class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction || showMoreActions || showReactionPicker || mediaRetries.size > 0 ? 'is-active' : ''} {mediaRetries.size > 0 ? 'has-media-retry' : ''}"
       role="toolbar"
       aria-label="消息快捷操作"
     >
@@ -814,49 +853,104 @@ function handleBubbleClick(e: MouseEvent) {
       <!-- 快捷表情反应 -->
       {#if onReaction}
         <div class="relative inline-flex items-center" bind:this={reactionEl}>
-          <ChatTooltip text="表情回应" disabled={showQuickReaction || showMoreActions}>
-            <button
-              type="button"
-              class="chat-action-icon-btn {showQuickReaction ? 'active' : ''}"
-              aria-label="表情回应"
-              onclick={(e) => {
-                e.stopPropagation();
-                showMoreActions = false;
-                showQuickReaction = !showQuickReaction;
-              }}
-            >
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M22 11v1a10 10 0 1 1-9-10" />
-                <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-                <line x1="9" y1="9" x2="9.01" y2="9" />
-                <line x1="15" y1="9" x2="15.01" y2="9" />
-                <path d="M16 5h6" />
-                <path d="M19 2v6" />
-              </svg>
-            </button>
-          </ChatTooltip>
+          <button
+            type="button"
+            class="chat-action-icon-btn {showQuickReaction || showReactionPicker ? 'active' : ''}"
+            aria-label="表情回应"
+            onclick={(e) => {
+              e.stopPropagation();
+              showMoreActions = false;
+              if (showQuickReaction) {
+                closeReactionMenus();
+              } else {
+                showQuickReaction = true;
+              }
+            }}
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M22 11v1a10 10 0 1 1-9-10" />
+              <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+              <line x1="9" y1="9" x2="9.01" y2="9" />
+              <line x1="15" y1="9" x2="15.01" y2="9" />
+              <path d="M16 5h6" />
+              <path d="M19 2v6" />
+            </svg>
+          </button>
 
           {#if showQuickReaction}
             <div
+              bind:this={quickReactionBar}
               data-chat-floating
               use:positionChatFloating={{
                 placement: isSelfMsg ? "top-end" : "top-start",
-                onReferenceHidden: () => (showQuickReaction = false),
+                onReady: () => { quickReactionReady = true; },
+                onReferenceHidden: closeReactionMenus,
               }}
               class="chat-quick-reactions-popover"
             >
-              {#each ["👍", "❤️", "😂", "🎉", "🔥", "👀"] as em (em)}
+              {#each QUICK_REACTION_PRESETS as em (em)}
                 <button
                   type="button"
                   class="chat-quick-reaction-btn"
                   onclick={() => {
                     onReaction?.(message.msgUid, em);
-                    showQuickReaction = false;
+                    closeReactionMenus();
                   }}
+                  aria-label={`回应 ${em}`}
                 >
                   {em}
                 </button>
               {/each}
+              <button
+                bind:this={reactionMoreButton}
+                type="button"
+                class="chat-quick-reaction-btn chat-quick-reaction-more-btn {showReactionPicker ? 'is-active' : ''}"
+                aria-label="更多表情回应"
+                aria-haspopup="dialog"
+                aria-expanded={showReactionPicker}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  showReactionPicker = !showReactionPicker;
+                }}
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
+            </div>
+          {/if}
+
+          {#if quickReactionBar && (prepareReactionPicker || showReactionPicker)}
+            <div
+              popover="manual"
+              data-chat-floating
+              data-chat-reaction-picker-open={showReactionPicker ? "" : undefined}
+              inert={!showReactionPicker}
+              use:showReactionPopover
+              use:positionChatFloating={{
+                reference: quickReactionBar,
+                placement: isSelfMsg ? "bottom-end" : "bottom-start",
+                gap: 6,
+                strategy: "fixed",
+                fitViewport: true,
+                sizeToAvailableSpace: false,
+                onReferenceHidden: closeReactionMenus,
+              }}
+              class="chat-reaction-picker-floating-wrap"
+            >
+              <div class="chat-emoji-popover chat-sticker-popover chat-reaction-system-picker">
+                <ChatStickerPicker
+                  stickerPacks={stickerPacks}
+                  chatServerUrl={chatServerUrl}
+                  variant="reaction"
+                  open={showReactionPicker}
+                  onSelect={(emoji) => {
+                    onReaction?.(message.msgUid, emoji);
+                    closeReactionMenus();
+                  }}
+                  onClose={closeReactionPicker}
+                />
+              </div>
             </div>
           {/if}
         </div>
@@ -871,7 +965,7 @@ function handleBubbleClick(e: MouseEvent) {
             aria-label="回复消息"
             onclick={(e) => {
               e.stopPropagation();
-              showQuickReaction = false;
+              closeReactionMenus();
               showMoreActions = false;
               onReply?.(message);
             }}
@@ -895,7 +989,7 @@ function handleBubbleClick(e: MouseEvent) {
               aria-expanded={showMoreActions}
               onclick={(e) => {
                 e.stopPropagation();
-                showQuickReaction = false;
+                closeReactionMenus();
                 showMoreActions = !showMoreActions;
               }}
             >
@@ -1138,6 +1232,7 @@ function handleBubbleClick(e: MouseEvent) {
       {#each reactionEntries as [emoji, users] (emoji)}
         {@const isMine = Boolean(currentUserKey && users.includes(currentUserKey))}
         {@const reactionUsers = resolveReactionUsers(users)}
+        {@const display = resolveReactionDisplay(emoji, chatServerUrl, stickerMap)}
         <div class="chat-reaction-item">
           <button
             type="button"
@@ -1148,9 +1243,27 @@ function handleBubbleClick(e: MouseEvent) {
             onpointercancel={handleReactionPointerCancel}
             oncontextmenu={handleReactionContextMenu}
             onclick={(e) => handleReactionClick(e, emoji)}
-            aria-label={`${emoji} ${users.length} 人回应（长按查看成员）`}
+            aria-label={`${display.alt} ${users.length} 人回应（长按查看成员）`}
           >
-            <span>{emoji}</span>
+            {#if display.type === "image"}
+              <img
+                src={display.url}
+                alt={display.alt}
+                class="chat-reaction-img"
+                loading="lazy"
+                decoding="async"
+                onerror={(e) => {
+                  const img = e.currentTarget as HTMLImageElement;
+                  if (display.fallbackUrl && img.src !== display.fallbackUrl) {
+                    img.src = display.fallbackUrl;
+                  } else {
+                    img.style.display = "none";
+                  }
+                }}
+              />
+            {:else}
+              <span>{display.text}</span>
+            {/if}
             <span class="text-[0.6875rem] font-medium opacity-85">{users.length}</span>
           </button>
           {#if reactionUsers.length > 0}
@@ -1159,14 +1272,24 @@ function handleBubbleClick(e: MouseEvent) {
               use:positionChatFloating={{ placement: alignEnd ? "top-end" : "top-start", hover: "card" }}
               class="chat-read-receipts-popover chat-reaction-popover"
               role="dialog"
-              aria-label={`${emoji} 回应成员`}
+              aria-label={`${display.alt} 回应成员`}
             >
               <div class="text-[0.6875rem] font-semibold text-[var(--deep-text)] dark:text-white/90 px-1 pb-1 mb-1 border-b border-[var(--chat-divider-color)] flex items-center justify-between gap-2">
-                <span class="flex items-center gap-1">
-                  <span>{emoji}</span>
-                  <span>回应成员</span>
+                <span class="flex items-center gap-1.5 min-w-0">
+                  {#if display.type === "image"}
+                    <img
+                      src={display.url}
+                      alt={display.alt}
+                      class="w-4 h-4 object-contain inline-block shrink-0 rounded-xs"
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  {:else}
+                    <span class="shrink-0">{display.text}</span>
+                  {/if}
+                  <span class="truncate">回应成员</span>
                 </span>
-                <span class="text-[0.625rem] font-normal text-[var(--chat-meta-color)] tabular-nums">{reactionUsers.length} 人</span>
+                <span class="text-[0.625rem] font-normal text-[var(--chat-meta-color)] tabular-nums shrink-0">{reactionUsers.length} 人</span>
               </div>
               <div class="chat-read-receipts-list custom-scrollbar space-y-0.5">
                 {#each reactionUsers as item (item.userKey)}
@@ -1446,7 +1569,7 @@ function handleBubbleClick(e: MouseEvent) {
     class="flex flex-row-reverse items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}"
     onpointerenter={() => { actionsMounted = true; }}
     onfocusin={() => { actionsMounted = true; }}
-    onpointerleave={() => { if (!showQuickReaction && !showMoreActions) actionsMounted = false; }}
+    onpointerleave={() => { if (!showQuickReaction && !showMoreActions && !showReactionPicker) actionsMounted = false; }}
   >
     <button
       type="button"
@@ -1491,7 +1614,7 @@ function handleBubbleClick(e: MouseEvent) {
         onpointercancel={cancelBubblePress}
         onclick={handleBubbleClick}
       >
-        {#if actionsMounted || showQuickReaction || showMoreActions || mediaRetries.size > 0}
+        {#if actionsMounted || showQuickReaction || showMoreActions || showReactionPicker || mediaRetries.size > 0}
           {@render renderFloatingActions(true)}
         {/if}
 
@@ -1558,7 +1681,7 @@ function handleBubbleClick(e: MouseEvent) {
     class="flex items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}"
     onpointerenter={() => { actionsMounted = true; }}
     onfocusin={() => { actionsMounted = true; }}
-    onpointerleave={() => { if (!showQuickReaction && !showMoreActions) actionsMounted = false; }}
+    onpointerleave={() => { if (!showQuickReaction && !showMoreActions && !showReactionPicker) actionsMounted = false; }}
   >
     <button
       type="button"
@@ -1615,7 +1738,7 @@ function handleBubbleClick(e: MouseEvent) {
         onpointercancel={cancelBubblePress}
         onclick={handleBubbleClick}
       >
-        {#if actionsMounted || showQuickReaction || showMoreActions || mediaRetries.size > 0}
+        {#if actionsMounted || showQuickReaction || showMoreActions || showReactionPicker || mediaRetries.size > 0}
           {@render renderFloatingActions(false)}
         {/if}
 
@@ -1702,6 +1825,8 @@ function handleBubbleClick(e: MouseEvent) {
     userProfileMap={userProfileMap}
     userNameMap={userNameMap}
     interconnectSites={interconnectSites}
+    chatServerUrl={chatServerUrl}
+    stickerMap={stickerMap}
     onOpenUserProfile={onOpenUserProfile}
     onClose={() => (showActivityModal = false)}
   />

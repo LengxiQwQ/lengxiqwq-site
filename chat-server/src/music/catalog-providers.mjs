@@ -1,6 +1,10 @@
-import { isAllowedStreamTarget, probeAudio } from './audio-source.mjs';
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { promisify } from 'node:util';
+import { HEADERS, isAllowedStreamTarget, probeAudio } from './audio-source.mjs';
 import { isMusicSourceId, normalizeMusicTrack } from './music-input.mjs';
 
+const execFileAsync = promisify(execFile);
 const COVER_SIZE = 200;
 const IS_TEST_ENV = typeof process !== 'undefined' && (Boolean(process.env.NODE_TEST_CONTEXT) || process.execArgv.includes('--test'));
 
@@ -438,7 +442,36 @@ export class YoutubeMusicProvider {
     }
   }
 
-  async resolveStream() {
+  async resolveStream(sourceId) {
+    if (!isMusicSourceId(this.id, sourceId)) return null;
+    try {
+      const ytDlpPath = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
+      if (!existsSync(ytDlpPath)) return null;
+      const url = 'https://www.youtube.com/watch?v=' + sourceId;
+      const ua = HEADERS['User-Agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36';
+      const nodePath = process.execPath || '/usr/bin/node';
+      const args = [
+        '--js-runtimes', `node:${nodePath}`,
+        '--user-agent', ua,
+        '-f', 'ba[ext=m4a]/ba',
+        '--no-playlist',
+        '--no-warnings',
+        '--socket-timeout', '5',
+        '-g',
+        url
+      ];
+      const cookiesPath = process.env.YOUTUBE_COOKIES_PATH || '/opt/chat-server/cookies.txt';
+      if (existsSync(cookiesPath)) {
+        args.unshift('--cookies', cookiesPath);
+      }
+      const { stdout } = await execFileAsync(ytDlpPath, args, { timeout: 8500 });
+      const streamUrl = stdout.trim().split('\n').pop()?.trim();
+      if (streamUrl && isAllowedStreamTarget(streamUrl)) {
+        return await checkStream(streamUrl, this.id);
+      }
+    } catch {
+      // Resolution failed, timed out, or restricted
+    }
     return null;
   }
 

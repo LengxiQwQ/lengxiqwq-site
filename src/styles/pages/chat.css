@@ -1161,47 +1161,66 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	transform: scale(0.92);
 }
 
-/* 图片画质切换（压缩 JPG / 原图），桌面端工具条 */
-.chat-quality-btn {
-	display: inline-flex;
-	align-items: center;
+/* 待发送附件条右侧：体积说明 + 「原图发送」复选框，上下两行 */
+.chat-attach-meta {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
 	justify-content: center;
-	gap: 0.28rem;
-	height: 2rem;
-	padding: 0 0.5rem;
-	border-radius: 8px;
-	border: 1px solid var(--chat-divider-color);
-	background: transparent;
-	color: var(--skin-text-dim);
-	font-size: 0.6875rem;
-	font-weight: 600;
-	line-height: 1;
-	white-space: nowrap;
-	cursor: pointer;
-	transition:
-		background-color 140ms ease,
-		color 140ms ease,
-		border-color 140ms ease;
+	gap: 0.25rem;
+	min-width: 0;
 }
 
-.chat-quality-btn:hover {
-	background: var(--btn-plain-bg-hover);
-	color: var(--skin-text);
-}
-
-.chat-quality-btn.is-original {
-	color: var(--skin-accent);
-	border-color: color-mix(in oklab, var(--skin-accent) 45%, transparent);
-	background: var(--skin-accent-soft);
-}
-
-/* 附件预览条右侧的体积说明（如 8.2 MB → 640 KB） */
+/* 附件预览条右侧的体积说明（如 8.2 MB → 640 KB）；空着也占一行，避免上传/切换时整条高度跳动 */
 .chat-upload-note {
+	display: block;
+	min-height: 1.2em;
 	font-size: 0.6875rem;
 	line-height: 1.2;
 	color: var(--chat-meta-color);
 	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 	user-select: none;
+}
+
+/* 勾选后这条消息的图片按原图发送 */
+.chat-original-check {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.35rem;
+	font-size: 0.75rem;
+	line-height: 1.2;
+	color: var(--chat-meta-color);
+	white-space: nowrap;
+	cursor: pointer;
+	user-select: none;
+	transition: color 140ms ease;
+}
+
+.chat-original-check:hover {
+	color: var(--skin-text);
+}
+
+.chat-original-check:has(input:checked) {
+	color: var(--skin-text);
+}
+
+.chat-original-check input {
+	width: 0.875rem;
+	height: 0.875rem;
+	margin: 0;
+	flex: none;
+	accent-color: var(--skin-accent);
+	cursor: pointer;
+}
+
+.chat-original-check:has(input:disabled) {
+	opacity: 0.6;
+	cursor: default;
+}
+
+.chat-original-check:has(input:disabled) input {
+	cursor: default;
 }
 
 /* 经典 Custom Toolbox 发送按钮 */
@@ -3674,6 +3693,17 @@ div.chat-sticker-large svg {
 	font-weight: 600;
 }
 
+.chat-picker-content {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.chat-composer-picker {
+	height: var(--chat-floating-max-height);
+}
+
 .chat-picker-body {
 	flex: 1;
 	min-height: 0;
@@ -3685,11 +3715,6 @@ div.chat-sticker-large svg {
 	transform: translateZ(0);
 	-webkit-overflow-scrolling: touch;
 	scroll-behavior: auto;
-}
-
-/* 滚动发生时临时禁用子元素指针事件，防止高速划过鼠标时触发密集的 hover 图层重绘 */
-.chat-picker-body[data-scrolling="true"] * {
-	pointer-events: none !important;
 }
 
 .chat-picker-pane {
@@ -5946,6 +5971,81 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	background: color-mix(in oklab, var(--skin-accent) 15%, var(--skin-surface));
 	color: var(--skin-accent);
 	font-weight: 600;
+}
+
+.chat-reaction-img {
+	width: 1rem;
+	height: 1rem;
+	object-fit: contain;
+	display: inline-block;
+	vertical-align: middle;
+	border-radius: 2px;
+	flex-shrink: 0;
+	pointer-events: none;
+}
+
+.chat-reaction-add-pill {
+	padding: 0.18rem 0.4rem;
+	opacity: 0.8;
+}
+
+.chat-reaction-add-pill:hover {
+	opacity: 1;
+	border-color: var(--skin-accent);
+	color: var(--skin-accent);
+}
+
+.chat-quick-reaction-more-btn {
+	color: var(--chat-meta-color);
+	transition: all 120ms ease;
+}
+
+.chat-quick-reaction-more-btn:hover,
+.chat-quick-reaction-more-btn.is-active {
+	color: var(--skin-accent);
+	background: var(--btn-plain-bg-hover);
+}
+
+.chat-mobile-sheet-more-btn {
+	background: var(--btn-plain-bg);
+	border: 1px dashed var(--chat-divider-color);
+	color: var(--chat-meta-color);
+}
+
+.chat-mobile-sheet-more-btn:hover,
+.chat-mobile-sheet-more-btn.is-active {
+	color: var(--skin-accent);
+	border-color: var(--skin-accent);
+}
+
+.chat-reaction-picker-floating-wrap {
+	--chat-floating-max-height: min(20rem, 50dvh);
+	z-index: 50;
+	width: min(23.5rem, calc(100vw - 1.5rem));
+	height: var(--chat-floating-max-height);
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	overflow: visible;
+	white-space: normal;
+}
+
+.chat-reaction-picker-floating-wrap > .chat-reaction-system-picker {
+	width: 100%;
+	height: 100%;
+}
+
+.chat-reaction-picker-floating-wrap:not([data-chat-reaction-picker-open]) {
+	visibility: hidden;
+	pointer-events: none;
+}
+
+.chat-reaction-system-picker {
+	width: min(23.5rem, calc(100vw - 1.5rem));
+	--chat-floating-max-height: min(20rem, 50vh);
+	box-shadow: 0 12px 36px -6px rgba(0, 0, 0, 0.24), 0 4px 10px rgba(0, 0, 0, 0.08);
+	border-radius: 14px;
 }
 
 .chat-quick-reactions {

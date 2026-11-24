@@ -785,7 +785,11 @@ export class MusicRegistry {
     const source = resolved.source;
     if (!source) return null;
     const base = origin.replace(/\/+$/, '');
-    const proxyUrl = signStreamProxyUrl(base, source.url, signSecret, 'https://y.qq.com/', source.mimeType, key + ':128');
+    const referer = provider.id === 'netease' ? 'https://music.163.com/'
+      : provider.id === 'kugou' ? 'https://www.kugou.com/'
+      : provider.id === 'youtube' ? 'https://www.youtube.com/'
+      : 'https://y.qq.com/';
+    const proxyUrl = signStreamProxyUrl(base, source.url, signSecret, referer, source.mimeType, key + ':128');
     const directUrl = provider.id === 'qq' && typeof source.url === 'string' && source.url.startsWith('http')
       ? source.url.replace(/^http:\/\//i, 'https://')
       : '';

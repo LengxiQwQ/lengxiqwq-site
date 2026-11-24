@@ -1,4 +1,4 @@
-const HEADERS = {
+export const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36',
   Referer: 'https://y.qq.com/',
   'Accept-Encoding': 'identity'
@@ -13,7 +13,7 @@ export function isAllowedStreamTarget(value) {
       (host.endsWith('.stream.qqmusic.qq.com') || host.endsWith('.music.tc.qq.com') ||
         host.endsWith('.music.qq.com') || host.endsWith('.music.gtimg.com') ||
         host.endsWith('.music.126.net') || host.endsWith('.126.net') ||
-        host.endsWith('.kugou.com'));
+        host.endsWith('.kugou.com') || host.endsWith('.googlevideo.com'));
   } catch {
     return false;
   }
@@ -24,7 +24,8 @@ export async function fetchAudio(url, { range, signal } = {}) {
     if (!isAllowedStreamTarget(url)) throw new Error('untrusted audio host');
     const host = new URL(url).hostname.toLowerCase();
     const referer = (host.endsWith('.126.net') || host.endsWith('.music.126.net')) ? 'https://music.163.com/'
-      : host.endsWith('.kugou.com') ? 'https://www.kugou.com/' : HEADERS.Referer;
+      : host.endsWith('.kugou.com') ? 'https://www.kugou.com/'
+      : host.endsWith('.googlevideo.com') ? 'https://www.youtube.com/' : HEADERS.Referer;
     const headers = { ...HEADERS, Referer: referer, ...(range && { Range: range }) };
     const response = await fetch(url, { headers, signal, redirect: 'manual' });
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
@@ -42,6 +43,7 @@ export function identifyAudio(bytes) {
   if (bytes.subarray(4, 8).toString() === 'ftyp') return 'audio/mp4';
   if (bytes.subarray(0, 4).toString() === 'fLaC') return 'audio/flac';
   if (bytes.subarray(0, 4).toString() === 'OggS') return 'audio/ogg';
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return 'audio/webm';
   if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) {
     return (bytes[1] & 0x06) === 0 ? 'audio/aac' : 'audio/mpeg';
   }

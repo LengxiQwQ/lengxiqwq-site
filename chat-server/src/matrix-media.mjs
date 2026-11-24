@@ -75,6 +75,15 @@ async function normalizeSvg(body) {
   return Buffer.from(text.replace(svg[0], '<svg' + svg[1] + ' viewBox="0 0 ' + width[1] + ' ' + height[1] + '">'));
 }
 
+function formatContentDisposition(filename) {
+  if (!filename) return 'attachment';
+  const cleanName = filename.replace(/[\r\n\0]/g, '').trim();
+  if (!cleanName) return 'attachment';
+  const asciiName = cleanName.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+  const utf8Name = encodeURIComponent(cleanName).replace(/['()]/g, escape).replace(/\*/g, '%2A');
+  return `attachment; filename="${asciiName}"; filename*=UTF-8''${utf8Name}`;
+}
+
 export function createMatrixMediaHandler({ baseUrl, token }) {
   let active = 0;
   return async function handleMatrixMedia(req, res, pathname) {
@@ -82,7 +91,7 @@ export function createMatrixMediaHandler({ baseUrl, token }) {
       res.writeHead(405, { Allow: 'GET, HEAD' }).end();
       return;
     }
-    const parts = /^\/api\/media\/([^/]+)\/([^/]+)$/.exec(pathname);
+    const parts = /^\/api\/media\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/.exec(pathname);
     if (!parts) return fail(res, 400, 'Invalid Matrix media address');
 
     let encodedPath;
@@ -95,6 +104,14 @@ export function createMatrixMediaHandler({ baseUrl, token }) {
     } catch {
       return fail(res, 400, 'Invalid Matrix media address');
     }
+
+    let requestedFilename = '';
+    try {
+      const reqUrl = new URL(req.url, 'http://localhost');
+      const queryName = reqUrl.searchParams.get('filename') || reqUrl.searchParams.get('name');
+      const pathName = parts[3] ? decodeURIComponent(parts[3]) : '';
+      requestedFilename = (queryName || pathName || '').trim().replace(/[/\\?%*:|"<>]/g, '_');
+    } catch {}
 
     const range = req.method === 'GET' && !req.headers['if-range'] ? req.headers.range : undefined;
     if (range !== undefined && !/^bytes=(?:\d+-\d*|-\d+)$/i.test(range)) {
@@ -130,7 +147,7 @@ export function createMatrixMediaHandler({ baseUrl, token }) {
         ...safeHeaders,
         'Content-Type': inline ? type : 'application/octet-stream',
         'Cache-Control': 'public, max-age=604800, immutable',
-        ...(inline ? {} : { 'Content-Disposition': 'attachment' }),
+        ...(inline ? {} : { 'Content-Disposition': formatContentDisposition(requestedFilename) }),
       };
       let length = lengthHeader(upstream.headers.get('content-length'));
       if (length > MAX_MEDIA_BYTES) return fail(res, 413, 'Matrix media exceeds size limit');

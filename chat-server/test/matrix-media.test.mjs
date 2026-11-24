@@ -126,6 +126,21 @@ test('Matrix media proxy range responses, original images and failures', async (
     assert.equal(html.headers.get('content-disposition'), 'attachment');
     assert.equal(html.headers.get('content-type'), 'application/octet-stream');
     assert.equal(html.headers.get('x-content-type-options'), 'nosniff');
+
+    // Supports filename in query param
+    const htmlWithQuery = await fetch(url('html') + '?filename=' + encodeURIComponent('测试文档.docx'));
+    assert.equal(
+      htmlWithQuery.headers.get('content-disposition'),
+      `attachment; filename="____.docx"; filename*=UTF-8''${encodeURIComponent('测试文档.docx')}`
+    );
+
+    // Supports filename in path component
+    const htmlWithPath = await fetch(url('html') + '/' + encodeURIComponent('report.pdf'));
+    assert.equal(
+      htmlWithPath.headers.get('content-disposition'),
+      "attachment; filename=\"report.pdf\"; filename*=UTF-8''report.pdf"
+    );
+
     const missing = await get('missing');
     assert.equal(missing.status, 404);
     assert.equal(missing.headers.get('cache-control'), 'no-store');

@@ -39,7 +39,9 @@ export function signStreamProxyUrl(
         ? 'flac'
         : mimeType === 'audio/ogg'
           ? 'ogg'
-          : 'mp3';
+          : mimeType === 'audio/webm'
+            ? 'webm'
+            : 'mp3';
   const safeName =
     typeof trackKey === 'string' && /^[A-Za-z0-9:_-]+$/.test(trackKey)
       ? trackKey.replace(/:/g, '_')

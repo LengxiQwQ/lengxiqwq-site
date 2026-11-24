@@ -11,7 +11,7 @@ import { ChatDatabase } from '../src/db/database.mjs';
 import { ArtistDirectory, MusicRegistry } from '../src/music/registry.mjs';
 import { findPlaylistRequestTrack } from '../src/music/music-input.mjs';
 import { QQMusicProvider } from '../src/music/qq-music.mjs';
-import { KugouMusicProvider, NeteaseMusicProvider } from '../src/music/catalog-providers.mjs';
+import { KugouMusicProvider, NeteaseMusicProvider, YoutubeMusicProvider } from '../src/music/catalog-providers.mjs';
 import { lookupPreferredProviders } from '../src/music/provider-routing.mjs';
 import { YoutubeCandidates } from '../src/music/youtube-candidates.mjs';
 
@@ -92,6 +92,13 @@ test('NetEase checks that the original CDN file supports seeking and rejects una
   assert.equal((await provider.resolveStream('123')).mimeType, 'audio/mpeg');
   assert.equal(await provider.resolveStream('124'), null);
   assert.deepEqual(calls, ['api.injahow.cn', 'm701.music.126.net', 'api.injahow.cn']);
+});
+
+test('YoutubeMusicProvider rejects invalid sourceIds and handles stream resolution', async () => {
+  const provider = new YoutubeMusicProvider();
+  assert.equal(await provider.resolveStream('invalid_id'), null);
+  assert.equal(await provider.resolveStream(''), null);
+  assert.equal(await provider.resolveStream('12345'), null);
 });
 
 test('manual YouTube candidates share a bounded search and only return official video IDs', async t => {

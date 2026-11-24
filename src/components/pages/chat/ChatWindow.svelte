@@ -2,7 +2,6 @@
 import ChatModal from "./ChatModal.svelte";
 import ChatShareModal from "./ChatShareModal.svelte";
 import { flushSync, onMount, tick } from "svelte";
-import { KAOMOJI_PRESETS } from "@/constants/kaomoji";
 import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar, {
 	canCorsDownscaleAvatar,
@@ -11,8 +10,10 @@ import ChatAvatar, {
 } from "./ChatAvatar.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessage from "./ChatMessage.svelte";
+import ChatStickerPicker from "./ChatStickerPicker.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
-import LottieSticker, {
+import { QUICK_REACTION_PRESETS } from "./chatReactions";
+import {
 	ensureLottieLibrary,
 	preloadLottieData,
 } from "./LottieSticker.svelte";
@@ -74,13 +75,10 @@ import type {
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import {
-	ALL_LOTTIE_ITEMS,
 	formatChatReplyPreview,
 	getChatAttachmentKind,
 	getChatReplyAttachmentKind,
-	getLottieSpriteStyle,
 	LOTTIE_SPRITE_URL,
-	type LottieStickerItem,
 	type StickerItem,
 	type StickerPack,
 } from "./stickerLoader";
@@ -278,6 +276,8 @@ let activePinIndex = $state(0);
 let typingTimer: ReturnType<typeof setTimeout> | null = null;
 let isUploadingImage = $state(false);
 let isUploadingMedia = $state(false);
+// 发送「原图」时，压缩版其实已经传好，这里只在发送这一刻补传原图
+let isSendingAttachments = $state(false);
 let isPreviewingMarkdown = $state(false);
 let showShareModal = $state(false);
 
@@ -308,6 +308,12 @@ const currentPinnedMsg = $derived.by(() => {
 let uploadError = $state("");
 let uploadNote = $state("");
 let imageQuality = $state<ChatImageQuality>("compressed");
+const hasPendingImage = $derived(pendingImages.some((att) => att.type === "image"));
+// 已上传图片的原始文件，切换画质时用于重新上传（key 为当前附件地址）
+let pendingImageSources = new Map<
+	string,
+	{ file: File; prefer: "waline" | "chat" }
+>();
 let isDraggingFiles = $state(false);
 let dragCounter = 0;
 let inputDragActive = $state(false);
@@ -417,62 +423,7 @@ function handleDrop(e: DragEvent) {
 	}
 }
 let activePopover = $state<"none" | "emoji">("none");
-let activeEmojiTab = $state<string>("kaomoji");
-let visitedTabs = $state<Record<string, boolean>>({ kaomoji: true });
-let pickerBodyEl = $state<HTMLElement | null>(null);
-const tabScrollPositions: Record<string, number> = {};
-
-function switchEmojiTab(tabId: string) {
-	if (activeEmojiTab === tabId) return;
-	if (pickerBodyEl) {
-		tabScrollPositions[activeEmojiTab] = pickerBodyEl.scrollTop;
-	}
-	activeEmojiTab = tabId;
-	if (!visitedTabs[tabId]) {
-		visitedTabs[tabId] = true;
-	}
-	onLottieItemLeave();
-	if (pickerBodyEl) {
-		pickerBodyEl.scrollTop = tabScrollPositions[tabId] ?? 0;
-	}
-}
-
-let isPickerScrolling = $state(false);
-let pickerScrollTimer: number | undefined;
-let hoveredLottieItem = $state<LottieStickerItem | null>(null);
-let hoveredLottieEl = $state<HTMLElement | null>(null);
-let hoverLottieTimer: number | undefined;
-
-function handlePickerScroll() {
-	if (!isPickerScrolling) {
-		isPickerScrolling = true;
-	}
-	window.clearTimeout(hoverLottieTimer);
-	hoveredLottieItem = null;
-	hoveredLottieEl = null;
-	window.clearTimeout(pickerScrollTimer);
-	pickerScrollTimer = window.setTimeout(() => {
-		isPickerScrolling = false;
-	}, 120);
-}
-
-function onLottieItemHover(item: LottieStickerItem, el: HTMLElement) {
-	if (isPickerScrolling) return;
-	// 鼠标一碰按钮，立刻在后台发起预取（与防抖倒计时并行，0 延迟秒开）
-	void preloadLottieData(item.name, chatServerUrl);
-
-	window.clearTimeout(hoverLottieTimer);
-	hoverLottieTimer = window.setTimeout(() => {
-		hoveredLottieItem = item;
-		hoveredLottieEl = el;
-	}, 90);
-}
-
-function onLottieItemLeave() {
-	window.clearTimeout(hoverLottieTimer);
-	hoveredLottieItem = null;
-	hoveredLottieEl = null;
-}
+let composerPickerMounted = $state(false);
 
 function onSelectEmojiOrSticker(code: string, url?: string, lottieName?: string) {
 	insertAtCursor(code);
@@ -483,57 +434,9 @@ function onSelectEmojiOrSticker(code: string, url?: string, lottieName?: string)
 		preloadImg.src = url;
 	}
 	if (lottieName) {
-		void preloadLottieData(lottieName, chatServerUrl);
+		void preloadLottieData(lottieName, chatServerUrl).catch(() => {});
 	}
 }
-
-$effect(() => {
-	if (activePopover !== "emoji") {
-		onLottieItemLeave();
-		return;
-	}
-
-	// 1. 表情面板打开后，在浏览器空闲调度期间分批预载剩余 Tab，消除用户初次点击 Tab 时的同步挂载耗时
-	const remainingTabs = ["qq", "lottie", ...STICKER_PACKS.map((p) => p.id)];
-	let cancelled = false;
-	let step = 0;
-	const scheduleNext = () => {
-		if (cancelled || step >= remainingTabs.length) return;
-		const tabId = remainingTabs[step++];
-		const run = () => {
-			if (cancelled) return;
-			if (!visitedTabs[tabId]) {
-				visitedTabs[tabId] = true;
-			}
-			scheduleNext();
-		};
-		if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-			(window as unknown as { requestIdleCallback: (cb: () => void, opts: { timeout: number }) => void }).requestIdleCallback(run, { timeout: 200 });
-		} else {
-			setTimeout(run, 60);
-		}
-	};
-	scheduleNext();
-
-	// 2. 若当前位于动态表情 Tab，平滑预热前 18 个菜狗动效，延后执行避免抢占当前帧渲染
-	let lottiePreloadTimer: number | undefined;
-	if (activeEmojiTab === "lottie") {
-		lottiePreloadTimer = window.setTimeout(() => {
-			if (cancelled) return;
-			const topItems = ALL_LOTTIE_ITEMS.slice(0, 18);
-			for (const it of topItems) {
-				void preloadLottieData(it.name, chatServerUrl);
-			}
-		}, 180);
-	} else {
-		onLottieItemLeave();
-	}
-
-	return () => {
-		cancelled = true;
-		if (lottiePreloadTimer) clearTimeout(lottiePreloadTimer);
-	};
-});
 
 let mentionMenuOpen = $state(false);
 let mentionQuery = $state("");
@@ -622,9 +525,12 @@ function openMobileActionDialog(dialog: HTMLDialogElement) {
 	};
 }
 
+let mobileShowMoreReactions = $state(false);
+
 function closeMobileActions() {
 	mobileActionTarget = null;
 	pressedActionBackdrop = null;
+	mobileShowMoreReactions = false;
 }
 
 function releaseMobileActions() {
@@ -1554,58 +1460,6 @@ async function handleCenterWallpaperDrop(e: DragEvent) {
 	await saveDevPanelWallpaperPreview("center", imageFile);
 	onNotify?.(`已更新中间聊天区壁纸预览：${imageFile.name}`);
 }
-
-const orderedStickerPacks = $derived.by(() => {
-	return stickerPacks
-		.map((pack) => {
-			let displayName = pack.name;
-			let order = 10;
-			if (pack.id.includes("/miku") || pack.name === "初音未来" || pack.name === "贴纸") {
-				displayName = "初音未来";
-				order = 1; // 站长专属 Miku 贴纸放最前面
-			} else if (pack.id.includes("/qq")) {
-				displayName = "QQ表情";
-				order = 2;
-			} else if (
-				pack.id.includes("/bmoji") ||
-				pack.name.toLowerCase().includes("bilibili") ||
-				pack.name.includes("bmoji")
-			) {
-				displayName = "B站";
-				order = 3;
-			} else if (pack.id === "rainzt" || pack.name.includes("朝朝听雨") || pack.name.includes("听雨")) {
-				displayName = "朝朝听雨";
-				order = 90; // 外部网站朝朝听雨表情放倒数第二
-			} else if (pack.id === "xue" || pack.name.includes("雪") || pack.id.includes("yybb")) {
-				displayName = "艾雪";
-				order = 100; // 艾雪的表情放绝对最后
-			}
-			return {
-				...pack,
-				displayName,
-				order,
-			};
-		})
-		.sort((a, b) => a.order - b.order);
-});
-
-const qqStickerPack = $derived(
-	orderedStickerPacks.find(
-		(p) =>
-			p.category === "qq" || p.id.includes("/qq") || p.displayName === "QQ表情",
-	),
-);
-
-const otherStickerPacks = $derived(
-	orderedStickerPacks.filter(
-		(p) =>
-			!(
-				p.category === "qq" ||
-				p.id.includes("/qq") ||
-				p.displayName === "QQ表情"
-			),
-	),
-);
 
 function isMentionedToMe(msg: ChatMessageRecord): boolean {
 	return isMentionedForUser(msg, currentUser);
@@ -3821,7 +3675,8 @@ function triggerTyping() {
 	}
 }
 
-function handleSend() {
+async function handleSend() {
+	if (isSendingAttachments) return;
 	const { content: trimmed, mentionEntities } = trimChatDraft({ content: inputText, mentionEntities: inputMentionEntities });
 	if (!trimmed && pendingImages.length === 0) return;
 	if (!currentUser) {
@@ -3839,20 +3694,45 @@ function handleSend() {
 		clearInput();
 		loadRoomDraft(roomId);
 		pendingImages = [];
+		pendingImageSources = new Map();
 		uploadNote = "";
 		replyingTo = null;
 		return;
 	}
 
+	let attachments = pendingImages;
+	// 压缩版在选图时就传好了；只有勾了「原图发送」才在发送这一刻补传原图
+	if (
+		imageQuality === "original" &&
+		pendingImages.some((att) => att.type === "image" && pendingImageSources.has(att.url))
+	) {
+		isSendingAttachments = true;
+		uploadError = "";
+		uploadNote = "正在上传原图…";
+		try {
+			attachments = await uploadPendingOriginals();
+		} catch (err) {
+			uploadError = err instanceof Error ? err.message : "原图上传失败";
+			uploadNote = describePendingImages();
+			return;
+		} finally {
+			isSendingAttachments = false;
+		}
+	}
+
 	const replyToUid = replyingTo?.msgUid || "";
-	onSendMessage(trimmed, pendingImages, mentionEntities, replyToUid || undefined);
+	onSendMessage(trimmed, attachments, mentionEntities, replyToUid || undefined);
 	clearInput();
 	clearRoomDraft(roomId);
 	pendingImages = [];
+	pendingImageSources = new Map();
 	isPreviewingMarkdown = false;
 	replyingTo = null;
 	uploadError = "";
 	uploadNote = "";
+	// 画质是「这一批附件」的选择，发完回到默认的压缩
+	imageQuality = "compressed";
+	saveChatImageQuality(imageQuality);
 	activePopover = "none";
 	unreadBarDismissed = true;
 	unfocusedBanner = null;
@@ -3955,36 +3835,44 @@ function handleKeydown(e: KeyboardEvent) {
 	}
 }
 
+// 勾选/取消「原图发送」只记录选择，不发请求；真正传哪一版在发送那一刻决定
 function toggleImageQuality() {
+	if (isSendingAttachments) return;
 	imageQuality = imageQuality === "compressed" ? "original" : "compressed";
 	saveChatImageQuality(imageQuality);
 	uploadError = "";
+	uploadNote = describePendingImages();
 }
 
-function describeUploadBatch(batch: {
-	count: number;
-	original: number;
-	output: number;
-}): string {
-	if (batch.count === 0) return "";
+// 就着当前附件算体积说明：压缩版已经传好，原图版用本地文件大小
+function describePendingImages(): string {
+	const images = pendingImages.filter((att) => att.type === "image");
+	if (images.length === 0) return "";
+	let original = 0;
+	let output = 0;
+	for (const att of images) {
+		original += pendingImageSources.get(att.url)?.file.size ?? att.size ?? 0;
+		output += att.size ?? 0;
+	}
 	if (imageQuality === "original") {
-		return `原图 ${batch.count} 张 · ${formatChatFileSize(batch.output)}`;
+		return `原图 ${images.length} 张 · ${formatChatFileSize(original)}`;
 	}
-	if (batch.original <= batch.output) {
-		return `图片 ${batch.count} 张 · ${formatChatFileSize(batch.output)}`;
+	if (original <= output) {
+		return `图片 ${images.length} 张 · ${formatChatFileSize(output)}`;
 	}
-	return `图片 ${batch.count} 张 · ${formatChatFileSize(batch.original)} → ${formatChatFileSize(batch.output)}`;
+	return `图片 ${images.length} 张 · ${formatChatFileSize(original)} → ${formatChatFileSize(output)}`;
 }
 
 async function uploadImageAttachment(
 	file: File,
 	prefer: "waline" | "chat",
+	quality: ChatImageQuality = imageQuality,
 ): Promise<{
 	attachment: ImageAttachment;
 	originalSize: number;
 	outputSize: number;
 }> {
-	const prepared = await prepareChatImageForSend(file, imageQuality);
+	const prepared = await prepareChatImageForSend(file, quality);
 	const chatBase = (chatServerUrl || "https://chat-server.lengxiqwq.com").trim();
 
 	// 粘贴/拖拽走 Waline（R2 + CDN），但原图超过 5MB 时只能回落到聊天网关
@@ -4027,6 +3915,26 @@ async function uploadImageAttachment(
 	};
 }
 
+// 发送时补传原图：只有勾了「原图发送」才会走到这里，压缩版在那之前已经传好了
+async function uploadPendingOriginals(): Promise<ImageAttachment[]> {
+	const uploaded: ImageAttachment[] = [];
+	for (const att of pendingImages) {
+		const source = att.type === "image" ? pendingImageSources.get(att.url) : null;
+		if (!source) {
+			uploaded.push(att);
+			continue;
+		}
+		const result = await uploadImageAttachment(source.file, source.prefer, "original");
+		// 原图分支不做解码，宽高沿用选图时压缩版量到的值，避免消息气泡布局抖动
+		uploaded.push({
+			...result.attachment,
+			width: result.attachment.width ?? att.width,
+			height: result.attachment.height ?? att.height,
+		});
+	}
+	return uploaded;
+}
+
 async function processImageFiles(files: FileList | File[]) {
 	if (!currentUser) {
 		onRequireAuth();
@@ -4055,16 +3963,16 @@ async function processImageFiles(files: FileList | File[]) {
 	uploadError = "";
 	uploadNote = "";
 	isUploadingImage = true;
-	const batch = { count: 0, original: 0, output: 0 };
 	try {
 		for (const file of list.slice(0, remaining)) {
 			const result = await uploadImageAttachment(file, "waline");
 			pendingImages = [...pendingImages, result.attachment];
-			batch.count += 1;
-			batch.original += result.originalSize;
-			batch.output += result.outputSize;
+			pendingImageSources.set(result.attachment.url, {
+				file,
+				prefer: "waline",
+			});
+			uploadNote = describePendingImages();
 		}
-		uploadNote = describeUploadBatch(batch);
 	} catch (err) {
 		uploadError = err instanceof Error ? err.message : "图片上传失败";
 	} finally {
@@ -4100,7 +4008,6 @@ async function processMediaFiles(files: FileList | File[]) {
 	uploadNote = "";
 	isUploadingMedia = true;
 	const chatBase = chatServerUrl || "https://chat-server.lengxiqwq.com";
-	const batch = { count: 0, original: 0, output: 0 };
 	try {
 		for (const file of list.slice(0, remaining)) {
 			const isImage = file.type.startsWith("image/");
@@ -4112,24 +4019,20 @@ async function processMediaFiles(files: FileList | File[]) {
 				chatBase,
 				walineToken,
 			);
-			pendingImages = [
-				...pendingImages,
-				{
-					type: res.type,
-					url: res.url,
-					name: prepared?.file.name || res.name,
-					size: res.size || prepared?.size,
-					width: prepared?.width,
-					height: prepared?.height,
-				},
-			];
-			if (prepared) {
-				batch.count += 1;
-				batch.original += prepared.originalSize;
-				batch.output += prepared.size;
+			const attachment: ImageAttachment = {
+				type: res.type,
+				url: res.url,
+				name: prepared?.file.name || res.name,
+				size: res.size || prepared?.size,
+				width: prepared?.width,
+				height: prepared?.height,
+			};
+			pendingImages = [...pendingImages, attachment];
+			if (isImage) {
+				pendingImageSources.set(attachment.url, { file, prefer: "chat" });
+				uploadNote = describePendingImages();
 			}
 		}
-		uploadNote = describeUploadBatch(batch);
 	} catch (err) {
 		uploadError = err instanceof Error ? err.message : "附件上传失败";
 	} finally {
@@ -4251,10 +4154,12 @@ onMount(() => {
 });
 
 function removePendingImage(index: number) {
-	pendingImages = pendingImages.filter((_, i) => i !== index);
-	if (pendingImages.length === 0) {
-		uploadNote = "";
+	const removed = pendingImages[index];
+	if (removed) {
+		pendingImageSources.delete(removed.url);
 	}
+	pendingImages = pendingImages.filter((_, i) => i !== index);
+	uploadNote = describePendingImages();
 }
 </script>
 
@@ -4849,34 +4754,6 @@ function removePendingImage(index: number) {
             {#if threadInMore || mentionsInMore || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore)}
               <div class="mx-2 my-0.5 border-t border-[var(--skin-line)]"></div>
             {/if}
-
-            <button
-              type="button"
-              role="menuitem"
-              class="chat-mobile-more-item"
-              onclick={() => {
-                toggleImageQuality();
-                closeAllHeaderMenus();
-                onNotify?.(
-                  imageQuality === "compressed"
-                    ? "图片发送画质：压缩 JPG"
-                    : "图片发送画质：原图（不压缩）",
-                );
-              }}
-            >
-              <span class="flex items-center gap-2.5">
-                <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M9 3v4a2 2 0 0 1-2 2H3" />
-                  <path d="M15 21v-4a2 2 0 0 1 2-2h4" />
-                  <path d="M3 15h4a2 2 0 0 1 2 2v4" />
-                  <path d="M21 9h-4a2 2 0 0 1-2-2V3" />
-                </svg>
-                <span>图片发送画质</span>
-              </span>
-              <span class="chat-mobile-more-count">
-                {imageQuality === "compressed" ? "压缩" : "原图"}
-              </span>
-            </button>
 
             <button
               type="button"
@@ -5484,6 +5361,7 @@ function removePendingImage(index: number) {
                 canEdit={canEdit}
                 canDelete={canDelete}
                 stickerMap={stickerMap}
+                stickerPacks={stickerPacks}
                 chatServerUrl={chatServerUrl}
                 interconnectSites={interconnectSites}
                 userNameMap={userNameMap}
@@ -5575,190 +5453,27 @@ function removePendingImage(index: number) {
         </div>
       </div>
     {/if}
-    <!-- 统一表情面板（纯图标 Tab）：1. 动效/动物/超级表情 -> 2. 颜文字 -> 3. QQ -> 4. 动物贴纸(岸宝/尤诺) -> 5. B站 -> 6. 贴纸 -->
-    {#if activePopover === "emoji"}
-      <div data-chat-floating use:positionChatFloating={{ placement: "top-start", gap: 8 }} class="chat-emoji-popover chat-sticker-popover" role="dialog" aria-label="颜文字与表情贴纸">
-        <div bind:this={pickerBodyEl} class="chat-picker-body custom-scrollbar" data-scrolling={isPickerScrolling} onscroll={handlePickerScroll}>
-          <!-- 1. 颜文字 Tab 面板 -->
-          <div class="chat-picker-pane" style:display={activeEmojiTab === "kaomoji" ? "block" : "none"}>
-            <div class="space-y-2.5">
-              {#each KAOMOJI_PRESETS as group (group.name)}
-                <div>
-                  <div class="text-[11px] font-semibold text-[var(--chat-meta-color)] mb-1 px-0.5">
-                    {group.name}
-                  </div>
-                  <div class="flex flex-wrap gap-1">
-                    {#each group.items as kaomoji (kaomoji)}
-                      <button
-                        type="button"
-                        class="chat-kaomoji-item"
-                        onclick={() => {
-                          insertAtCursor(kaomoji);
-                          activePopover = "none";
-                        }}
-                      >
-                        {kaomoji}
-                      </button>
-                    {/each}
-                  </div>
-                </div>
-              {/each}
-            </div>
-          </div>
-
-          <!-- 2. 动态表情 Tab 面板（菜狗，驻留复用） -->
-          {#if visitedTabs["lottie"]}
-            <div class="chat-picker-pane" style:display={activeEmojiTab === "lottie" ? "block" : "none"}>
-              <div class="grid grid-cols-5 sm:grid-cols-7 md:grid-cols-9 gap-1.5">
-                {#each ALL_LOTTIE_ITEMS as item (item.name)}
-                  <button
-                    type="button"
-                    class="chat-lottie-btn p-1 rounded-lg hover:bg-[var(--btn-plain-bg-hover)] transition-all hover:scale-110 active:scale-95 flex flex-col items-center justify-center gap-0.5 group"
-                    aria-label={item.label}
-                    onmouseenter={(e) => onLottieItemHover(item, e.currentTarget)}
-                    onmouseleave={onLottieItemLeave}
-                    onclick={() => {
-                      onLottieItemLeave();
-                      onSelectEmojiOrSticker(item.token, undefined, item.name);
-                    }}
-                  >
-                    <span
-                      class="w-8 h-8 block rounded-md pointer-events-none"
-                      style={getLottieSpriteStyle(item.name)}
-                    ></span>
-                    <span class="text-[10px] text-[var(--chat-meta-color)] group-hover:text-[var(--primary)] truncate max-w-full leading-none">
-                      {item.label}
-                    </span>
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-
-          <!-- 4. 各类贴纸包 Tab 面板（QQ表情、初音未来、B站、朝朝听雨、艾雪等），访问过的包永久驻留 -->
-          {#each orderedStickerPacks as pack (pack.id)}
-            {#if visitedTabs[pack.id]}
-              {@const isStickerPack = pack.category === "sticker"}
-              {@const isQQPack = pack.category === "qq"}
-              <div class="chat-picker-pane" style:display={activeEmojiTab === pack.id ? "block" : "none"}>
-                <div class={isStickerPack ? "grid grid-cols-4 sm:grid-cols-6 gap-2" : "grid grid-cols-8 sm:grid-cols-11 gap-1"}>
-                  {#each pack.items as item (item.code)}
-                    <button
-                      type="button"
-                      class="chat-sticker-btn {isStickerPack ? 'chat-sticker-btn--sticker' : 'chat-sticker-btn--emoji'}"
-                      aria-label={item.name}
-                      onclick={() => {
-                        onSelectEmojiOrSticker(item.code, item.url);
-                      }}
-                    >
-                      <img
-                        src={item.url}
-                        alt={item.name}
-                        loading="lazy"
-                        decoding="async"
-                        class={isStickerPack
-                          ? "w-14 h-14 sm:w-16 sm:h-16 max-w-full object-contain"
-                          : isQQPack
-                            ? "w-6 h-6 object-contain"
-                            : "w-[26px] h-[26px] object-contain"}
-                      />
-                    </button>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          {/each}
-        </div>
-
-        {#if hoveredLottieItem && hoveredLottieEl}
-          <div
-            data-chat-floating
-            use:positionChatFloating={{
-              reference: hoveredLottieEl,
-              placement: "top",
-              gap: 8,
-              strategy: "fixed",
-              fitViewport: true,
-            }}
-            class="chat-lottie-hover-preview"
-          >
-            <div class="chat-lottie-hover-card">
-              <div class="chat-lottie-hover-media">
-                <LottieSticker
-                  name={hoveredLottieItem.name}
-                  alt={hoveredLottieItem.label}
-                  chatServerUrl={chatServerUrl}
-                  className="w-full h-full flex items-center justify-center"
-                />
-              </div>
-              <div class="chat-lottie-hover-title">
-                {hoveredLottieItem.label}
-              </div>
-            </div>
-          </div>
-        {/if}
-
-        <div class="chat-picker-tabs custom-scrollbar" role="tablist" aria-label="表情分类">
-          <!-- 1. 颜文字（第一个） -->
-          <ChatTooltip text="颜文字" position="bottom" strategy="fixed" class="shrink-0">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeEmojiTab === "kaomoji"}
-              class="chat-picker-tab {activeEmojiTab === 'kaomoji' ? 'active' : ''}"
-              aria-label="颜文字"
-              onclick={() => switchEmojiTab("kaomoji")}
-            >
-              <span class="font-bold text-xs leading-none">OωO</span>
-            </button>
-          </ChatTooltip>
-
-          <!-- 2. QQ 表情 -->
-          {#if qqStickerPack}
-            <ChatTooltip text="QQ 表情" position="bottom" strategy="fixed" class="shrink-0">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeEmojiTab === qqStickerPack.id}
-                class="chat-picker-tab {activeEmojiTab === qqStickerPack.id ? 'active' : ''}"
-                aria-label={qqStickerPack.displayName}
-                onclick={() => switchEmojiTab(qqStickerPack.id)}
-              >
-                <img src={qqStickerPack.iconUrl} alt={qqStickerPack.displayName} class="w-5 h-5 object-contain" />
-              </button>
-            </ChatTooltip>
-          {/if}
-
-          <!-- 3. 动态表情（菜狗与动效表情） -->
-          <ChatTooltip text="动态表情" position="bottom" strategy="fixed" class="shrink-0">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeEmojiTab === "lottie"}
-              class="chat-picker-tab {activeEmojiTab === 'lottie' ? 'active' : ''}"
-              aria-label="动态表情"
-              onclick={() => switchEmojiTab("lottie")}
-            >
-              <span class="w-5 h-5 block rounded-xs pointer-events-none" style={getLottieSpriteStyle("caigou")}></span>
-            </button>
-          </ChatTooltip>
-
-          <!-- 5. 其余贴纸包：Miku (前面) -> B站 -> 朝朝听雨 -> 艾雪 (放最后) -->
-          {#each otherStickerPacks as pack (pack.id)}
-            <ChatTooltip text={pack.displayName} position="bottom" strategy="fixed" class="shrink-0">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={activeEmojiTab === pack.id}
-                class="chat-picker-tab {activeEmojiTab === pack.id ? 'active' : ''}"
-                aria-label={pack.displayName}
-                onclick={() => switchEmojiTab(pack.id)}
-              >
-                <img src={pack.iconUrl} alt={pack.displayName} class="w-5 h-5 object-contain" />
-              </button>
-            </ChatTooltip>
-          {/each}
-        </div>
+    {#if composerPickerMounted}
+      <div
+        data-chat-floating
+        use:positionChatFloating={{
+          enabled: activePopover === "emoji",
+          placement: "top-start",
+          gap: 8,
+        }}
+        class="chat-emoji-popover chat-sticker-popover chat-composer-picker"
+      >
+        <ChatStickerPicker
+          variant="composer"
+          open={activePopover === "emoji"}
+          {stickerPacks}
+          {chatServerUrl}
+          onSelect={onSelectEmojiOrSticker}
+          onClose={() => {
+            activePopover = "none";
+            focusInput(false);
+          }}
+        />
       </div>
     {/if}
 
@@ -5985,8 +5700,21 @@ function removePendingImage(index: number) {
           {#if uploadError}
             <span class="text-xs text-red-500">{uploadError}</span>
           {/if}
-          {#if uploadNote && !uploadError && !isUploadingImage && !isUploadingMedia}
-            <span class="chat-upload-note">{uploadNote}</span>
+          {#if hasPendingImage || uploadNote}
+            <div class="chat-attach-meta">
+              <span class="chat-upload-note">{uploadError || isUploadingImage ? "" : uploadNote}</span>
+              {#if hasPendingImage}
+                <label class="chat-original-check">
+                  <input
+                    type="checkbox"
+                    checked={imageQuality === "original"}
+                    disabled={isUploadingImage || isSendingAttachments}
+                    onchange={() => toggleImageQuality()}
+                  />
+                  <span>原图发送</span>
+                </label>
+              {/if}
+            </div>
           {/if}
         </div>
       {/if}
@@ -6099,12 +5827,15 @@ function removePendingImage(index: number) {
             <button
               type="button"
               class="chat-tool-btn {activePopover === 'emoji' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : ''}"
-              aria-label="动态表情、颜文字、QQ 表情与贴纸"
+              aria-label="表情与贴纸"
+              aria-expanded={activePopover === "emoji"}
+              aria-haspopup="dialog"
               onclick={() => {
                 if (!currentUser) {
                   onRequireAuth();
                   return;
                 }
+                composerPickerMounted = true;
                 activePopover = activePopover === "emoji" ? "none" : "emoji";
               }}
             >
@@ -6146,44 +5877,6 @@ function removePendingImage(index: number) {
               <svg class="w-5 h-5 md:w-[1.15rem] md:h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
-            </button>
-          </ChatTooltip>
-
-          <!-- 图片画质切换：压缩 JPG（默认）/ 原图 -->
-          <ChatTooltip
-            class="chat-desktop-only"
-            text={imageQuality === "compressed"
-              ? "图片画质：压缩 JPG（点击改为原图）"
-              : "图片画质：原图（点击改为压缩）"}
-            align="left"
-          >
-            <button
-              type="button"
-              class="chat-quality-btn {imageQuality === "original" ? 'is-original' : ''}"
-              aria-label={imageQuality === "compressed"
-                ? "图片画质：压缩 JPG，点击改为原图"
-                : "图片画质：原图，点击改为压缩"}
-              aria-pressed={imageQuality === "original"}
-              onclick={toggleImageQuality}
-            >
-              {#if imageQuality === "compressed"}
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M9 3v4a2 2 0 0 1-2 2H3" />
-                  <path d="M15 21v-4a2 2 0 0 1 2-2h4" />
-                  <path d="M3 15h4a2 2 0 0 1 2 2v4" />
-                  <path d="M21 9h-4a2 2 0 0 1-2-2V3" />
-                </svg>
-                <span>压缩</span>
-              {:else}
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M3 8V5a2 2 0 0 1 2-2h3" />
-                  <path d="M16 3h3a2 2 0 0 1 2 2v3" />
-                  <path d="M21 16v3a2 2 0 0 1-2 2h-3" />
-                  <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
-                  <circle cx="12" cy="12" r="2.4" />
-                </svg>
-                <span>原图</span>
-              {/if}
             </button>
           </ChatTooltip>
 
@@ -6265,10 +5958,10 @@ function removePendingImage(index: number) {
           <button
             type="button"
             class="chat-send-btn h-9.5! md:h-8! px-4.5! md:px-4! text-[13.5px]! md:text-xs! rounded-xl! md:rounded-lg! shrink-0"
-            disabled={isUploadingImage || isUploadingMedia}
+            disabled={isUploadingImage || isUploadingMedia || isSendingAttachments}
             onclick={handleSend}
           >
-            <span>发送</span>
+            <span>{isSendingAttachments ? "上传中" : "发送"}</span>
             <svg class="w-4 h-4 md:w-3.5 md:h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
             </svg>
@@ -6345,14 +6038,14 @@ function removePendingImage(index: number) {
           </button>
         </div>
 
-        <!-- 第一排：6 个大号快捷表情回应 -->
+        <!-- 第一排：大号快捷表情回应 + 展开更多按钮 -->
         {#if onReaction}
-          <div class="grid grid-cols-6 gap-2 mb-3">
-            {#each ["👍", "❤️", "😂", "🎉", "🔥", "👀"] as em (em)}
+          <div class="flex items-center gap-1.5 mb-3 overflow-x-auto custom-scrollbar py-0.5">
+            {#each QUICK_REACTION_PRESETS as em (em)}
               {@const isMyReaction = Boolean(currentUser?.userKey && activeMsg.reactions?.[em]?.includes(currentUser.userKey))}
               <button
                 type="button"
-                class="chat-mobile-sheet-emoji-btn {isMyReaction ? 'is-active' : ''}"
+                class="chat-mobile-sheet-emoji-btn shrink-0 {isMyReaction ? 'is-active' : ''}"
                 aria-label={`回应表情 ${em}`}
                 onclick={() => {
                   const uid = activeMsg.msgUid;
@@ -6363,7 +6056,37 @@ function removePendingImage(index: number) {
                 <span>{em}</span>
               </button>
             {/each}
+            <button
+              type="button"
+              class="chat-mobile-sheet-emoji-btn chat-mobile-sheet-more-btn shrink-0 {mobileShowMoreReactions ? 'is-active' : ''}"
+              aria-label="更多表情回应"
+              onclick={() => {
+                mobileShowMoreReactions = !mobileShowMoreReactions;
+              }}
+            >
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
           </div>
+
+          {#if mobileShowMoreReactions}
+            <div class="mb-3 flex h-[min(260px,45dvh)] flex-col overflow-hidden rounded-xl border border-[var(--chat-divider-color)] bg-[var(--card-bg)]">
+              <ChatStickerPicker
+                variant="reaction"
+                stickerPacks={stickerPacks}
+                chatServerUrl={chatServerUrl}
+                onSelect={(em) => {
+                  const uid = activeMsg.msgUid;
+                  closeMobileActions();
+                  onReaction?.(uid, em);
+                }}
+                onClose={() => {
+                  mobileShowMoreReactions = false;
+                }}
+              />
+            </div>
+          {/if}
         {/if}
 
         <!-- 第二排：带图标与中文文字的大操作按钮网格 -->

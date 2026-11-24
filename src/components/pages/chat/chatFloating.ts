@@ -11,13 +11,16 @@ import {
 } from "@floating-ui/dom";
 
 interface ChatFloatingOptions {
+	enabled?: boolean;
 	placement?: Placement;
 	reference?: HTMLElement | null;
 	gap?: number;
 	hover?: "tooltip" | "card";
 	forceOpen?: boolean;
 	fitViewport?: boolean;
+	sizeToAvailableSpace?: boolean;
 	strategy?: "absolute" | "fixed";
+	onReady?: () => void;
 	onReferenceHidden?: () => void;
 }
 
@@ -98,33 +101,47 @@ export function positionChatFloating(
 		let request = 0;
 		refreshPosition = () => {
 			const current = ++request;
-			if (node.dataset.chatFloatingState !== "ready") {
+			const strategy = options.strategy ?? "absolute";
+			const sizeToAvailableSpace = options.sizeToAvailableSpace ?? true;
+			if (strategy === "fixed") {
+				node.dataset.chatFloatingStrategy = "fixed";
+			} else {
+				delete node.dataset.chatFloatingStrategy;
+			}
+			if (node.dataset.chatFloatingState === undefined) {
 				node.dataset.chatFloatingState = "measuring";
 			}
-			// Measure the preferred size again so a previous cap cannot prevent a needed flip.
-			node.style.removeProperty("--chat-floating-width");
-			node.style.removeProperty("--chat-floating-height");
+			if (sizeToAvailableSpace) {
+				// Measure the preferred size again so a previous cap cannot prevent a needed flip.
+				node.style.removeProperty("--chat-floating-width");
+				node.style.removeProperty("--chat-floating-height");
+			}
 			void computePosition(reference, node, {
 				placement: options.placement ?? "top",
-				strategy: options.strategy ?? "absolute",
+				strategy,
 				middleware: [
 					offset(options.gap ?? 6),
 					flip(boundaries),
-					shift({ ...boundaries, limiter: limitShift() }),
-					size({
+					shift({
 						...boundaries,
-						apply({ availableWidth, availableHeight }) {
-							if (current !== request) return;
-							node.style.setProperty(
-								"--chat-floating-width",
-								`${Math.max(0, Math.floor(availableWidth))}px`,
-							);
-							node.style.setProperty(
-								"--chat-floating-height",
-								`${Math.max(0, Math.floor(availableHeight))}px`,
-							);
-						},
+						crossAxis: !sizeToAvailableSpace,
+						limiter: sizeToAvailableSpace ? limitShift() : undefined,
 					}),
+					sizeToAvailableSpace &&
+						size({
+							...boundaries,
+							apply({ availableWidth, availableHeight }) {
+								if (current !== request) return;
+								node.style.setProperty(
+									"--chat-floating-width",
+									`${Math.max(0, Math.floor(availableWidth))}px`,
+								);
+								node.style.setProperty(
+									"--chat-floating-height",
+									`${Math.max(0, Math.floor(availableHeight))}px`,
+								);
+							},
+						}),
 					hide({ boundary }),
 				],
 			}).then(({ x, y, placement, middlewareData }) => {
@@ -136,11 +153,6 @@ export function positionChatFloating(
 				}
 				node.style.setProperty("--chat-floating-x", `${x}px`);
 				node.style.setProperty("--chat-floating-y", `${y}px`);
-				if (options.strategy === "fixed") {
-					node.dataset.chatFloatingStrategy = "fixed";
-				} else {
-					delete node.dataset.chatFloatingStrategy;
-				}
 				if (options.hover === "tooltip") {
 					node.dataset.chatTooltipSide = placement.split("-")[0];
 				} else if (options.hover === "card" && !options.forceOpen) {
@@ -149,7 +161,10 @@ export function positionChatFloating(
 					}
 					dismissActiveCard = dismissCard;
 				}
-				node.dataset.chatFloatingState = "ready";
+				if (node.dataset.chatFloatingState !== "ready") {
+					node.dataset.chatFloatingState = "ready";
+					options.onReady?.();
+				}
 			});
 		};
 		const cleanup = autoUpdate(reference, node, refreshPosition);
@@ -162,6 +177,10 @@ export function positionChatFloating(
 	}
 
 	function sync() {
+		if (options.enabled === false) {
+			stop();
+			return;
+		}
 		if (!options.hover || options.forceOpen || hovered || focused) {
 			start();
 			return;
@@ -227,9 +246,10 @@ export function positionChatFloating(
 	return {
 		update(nextOptions) {
 			if (options.reference !== nextOptions.reference) stop();
+			const previousRefresh = refreshPosition;
 			options = nextOptions;
 			sync();
-			refreshPosition?.();
+			if (refreshPosition === previousRefresh) refreshPosition?.();
 		},
 		destroy() {
 			stop();
