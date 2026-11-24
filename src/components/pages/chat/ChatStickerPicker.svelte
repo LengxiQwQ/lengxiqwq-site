@@ -140,7 +140,7 @@ $effect(() => {
 });
 
 function schedulePickerIdle(task: () => void): () => void {
-	if ("requestIdleCallback" in window) {
+	if (typeof window.requestIdleCallback === "function") {
 		const idle = window.requestIdleCallback(task);
 		return () => window.cancelIdleCallback(idle);
 	}
