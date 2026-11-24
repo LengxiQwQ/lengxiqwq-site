@@ -1470,16 +1470,9 @@ export function resolveChatAvatarUrl(raw?: string): string {
 				? window.location.origin
 				: "https://example.invalid";
 		const parsed = new URL(trimmed, origin);
-		// 1. 如果带有指向 DiceBear 等外部 SVG 的 fallback 参数（例如 d=https://api.dicebear.com/...），直接提取并返回真实的 fallback
 		const dParam =
 			parsed.searchParams.get("d") || parsed.searchParams.get("default");
-		if (
-			dParam &&
-			(dParam.startsWith("http://") || dParam.startsWith("https://"))
-		) {
-			return dParam;
-		}
-		// 2. 如果是 cravatar / gravatar / libravatar 且为默认占位符或 404，直接返回空字符串，让纯无头像用户无缝走 Cutouts 剪纸风
+		// Skip generic avatar placeholders so ChatAvatar can use its local fallback.
 		const isAvatarService =
 			parsed.hostname.includes("cravatar") ||
 			parsed.hostname.includes("gravatar") ||
@@ -1501,6 +1494,26 @@ export function resolveChatAvatarUrl(raw?: string): string {
 		}
 	} catch {}
 	return rewriteDefaultAvatarQuery(raw);
+}
+
+export function resolveChatAvatarFallbackUrl(raw?: string): string {
+	if (!raw) return "";
+	try {
+		const avatar = new URL(raw);
+		if (
+			!["cravatar", "gravatar", "libravatar", "weavatar"].some((service) =>
+				avatar.hostname.includes(service),
+			)
+		) {
+			return "";
+		}
+		return sanitizeChatUrl(
+			avatar.searchParams.get("d") || avatar.searchParams.get("default") || "",
+			false,
+		);
+	} catch {
+		return "";
+	}
 }
 
 export function previewAvatarFromEmail(email: string): string {

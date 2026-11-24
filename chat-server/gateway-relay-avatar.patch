@@ -1,0 +1,58 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -11,4 +11,5 @@
+ import { promisify } from 'node:util';
+ import { WebSocketServer, WebSocket } from 'ws';
+ import { createMatrixMediaHandler } from './src/matrix-media.mjs';
++import { parseMatrixRelayPrefix } from './src/matrix-relay-prefix.mjs';
+ import { historicalReplyAttachmentFields, matrixReplyAttachmentFields, replyAttachmentFields } from './src/chat-attachment-kind.mjs';
+@@ -2471,9 +2472,9 @@
+   let body = typeof rawEv.content?.body === 'string' ? rawEv.content.body : '';
+   let name = '';
+-  const relayMatch = /^\[ID:(?<name>[^\]\r\n]+)\];\[URL:[^\]\r\n]*?\](?:;\[KEY:[^\]\r\n]+\])?(?:;\[SITE:[^\]\r\n]+\])?(?:\r?\n)?(?<content>[\s\S]*)$/.exec(body);
+-  if (relayMatch?.groups) {
+-    name = normalizeDotSpacing(relayMatch.groups.name) || relayMatch.groups.name;
+-    body = relayMatch.groups.content || '';
++  const relay = parseMatrixRelayPrefix(body);
++  if (relay) {
++    name = normalizeDotSpacing(relay.name) || relay.name;
++    body = relay.content;
+   }
+   if (/^>\s*<@[^>]+>/.test(body)) {
+     body = body.replace(/^(?:>[^\n]*\r?\n)+\s*/, '').trim();
+@@ -6712,17 +6713,14 @@
+   // Parse [ID:...];[URL:...] relay prefix BEFORE media handlers clear/consume rawBody
+-  const prefixMatch = !isEncryptedPlaceholder
+-    ? /^\[ID:(?<name>[^\]\r\n]+)\];\[URL:(?<avatar>[^\]\r\n]*?)\](?:;\[KEY:(?<userKey>[^\]\r\n]+)\])?(?:;\[SITE:(?<site>[^\]\r\n]+)\])?(?:\r?\n)?(?<content>[\s\S]*)$/.exec(rawBody)
+-    : null;
+-  const relayHeader = prefixMatch
+-    ? rawBody.slice(0, rawBody.length - prefixMatch.groups.content.length).trimEnd()
+-    : '';
+-  if (prefixMatch && prefixMatch.groups) {
+-    displayName = prefixMatch.groups.name;
+-    avatarUrl = prefixMatch.groups.avatar;
++  const prefixMatch = isEncryptedPlaceholder ? null : parseMatrixRelayPrefix(rawBody);
++  const relayHeader = prefixMatch?.header || '';
++  if (prefixMatch) {
++    displayName = prefixMatch.name;
++    avatarUrl = prefixMatch.avatar;
++    if (avatarUrl.startsWith('mxc://')) avatarUrl = mxcToHttp(avatarUrl);
+     if (avatarUrl && avatarUrl.includes('chat-api.lengxiqwq.com')) {
+       avatarUrl = '';
+     }
+-    if (ev.sender === MATRIX_ADMIN_USER_ID) customUserKey = prefixMatch.groups.userKey || '';
+-    siteHint = prefixMatch.groups.site || '';
+-    rawBody = prefixMatch.groups.content;
++    if (ev.sender === MATRIX_ADMIN_USER_ID) customUserKey = prefixMatch.userKey || '';
++    siteHint = prefixMatch.site || '';
++    rawBody = prefixMatch.content;
+   }
+@@ -6867,7 +6865,7 @@
+     if (isSelfAdmin) {
+       finalUserKey = 'waline:1';
+     } else if (isRelayedExternalUser) {
+       const relayScope = relayMeta.siteKey || 'bridge';
+-      const subId = relayMeta.relayUserId || (KNOWN_MATRIX_RELAY_SENDERS.has(ev.sender) ? prefixMatch?.groups.userKey : '') || ('n_' + createHash('sha1').update(`${ev.sender}|${displayName}`).digest('hex').slice(0, 10));
++      const subId = relayMeta.relayUserId || (KNOWN_MATRIX_RELAY_SENDERS.has(ev.sender) ? prefixMatch?.userKey : '') || ('n_' + createHash('sha1').update(`${ev.sender}|${displayName}`).digest('hex').slice(0, 10));
+       finalUserKey = `matrix:${ev.sender}#relay:${relayScope}:${subId}`;
+     } else {

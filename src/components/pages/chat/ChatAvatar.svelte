@@ -155,7 +155,12 @@ function downscaleAvatarToBlobUrl(
 </script>
 
 <script lang="ts">
-import { getAvatarInitials, getDiceBearGlassAvatar, resolveChatAvatarUrl } from "./chatClient";
+import {
+	getAvatarInitials,
+	getDiceBearGlassAvatar,
+	resolveChatAvatarFallbackUrl,
+	resolveChatAvatarUrl,
+} from "./chatClient";
 
 type AvatarSize = "2xs" | "xs" | "sm" | "md" | "lg";
 
@@ -194,7 +199,12 @@ let diceBearError = $state(false);
 let diceBearLoaded = $state(false);
 
 const primaryUrl = $derived(resolveChatAvatarUrl(src));
-const alternateUrl = $derived(resolveChatAvatarUrl(alternateSrc));
+const alternateUrl = $derived.by(() => {
+	const explicit = resolveChatAvatarUrl(alternateSrc);
+	return explicit && explicit !== primaryUrl
+		? explicit
+		: resolveChatAvatarFallbackUrl(src);
+});
 const resolvedSrc = $derived(
 	alternateUrl && (useAlternate || !primaryUrl || failedAvatarUrls.has(primaryUrl))
 		? alternateUrl

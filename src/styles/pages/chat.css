@@ -3708,6 +3708,7 @@ div.chat-sticker-large svg {
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
+	scrollbar-gutter: stable;
 	padding: 0.55rem;
 	overscroll-behavior: contain;
 	contain: content;
