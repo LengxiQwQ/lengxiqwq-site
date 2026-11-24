@@ -786,7 +786,8 @@ export async function loadStickerPacks(
 		const loaded: StickerPack[] = [];
 		for (const baseUrl of cleanUrls) {
 			try {
-				const resp = await fetch(`${baseUrl}/info.json`);
+				const separator = baseUrl.includes("?") ? "&" : "?";
+				const resp = await fetch(`${baseUrl}/info.json${separator}v=20261124`);
 				if (!resp.ok) continue;
 				const manifest = (await resp.json()) as RawStickerManifest;
 				const prefix = manifest.prefix || "";

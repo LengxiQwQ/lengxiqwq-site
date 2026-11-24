@@ -197,7 +197,7 @@
   2. **邮件白名单与别名库**：打开邮件服务核心 `D:\Projects\waline-comment-system\src\utils\mailer.ts`，将新增表情加入已知白名单集合（`KNOWN_*`），并在对应的别名映射字典（`*_NAME_ALIAS`）中配置常见口语别名（例如将口语 `:miku_给心:` 映射为真实的 `抱爱心`，将中文 `:qq_鼓掌:` 映射为 `clap`）；
   3. **安全降级保障**：系统已对未命中表情开启安全文本徽章回退，绝不允许向邮件客户端输出 404 图片地址。
 - **参考指南**：详见 [`public/assets/stickers/README.md`](public/assets/stickers/README.md)。
-- **聊天室 Lottie 动图预览**：Matrix 贴纸只能携带一张图片，所以动态表情需要一份由 Lottie JSON 离线渲染的 `public/assets/stickers/lottie/<name>.webp`（内容仓）。它由主仓 `pnpm lottie:render`（`scripts/render-lottie-stickers.mjs`）生成，产物直接提交，**构建流程不渲染**；`LOTTIE_SPRITE_KEYS` 变动后必须重跑。网关取图顺序与兜底见 `chat-server/README.md`。
+- **聊天室 Lottie 动图预览**：Matrix 贴纸只能携带一张图片，所以动态表情需要一份由 Lottie JSON 离线渲染的 `public/assets/stickers/lottie/<name>.gif`（内容仓，192×192 / 15fps，与互联大厅其他站点一致）。它由主仓 `pnpm lottie:render`（`scripts/render-lottie-stickers.mjs`）生成，产物直接提交，**构建流程不渲染**；`LOTTIE_SPRITE_KEYS` 变动后必须重跑。网关取图顺序与兜底见 `chat-server/README.md`。
 
 ---
 

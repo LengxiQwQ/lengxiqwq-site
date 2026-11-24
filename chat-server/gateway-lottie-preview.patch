@@ -1,0 +1,210 @@
+diff --git a/server.mjs b/server.mjs
+index a5a91a0..75948d7 100644
+--- a/server.mjs
++++ b/server.mjs
+@@ -7,6 +7,8 @@ import { createServer } from 'node:http';
+ import { createHmac, createHash, randomBytes } from 'node:crypto';
+ import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, createReadStream, createWriteStream, statSync, unlinkSync } from 'node:fs';
+ import { join } from 'node:path';
++import { execFile } from 'node:child_process';
++import { promisify } from 'node:util';
+ import { WebSocketServer, WebSocket } from 'ws';
+ import { createMatrixMediaHandler } from './src/matrix-media.mjs';
+ import { historicalReplyAttachmentFields, matrixReplyAttachmentFields, replyAttachmentFields } from './src/chat-attachment-kind.mjs';
+@@ -85,10 +87,20 @@ async function resolveIpLocation(ip) {
+ mkdirSync(DATA_DIR, { recursive: true });
+ const LOTTIE_CACHE_DIR = join(DATA_DIR, 'lottie_cache');
+ mkdirSync(LOTTIE_CACHE_DIR, { recursive: true });
++const LOTTIE_PREVIEW_DIR = join(LOTTIE_CACHE_DIR, 'lottie_preview');
++mkdirSync(LOTTIE_PREVIEW_DIR, { recursive: true });
++const LOTTIE_SPRITE_FILE = join(LOTTIE_CACHE_DIR, 'preview-sprite.webp');
++const LOTTIE_SPRITE_URL = 'https://rainzt.cn/lottie/preview-sprite.webp';
++const LOTTIE_SPRITE_COLUMNS = 12;
++const LOTTIE_SPRITE_CELL = 96;
++const LOTTIE_PREVIEW_SIZE = 192;
++const FFMPEG_BIN = existsSync('/usr/bin/ffmpeg') ? '/usr/bin/ffmpeg' : 'ffmpeg';
++const execFileAsync = promisify(execFile);
+ 
+ const CYAPI_KEY = '1ffdf5733f5d538760e63d7e46ba17438d9f7b9dfc18c51be1109386fd74c3a1';
+ const STREAM_SIGN_SECRET = 'b0f4489766826e2f878941e31c92bfe3a9e8166534650dbd2e6df484a3e5f036';
+ const SERVER_ORIGIN = 'https://chat-server.lengxiqwq.com';
++const SITE_ORIGIN = 'https://lengxiqwq.com';
+ 
+ const MATRIX_ROOM_ID = '!CKQYQ95MT69FlskJmkcEbSmkd72I6CTgnf_nITckm4I';
+ const MATRIX_INTERNAL_URL = 'http://127.0.0.1:6167';
+@@ -4083,6 +4095,43 @@ const server = createServer(async (req, res) => {
+     return;
+   }
+ 
++  // Lottie Sticker Static Preview: GET /api/lottie/:name.webp
++  // 从 preview-sprite.webp 裁出单枚表情，供 Matrix 出站贴纸使用，避免把整张合集图当成一枚表情发出去。
++  if (url.pathname.startsWith('/api/lottie/') && /\.webp$/i.test(url.pathname) && (req.method === 'GET' || req.method === 'HEAD')) {
++    const rawFile = url.pathname.slice('/api/lottie/'.length);
++    const match = /^([a-z0-9-]+)\.webp$/i.exec(rawFile);
++    if (!match) {
++      res.writeHead(400, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ ok: false, error: 'Invalid lottie name' }));
++      return;
++    }
++    try {
++      const previewFile = await ensureLottiePreviewFile(match[1].toLowerCase());
++      if (!previewFile) {
++        res.writeHead(404, { 'Content-Type': 'application/json' });
++        res.end(JSON.stringify({ ok: false, error: 'Lottie preview not found' }));
++        return;
++      }
++      const size = statSync(previewFile).size;
++      res.writeHead(200, {
++        'Content-Type': 'image/webp',
++        'Content-Length': String(size),
++        'Cache-Control': 'public, max-age=2592000, immutable',
++        'Access-Control-Allow-Origin': '*'
++      });
++      if (req.method === 'HEAD') {
++        res.end();
++        return;
++      }
++      createReadStream(previewFile).pipe(res);
++    } catch (err) {
++      console.warn(`[Lottie Preview] Failed for ${match[1]}:`, err.message);
++      res.writeHead(500, { 'Content-Type': 'application/json' });
++      res.end(JSON.stringify({ ok: false, error: 'Lottie preview unavailable' }));
++    }
++    return;
++  }
++
+   // Lottie Sticker JSON Cache Proxy: GET /api/lottie/:name.json
+   if (url.pathname.startsWith('/api/lottie/') && (req.method === 'GET' || req.method === 'HEAD')) {
+     if (req.method === 'HEAD') {
+@@ -6164,6 +6213,77 @@ const LOTTIE_LABELS = {
+   'qq-490-490': '满心期待', 'qq-491-491': '认真敲代码', 'qq-492-492': '仔细查找', 'qq-493-493': '睡觉啦'
+ };
+ 
++// 与 src/components/pages/chat/stickerLoader.ts 的 LOTTIE_SPRITE_KEYS 顺序保持一致，
++// 用于从 preview-sprite.webp 中裁出单枚表情的静态预览图。
++const LOTTIE_SPRITE_KEYS = [
++  'aini', 'bianpao', 'bixin', 'caigou', 'cool', 'daku', 'exin', 'fan', 'foxi', 'gandong',
++  'gongzuo', 'huang', 'jingxia', 'jiong', 'kaixin', 'meiku', 'meishi',
++  'qq-181-181', 'qq-311-311', 'qq-314-314', 'qq-317-317', 'qq-318-318', 'qq-320-320',
++  'qq-337-337', 'qq-338-338', 'qq-341-341', 'qq-342-342', 'qq-343-343', 'qq-344-344',
++  'qq-346-346', 'qq-349-349', 'qq-351-351', 'qq-360-360', 'qq-361-361', 'qq-363-363',
++  'qq-364-364', 'qq-365-365', 'qq-367-367', 'qq-371-371', 'qq-372-372', 'qq-373-373',
++  'qq-375-375', 'qq-377-377', 'qq-378-378', 'qq-379-379', 'qq-380-380', 'qq-381-381',
++  'qq-382-382', 'qq-383-383', 'qq-384-384', 'qq-385-385', 'qq-387-387', 'qq-388-388',
++  'qq-390-390', 'qq-391-391', 'qq-395-395', 'qq-397-397', 'qq-398-398', 'qq-400-400',
++  'qq-402-402', 'qq-403-403', 'qq-404-404', 'qq-405-405', 'qq-407-407', 'qq-408-408',
++  'qq-409-409', 'qq-410-410', 'qq-412-412', 'qq-425-425', 'qq-427-427', 'qq-450-450',
++  'qq-451-451', 'qq-452-452', 'qq-453-453', 'qq-454-454', 'qq-455-455', 'qq-456-456',
++  'qq-457-457', 'qq-458-458', 'qq-460-460', 'qq-461-461', 'qq-462-462', 'qq-468-468',
++  'qq-469-469', 'qq-472-472', 'qq-474-474', 'qq-475-475', 'qq-476-476', 'qq-477-477',
++  'qq-478-478', 'qq-479-479', 'qq-481-481', 'qq-482-482', 'qq-483-483', 'qq-484-484',
++  'qq-489-489', 'qq-490-490', 'qq-491-491', 'qq-492-492', 'qq-493-493', 'qq-5-5',
++  're', 'shengqi', 'shengri', 'shuijiao', 'tietie', 'wangpan', 'wenhao', 'wuzui', 'xiaoku', 'yanhua'
++];
++
++let lottieSpriteTask = null;
++async function ensureLottieSpriteFile() {
++  try {
++    if (existsSync(LOTTIE_SPRITE_FILE) && statSync(LOTTIE_SPRITE_FILE).size > 50000) return LOTTIE_SPRITE_FILE;
++  } catch {}
++  if (!lottieSpriteTask) {
++    lottieSpriteTask = (async () => {
++      const { buffer } = await fetchRemoteBuffer(LOTTIE_SPRITE_URL, 20000);
++      if (!buffer || buffer.length < 50000) throw new Error('Lottie sprite download failed');
++      const tmp = `${LOTTIE_SPRITE_FILE}.${process.pid}.tmp`;
++      writeFileSync(tmp, buffer);
++      renameSync(tmp, LOTTIE_SPRITE_FILE);
++      return LOTTIE_SPRITE_FILE;
++    })().finally(() => { lottieSpriteTask = null; });
++  }
++  return lottieSpriteTask;
++}
++
++const lottiePreviewTasks = new Map();
++async function ensureLottiePreviewFile(name) {
++  const index = LOTTIE_SPRITE_KEYS.indexOf(name);
++  if (index < 0) return '';
++  const target = join(LOTTIE_PREVIEW_DIR, `${name}.webp`);
++  try {
++    if (existsSync(target) && statSync(target).size > 0) return target;
++  } catch {}
++  const running = lottiePreviewTasks.get(name);
++  if (running) return running;
++  const task = (async () => {
++    const spriteFile = await ensureLottieSpriteFile();
++    const col = index % LOTTIE_SPRITE_COLUMNS;
++    const row = Math.floor(index / LOTTIE_SPRITE_COLUMNS);
++    const tmp = `${target}.${process.pid}.tmp.webp`;
++    await execFileAsync(FFMPEG_BIN, [
++      '-v', 'error', '-y',
++      '-i', spriteFile,
++      '-vf', `crop=${LOTTIE_SPRITE_CELL}:${LOTTIE_SPRITE_CELL}:${col * LOTTIE_SPRITE_CELL}:${row * LOTTIE_SPRITE_CELL},scale=${LOTTIE_PREVIEW_SIZE}:${LOTTIE_PREVIEW_SIZE}:flags=lanczos`,
++      '-frames:v', '1',
++      '-c:v', 'libwebp',
++      '-quality', '92',
++      tmp
++    ], { timeout: 15000, windowsHide: true });
++    renameSync(tmp, target);
++    return target;
++  })().finally(() => { lottiePreviewTasks.delete(name); });
++  lottiePreviewTasks.set(name, task);
++  return task;
++}
++
+ function resolveSingleSticker(content) {
+   const trimmed = (content || '').trim();
+   const lottieMatch =
+@@ -6178,9 +6298,13 @@ function resolveSingleSticker(content) {
+       name: label,
+       isLottie: true,
+       lottieName: name,
+-      url: 'https://rainzt.cn/lottie/preview-sprite.webp',
+-      filename: `${name}.webp`,
+-      mimetype: 'image/webp'
++      // 依次尝试：站点 GIF 动图 → 站点旧版 WebP 动图（未重新渲染的过渡期）→ 网关裁图兜底。
++      candidates: [
++        { url: `${SITE_ORIGIN}/assets/stickers/lottie/${encodeURIComponent(name)}.gif`, filename: `${name}.gif`, mimetype: 'image/gif' },
++        { url: `${SITE_ORIGIN}/assets/stickers/lottie/${encodeURIComponent(name)}.webp`, filename: `${name}.webp`, mimetype: 'image/webp' },
++        { url: `${SERVER_ORIGIN}/api/lottie/${encodeURIComponent(name)}.webp`, filename: `${name}.webp`, mimetype: 'image/webp' }
++      ],
++      mimetype: 'image/gif'
+     };
+   }
+   const miku = /^:miku_([^:\s]+):$/.exec(trimmed);
+@@ -6391,20 +6515,30 @@ async function sendToMatrix(user, msg, mentionMeta = null) {
+     const hasAttachments = Array.isArray(msg.attachments) && msg.attachments.length > 0;
+     const singleSticker = !hasAttachments ? resolveSingleSticker(msg.content) : null;
+     let singleStickerMxc = null;
++    let singleStickerMime = singleSticker ? singleSticker.mimetype : null;
+     if (singleSticker && !isProxiedGuest) {
+-      singleStickerMxc = await getOrUploadMxc(singleSticker.url, singleSticker.filename);
++      const stickerSources = Array.isArray(singleSticker.candidates) && singleSticker.candidates.length > 0
++        ? singleSticker.candidates
++        : (singleSticker.url ? [{ url: singleSticker.url, filename: singleSticker.filename, mimetype: singleSticker.mimetype }] : []);
++      for (const source of stickerSources) {
++        singleStickerMxc = await getOrUploadMxc(source.url, source.filename);
++        if (singleStickerMxc) {
++          singleStickerMime = source.mimetype || singleStickerMime;
++          break;
++        }
++      }
+     }
+ 
+-    if (singleStickerMxc || (singleSticker && singleSticker.isLottie)) {
++    if (singleStickerMxc) {
+       eventsToSend.push({
+         eventType: 'm.sticker',
+         payload: {
+           body: singleSticker.isLottie ? (singleSticker.name || singleSticker.canonicalToken) : (singleSticker.name || '贴纸'),
+-          url: singleStickerMxc || 'mxc://matrix.lengxiqwq.com/lottie-preview',
++          url: singleStickerMxc,
+           info: {
+-            mimetype: singleSticker.mimetype || 'image/webp',
+-            w: 128,
+-            h: 128
++            mimetype: singleStickerMime || 'image/webp',
++            w: singleSticker.isLottie ? LOTTIE_PREVIEW_SIZE : 128,
++            h: singleSticker.isLottie ? LOTTIE_PREVIEW_SIZE : 128
+           },
+           'org.tea-room.bridge': {
+             site: 'https://lengxiqwq.com/',

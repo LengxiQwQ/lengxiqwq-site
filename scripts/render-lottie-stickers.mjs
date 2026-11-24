@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 /**
- * 把聊天室 Lottie 表情离线渲染成 animated webp。
+ * 把聊天室 Lottie 表情离线渲染成动图（默认 GIF，192px / 15fps）。
  *
  * Matrix 的 m.sticker 只能携带一张图片，站点里的 Lottie 是 JSON 动画，
  * 所以需要提前把每枚表情渲染成动图，交给聊天网关当作普通贴纸发给 Matrix。
+ * 选 GIF 是为了对齐互联大厅里其他站点的做法：所有客户端都能直接播放，
+ * 平坦的卡通色块不会像有损 WebP 那样糊边。15fps 写进 GIF 时会被量化成
+ * 7cs/帧（约 14.29fps），与听雨茶室等站点一致。
  *
- * 产物默认写入内容仓 public/assets/stickers/lottie/<name>.webp，
+ * 产物默认写入内容仓 public/assets/stickers/lottie/<name>.gif，
  * 由静态站 CDN 分发，网关只在发送时把它上传成 mxc。
  *
  * 只在表情包发生变化时手动运行，构建流程不会调用本脚本。
@@ -16,6 +19,7 @@ import { execFile } from "node:child_process";
  *   node scripts/render-lottie-stickers.mjs --force    # 全部重渲染
  *   node scripts/render-lottie-stickers.mjs --only=aini,caigou
  *   node scripts/render-lottie-stickers.mjs --size=160 --fps=12 --quality=60
+ *   node scripts/render-lottie-stickers.mjs --format=webp --quality=85
  *
  * 依赖：本机已安装 Chrome 或 Edge（或设置 CHROME_PATH），以及 ffmpeg（或设置 FFMPEG_PATH）。
  */
@@ -53,6 +57,8 @@ function parseArgs(argv) {
 		size: 192,
 		fps: 15,
 		quality: 65,
+		format: "gif",
+		colors: 256,
 	};
 	for (const raw of argv) {
 		const [key, value] = raw.split("=");
@@ -80,6 +86,12 @@ function parseArgs(argv) {
 				break;
 			case "--quality":
 				args.quality = Number(value);
+				break;
+			case "--format":
+				args.format = value === "webp" ? "webp" : "gif";
+				break;
+			case "--colors":
+				args.colors = Number(value);
 				break;
 			default:
 				console.warn(`[lottie] 忽略未知参数：${raw}`);
@@ -187,6 +199,28 @@ async function captureFrames(page, animationData, size, fps) {
 	);
 }
 
+async function encodeGif(framesDir, outputFile, fps, colors) {
+	await execFileAsync(
+		process.env.FFMPEG_PATH || "ffmpeg",
+		[
+			"-y",
+			"-v",
+			"error",
+			"-framerate",
+			String(fps),
+			"-i",
+			path.join(framesDir, "%03d.png"),
+			"-filter_complex",
+			`[0:v]split[a][b];[a]palettegen=max_colors=${colors}:stats_mode=full:reserve_transparent=1[p];[b][p]paletteuse=dither=sierra2_4a:alpha_threshold=128`,
+			"-loop",
+			"0",
+			"-an",
+			outputFile,
+		],
+		{ timeout: 180000 },
+	);
+}
+
 async function encodeWebp(framesDir, outputFile, fps, quality) {
 	await execFileAsync(
 		process.env.FFMPEG_PATH || "ffmpeg",
@@ -215,16 +249,23 @@ async function encodeWebp(framesDir, outputFile, fps, quality) {
 	);
 }
 
+function encodeFrames(args, framesDir, outputFile) {
+	return args.format === "gif"
+		? encodeGif(framesDir, outputFile, args.fps, args.colors)
+		: encodeWebp(framesDir, outputFile, args.fps, args.quality);
+}
+
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	const outDir = args.out ?? DEFAULT_OUT;
+	const extension = args.format === "gif" ? "gif" : "webp";
 	const chrome = findChrome();
 	const allNames = readStickerNames();
 	const names = args.only?.length ? args.only : allNames;
 
 	const pending = names.filter((name) => {
 		if (args.force) return true;
-		const file = path.join(outDir, `${name}.webp`);
+		const file = path.join(outDir, `${name}.${extension}`);
 		return !fs.existsSync(file) || fs.statSync(file).size === 0;
 	});
 	const unknown = names.filter((name) => !allNames.includes(name));
@@ -271,8 +312,8 @@ async function main() {
 					Buffer.from(base64, "base64"),
 				);
 			}
-			const outputFile = path.join(outDir, `${name}.webp`);
-			await encodeWebp(framesDir, outputFile, args.fps, args.quality);
+			const outputFile = path.join(outDir, `${name}.${extension}`);
+			await encodeFrames(args, framesDir, outputFile);
 			if (!args.keepFrames)
 				fs.rmSync(framesDir, { recursive: true, force: true });
 			const sizeKb = (fs.statSync(outputFile).size / 1024).toFixed(0);

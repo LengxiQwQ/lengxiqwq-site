@@ -44,6 +44,24 @@ const config = {
       window.__walineFetchInterceptorInstalled = true;
       const originalFetch = window.fetch;
       window.fetch = async function (input, init) {
+        // 自动为贴纸包清单（info.json）追加版本号，彻底击穿 EdgeOne CDN 与浏览器 7 天本地强缓存
+        const reqUrl = typeof input === "string" ? input : input instanceof Request ? input.url : "";
+        if (
+          reqUrl &&
+          reqUrl.includes("/assets/stickers/") &&
+          reqUrl.includes("/info.json") &&
+          !reqUrl.includes("?v=") &&
+          !reqUrl.includes("&v=")
+        ) {
+          const separator = reqUrl.includes("?") ? "&" : "?";
+          const newUrl = `${reqUrl}${separator}v=20261124`;
+          if (typeof input === "string") {
+            input = newUrl;
+          } else if (input instanceof Request) {
+            input = new Request(newUrl, input);
+          }
+        }
+
         if (
           init &&
           init.method &&

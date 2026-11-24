@@ -60,11 +60,12 @@ python3 scripts/backfill-chat-image-dimensions.py /path/to/chat-data-copy \
 
 `gateway-lottie-preview.patch` 对应当前 VPS 网关。Matrix 出站贴纸只能携带一张图片，不能直接引用 Lottie JSON；旧逻辑把 1152×960 的 `preview-sprite.webp` 合集图当成一枚贴纸上载，Element 等客户端会显示整张表情墙。
 
-现在的取图顺序：
+现在的取图顺序（`resolveSingleSticker` 返回 `candidates` 逐个尝试，成功即停）：
 
-1. **动图（首选）**：`https://lengxiqwq.com/assets/stickers/lottie/<name>.webp`，由 `pnpm lottie:render`（`scripts/render-lottie-stickers.mjs`）离线渲染，产物提交在内容仓 `public/assets/stickers/lottie/`，随静态站发布。渲染用本机 Chrome/Edge + lottie-web + ffmpeg，只在表情包变动时手动执行，构建流程不会调用。
-2. **静态兜底**：上述文件缺失或上传失败时，改用网关的 `GET /api/lottie/:name.webp`——按 `LOTTIE_SPRITE_KEYS` 的格子顺序（12 列、每格 96px）用 ffmpeg 从 `data/lottie_cache/preview-sprite.webp` 裁单格并放大到 192×192，缓存进 `data/lottie_cache/lottie_preview/`。
+1. **GIF 动图（首选）**：`https://lengxiqwq.com/assets/stickers/lottie/<name>.gif`，由 `pnpm lottie:render`（`scripts/render-lottie-stickers.mjs`）离线渲染，产物提交在内容仓 `public/assets/stickers/lottie/`，随静态站发布。渲染用本机 Chrome/Edge + lottie-web + ffmpeg，输出 192×192、15fps 的 GIF（与互联大厅里其他站点的做法一致，所有客户端都能直接播放），只在表情包变动时手动执行，构建流程不会调用。
+2. **旧版 WebP 动图（过渡）**：同一目录的 `<name>.webp`。静态站尚未发布新 GIF 时用它，保证发送出来的仍是动图而不是静态首帧。
+3. **静态兜底**：以上都缺失或上传失败时，改用网关的 `GET /api/lottie/:name.webp`——按 `LOTTIE_SPRITE_KEYS` 的格子顺序（12 列、每格 96px）用 ffmpeg 从 `data/lottie_cache/preview-sprite.webp` 裁单格并放大到 192×192，缓存进 `data/lottie_cache/lottie_preview/`。走兜底时事件里的 `info.mimetype` 会自动改成 `image/webp`。
 
 `server.mjs` 里的 `LOTTIE_SPRITE_KEYS` 必须与 `src/components/pages/chat/stickerLoader.ts` 的同名数组保持一致，增删或调整表情顺序时要同时更新两处，并重新跑一次 `pnpm lottie:render`。
 
-出站 `m.sticker` 只在拿到真实 `mxc://` 时才发送；两步都失败时退回文字短码，不再发送占位的假 mxc 地址。网关侧依赖 VPS 自带 `/usr/bin/ffmpeg`（含 libwebp），可用 `curl -I https://chat-server.lengxiqwq.com/api/lottie/aini.webp` 验收兜底图。历史消息里已经上载的合集图不会自动修正。
+出站 `m.sticker` 只在拿到真实 `mxc://` 时才发送；三步都失败时退回文字短码，不再发送占位的假 mxc 地址。网关侧依赖 VPS 自带 `/usr/bin/ffmpeg`（含 libwebp），可用 `curl -I https://chat-server.lengxiqwq.com/api/lottie/aini.webp` 验收兜底图。历史消息里已经上载的合集图不会自动修正。
