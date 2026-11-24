@@ -36,10 +36,10 @@ export type ChatContentSegment =
 
 export const LOTTIE_LABELS: Record<string, string> = {
 	// 27 精选动态表情
+	caigou: "菜狗",
 	aini: "爱你",
 	bianpao: "鞭炮",
 	bixin: "比心",
-	caigou: "菜狗",
 	cool: "酷",
 	daku: "大哭",
 	exin: "恶心",
@@ -149,6 +149,196 @@ export const LOTTIE_LABELS: Record<string, string> = {
 	"qq-492-492": "仔细查找",
 	"qq-493-493": "睡觉啦",
 };
+
+export const LOTTIE_SPRITE_KEYS: string[] = [
+	"aini", "bianpao", "bixin", "caigou", "cool", "daku", "exin", "fan", "foxi", "gandong", "gongzuo", "huang", "jingxia", "jiong", "kaixin", "meiku", "meishi",
+	"qq-181-181", "qq-311-311", "qq-314-314", "qq-317-317", "qq-318-318", "qq-320-320", "qq-337-337", "qq-338-338", "qq-341-341", "qq-342-342", "qq-343-343", "qq-344-344", "qq-346-346", "qq-349-349", "qq-351-351", "qq-360-360", "qq-361-361", "qq-363-363", "qq-364-364", "qq-365-365", "qq-367-367", "qq-371-371", "qq-372-372", "qq-373-373", "qq-375-375", "qq-377-377", "qq-378-378", "qq-379-379", "qq-380-380", "qq-381-381", "qq-382-382", "qq-383-383", "qq-384-384", "qq-385-385", "qq-387-387", "qq-388-388", "qq-390-390", "qq-391-391", "qq-395-395", "qq-397-397", "qq-398-398", "qq-400-400", "qq-402-402", "qq-403-403", "qq-404-404", "qq-405-405", "qq-407-407", "qq-408-408", "qq-409-409", "qq-410-410", "qq-412-412", "qq-425-425", "qq-427-427", "qq-450-450", "qq-451-451", "qq-452-452", "qq-453-453", "qq-454-454", "qq-455-455", "qq-456-456", "qq-457-457", "qq-458-458", "qq-460-460", "qq-461-461", "qq-462-462", "qq-468-468", "qq-469-469", "qq-472-472", "qq-474-474", "qq-475-475", "qq-476-476", "qq-477-477", "qq-478-478", "qq-479-479", "qq-481-481", "qq-482-482", "qq-483-483", "qq-484-484", "qq-489-489", "qq-490-490", "qq-491-491", "qq-492-492", "qq-493-493",
+	"qq-5-5", "re", "shengqi", "shengri", "shuijiao", "tietie", "wangpan", "wenhao", "wuzui", "xiaoku", "yanhua"
+];
+
+export const LOTTIE_SPRITE_URL = "https://rainzt.cn/lottie/preview-sprite.webp";
+
+export function getLottieSpriteStyle(name: string): string {
+	const idx = LOTTIE_SPRITE_KEYS.indexOf(name.toLowerCase());
+	if (idx < 0) return "";
+	const rows = Math.ceil(LOTTIE_SPRITE_KEYS.length / 12);
+	const col = idx % 12;
+	const row = Math.floor(idx / 12);
+	const posX = ((col / 11) * 100).toFixed(2);
+	const posY = ((row / Math.max(1, rows - 1)) * 100).toFixed(2);
+	return `background-image: url('${LOTTIE_SPRITE_URL}'); background-size: 1200% ${rows * 100}%; background-position: ${posX}% ${posY}%;`;
+}
+
+export interface LottieStickerItem {
+	name: string;
+	label: string;
+	token: string;
+	group: "animal" | "featured" | "qq";
+}
+
+/** 动物萌宠类动态 Lottie 表情（菜狗、菜汪、狗狗与企鹅等） */
+export const ANIMAL_LOTTIE_ITEMS: LottieStickerItem[] = [
+	{ name: "caigou", label: "菜狗", token: ":lottie_caigou:", group: "animal" },
+	{ name: "qq-317-317", label: "菜汪", token: ":lottie_qq-317-317:", group: "animal" },
+	{ name: "qq-361-361", label: "狗狗笑哭", token: ":lottie_qq-361-361:", group: "animal" },
+	{ name: "qq-363-363", label: "狗狗可怜", token: ":lottie_qq-363-363:", group: "animal" },
+	{ name: "qq-365-365", label: "狗狗生气", token: ":lottie_qq-365-365:", group: "animal" },
+	{ name: "qq-367-367", label: "狗狗疑问", token: ":lottie_qq-367-367:", group: "animal" },
+	{ name: "qq-378-378", label: "企鹅笑哭", token: ":lottie_qq-378-378:", group: "animal" },
+	{ name: "qq-379-379", label: "企鹅流泪", token: ":lottie_qq-379-379:", group: "animal" },
+	{ name: "qq-383-383", label: "企鹅爱心", token: ":lottie_qq-383-383:", group: "animal" },
+];
+
+/** 精选热门动态 Lottie 表情（27个） */
+export const FEATURED_LOTTIE_ITEMS: LottieStickerItem[] = [
+	{ name: "caigou", label: "菜狗", token: ":lottie_caigou:", group: "animal" },
+	{ name: "foxi", label: "佛系", token: ":lottie_foxi:", group: "featured" },
+	{ name: "aini", label: "爱你", token: ":lottie_aini:", group: "featured" },
+	{ name: "bixin", label: "比心", token: ":lottie_bixin:", group: "featured" },
+	{ name: "tietie", label: "贴贴", token: ":lottie_tietie:", group: "featured" },
+	{ name: "xiaoku", label: "笑哭", token: ":lottie_xiaoku:", group: "featured" },
+	{ name: "daku", label: "大哭", token: ":lottie_daku:", group: "featured" },
+	{ name: "fan", label: "烦", token: ":lottie_fan:", group: "featured" },
+	{ name: "cool", label: "酷", token: ":lottie_cool:", group: "featured" },
+	{ name: "kaixin", label: "开心", token: ":lottie_kaixin:", group: "featured" },
+	{ name: "shengqi", label: "生气", token: ":lottie_shengqi:", group: "featured" },
+	{ name: "shuijiao", label: "睡觉", token: ":lottie_shuijiao:", group: "featured" },
+	{ name: "wenhao", label: "问号", token: ":lottie_wenhao:", group: "featured" },
+	{ name: "wuzui", label: "捂嘴", token: ":lottie_wuzui:", group: "featured" },
+	{ name: "gongzuo", label: "工作", token: ":lottie_gongzuo:", group: "featured" },
+	{ name: "gandong", label: "感动", token: ":lottie_gandong:", group: "featured" },
+	{ name: "meishi", label: "美食", token: ":lottie_meishi:", group: "featured" },
+	{ name: "re", label: "热", token: ":lottie_re:", group: "featured" },
+	{ name: "huang", label: "慌", token: ":lottie_huang:", group: "featured" },
+	{ name: "jingxia", label: "惊吓", token: ":lottie_jingxia:", group: "featured" },
+	{ name: "jiong", label: "囧", token: ":lottie_jiong:", group: "featured" },
+	{ name: "meiku", label: "美哭", token: ":lottie_meiku:", group: "featured" },
+	{ name: "shengri", label: "生日", token: ":lottie_shengri:", group: "featured" },
+	{ name: "bianpao", label: "鞭炮", token: ":lottie_bianpao:", group: "featured" },
+	{ name: "yanhua", label: "烟花", token: ":lottie_yanhua:", group: "featured" },
+	{ name: "wangpan", label: "网盘", token: ":lottie_wangpan:", group: "featured" },
+	{ name: "exin", label: "恶心", token: ":lottie_exin:", group: "featured" },
+];
+
+/** QQ 超级表情与小黄脸动态（84个） */
+export const QQ_SUPER_LOTTIE_ITEMS: LottieStickerItem[] = Object.entries(LOTTIE_LABELS)
+	.filter(([key]) => key.startsWith("qq-"))
+	.map(([key, label]) => ({
+		name: key,
+		label,
+		token: `:lottie_${key}:`,
+		group: ANIMAL_LOTTIE_ITEMS.some((a) => a.name === key) ? "animal" : "qq",
+	}));
+
+/** 全部 Lottie 动效表情（111个），菜狗排在最首位，动物与热门动效在前，QQ超级表情在后，平铺无缝滚动 */
+export const ALL_LOTTIE_ITEMS: LottieStickerItem[] = (() => {
+	const seen = new Set<string>();
+	const list: LottieStickerItem[] = [];
+	// 1. 萌宠动物（菜狗、菜汪、狗狗笑哭等）
+	for (const item of ANIMAL_LOTTIE_ITEMS) {
+		if (!seen.has(item.name)) {
+			seen.add(item.name);
+			list.push(item);
+		}
+	}
+	// 2. 精选热门动效（佛系、爱你、比心、贴贴等）
+	for (const item of FEATURED_LOTTIE_ITEMS) {
+		if (!seen.has(item.name)) {
+			seen.add(item.name);
+			list.push(item);
+		}
+	}
+	// 3. QQ 超级表情与小黄脸
+	for (const item of QQ_SUPER_LOTTIE_ITEMS) {
+		if (!seen.has(item.name)) {
+			seen.add(item.name);
+			list.push(item);
+		}
+	}
+	return list;
+})();
+
+/** 岸宝小动物贴纸项目（30个） */
+export const ANBAO_STICKER_ITEMS: string[] = [
+	"打招呼", "比心", "开心", "探头", "委屈", "咬牙切齿", "早", "嘿嘿",
+	"大哭", "哭哭", "躺平", "心虚", "思考", "思考中", "生气", "疑惑",
+	"惊讶", "无语", "抱抱", "谢谢", "偷笑", "没电", "点赞", "拒绝",
+	"收到", "催更", "加油", "递茶", "吃瓜", "晚安",
+];
+
+/** 尤诺宝宝小动物贴纸项目（18个） */
+export const YOUNUO_STICKER_ITEMS: string[] = [
+	"打招呼", "比心", "开心", "抱抱", "委屈", "气鼓鼓", "震惊", "疑惑",
+	"害羞", "困困", "点赞", "喝茶", "收到", "谢谢", "加油", "贴贴",
+	"吃瓜", "晚安",
+];
+
+/** 艾雪专属贴纸项目（20个） */
+export const XUE_SNOW_ITEMS: string[] = [
+	"snow-01", "snow-02", "snow-03", "snow-04", "snow-05",
+	"snow-06", "snow-07", "snow-08", "snow-09", "snow-10",
+	"snow-11", "snow-12", "snow-13", "snow-14", "snow-15",
+	"snow-16", "snow-17", "snow-18", "snow-19", "snow-20",
+];
+
+/** 艾雪精选收藏贴纸项目（12个） */
+export const XUE_FAV_ITEMS: { name: string; ext: string }[] = [
+	{ name: "fav-01", ext: "jpg" },
+	{ name: "fav-02", ext: "gif" },
+	{ name: "fav-03", ext: "jpg" },
+	{ name: "fav-04", ext: "jpg" },
+	{ name: "fav-05", ext: "jpg" },
+	{ name: "fav-06", ext: "png" },
+	{ name: "fav-07", ext: "jpg" },
+	{ name: "fav-08", ext: "gif" },
+	{ name: "fav-09", ext: "jpg" },
+	{ name: "fav-10", ext: "gif" },
+	{ name: "fav-11", ext: "png" },
+	{ name: "fav-12", ext: "jpg" },
+];
+
+export function getBuiltinAnimalStickerPacks(): StickerPack[] {
+	const anbaoItems: StickerItem[] = ANBAO_STICKER_ITEMS.map((itemName) => ({
+		code: `:anbao_${itemName}:`,
+		name: `岸宝 · ${itemName}`,
+		url: `https://rainzt.cn/assets/waline-emojis/anbao/anbao_${encodeURIComponent(itemName)}.webp`,
+		category: "sticker",
+	}));
+	const younuoItems: StickerItem[] = YOUNUO_STICKER_ITEMS.map((itemName) => ({
+		code: `:younuo_${itemName}:`,
+		name: `尤诺 · ${itemName}`,
+		url: `https://rainzt.cn/assets/waline-emojis/younuo/younuo_${encodeURIComponent(itemName)}.webp`,
+		category: "sticker",
+	}));
+	const xueSnowItems: StickerItem[] = XUE_SNOW_ITEMS.map((itemName) => ({
+		code: `:snow_${itemName}:`,
+		name: `艾雪 · ${itemName}`,
+		url: `https://daily.yybb.us/owo/snow/${encodeURIComponent(itemName)}.webp`,
+		category: "sticker",
+	}));
+	const xueFavItems: StickerItem[] = XUE_FAV_ITEMS.map((item) => ({
+		code: `:snow_${item.name}:`,
+		name: `收藏 · ${item.name}`,
+		url: `https://daily.yybb.us/owo/favorites/${encodeURIComponent(item.name)}.${item.ext}`,
+		category: "sticker",
+	}));
+	return [
+		{
+			id: "rainzt",
+			name: "朝朝听雨",
+			iconUrl: "https://rainzt.cn/assets/waline-emojis/anbao/thumbs/anbao_%E6%AF%94%E5%BF%83.webp",
+			category: "sticker",
+			items: [...anbaoItems, ...younuoItems],
+		},
+		{
+			id: "xue",
+			name: "艾雪",
+			iconUrl: "https://daily.yybb.us/owo/snow/snow-01.webp",
+			category: "sticker",
+			items: [...xueSnowItems, ...xueFavItems],
+		},
+	];
+}
 
 function resolveStickerCategory(
 	baseUrl: string,
@@ -268,6 +458,30 @@ export function resolveExternalOrLocalSticker(
 		};
 	}
 
+	const xueMatch = /^:(snow|xue|fav)_([^:\s<>"']+):$/i.exec(token);
+	if (xueMatch) {
+		const prefix = xueMatch[1].toLowerCase();
+		const itemName = xueMatch[2];
+		if (prefix === "fav" || itemName.startsWith("fav-")) {
+			const found = XUE_FAV_ITEMS.find((f) => f.name === itemName || f.name === `fav-${itemName}`);
+			const ext = found ? found.ext : "jpg";
+			const realName = found ? found.name : itemName;
+			return {
+				code: token,
+				name: `收藏 · ${realName}`,
+				url: `https://daily.yybb.us/owo/favorites/${encodeURIComponent(realName)}.${ext}`,
+				category: "sticker",
+			};
+		}
+		const realSnowName = itemName.startsWith("snow-") ? itemName : `snow-${itemName}`;
+		return {
+			code: token,
+			name: `艾雪 · ${realSnowName}`,
+			url: `https://daily.yybb.us/owo/snow/${encodeURIComponent(realSnowName)}.webp`,
+			category: "sticker",
+		};
+	}
+
 	return null;
 }
 
@@ -317,6 +531,13 @@ export async function loadStickerPacks(
 				});
 			} catch {
 				// Ignore failed sticker pack manifest
+			}
+		}
+		// 自动挂载岸宝与尤诺宝宝小动物贴纸包
+		const animalPacks = getBuiltinAnimalStickerPacks();
+		for (const ap of animalPacks) {
+			if (!loaded.some((p) => p.id === ap.id)) {
+				loaded.push(ap);
 			}
 		}
 		return loaded;
@@ -448,7 +669,7 @@ export function formatStickerAttachmentAlt(rawName?: string): string {
 }
 
 const INLINE_STICKER_PATH_RE =
-	/(?:\/assets\/stickers\/(?:qq|bmoji)\/|\/chat-api\/emoji\/|\/waline-emojis\/|qface)/i;
+	/(?:\/assets\/stickers\/(?:qq|bmoji)\/|\/chat-api\/emoji\/|\/waline-emojis\/|qface|\/owo\/(?:snow|favorites)\/)/i;
 
 export function isChatInlineSticker(
 	url?: string,

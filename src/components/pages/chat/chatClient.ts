@@ -59,6 +59,7 @@ export interface RoomInitPacket {
 	unreadCount?: number;
 	unreadUserCount?: number;
 	pinnedUids?: string[];
+	pinnedDetails?: ChatMessageRecord[];
 	topic?: string;
 	roomAvatar?: string;
 	roomAvatars?: Record<string, string>;
@@ -152,7 +153,12 @@ export type ServerPacket =
 			isEdited?: boolean;
 			editedAt?: number;
 	  }
-	| { type: "chat:pinned_update"; roomId: string; pinnedUids: string[] }
+	| {
+			type: "chat:pinned_update";
+			roomId: string;
+			pinnedUids: string[];
+			pinnedDetails?: ChatMessageRecord[];
+	  }
 	| { type: "chat:topic_update"; roomId: string; topic: string }
 	| { type: "chat:room_avatar_update"; roomId: string; avatar: string }
 	| {
@@ -438,7 +444,7 @@ export function resolveWorkingAvatarUrl(
 		}
 	}
 	if (mailMd5 && /^[a-f0-9]{32}$/i.test(mailMd5.trim())) {
-		return `https://cravatar.cn/avatar/${mailMd5.trim().toLowerCase()}?d=mp`;
+		return "";
 	}
 	return "";
 }
@@ -826,9 +832,7 @@ export function readInitialCachedUser(): ChatSessionUser | null {
 				const rawAvatar =
 					typeof walineData.avatar === "string" && walineData.avatar.trim()
 						? walineData.avatar.trim()
-						: walineData.mailMd5
-							? `https://cravatar.cn/avatar/${walineData.mailMd5}?d=mp`
-							: "";
+						: "";
 				const synthesizedUser: ChatSessionUser = {
 					userKey:
 						walineData.objectId !== undefined
@@ -1547,6 +1551,43 @@ export function resolveChatAvatarUrl(raw?: string): string {
 	if (raw.includes("chat-api.lengxiqwq.com/api/interconnect/media/")) {
 		return "";
 	}
+	const trimmed = raw.trim();
+	try {
+		const origin =
+			typeof window !== "undefined"
+				? window.location.origin
+				: "https://example.invalid";
+		const parsed = new URL(trimmed, origin);
+		// 1. 如果带有指向 DiceBear 等外部 SVG 的 fallback 参数（例如 d=https://api.dicebear.com/...），直接提取并返回真实的 fallback
+		const dParam =
+			parsed.searchParams.get("d") || parsed.searchParams.get("default");
+		if (
+			dParam &&
+			(dParam.startsWith("http://") || dParam.startsWith("https://"))
+		) {
+			return dParam;
+		}
+		// 2. 如果是 cravatar / gravatar / libravatar 且为默认占位符或 404，直接返回空字符串，让纯无头像用户无缝走 Cutouts 剪纸风
+		const isAvatarService =
+			parsed.hostname.includes("cravatar") ||
+			parsed.hostname.includes("gravatar") ||
+			parsed.hostname.includes("libravatar");
+		if (isAvatarService) {
+			const d = (dParam || "").toLowerCase();
+			if (
+				d === "mp" ||
+				d === "mm" ||
+				d === "mystery" ||
+				d === "identicon" ||
+				d === "retro" ||
+				d === "monsterid" ||
+				d === "wavatar" ||
+				d === "robohash"
+			) {
+				return "";
+			}
+		}
+	} catch {}
 	return rewriteDefaultAvatarQuery(raw);
 }
 

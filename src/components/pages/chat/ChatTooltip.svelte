@@ -7,6 +7,7 @@ interface Props {
 	align?: "center" | "left" | "right";
 	position?: "top" | "bottom";
 	disabled?: boolean;
+	strategy?: "absolute" | "fixed";
 	class?: string;
 	tooltipClass?: string;
 	children?: Snippet;
@@ -18,6 +19,7 @@ const {
 	align = "center",
 	position = "top",
 	disabled = false,
+	strategy,
 	class: className = "",
 	tooltipClass = "",
 	children,
@@ -40,7 +42,13 @@ const placement = $derived(
   {#if !disabled && (text || content)}
     <span
       data-chat-floating
-      use:positionChatFloating={{ placement, hover: "tooltip", gap: 7 }}
+      use:positionChatFloating={{
+        placement,
+        hover: "tooltip",
+        gap: 7,
+        strategy,
+        fitViewport: strategy === "fixed",
+      }}
       class="chat-tooltip {tooltipClass}"
       role="tooltip"
     >

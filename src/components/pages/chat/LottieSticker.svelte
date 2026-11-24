@@ -1,4 +1,6 @@
 <script module lang="ts">
+import { normalizeServerUrl } from "./chatClient";
+
 interface LottieAnimation {
 	play: () => void;
 	pause: () => void;
@@ -12,7 +14,8 @@ interface LottiePlayer {
 		renderer: "svg" | "canvas" | "html";
 		loop: boolean;
 		autoplay: boolean;
-		path: string;
+		path?: string;
+		animationData?: object;
 	}) => LottieAnimation;
 }
 
@@ -22,7 +25,11 @@ const LOTTIE_CDNS = [
 	"https://unpkg.com/lottie-web@5.12.2/build/player/lottie.min.js",
 ];
 
+const DEFAULT_SERVER_URL = "https://chat-server.lengxiqwq.com";
+
 let lottieLoaderPromise: Promise<LottiePlayer> | null = null;
+const lottieDataCache = new Map<string, object>();
+const lottiePromiseCache = new Map<string, Promise<object>>();
 
 function getWindowLottie(): LottiePlayer | undefined {
 	const w = window as unknown as {
@@ -66,7 +73,7 @@ function loadScript(src: string): Promise<void> {
 	});
 }
 
-function ensureLottieLibrary(): Promise<LottiePlayer> {
+export function ensureLottieLibrary(): Promise<LottiePlayer> {
 	if (typeof window === "undefined") {
 		return Promise.reject(new Error("Lottie unavailable on server"));
 	}
@@ -94,10 +101,47 @@ function ensureLottieLibrary(): Promise<LottiePlayer> {
 	}
 	return lottieLoaderPromise;
 }
+
+export function preloadLottieData(
+	name: string,
+	chatServerUrl?: string,
+): Promise<object> {
+	if (typeof window === "undefined" || !name) {
+		return Promise.reject(new Error("Cannot preload on server"));
+	}
+	const key = name.toLowerCase();
+	const cached = lottieDataCache.get(key);
+	if (cached) {
+		return Promise.resolve(cached);
+	}
+	const pending = lottiePromiseCache.get(key);
+	if (pending) {
+		return pending;
+	}
+	const base = normalizeServerUrl(chatServerUrl) || DEFAULT_SERVER_URL;
+	const url = `${base}/api/lottie/${encodeURIComponent(key)}.json`;
+	const promise = fetch(url)
+		.then((res) => {
+			if (!res.ok) {
+				throw new Error(`Lottie load failed with status ${res.status}`);
+			}
+			return res.json() as Promise<object>;
+		})
+		.then((data) => {
+			lottieDataCache.set(key, data);
+			lottiePromiseCache.delete(key);
+			return data;
+		})
+		.catch((err) => {
+			lottiePromiseCache.delete(key);
+			throw err;
+		});
+	lottiePromiseCache.set(key, promise);
+	return promise;
+}
 </script>
 
 <script lang="ts">
-import { normalizeServerUrl } from "./chatClient";
 import { useChatMediaRetry } from "./chatMediaRetry";
 
 interface Props {
@@ -106,8 +150,6 @@ interface Props {
 	className?: string;
 	chatServerUrl?: string;
 }
-
-const DEFAULT_SERVER_URL = "https://chat-server.lengxiqwq.com";
 
 let {
 	name,
@@ -129,10 +171,6 @@ function handleLoadError() {
 let activeAnim: LottieAnimation | null = null;
 
 const displayAlt = $derived(alt || name);
-const lottiePath = $derived.by(() => {
-	const base = normalizeServerUrl(chatServerUrl) || DEFAULT_SERVER_URL;
-	return `${base}/api/lottie/${encodeURIComponent(name.toLowerCase())}.json`;
-});
 
 $effect(() => {
 	const el = containerEl;
@@ -164,15 +202,22 @@ $effect(() => {
 
 $effect(() => {
 	const el = containerEl;
-	const jsonUrl = lottiePath;
 	if (!el || !hasEnteredViewport || !name) return;
 
 	let disposed = false;
 	let anim: LottieAnimation | null = null;
 	failed = false;
 
-	void ensureLottieLibrary()
-		.then((lottie) => {
+	const key = name.toLowerCase();
+	const cachedData = lottieDataCache.get(key);
+
+	void Promise.all([
+		ensureLottieLibrary(),
+		cachedData
+			? Promise.resolve(cachedData)
+			: preloadLottieData(name, chatServerUrl),
+	])
+		.then(([lottie, data]) => {
 			if (disposed || !el) return;
 			el.replaceChildren();
 			anim = lottie.loadAnimation({
@@ -180,7 +225,7 @@ $effect(() => {
 				renderer: "svg",
 				loop: true,
 				autoplay: isVisible,
-				path: jsonUrl,
+				animationData: data,
 			});
 			activeAnim = anim;
 			anim.addEventListener("DOMLoaded", retry.clear);

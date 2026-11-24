@@ -12,6 +12,10 @@ import ChatAvatar, {
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
+import LottieSticker, {
+	ensureLottieLibrary,
+	preloadLottieData,
+} from "./LottieSticker.svelte";
 import {
 	isMusicNoticeMessage,
 	parseMusicNoticeContent,
@@ -63,9 +67,13 @@ import type {
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import {
+	ALL_LOTTIE_ITEMS,
 	formatChatReplyPreview,
 	getChatAttachmentKind,
 	getChatReplyAttachmentKind,
+	getLottieSpriteStyle,
+	LOTTIE_SPRITE_URL,
+	type LottieStickerItem,
 	type StickerItem,
 	type StickerPack,
 } from "./stickerLoader";
@@ -117,6 +125,7 @@ interface Props {
 	interconnectSites?: InterconnectSite[];
 	totalChatterCount?: number;
 	pinnedUids?: string[];
+	pinnedDetails?: ChatMessageRecord[];
 	activeThreads?: ChatActiveThreadItem[];
 	roomTopic?: string;
 	typingUsers?: string[];
@@ -220,6 +229,7 @@ const {
 	interconnectSites = [],
 	totalChatterCount = 0,
 	pinnedUids = [],
+	pinnedDetails = [],
 	activeThreads = [],
 	roomTopic = "",
 	typingUsers = [],
@@ -276,7 +286,11 @@ const hasRoomAvatar = $derived(
 const pinnedMessages = $derived.by(() => {
 	if (!pinnedUids || pinnedUids.length === 0) return [];
 	return pinnedUids
-		.map((uid) => messages.find((m) => m.msgUid === uid))
+		.map(
+			(uid) =>
+				messages.find((m) => m.msgUid === uid) ??
+				pinnedDetails.find((m) => m.msgUid === uid),
+		)
 		.filter((m): m is ChatMessageRecord => Boolean(m));
 });
 const currentPinnedMsg = $derived.by(() => {
@@ -395,6 +409,122 @@ function handleDrop(e: DragEvent) {
 }
 let activePopover = $state<"none" | "emoji">("none");
 let activeEmojiTab = $state<string>("kaomoji");
+let visitedTabs = $state<Record<string, boolean>>({ kaomoji: true });
+let pickerBodyEl = $state<HTMLElement | null>(null);
+const tabScrollPositions: Record<string, number> = {};
+
+function switchEmojiTab(tabId: string) {
+	if (activeEmojiTab === tabId) return;
+	if (pickerBodyEl) {
+		tabScrollPositions[activeEmojiTab] = pickerBodyEl.scrollTop;
+	}
+	activeEmojiTab = tabId;
+	if (!visitedTabs[tabId]) {
+		visitedTabs[tabId] = true;
+	}
+	onLottieItemLeave();
+	if (pickerBodyEl) {
+		pickerBodyEl.scrollTop = tabScrollPositions[tabId] ?? 0;
+	}
+}
+
+let isPickerScrolling = $state(false);
+let pickerScrollTimer: number | undefined;
+let hoveredLottieItem = $state<LottieStickerItem | null>(null);
+let hoveredLottieEl = $state<HTMLElement | null>(null);
+let hoverLottieTimer: number | undefined;
+
+function handlePickerScroll() {
+	if (!isPickerScrolling) {
+		isPickerScrolling = true;
+	}
+	window.clearTimeout(hoverLottieTimer);
+	hoveredLottieItem = null;
+	hoveredLottieEl = null;
+	window.clearTimeout(pickerScrollTimer);
+	pickerScrollTimer = window.setTimeout(() => {
+		isPickerScrolling = false;
+	}, 120);
+}
+
+function onLottieItemHover(item: LottieStickerItem, el: HTMLElement) {
+	if (isPickerScrolling) return;
+	// 鼠标一碰按钮，立刻在后台发起预取（与防抖倒计时并行，0 延迟秒开）
+	void preloadLottieData(item.name, chatServerUrl);
+
+	window.clearTimeout(hoverLottieTimer);
+	hoverLottieTimer = window.setTimeout(() => {
+		hoveredLottieItem = item;
+		hoveredLottieEl = el;
+	}, 90);
+}
+
+function onLottieItemLeave() {
+	window.clearTimeout(hoverLottieTimer);
+	hoveredLottieItem = null;
+	hoveredLottieEl = null;
+}
+
+function onSelectEmojiOrSticker(code: string, url?: string, lottieName?: string) {
+	insertAtCursor(code);
+	activePopover = "none";
+	// 选定表情即时预载：用户打字或按发送键前，贴纸原图/动图已被静默载入本地缓存，发送后秒显无需等待
+	if (url && typeof window !== "undefined") {
+		const preloadImg = new Image();
+		preloadImg.src = url;
+	}
+	if (lottieName) {
+		void preloadLottieData(lottieName, chatServerUrl);
+	}
+}
+
+$effect(() => {
+	if (activePopover !== "emoji") {
+		onLottieItemLeave();
+		return;
+	}
+
+	// 1. 表情面板打开后，在浏览器空闲调度期间分批预载剩余 Tab，消除用户初次点击 Tab 时的同步挂载耗时
+	const remainingTabs = ["qq", "lottie", ...STICKER_PACKS.map((p) => p.id)];
+	let cancelled = false;
+	let step = 0;
+	const scheduleNext = () => {
+		if (cancelled || step >= remainingTabs.length) return;
+		const tabId = remainingTabs[step++];
+		const run = () => {
+			if (cancelled) return;
+			if (!visitedTabs[tabId]) {
+				visitedTabs[tabId] = true;
+			}
+			scheduleNext();
+		};
+		if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+			(window as unknown as { requestIdleCallback: (cb: () => void, opts: { timeout: number }) => void }).requestIdleCallback(run, { timeout: 200 });
+		} else {
+			setTimeout(run, 60);
+		}
+	};
+	scheduleNext();
+
+	// 2. 若当前位于动态表情 Tab，平滑预热前 18 个菜狗动效，延后执行避免抢占当前帧渲染
+	let lottiePreloadTimer: number | undefined;
+	if (activeEmojiTab === "lottie") {
+		lottiePreloadTimer = window.setTimeout(() => {
+			if (cancelled) return;
+			const topItems = ALL_LOTTIE_ITEMS.slice(0, 18);
+			for (const it of topItems) {
+				void preloadLottieData(it.name, chatServerUrl);
+			}
+		}, 180);
+	} else {
+		onLottieItemLeave();
+	}
+
+	return () => {
+		cancelled = true;
+		if (lottiePreloadTimer) clearTimeout(lottiePreloadTimer);
+	};
+});
 
 let mentionMenuOpen = $state(false);
 let mentionQuery = $state("");
@@ -1419,15 +1549,54 @@ async function handleCenterWallpaperDrop(e: DragEvent) {
 const orderedStickerPacks = $derived.by(() => {
 	return stickerPacks
 		.map((pack) => {
-			const isMiku = pack.id.includes("/miku") || pack.name === "初音未来";
+			let displayName = pack.name;
+			let order = 10;
+			if (pack.id.includes("/miku") || pack.name === "初音未来" || pack.name === "贴纸") {
+				displayName = "初音未来";
+				order = 1; // 站长专属 Miku 贴纸放最前面
+			} else if (pack.id.includes("/qq")) {
+				displayName = "QQ表情";
+				order = 2;
+			} else if (
+				pack.id.includes("/bmoji") ||
+				pack.name.toLowerCase().includes("bilibili") ||
+				pack.name.includes("bmoji")
+			) {
+				displayName = "B站";
+				order = 3;
+			} else if (pack.id === "rainzt" || pack.name.includes("朝朝听雨") || pack.name.includes("听雨")) {
+				displayName = "朝朝听雨";
+				order = 90; // 外部网站朝朝听雨表情放倒数第二
+			} else if (pack.id === "xue" || pack.name.includes("雪") || pack.id.includes("yybb")) {
+				displayName = "艾雪";
+				order = 100; // 艾雪的表情放绝对最后
+			}
 			return {
 				...pack,
-				displayName: isMiku ? "贴纸" : pack.name,
-				order: pack.id.includes("/qq") ? 1 : isMiku ? 2 : 3,
+				displayName,
+				order,
 			};
 		})
 		.sort((a, b) => a.order - b.order);
 });
+
+const qqStickerPack = $derived(
+	orderedStickerPacks.find(
+		(p) =>
+			p.category === "qq" || p.id.includes("/qq") || p.displayName === "QQ表情",
+	),
+);
+
+const otherStickerPacks = $derived(
+	orderedStickerPacks.filter(
+		(p) =>
+			!(
+				p.category === "qq" ||
+				p.id.includes("/qq") ||
+				p.displayName === "QQ表情"
+			),
+	),
+);
 
 function isMentionedToMe(msg: ChatMessageRecord): boolean {
 	return isMentionedForUser(msg, currentUser);
@@ -2508,6 +2677,30 @@ function resolveMusicNoticeAvatar(
 onMount(() => {
 	setChatLightboxSourceProvider(collectChatImageSources);
 
+	// 预热外部贴纸与动效 CDN 连接（DNS + TLS 提前握手，消除网络初次冷启动延迟）
+	const stickerCdnDomains = [
+		"https://rainzt.cn",
+		"https://daily.yybb.us",
+		"https://chat-server.lengxiqwq.com",
+	];
+	for (const domain of stickerCdnDomains) {
+		const existing = document.querySelector(`link[rel="preconnect"][href="${domain}"]`);
+		if (!existing) {
+			const link = document.createElement("link");
+			link.rel = "preconnect";
+			link.href = domain;
+			link.crossOrigin = "anonymous";
+			document.head.appendChild(link);
+		}
+	}
+
+	// 预热 Lottie 雪碧图与 Lottie 播放器库（空闲时后台静默加载）
+	const spriteImg = new Image();
+	spriteImg.src = LOTTIE_SPRITE_URL;
+	const idleLottieTimer = window.setTimeout(() => {
+		void ensureLottieLibrary();
+	}, 1200);
+
 	const updateImageConstraints = () => {
 		if (!messageContentEl?.clientWidth) return;
 		const style = getComputedStyle(messageContentEl);
@@ -2706,6 +2899,7 @@ onMount(() => {
 	document.addEventListener("pointerdown", handlePointerDown);
 	document.addEventListener("keydown", handleDocKeydown);
 	return () => {
+		window.clearTimeout(idleLottieTimer);
 		window.removeEventListener("dragover", preventWindowDrag);
 		window.removeEventListener("drop", preventWindowDrag);
 		resizeObserver?.disconnect();
@@ -5240,11 +5434,12 @@ function removePendingImage(index: number) {
         </div>
       </div>
     {/if}
-    <!-- 统一表情面板（纯图标 Tab）：1. 颜文字 -> 2. QQ -> 3. 贴纸 -->
+    <!-- 统一表情面板（纯图标 Tab）：1. 动效/动物/超级表情 -> 2. 颜文字 -> 3. QQ -> 4. 动物贴纸(岸宝/尤诺) -> 5. B站 -> 6. 贴纸 -->
     {#if activePopover === "emoji"}
       <div data-chat-floating use:positionChatFloating={{ placement: "top-start", gap: 8 }} class="chat-emoji-popover chat-sticker-popover" role="dialog" aria-label="颜文字与表情贴纸">
-        <div class="chat-picker-body custom-scrollbar">
-          {#if activeEmojiTab === "kaomoji"}
+        <div bind:this={pickerBodyEl} class="chat-picker-body custom-scrollbar" data-scrolling={isPickerScrolling} onscroll={handlePickerScroll}>
+          <!-- 1. 颜文字 Tab 面板 -->
+          <div class="chat-picker-pane" style:display={activeEmojiTab === "kaomoji" ? "block" : "none"}>
             <div class="space-y-2.5">
               {#each KAOMOJI_PRESETS as group (group.name)}
                 <div>
@@ -5268,62 +5463,159 @@ function removePendingImage(index: number) {
                 </div>
               {/each}
             </div>
-          {:else}
-            {@const currentPack = orderedStickerPacks.find((p) => p.id === activeEmojiTab)}
-            {#if currentPack}
-              {@const isStickerPack = currentPack.category === "sticker"}
-              {@const isQQPack = currentPack.category === "qq"}
-              <div class={isStickerPack ? "grid grid-cols-4 sm:grid-cols-6 gap-2" : "grid grid-cols-8 sm:grid-cols-11 gap-1"}>
-                {#each currentPack.items as item (item.code)}
+          </div>
+
+          <!-- 2. 动态表情 Tab 面板（菜狗，驻留复用） -->
+          {#if visitedTabs["lottie"]}
+            <div class="chat-picker-pane" style:display={activeEmojiTab === "lottie" ? "block" : "none"}>
+              <div class="grid grid-cols-5 sm:grid-cols-7 md:grid-cols-9 gap-1.5">
+                {#each ALL_LOTTIE_ITEMS as item (item.name)}
                   <button
                     type="button"
-                    class="chat-sticker-btn {isStickerPack ? 'chat-sticker-btn--sticker' : 'chat-sticker-btn--emoji'}"
-                    aria-label={item.name}
+                    class="chat-lottie-btn p-1 rounded-lg hover:bg-[var(--btn-plain-bg-hover)] transition-all hover:scale-110 active:scale-95 flex flex-col items-center justify-center gap-0.5 group"
+                    aria-label={item.label}
+                    onmouseenter={(e) => onLottieItemHover(item, e.currentTarget)}
+                    onmouseleave={onLottieItemLeave}
                     onclick={() => {
-                      insertAtCursor(item.code);
-                      activePopover = "none";
+                      onLottieItemLeave();
+                      onSelectEmojiOrSticker(item.token, undefined, item.name);
                     }}
                   >
-                    <img
-                      src={item.url}
-                      alt={item.name}
-                      loading="lazy"
-                      class={isStickerPack
-                        ? "w-14 h-14 sm:w-16 sm:h-16 max-w-full object-contain"
-                        : isQQPack
-                          ? "w-6 h-6 object-contain"
-                          : "w-[26px] h-[26px] object-contain"}
-                    />
+                    <span
+                      class="w-8 h-8 block rounded-md pointer-events-none"
+                      style={getLottieSpriteStyle(item.name)}
+                    ></span>
+                    <span class="text-[10px] text-[var(--chat-meta-color)] group-hover:text-[var(--primary)] truncate max-w-full leading-none">
+                      {item.label}
+                    </span>
                   </button>
                 {/each}
               </div>
-            {/if}
+            </div>
           {/if}
+
+          <!-- 4. 各类贴纸包 Tab 面板（QQ表情、初音未来、B站、朝朝听雨、艾雪等），访问过的包永久驻留 -->
+          {#each orderedStickerPacks as pack (pack.id)}
+            {#if visitedTabs[pack.id]}
+              {@const isStickerPack = pack.category === "sticker"}
+              {@const isQQPack = pack.category === "qq"}
+              <div class="chat-picker-pane" style:display={activeEmojiTab === pack.id ? "block" : "none"}>
+                <div class={isStickerPack ? "grid grid-cols-4 sm:grid-cols-6 gap-2" : "grid grid-cols-8 sm:grid-cols-11 gap-1"}>
+                  {#each pack.items as item (item.code)}
+                    <button
+                      type="button"
+                      class="chat-sticker-btn {isStickerPack ? 'chat-sticker-btn--sticker' : 'chat-sticker-btn--emoji'}"
+                      aria-label={item.name}
+                      onclick={() => {
+                        onSelectEmojiOrSticker(item.code, item.url);
+                      }}
+                    >
+                      <img
+                        src={item.url}
+                        alt={item.name}
+                        loading="lazy"
+                        decoding="async"
+                        class={isStickerPack
+                          ? "w-14 h-14 sm:w-16 sm:h-16 max-w-full object-contain"
+                          : isQQPack
+                            ? "w-6 h-6 object-contain"
+                            : "w-[26px] h-[26px] object-contain"}
+                      />
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          {/each}
         </div>
 
-        <div class="chat-picker-tabs" role="tablist" aria-label="表情分类">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeEmojiTab === "kaomoji"}
-            class="chat-picker-tab {activeEmojiTab === 'kaomoji' ? 'active' : ''}"
-            aria-label="颜文字"
-            onclick={() => (activeEmojiTab = "kaomoji")}
+        {#if hoveredLottieItem && hoveredLottieEl}
+          <div
+            data-chat-floating
+            use:positionChatFloating={{
+              reference: hoveredLottieEl,
+              placement: "top",
+              gap: 8,
+              strategy: "fixed",
+              fitViewport: true,
+            }}
+            class="chat-lottie-hover-preview"
           >
-            <span class="font-bold text-xs leading-none">OωO</span>
-          </button>
+            <div class="chat-lottie-hover-card">
+              <div class="chat-lottie-hover-media">
+                <LottieSticker
+                  name={hoveredLottieItem.name}
+                  alt={hoveredLottieItem.label}
+                  chatServerUrl={chatServerUrl}
+                  className="w-full h-full flex items-center justify-center"
+                />
+              </div>
+              <div class="chat-lottie-hover-title">
+                {hoveredLottieItem.label}
+              </div>
+            </div>
+          </div>
+        {/if}
 
-          {#each orderedStickerPacks as pack (pack.id)}
+        <div class="chat-picker-tabs custom-scrollbar" role="tablist" aria-label="表情分类">
+          <!-- 1. 颜文字（第一个） -->
+          <ChatTooltip text="颜文字" position="bottom" strategy="fixed" class="shrink-0">
             <button
               type="button"
               role="tab"
-              aria-selected={activeEmojiTab === pack.id}
-              class="chat-picker-tab {activeEmojiTab === pack.id ? 'active' : ''}"
-              aria-label={pack.displayName}
-              onclick={() => (activeEmojiTab = pack.id)}
+              aria-selected={activeEmojiTab === "kaomoji"}
+              class="chat-picker-tab {activeEmojiTab === 'kaomoji' ? 'active' : ''}"
+              aria-label="颜文字"
+              onclick={() => switchEmojiTab("kaomoji")}
             >
-              <img src={pack.iconUrl} alt={pack.displayName} class="w-5 h-5 object-contain" />
+              <span class="font-bold text-xs leading-none">OωO</span>
             </button>
+          </ChatTooltip>
+
+          <!-- 2. QQ 表情 -->
+          {#if qqStickerPack}
+            <ChatTooltip text="QQ 表情" position="bottom" strategy="fixed" class="shrink-0">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeEmojiTab === qqStickerPack.id}
+                class="chat-picker-tab {activeEmojiTab === qqStickerPack.id ? 'active' : ''}"
+                aria-label={qqStickerPack.displayName}
+                onclick={() => switchEmojiTab(qqStickerPack.id)}
+              >
+                <img src={qqStickerPack.iconUrl} alt={qqStickerPack.displayName} class="w-5 h-5 object-contain" />
+              </button>
+            </ChatTooltip>
+          {/if}
+
+          <!-- 3. 动态表情（菜狗与动效表情） -->
+          <ChatTooltip text="动态表情" position="bottom" strategy="fixed" class="shrink-0">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeEmojiTab === "lottie"}
+              class="chat-picker-tab {activeEmojiTab === 'lottie' ? 'active' : ''}"
+              aria-label="动态表情"
+              onclick={() => switchEmojiTab("lottie")}
+            >
+              <span class="w-5 h-5 block rounded-xs pointer-events-none" style={getLottieSpriteStyle("caigou")}></span>
+            </button>
+          </ChatTooltip>
+
+          <!-- 5. 其余贴纸包：Miku (前面) -> B站 -> 朝朝听雨 -> 艾雪 (放最后) -->
+          {#each otherStickerPacks as pack (pack.id)}
+            <ChatTooltip text={pack.displayName} position="bottom" strategy="fixed" class="shrink-0">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activeEmojiTab === pack.id}
+                class="chat-picker-tab {activeEmojiTab === pack.id ? 'active' : ''}"
+                aria-label={pack.displayName}
+                onclick={() => switchEmojiTab(pack.id)}
+              >
+                <img src={pack.iconUrl} alt={pack.displayName} class="w-5 h-5 object-contain" />
+              </button>
+            </ChatTooltip>
           {/each}
         </div>
       </div>
@@ -5663,7 +5955,7 @@ function removePendingImage(index: number) {
             <button
               type="button"
               class="chat-tool-btn {activePopover === 'emoji' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : ''}"
-              aria-label="颜文字、QQ 表情与贴纸"
+              aria-label="动态表情、颜文字、QQ 表情与贴纸"
               onclick={() => {
                 if (!currentUser) {
                   onRequireAuth();

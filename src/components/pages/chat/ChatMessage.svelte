@@ -1,15 +1,15 @@
 <script lang="ts">
 import { SvelteSet } from "svelte/reactivity";
-import ChatAudioAttachment from "./ChatAudioAttachment.svelte";
 import ChatArticleCard from "./ChatArticleCard.svelte";
-import ChatFileAttachment from "./ChatFileAttachment.svelte";
-import ChatStickerImage from "./ChatStickerImage.svelte";
+import ChatAudioAttachment from "./ChatAudioAttachment.svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
+import ChatFileAttachment from "./ChatFileAttachment.svelte";
 import ChatImagePreview from "./ChatImagePreview.svelte";
-import ChatVideoPreview from "./ChatVideoPreview.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessageActivityModal from "./ChatMessageActivityModal.svelte";
+import ChatStickerImage from "./ChatStickerImage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
+import ChatVideoPreview from "./ChatVideoPreview.svelte";
 import {
 	formatChatFullDateTime,
 	formatChatMessageTime,
@@ -23,9 +23,9 @@ import { positionChatFloating } from "./chatFloating";
 import { getChatMessageAttachments } from "./chatMarkdown";
 import { provideChatMediaRetry } from "./chatMediaRetry";
 import {
+	type ChatShareData,
 	parseLxArticleShare,
 	parseLxMomentShare,
-	type ChatShareData,
 } from "./chatShareProtocol";
 import type {
 	ChatMessageRecord,
@@ -36,8 +36,8 @@ import type {
 import LottieSticker from "./LottieSticker.svelte";
 import {
 	formatChatReplyPreview,
-	getChatReplyAttachmentKind,
 	formatStickerAttachmentAlt,
+	getChatReplyAttachmentKind,
 	parseChatSegments,
 	type StickerItem,
 } from "./stickerLoader";
@@ -332,6 +332,13 @@ const externalOrigin = $derived.by(() => {
 		},
 		interconnectSites,
 	);
+});
+
+const cleanSenderName = $derived.by(() => {
+	if (externalOrigin?.cleanName) return externalOrigin.cleanName;
+	const rawName = message.name || "";
+	const match = rawName.match(/^(.+?)\s*[·•・]\s*(.+)$/);
+	return match ? match[1].trim() : rawName.trim();
 });
 
 const senderDisplayName = $derived.by(() => {
@@ -1442,9 +1449,9 @@ function handleBubbleClick(e: MouseEvent) {
     >
       <ChatAvatar
         src={message.avatar}
-        name={message.name}
+        name={cleanSenderName || message.name}
         fallback="我"
-        alt={message.name || "我"}
+        alt={cleanSenderName || message.name || "我"}
         size="md"
       />
     </button>
@@ -1554,7 +1561,7 @@ function handleBubbleClick(e: MouseEvent) {
     >
       <ChatAvatar
         src={message.avatar}
-        name={externalOrigin?.cleanName || message.name}
+        name={cleanSenderName || externalOrigin?.cleanName || message.name}
         fallback="?"
         alt={senderDisplayName}
         size="md"

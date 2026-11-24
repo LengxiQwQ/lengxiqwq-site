@@ -17,6 +17,7 @@ interface ChatFloatingOptions {
 	hover?: "tooltip" | "card";
 	forceOpen?: boolean;
 	fitViewport?: boolean;
+	strategy?: "absolute" | "fixed";
 	onReferenceHidden?: () => void;
 }
 
@@ -43,6 +44,7 @@ export function positionChatFloating(
 		refreshPosition = undefined;
 		delete node.dataset.chatFloatingState;
 		delete node.dataset.chatTooltipLeaving;
+		delete node.dataset.chatFloatingStrategy;
 		if (dismissActiveTooltip === dismissTooltip) {
 			dismissActiveTooltip = undefined;
 		}
@@ -104,6 +106,7 @@ export function positionChatFloating(
 			node.style.removeProperty("--chat-floating-height");
 			void computePosition(reference, node, {
 				placement: options.placement ?? "top",
+				strategy: options.strategy ?? "absolute",
 				middleware: [
 					offset(options.gap ?? 6),
 					flip(boundaries),
@@ -133,6 +136,11 @@ export function positionChatFloating(
 				}
 				node.style.setProperty("--chat-floating-x", `${x}px`);
 				node.style.setProperty("--chat-floating-y", `${y}px`);
+				if (options.strategy === "fixed") {
+					node.dataset.chatFloatingStrategy = "fixed";
+				} else {
+					delete node.dataset.chatFloatingStrategy;
+				}
 				if (options.hover === "tooltip") {
 					node.dataset.chatTooltipSide = placement.split("-")[0];
 				} else if (options.hover === "card" && !options.forceOpen) {

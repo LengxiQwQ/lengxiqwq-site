@@ -109,7 +109,7 @@ const {
 	playlistOutApiUrl = "https://playlistout-api.lengxiqwq.com",
 	rooms = [{ id: "chat", name: "闲聊", subtitle: "随便聊聊日常与折腾" }],
 	enableImageUpload = true,
-	stickerPackUrls = ["/assets/stickers/qq", "/assets/stickers/miku"],
+	stickerPackUrls = ["/assets/stickers/qq", "/assets/stickers/bmoji", "/assets/stickers/miku"],
 	musicTracks = [],
 	initialMusicVolume = 1,
 	interconnectSites = [],
@@ -260,6 +260,7 @@ let unreadJumpSeq = $state(0);
 let roomInitSeq = $state(0);
 let isRoomReady = $state(false);
 let pinnedUids = $state<string[]>([]);
+let pinnedDetails = $state<ChatMessageRecord[]>([]);
 let roomTopic = $state<string>("");
 let roomAvatars = $state<Record<string, string>>({});
 let typingUsers = $state<string[]>([]);
@@ -1817,6 +1818,7 @@ function connectRoom(roomId: string) {
 				oldestHistoryId = messages[0]?.id ?? packet.oldestHistoryId ?? 0;
 				activeThreads = packet.activeThreads ?? [];
 				pinnedUids = packet.pinnedUids ?? [];
+				pinnedDetails = packet.pinnedDetails ?? [];
 				roomTopic = packet.topic ?? "";
 				if (packet.roomAvatars || typeof packet.roomAvatar === "string") {
 					roomAvatars = {
@@ -2275,6 +2277,9 @@ function connectRoom(roomId: string) {
 			case "chat:pinned_update": {
 				if (packet.roomId === currentRoom) {
 					pinnedUids = packet.pinnedUids || [];
+					if (packet.pinnedDetails) {
+						pinnedDetails = packet.pinnedDetails;
+					}
 				}
 				break;
 			}
@@ -2630,6 +2635,7 @@ function handleRoomSelect(roomId: string) {
 	clearHistoryLoadTimer();
 	isLoadingHistory = false;
 	pinnedUids = [];
+	pinnedDetails = [];
 	roomTopic = "";
 	readReceipts = {};
 	clearAllTypingTimers();
@@ -3870,6 +3876,7 @@ onMount(() => {
           interconnectSites={interconnectSites}
           totalChatterCount={totalChatterCount}
           pinnedUids={pinnedUids}
+          pinnedDetails={pinnedDetails}
           activeThreads={activeThreads}
           roomTopic={roomTopic}
           typingUsers={typingUsers}

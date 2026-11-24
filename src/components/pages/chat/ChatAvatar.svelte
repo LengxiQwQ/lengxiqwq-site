@@ -201,7 +201,10 @@ const resolvedSrc = $derived(
 		: primaryUrl,
 );
 
-const diceBearSeed = $derived(name || fallback || "spectator");
+const diceBearSeed = $derived.by(() => {
+	const raw = (name || fallback || "spectator").trim();
+	return raw.replace(/\s*·\s*[^·]+$/, "").trim() || raw || "spectator";
+});
 const diceBearUrl = $derived(getDiceBearGlassAvatar(diceBearSeed));
 
 $effect(() => {
@@ -274,7 +277,8 @@ function handleDiceBearError(): void {
 	diceBearError = true;
 }
 
-const showCustomImage = $derived(Boolean(resolvedSrc) && !imgError);
+const hasCustomAvatar = $derived(Boolean(resolvedSrc));
+const showCustomImage = $derived(hasCustomAvatar && !imgError);
 const initials = $derived(getAvatarInitials(name, fallback));
 const isMultiChar = $derived(Array.from(initials).length >= 2);
 
@@ -316,8 +320,8 @@ const fallbackTextColorClass = $derived(
 );
 </script>
 
-{#if showCustomImage}
-  {#if imgLoaded}
+{#if hasCustomAvatar}
+  {#if showCustomImage && imgLoaded}
     <img
       src={downscaledSrc || resolvedSrc}
       loading={lazy ? "lazy" : "eager"}
@@ -330,24 +334,20 @@ const fallbackTextColorClass = $derived(
       onload={(event) => handleAvatarLoad(event.currentTarget)}
       onerror={handleAvatarError}
     />
-  {:else}
-    <span class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden {extraClass}">
-      {#if !diceBearError}
-        <img
-          src={diceBearUrl}
-          alt=""
-          loading="eager"
-          decoding="async"
-          aria-hidden="true"
-          class="absolute inset-0 w-full h-full object-cover {grayscale ? 'grayscale-[35%]' : ''}"
-        />
-      {:else}
-        <span
-          class="absolute inset-0 {fallbackBgClass} {textSizeClass} {fallbackTextColorClass} inline-flex items-center justify-center font-bold leading-none select-none"
-        >
-          {initials}
-        </span>
-      {/if}
+  {:else if showCustomImage}
+    <!-- 有头像但在加载中：显示中性灰色人头像剪影，绝不闪现奇怪头像 -->
+    <span
+      class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-neutral-200/90 dark:bg-neutral-800/90 {extraClass}"
+      aria-label={alt || name || "加载中"}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        class="w-[58%] h-[58%] text-neutral-400 dark:text-neutral-500 shrink-0"
+        aria-hidden="true"
+      >
+        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+      </svg>
       <img
         src={downscaledSrc || resolvedSrc}
         loading={lazy ? "lazy" : "eager"}
@@ -356,13 +356,30 @@ const fallbackTextColorClass = $derived(
         crossorigin={useCors ? "anonymous" : undefined}
         referrerpolicy="no-referrer"
         alt={alt || name}
-        class="relative w-full h-full object-cover opacity-0 transition-opacity duration-150 {grayscale ? 'grayscale-[35%]' : ''}"
+        class="absolute inset-0 w-full h-full object-cover opacity-0 transition-opacity duration-150 {grayscale ? 'grayscale-[35%]' : ''}"
         onload={(event) => handleAvatarLoad(event.currentTarget)}
         onerror={handleAvatarError}
       />
     </span>
+  {:else}
+    <!-- 有头像但加载失败（404/破损）：纯灰色人头像剪影，绝不替换成怪异头像 -->
+    <span
+      class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-neutral-200/90 dark:bg-neutral-800/90 {extraClass}"
+      title="头像加载失败"
+      aria-label={alt || name || "默认头像"}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        class="w-[58%] h-[58%] text-neutral-400 dark:text-neutral-500 shrink-0"
+        aria-hidden="true"
+      >
+        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+      </svg>
+    </span>
   {/if}
 {:else if !diceBearError}
+  <!-- 没有任何头像的人：使用 Cutouts 剪纸风生成专属趣味头像 -->
   {#if diceBearLoaded}
     <img
       src={diceBearUrl}
@@ -376,12 +393,16 @@ const fallbackTextColorClass = $derived(
       onerror={handleDiceBearError}
     />
   {:else}
-    <span class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden {extraClass}">
-      <span
-        class="absolute inset-0 {fallbackBgClass} {textSizeClass} {fallbackTextColorClass} inline-flex items-center justify-center font-bold leading-none select-none"
+    <!-- Cutouts 正在加载中：同样以温和中性灰色人像剪影过渡 -->
+    <span class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-neutral-200/90 dark:bg-neutral-800/90 {extraClass}">
+      <svg
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        class="w-[58%] h-[58%] text-neutral-400 dark:text-neutral-500 shrink-0"
+        aria-hidden="true"
       >
-        {initials}
-      </span>
+        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+      </svg>
       <img
         src={diceBearUrl}
         loading={lazy ? "lazy" : "eager"}
@@ -389,16 +410,25 @@ const fallbackTextColorClass = $derived(
         decoding="async"
         referrerpolicy="no-referrer"
         alt={alt || name}
-        class="relative w-full h-full object-cover opacity-0 transition-opacity duration-150 {grayscale ? 'grayscale-[35%]' : ''}"
+        class="absolute inset-0 w-full h-full object-cover opacity-0 transition-opacity duration-150 {grayscale ? 'grayscale-[35%]' : ''}"
         onload={handleDiceBearLoad}
         onerror={handleDiceBearError}
       />
     </span>
   {/if}
 {:else}
+  <!-- 极端离线/不可用兜底：中性灰色人像剪影 -->
   <div
-    class="{boxClass} {fallbackBgClass} {textSizeClass} {fallbackTextColorClass} inline-flex items-center justify-center font-bold leading-none select-none shrink-0 {extraClass}"
+    class="{boxClass} bg-neutral-200/90 dark:bg-neutral-800/90 inline-flex items-center justify-center shrink-0 {extraClass}"
+    aria-label={alt || name || "默认头像"}
   >
-    {initials}
+    <svg
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      class="w-[58%] h-[58%] text-neutral-400 dark:text-neutral-500 shrink-0"
+      aria-hidden="true"
+    >
+      <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+    </svg>
   </div>
 {/if}
