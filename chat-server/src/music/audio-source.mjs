@@ -13,7 +13,8 @@ export function isAllowedStreamTarget(value) {
       (host.endsWith('.stream.qqmusic.qq.com') || host.endsWith('.music.tc.qq.com') ||
         host.endsWith('.music.qq.com') || host.endsWith('.music.gtimg.com') ||
         host.endsWith('.music.126.net') || host.endsWith('.126.net') ||
-        host.endsWith('.kugou.com') || host.endsWith('.googlevideo.com'));
+        host.endsWith('.kugou.com') || host.endsWith('.googlevideo.com') ||
+        host.endsWith('.youtube.com') || host === 'youtube.com');
   } catch {
     return false;
   }

@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, promises as fsPromises } from 'node:fs';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { HEADERS, isAllowedStreamTarget, probeAudio } from './audio-source.mjs';
 import { isMusicSourceId, normalizeMusicTrack } from './music-input.mjs';
@@ -448,6 +450,31 @@ export class YoutubeMusicProvider {
       const ytDlpPath = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
       if (!existsSync(ytDlpPath)) return null;
       const url = 'https://www.youtube.com/watch?v=' + sourceId;
+      const trackKey = `youtube:${sourceId}:128`;
+      const cacheDir = process.env.CHAT_MUSIC_CACHE_DIR || '/opt/chat-server/data/music_cache';
+      const cacheKey = createHash('sha256').update(trackKey).digest('hex').slice(0, 32);
+      const audioFile = join(cacheDir, `${cacheKey}.audio`);
+      const metaFile = join(cacheDir, `${cacheKey}.meta.json`);
+
+      // If already cached on disk, return immediately (0ms, no network delay)
+      try {
+        if (existsSync(metaFile) && existsSync(audioFile)) {
+          const meta = JSON.parse(await fsPromises.readFile(metaFile, 'utf8'));
+          if (meta?.complete) {
+            const stat = await fsPromises.stat(audioFile);
+            if (stat.size > 0 && stat.size === meta.size) {
+              return { url, mimeType: 'audio/mp4', providerChannel: this.id };
+            }
+          }
+        }
+      } catch {}
+
+      // Download directly into disk cache with yt-dlp to bypass googlevideo stream throttling & 403s
+      const partFile = join(cacheDir, `${cacheKey}.audio.part`);
+      const metaPartFile = join(cacheDir, `${cacheKey}.meta.json.part`);
+      try { if (existsSync(partFile)) await fsPromises.unlink(partFile); } catch {}
+      try { if (existsSync(metaPartFile)) await fsPromises.unlink(metaPartFile); } catch {}
+
       const ua = HEADERS['User-Agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36';
       const nodePath = process.execPath || '/usr/bin/node';
       const args = [
@@ -456,27 +483,27 @@ export class YoutubeMusicProvider {
         '-f', 'ba[ext=m4a]/ba',
         '--no-playlist',
         '--no-warnings',
-        '--socket-timeout', '5',
-        '-g',
+        '--socket-timeout', '10',
+        '-o', partFile,
         url
       ];
       const cookiesPath = process.env.YOUTUBE_COOKIES_PATH || '/opt/chat-server/cookies.txt';
       if (existsSync(cookiesPath)) {
         args.unshift('--cookies', cookiesPath);
       }
-      const { stdout } = await execFileAsync(ytDlpPath, args, { timeout: 8500 });
-      const streamUrl = stdout.trim().split('\n').pop()?.trim();
-      if (streamUrl && isAllowedStreamTarget(streamUrl)) {
-        let checked = await checkStream(streamUrl, this.id);
-        if (!checked) {
-          // YouTube edge CDN enforces a ~3-second token activation delay for newly generated videoplayback streams
-          await new Promise(r => setTimeout(r, 3100));
-          checked = await checkStream(streamUrl, this.id);
+      await execFileAsync(ytDlpPath, args, { timeout: 35000 });
+
+      if (existsSync(partFile)) {
+        const stat = await fsPromises.stat(partFile);
+        if (stat.size > 0) {
+          await fsPromises.rename(partFile, audioFile);
+          await fsPromises.writeFile(metaPartFile, JSON.stringify({ complete: true, size: stat.size }));
+          await fsPromises.rename(metaPartFile, metaFile);
+          return { url, mimeType: 'audio/mp4', providerChannel: this.id };
         }
-        return checked;
       }
-    } catch {
-      // Resolution failed, timed out, or restricted
+    } catch (err) {
+      console.warn('[YoutubeProvider] resolveStream failed for ' + sourceId + ':', err.message);
     }
     return null;
   }

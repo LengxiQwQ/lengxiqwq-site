@@ -343,7 +343,7 @@ function handleSelect(code: string, imageUrl?: string, lottieName?: string) {
           {#each lottieItems.slice(0, itemCounts.lottie) as item (item.name)}
             <button
               type="button"
-              class="chat-lottie-btn p-1 rounded-lg hover:bg-[var(--btn-plain-bg-hover)] hover:scale-110 active:scale-95 flex flex-col items-center justify-center gap-0.5 group"
+              class="chat-lottie-btn min-w-0 p-1 rounded-lg hover:bg-[var(--btn-plain-bg-hover)] hover:scale-110 active:scale-95 flex flex-col items-center justify-center gap-0.5 group"
               aria-label={item.label}
               onpointerenter={(event) => onLottieItemHover(item, event)}
               onpointermove={(event) => onLottieItemHover(item, event)}
@@ -351,7 +351,7 @@ function handleSelect(code: string, imageUrl?: string, lottieName?: string) {
               onclick={() => handleSelect(item.token, undefined, item.name)}
             >
               <span
-                class="w-8 h-8 block rounded-md pointer-events-none"
+                class="w-8 max-w-full aspect-square block rounded-md pointer-events-none"
                 style={item.spriteStyle}
               ></span>
               <span class="text-[10px] text-[var(--chat-meta-color)] group-hover:text-[var(--primary)] truncate max-w-full leading-none">
@@ -368,11 +368,11 @@ function handleSelect(code: string, imageUrl?: string, lottieName?: string) {
       {#if visitedTabs.has(pack.id)}
         {@const isStickerPack = pack.category === "sticker"}
         <div class="chat-picker-pane" style:display={activeTab === pack.id ? "block" : "none"}>
-          <div class={isStickerPack ? "grid grid-cols-[repeat(auto-fill,minmax(3.5rem,1fr))] gap-2" : "grid grid-cols-[repeat(auto-fill,minmax(2.25rem,1fr))] gap-1"}>
+          <div class={isStickerPack ? "grid grid-cols-7 gap-[8px]" : "grid grid-cols-[repeat(auto-fill,minmax(2.25rem,1fr))] gap-1"}>
             {#each pack.items as item (item.code)}
               <button
                 type="button"
-                class="chat-sticker-btn {isStickerPack ? 'chat-sticker-btn--sticker' : 'chat-sticker-btn--emoji'}"
+                class="chat-sticker-btn {isStickerPack ? 'chat-sticker-btn--sticker p-1!' : 'chat-sticker-btn--emoji'}"
                 aria-label={item.name}
                 title={item.name}
                 onclick={() => handleSelect(item.code, item.url)}
@@ -383,7 +383,7 @@ function handleSelect(code: string, imageUrl?: string, lottieName?: string) {
                   loading="lazy"
                   decoding="async"
                   class={isStickerPack
-                    ? "w-12 h-12 sm:w-14 sm:h-14 max-w-full object-contain pointer-events-none"
+                    ? "w-full aspect-square object-contain pointer-events-none"
                     : "w-7 h-7 object-contain pointer-events-none"}
                 />
               </button>
