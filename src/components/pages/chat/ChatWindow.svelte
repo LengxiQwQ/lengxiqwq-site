@@ -3691,7 +3691,12 @@ function formatCandidateMentionName(candidate: {
 	url?: string;
 }): string {
 	if (candidate.userKey === "room") return "全体成员";
-	const rawName = candidate.name || "";
+	const rawName = (candidate.name || "").trim();
+	const hasDot =
+		rawName.includes("·") || rawName.includes("•") || rawName.includes("・");
+	if (hasDot) {
+		return normalizeDotSpacing(rawName);
+	}
 	if (isInterconnectRoom) {
 		const isExt = isExternalMatrixIdentity(candidate);
 		if (isExt) {

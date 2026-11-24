@@ -3,6 +3,7 @@ import type { CollectionEntry } from "astro:content";
 import { render } from "astro:content";
 import { getContainerRenderer as getMDXRenderer } from "@astrojs/mdx/container-renderer";
 import { getContainerRenderer as getSvelteRenderer } from "@astrojs/svelte/container-renderer";
+import EncryptedBlock from "@components/features/EncryptedBlock.astro";
 import I18nKey from "@i18n/i18nKey";
 import { i18n } from "@i18n/translation";
 import { url } from "@utils/url-utils";
@@ -126,7 +127,9 @@ export async function renderFeedEntries(
 			continue;
 		}
 		const { Content } = await render(post);
-		const rawContent = await container.renderToString(Content);
+		const rawContent = await container.renderToString(Content, {
+			props: { components: { EncryptedBlock } },
+		});
 		const cleanedContent = stripInvalidXmlChars(rawContent);
 		entries.push({
 			...base,

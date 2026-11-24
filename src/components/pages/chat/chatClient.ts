@@ -2065,11 +2065,11 @@ export function resolveExternalOrigin(
 		(!member.url?.includes("matrix.to/") ? extractHostname(member.url) : "") ||
 		host;
 
-	// 优先使用匹配到的官方标准站点标签或名称；没有时才使用对方原本自带的站点后缀或域名兜底
+	// 优先使用对方原本自带的规范站点后缀；没有时才使用匹配到的官方全名或域名兜底
 	const siteName =
-		matchedSite?.badge ||
-		matchedSite?.name ||
 		siteFromSuffix ||
+		matchedSite?.name ||
+		matchedSite?.badge ||
 		unknownServerHost ||
 		explicitSite ||
 		explicitBadge ||

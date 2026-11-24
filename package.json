@@ -37,6 +37,7 @@
 		"upload:img": "tsx scripts/upload-post-image.ts",
 		"update:steam": "npx tsx scripts/generate-steam-data.ts",
 		"sticker:sort": "npx tsx scripts/manage-stickers.ts",
+		"lottie:render": "node scripts/render-lottie-stickers.mjs",
 		"check:friends": "npx tsx scripts/check-friends-reciprocal.ts",
 		"check:friends-health": "npx tsx scripts/check-friends-health.ts"
 	},
@@ -125,6 +126,7 @@
 		"pinyin-pro": "^3.29.3",
 		"postcss-import": "^16.1.1",
 		"postcss-nesting": "^14.0.1",
+		"puppeteer-core": "^25.18.1",
 		"rehype-callouts": "^2.2.0",
 		"subset-font": "^2.7.0"
 	}

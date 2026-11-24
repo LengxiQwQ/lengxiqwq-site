@@ -615,6 +615,14 @@ export const en: Translation = {
 	[Key.passwordError]: "Incorrect password, please try again.",
 	[Key.passwordProtectedRss]:
 		"This article is encrypted. Please visit the website to view it.",
+	[Key.passwordBlockTitle]: "Protected Content",
+	[Key.passwordBlockDesc]:
+		"This section is password protected. Enter the password to unlock.",
+	[Key.passwordUnlocked]: "Unlocked Content",
+	[Key.passwordRelock]: "Relock",
+	[Key.passwordDecrypting]: "Decrypting...",
+	[Key.passwordShow]: "Show password",
+	[Key.passwordHide]: "Hide password",
 
 	// Background video player
 	[Key.videoPlay]: "Play background video",

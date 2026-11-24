@@ -617,6 +617,14 @@ export const ru: Translation = {
 	[Key.passwordError]: "Неверный пароль, попробуйте снова.",
 	[Key.passwordProtectedRss]:
 		"Эта статья зашифрована. Пожалуйста, посетите сайт для просмотра.",
+	[Key.passwordBlockTitle]: "Защищённый контент",
+	[Key.passwordBlockDesc]:
+		"Этот раздел защищён паролем. Введите пароль для разблокировки.",
+	[Key.passwordUnlocked]: "Разблокированный контент",
+	[Key.passwordRelock]: "Заблокировать снова",
+	[Key.passwordDecrypting]: "Расшифровка...",
+	[Key.passwordShow]: "Показать пароль",
+	[Key.passwordHide]: "Скрыть пароль",
 
 	// Фоновый видеоплеер
 	[Key.videoPlay]: "Воспроизвести фоновое видео",

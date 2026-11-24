@@ -12,6 +12,14 @@
 | `miku/` | `miku_` | `.webp` | 72x72 / 80x80 | 中文键名（如 `miku_抱爱心.webp`） | 初音未来高清大贴纸、情绪反馈 |
 | `bmoji/` | `bmoji_` | `.png` | 22x22 | 英文键名（如 `bmoji_doge.png`） | B 站经典小黄脸表情 |
 
+### `lottie/` 目录（自动生成，不要手改）
+
+`lottie/` 存放聊天室 Lottie 动态表情的 **Matrix 动图预览**（`<name>.webp`）。站内渲染用的是 Lottie JSON，Matrix 贴纸只能带一张图片，所以需要这份由 JSON 离线渲染出来的动图，供聊天网关上传成 `mxc://`。
+
+- 生成：在主仓运行 `pnpm lottie:render`（`scripts/render-lottie-stickers.mjs`，需要本机 Chrome/Edge 与 ffmpeg），只补缺失的；`--force` 全量重渲，`--only=aini,caigou` 指定表情。
+- 何时重跑：`src/components/pages/chat/stickerLoader.ts` 的 `LOTTIE_SPRITE_KEYS` 增删或顺序变化后。
+- 不要手动编辑这些 webp，也不要单独提交其中几个——它们是一次性产物，重跑脚本即可整体重建。
+
 ---
 
 ## 2. 新增或修改表情的四步 SOP（开发者与 AI 必须严格遵守）

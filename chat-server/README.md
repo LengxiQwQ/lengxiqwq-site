@@ -55,3 +55,16 @@ python3 scripts/backfill-chat-image-dimensions.py /path/to/chat-data-copy \
 `gateway-matrix-media.patch` 对应当前 VPS 网关。候选发布目录需包含 `src/matrix-media.mjs` 和 `src/chat-attachment-kind.mjs`。先对当前入口的副本执行 `git apply --check`，应用后用 `node --check server.mjs` 校验。两个模块可用 `node --test chat-server/test/matrix-media.test.mjs` 验证。发布时先更新网关，再更新静态站。历史媒体地址和消息文件无需迁移，旧引用会在读取时从原消息恢复附件类型。
 
 发布验收时，用同一张联邦 PNG 检查消息小图与原图，用同一段联邦 MP4 检查起播和拖动。在网站回复这个视频后，核对网站和 Element 的引用均指向同一条视频。若需回滚，恢复备份中的网关入口和静态站版本。
+
+## Lottie 贴纸预览
+
+`gateway-lottie-preview.patch` 对应当前 VPS 网关。Matrix 出站贴纸只能携带一张图片，不能直接引用 Lottie JSON；旧逻辑把 1152×960 的 `preview-sprite.webp` 合集图当成一枚贴纸上载，Element 等客户端会显示整张表情墙。
+
+现在的取图顺序：
+
+1. **动图（首选）**：`https://lengxiqwq.com/assets/stickers/lottie/<name>.webp`，由 `pnpm lottie:render`（`scripts/render-lottie-stickers.mjs`）离线渲染，产物提交在内容仓 `public/assets/stickers/lottie/`，随静态站发布。渲染用本机 Chrome/Edge + lottie-web + ffmpeg，只在表情包变动时手动执行，构建流程不会调用。
+2. **静态兜底**：上述文件缺失或上传失败时，改用网关的 `GET /api/lottie/:name.webp`——按 `LOTTIE_SPRITE_KEYS` 的格子顺序（12 列、每格 96px）用 ffmpeg 从 `data/lottie_cache/preview-sprite.webp` 裁单格并放大到 192×192，缓存进 `data/lottie_cache/lottie_preview/`。
+
+`server.mjs` 里的 `LOTTIE_SPRITE_KEYS` 必须与 `src/components/pages/chat/stickerLoader.ts` 的同名数组保持一致，增删或调整表情顺序时要同时更新两处，并重新跑一次 `pnpm lottie:render`。
+
+出站 `m.sticker` 只在拿到真实 `mxc://` 时才发送；两步都失败时退回文字短码，不再发送占位的假 mxc 地址。网关侧依赖 VPS 自带 `/usr/bin/ffmpeg`（含 libwebp），可用 `curl -I https://chat-server.lengxiqwq.com/api/lottie/aini.webp` 验收兜底图。历史消息里已经上载的合集图不会自动修正。

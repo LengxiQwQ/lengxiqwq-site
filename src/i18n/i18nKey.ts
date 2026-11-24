@@ -590,6 +590,13 @@ enum I18nKey {
 	passwordSubmit = "passwordSubmit",
 	passwordError = "passwordError",
 	passwordProtectedRss = "passwordProtectedRss",
+	passwordBlockTitle = "passwordBlockTitle",
+	passwordBlockDesc = "passwordBlockDesc",
+	passwordUnlocked = "passwordUnlocked",
+	passwordRelock = "passwordRelock",
+	passwordDecrypting = "passwordDecrypting",
+	passwordShow = "passwordShow",
+	passwordHide = "passwordHide",
 
 	// 背景视频播放器
 	videoPlay = "videoPlay",

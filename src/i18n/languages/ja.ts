@@ -612,6 +612,14 @@ export const ja: Translation = {
 	[Key.passwordError]: "パスワードが間違っています。もう一度お試しください。",
 	[Key.passwordProtectedRss]:
 		"この記事は暗号化されています。ウェブサイトにアクセスしてご覧ください。",
+	[Key.passwordBlockTitle]: "保護されたコンテンツ",
+	[Key.passwordBlockDesc]:
+		"このセクションはパスワードで保護されています。パスワードを入力してロックを解除してください。",
+	[Key.passwordUnlocked]: "ロック解除済みコンテンツ",
+	[Key.passwordRelock]: "再ロック",
+	[Key.passwordDecrypting]: "復号中...",
+	[Key.passwordShow]: "パスワードを表示",
+	[Key.passwordHide]: "パスワードを隠す",
 
 	// 背景動画プレイヤー
 	[Key.videoPlay]: "背景動画を再生",

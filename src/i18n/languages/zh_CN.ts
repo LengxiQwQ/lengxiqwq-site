@@ -601,6 +601,13 @@ export const zh_CN: Translation = {
 	[Key.passwordSubmit]: "解锁",
 	[Key.passwordError]: "密码错误，请重试。",
 	[Key.passwordProtectedRss]: "本文已加密保护，请访问网站查看。",
+	[Key.passwordBlockTitle]: "受保护的隐藏内容",
+	[Key.passwordBlockDesc]: "此区块已被密码保护，请输入密码解锁查看。",
+	[Key.passwordUnlocked]: "已解锁内容",
+	[Key.passwordRelock]: "重新锁定",
+	[Key.passwordDecrypting]: "解密中...",
+	[Key.passwordShow]: "显示密码",
+	[Key.passwordHide]: "隐藏密码",
 
 	// 背景视频播放器
 	[Key.videoPlay]: "播放背景视频",

@@ -603,6 +603,13 @@ export const zh_TW: Translation = {
 	[Key.passwordSubmit]: "解鎖",
 	[Key.passwordError]: "密碼錯誤，請重試。",
 	[Key.passwordProtectedRss]: "本文已加密保護，請訪問網站查看。",
+	[Key.passwordBlockTitle]: "受保護的隱藏內容",
+	[Key.passwordBlockDesc]: "此區塊已被密碼保護，請輸入密碼解鎖查看。",
+	[Key.passwordUnlocked]: "已解鎖內容",
+	[Key.passwordRelock]: "重新鎖定",
+	[Key.passwordDecrypting]: "解密中...",
+	[Key.passwordShow]: "顯示密碼",
+	[Key.passwordHide]: "隱藏密碼",
 
 	// 背景影片播放器
 	[Key.videoPlay]: "播放背景影片",

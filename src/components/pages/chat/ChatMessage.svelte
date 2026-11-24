@@ -342,17 +342,23 @@ const cleanSenderName = $derived.by(() => {
 });
 
 const senderDisplayName = $derived.by(() => {
-	if (isExternal && externalOrigin) {
-		return `${externalOrigin.cleanName} · ${externalOrigin.siteName}`;
-	}
-	if (isInterconnectRoom) {
-		const rawName = message.name || "";
-		if (!rawName.includes("·") && !rawName.includes("•") && !rawName.includes("・")) {
-			return `${rawName} · 冷汐的杂货铺`;
-		}
+	const rawName = (message.name || "").trim();
+	const hasDot =
+		rawName.includes("·") || rawName.includes("•") || rawName.includes("・");
+
+	// 1. 如果昵称本身已经规范化（自带点号和站点名称），100% 完整保留原本昵称
+	if (hasDot) {
 		return normalizeDotSpacing(rawName);
 	}
-	return normalizeDotSpacing(message.name);
+
+	// 2. 只有未带站点后缀的裸昵称，才补充站点后缀
+	if (isExternal && externalOrigin?.siteName) {
+		return `${rawName || externalOrigin.cleanName} · ${externalOrigin.siteName}`;
+	}
+	if (isInterconnectRoom) {
+		return `${rawName} · 冷汐的杂货铺`;
+	}
+	return normalizeDotSpacing(rawName);
 });
 
 const effectiveSenderUrl = $derived.by(() => {

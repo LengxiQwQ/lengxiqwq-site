@@ -2,6 +2,7 @@
 import { render } from "astro:content";
 import Comment from "@components/comment/index.astro";
 import Markdown from "@components/common/Markdown.astro";
+import EncryptedBlock from "@components/features/EncryptedBlock.astro";
 import EncryptedPost from "@components/features/EncryptedPost.astro";
 import KatexManager from "@components/features/KatexManager.astro";
 import License from "@components/misc/License.astro";
@@ -430,7 +431,7 @@ const seriesData = await getSeriesPosts(entry);
       {entry.data.password ? (
         <EncryptedPost password={entry.data.password} slug={entry.id} hint={entry.data.passwordHint}>
           <Markdown class="mb-6 markdown-content onload-animation">
-            <Content />
+            <Content components={{ EncryptedBlock }} />
           </Markdown>
 
           {/* 打赏按钮 & 分享按钮 */}
@@ -520,7 +521,7 @@ const seriesData = await getSeriesPosts(entry);
       ) : (
         <>
           <Markdown class="mb-6 markdown-content onload-animation">
-            <Content />
+            <Content components={{ EncryptedBlock }} />
           </Markdown>
 
           {/* 打赏按钮 & 分享按钮 */}

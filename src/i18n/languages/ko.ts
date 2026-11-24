@@ -612,6 +612,14 @@ export const ko: Translation = {
 	[Key.passwordError]: "비밀번호가 올바르지 않습니다. 다시 시도해 주세요.",
 	[Key.passwordProtectedRss]:
 		"이 글은 암호화되어 있습니다. 웹사이트에서 확인해 주세요.",
+	[Key.passwordBlockTitle]: "보호된 숨김 콘텐츠",
+	[Key.passwordBlockDesc]:
+		"이 섹션은 비밀번호로 보호되어 있습니다. 비밀번호를 입력하여 잠금을 해제하세요.",
+	[Key.passwordUnlocked]: "잠금 해제된 콘텐츠",
+	[Key.passwordRelock]: "다시 잠그기",
+	[Key.passwordDecrypting]: "해독 중...",
+	[Key.passwordShow]: "비밀번호 표시",
+	[Key.passwordHide]: "비밀번호 숨기기",
 
 	// Background video player
 	[Key.videoPlay]: "배경 영상 재생",

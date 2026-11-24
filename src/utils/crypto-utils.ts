@@ -23,7 +23,7 @@ function deriveBytes(key: string, context: string, length: number): Buffer {
 export function encryptContent(
 	html: string,
 	password: string,
-	slug: string,
+	slug = "default",
 ): string {
 	const salt = deriveBytes(password, `salt:${slug}`, SALT_LENGTH);
 	const iv = deriveBytes(password, `iv:${slug}`, IV_LENGTH);

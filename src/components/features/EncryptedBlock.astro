@@ -1,0 +1,399 @@
+---
+import I18nKey from "@i18n/i18nKey";
+import { i18n } from "@i18n/translation";
+import { encryptContent } from "@utils/crypto-utils";
+import { Icon } from "astro-icon/components";
+
+interface Props {
+	password: string;
+	hint?: string;
+	title?: string;
+	id?: string;
+}
+
+const { password, hint = "", title = "", id = "" } = Astro.props;
+
+if (!password) {
+	throw new Error("[EncryptedBlock] The 'password' prop is required.");
+}
+
+const rawHtml = await Astro.slots.render("default");
+const blockContext = id || `block:${rawHtml.length}`;
+const encryptedData = encryptContent(rawHtml, password, blockContext);
+
+const labels = {
+	title: title || i18n(I18nKey.passwordBlockTitle),
+	desc: i18n(I18nKey.passwordBlockDesc),
+	hintLabel: i18n(I18nKey.passwordHint),
+	placeholder: i18n(I18nKey.passwordPlaceholder),
+	submit: i18n(I18nKey.passwordSubmit),
+	error: i18n(I18nKey.passwordError),
+	unlocked: i18n(I18nKey.passwordUnlocked),
+	relock: i18n(I18nKey.passwordRelock),
+	decrypting: i18n(I18nKey.passwordDecrypting),
+	showPassword: i18n(I18nKey.passwordShow),
+	hidePassword: i18n(I18nKey.passwordHide),
+};
+---
+
+<encrypted-block
+  class="encrypted-block block my-6 w-full text-left not-prose"
+  data-encrypted={encryptedData}
+  data-block-id={id}
+  data-clarity-mask="true"
+  data-pagefind-ignore="true"
+>
+  <!-- Locked Card UI -->
+  <div class="lock-card relative overflow-hidden rounded-2xl border border-dashed border-(--primary)/35 bg-(--primary)/[0.03] dark:bg-(--primary)/[0.06] p-4.5 sm:p-5.5 transition-all duration-300">
+    <!-- Header -->
+    <div class="flex items-start justify-between gap-3 mb-3.5">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-8 h-8 rounded-xl bg-(--primary)/12 text-(--primary) flex items-center justify-center shrink-0">
+          <Icon name="material-symbols:shield-lock-rounded" class="text-xl" />
+        </div>
+        <div class="min-w-0">
+          <h4 class="text-sm sm:text-base font-bold text-black/85 dark:text-white/85 m-0 leading-snug truncate">
+            {labels.title}
+          </h4>
+          <p class="text-xs text-black/45 dark:text-white/45 m-0 mt-0.5 line-clamp-1">
+            {labels.desc}
+          </p>
+        </div>
+      </div>
+      <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium tracking-wide bg-black/5 dark:bg-white/10 text-black/50 dark:text-white/50 shrink-0 select-none">
+        Encrypted
+      </span>
+    </div>
+
+    {hint && (
+      <div class="mb-3.5 px-3 py-1.5 rounded-lg bg-(--primary)/8 text-(--primary) text-xs flex items-center gap-1.5 font-medium">
+        <Icon name="material-symbols:info-outline-rounded" class="text-sm shrink-0" />
+        <span>{labels.hintLabel}：{hint}</span>
+      </div>
+    )}
+
+    <!-- Form -->
+    <form class="password-form flex flex-col sm:flex-row items-stretch sm:items-center gap-2" autocomplete="off">
+      <div class="relative flex-1">
+        <Icon name="material-symbols:key-outline" class="absolute left-3 top-1/2 -translate-y-1/2 text-black/35 dark:text-white/35 text-base pointer-events-none" />
+        <input
+          type="password"
+          name="password"
+          placeholder={labels.placeholder}
+          class="password-input w-full pl-9 pr-9 py-2 text-sm rounded-xl
+                 bg-white/80 dark:bg-black/30
+                 border border-black/12 dark:border-white/12
+                 text-black/90 dark:text-white/90 placeholder-black/35 dark:placeholder-white/35
+                 outline-hidden focus:border-(--primary) focus:ring-2 focus:ring-(--primary)/20
+                 transition-all"
+        />
+        <button
+          type="button"
+          class="eye-btn absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-black/40 hover:text-black/75 dark:text-white/40 dark:hover:text-white/75 transition-colors cursor-pointer"
+          title={labels.showPassword}
+          aria-label={labels.showPassword}
+        >
+          <Icon name="material-symbols:visibility-outline" class="eye-open text-base" />
+          <Icon name="material-symbols:visibility-off-outline" class="eye-closed text-base hidden" />
+        </button>
+      </div>
+
+      <button
+        type="submit"
+        class="submit-btn px-5 py-2 rounded-xl text-sm font-medium bg-(--primary) text-white dark:text-black/80
+               hover:opacity-90 active:scale-95 transition-all shadow-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+      >
+        <Icon name="material-symbols:lock-open-rounded" class="btn-icon text-base" />
+        <span class="btn-spinner hidden animate-spin w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full"></span>
+        <span class="btn-text">{labels.submit}</span>
+      </button>
+    </form>
+
+    <!-- Error message -->
+    <p class="error-msg text-xs text-red-500 dark:text-red-400 mt-2 m-0 flex items-center gap-1 hidden">
+      <Icon name="material-symbols:error-outline-rounded" class="text-sm shrink-0" />
+      <span>{labels.error}</span>
+    </p>
+  </div>
+
+  <!-- Unlocked Container (initially hidden) -->
+  <div class="unlocked-card hidden relative overflow-hidden rounded-2xl border border-dashed border-(--primary)/30 bg-black/[0.015] dark:bg-white/[0.02] p-4.5 sm:p-5.5 transition-all duration-300">
+    <!-- Unlocked Header Bar -->
+    <div class="flex items-center justify-between pb-3 mb-3 border-b border-black/6 dark:border-white/6 text-xs text-black/50 dark:text-white/50 select-none">
+      <span class="flex items-center gap-1.5 font-medium text-(--primary)">
+        <Icon name="material-symbols:lock-open-outline" class="text-sm" />
+        <span>{title ? `${labels.unlocked}：${title}` : labels.unlocked}</span>
+      </span>
+      <button
+        type="button"
+        class="relock-btn inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-black/4 dark:bg-white/6 hover:bg-black/8 dark:hover:bg-white/12 text-black/60 dark:text-white/60 hover:text-black/90 dark:hover:text-white/90 transition-all active:scale-95 cursor-pointer"
+        title={labels.relock}
+      >
+        <Icon name="material-symbols:lock-outline" class="text-xs" />
+        <span>{labels.relock}</span>
+      </button>
+    </div>
+
+    <!-- Decrypted content inserted here -->
+    <div class="decrypted-body custom-md prose dark:prose-invert max-w-none"></div>
+  </div>
+</encrypted-block>
+
+<style>
+@keyframes block-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-5px); }
+  40%, 80% { transform: translateX(5px); }
+}
+
+:global(.animate-shake) {
+  animation: block-shake 0.35s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+@keyframes block-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+:global(.animate-fade-in) {
+  animation: block-fade-in 0.25s ease-out forwards;
+}
+</style>
+
+<script is:inline>
+if (!customElements.get('encrypted-block')) {
+  var ITERATIONS = 100000;
+  var SALT_LEN = 16;
+  var IV_LEN = 12;
+  var TAG_LEN = 16;
+
+  function base64ToBytes(b64) {
+    var bin = atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) {
+      bytes[i] = bin.charCodeAt(i);
+    }
+    return bytes;
+  }
+
+  async function decryptAesGcm(b64Data, pwd) {
+    var raw = base64ToBytes(b64Data);
+    var salt = raw.slice(0, SALT_LEN);
+    var iv = raw.slice(SALT_LEN, SALT_LEN + IV_LEN);
+    var authTag = raw.slice(SALT_LEN + IV_LEN, SALT_LEN + IV_LEN + TAG_LEN);
+    var ciphertext = raw.slice(SALT_LEN + IV_LEN + TAG_LEN);
+
+    var combined = new Uint8Array(ciphertext.length + TAG_LEN);
+    combined.set(ciphertext);
+    combined.set(authTag, ciphertext.length);
+
+    var enc = new TextEncoder();
+    var keyMaterial = await crypto.subtle.importKey(
+      'raw', enc.encode(pwd), 'PBKDF2', false, ['deriveBits', 'deriveKey']
+    );
+    var key = await crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: salt, iterations: ITERATIONS, hash: 'SHA-256' },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['decrypt']
+    );
+    var decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, combined);
+    return new TextDecoder().decode(decrypted);
+  }
+
+  class EncryptedBlockElement extends HTMLElement {
+    connectedCallback() {
+      if (this.dataset.initialized === 'true') return;
+      this.dataset.initialized = 'true';
+
+      var self = this;
+      var encryptedData = this.getAttribute('data-encrypted');
+      if (!encryptedData) return;
+
+      var blockId = this.getAttribute('data-block-id') || '';
+      var hash = blockId || encryptedData.slice(0, 24).replace(/[^a-zA-Z0-9]/g, '');
+      var cacheKey = 'pw:blk:' + hash;
+
+      var lockCard = this.querySelector('.lock-card');
+      var unlockedCard = this.querySelector('.unlocked-card');
+      var form = this.querySelector('.password-form');
+      var input = this.querySelector('.password-input');
+      var eyeBtn = this.querySelector('.eye-btn');
+      var eyeOpen = this.querySelector('.eye-open');
+      var eyeClosed = this.querySelector('.eye-closed');
+      var submitBtn = this.querySelector('.submit-btn');
+      var btnIcon = this.querySelector('.btn-icon');
+      var btnSpinner = this.querySelector('.btn-spinner');
+      var errorMsg = this.querySelector('.error-msg');
+      var decryptedBody = this.querySelector('.decrypted-body');
+      var relockBtn = this.querySelector('.relock-btn');
+
+      function setLoading(isLoading) {
+        if (!submitBtn) return;
+        submitBtn.disabled = isLoading;
+        if (input) input.disabled = isLoading;
+        if (btnSpinner && btnIcon) {
+          if (isLoading) {
+            btnSpinner.classList.remove('hidden');
+            btnIcon.classList.add('hidden');
+          } else {
+            btnSpinner.classList.add('hidden');
+            btnIcon.classList.remove('hidden');
+          }
+        }
+      }
+
+      function showError() {
+        if (errorMsg) errorMsg.classList.remove('hidden');
+        if (input) {
+          input.classList.add('border-red-500', 'dark:border-red-500', 'focus:border-red-500');
+          input.select();
+        }
+        if (form) {
+          form.classList.remove('animate-shake');
+          void form.offsetWidth;
+          form.classList.add('animate-shake');
+        }
+      }
+
+      function hideError() {
+        if (errorMsg) errorMsg.classList.add('hidden');
+        if (input) {
+          input.classList.remove('border-red-500', 'dark:border-red-500', 'focus:border-red-500');
+        }
+      }
+
+      function showContent(html) {
+        if (!decryptedBody || !lockCard || !unlockedCard) return;
+        decryptedBody.innerHTML = html;
+        lockCard.classList.add('hidden');
+        unlockedCard.classList.remove('hidden');
+        unlockedCard.classList.add('animate-fade-in');
+
+        // Re-run script tags
+        var scripts = decryptedBody.querySelectorAll('script');
+        for (var i = 0; i < scripts.length; i++) {
+          var old = scripts[i];
+          var ns = document.createElement('script');
+          for (var j = 0; j < old.attributes.length; j++) {
+            ns.setAttribute(old.attributes[j].name, old.attributes[j].value);
+          }
+          ns.textContent = old.textContent;
+          old.parentNode.replaceChild(ns, old);
+        }
+
+        // Initialize LQIP placeholders if present
+        var placeholders = decryptedBody.querySelectorAll('.lqip-placeholder');
+        for (var k = 0; k < placeholders.length; k++) {
+          (function(placeholder) {
+            var container = placeholder.parentElement;
+            if (!container) return;
+            var img = container.querySelector('img');
+            if (!img) return;
+            if (img.complete && img.naturalWidth > 0) {
+              img.style.opacity = '1';
+              placeholder.classList.add('loaded');
+            } else {
+              img.addEventListener('load', function() {
+                img.style.opacity = '1';
+                placeholder.classList.add('loaded');
+              }, { once: true });
+              img.addEventListener('error', function() {
+                placeholder.classList.add('loaded');
+              }, { once: true });
+            }
+          })(placeholders[k]);
+        }
+
+        setTimeout(function() {
+          document.dispatchEvent(new CustomEvent('password:decrypted', { detail: { target: self } }));
+        }, 80);
+      }
+
+      function relock() {
+        try {
+          sessionStorage.removeItem(cacheKey);
+        } catch (_) {}
+        if (input) input.value = '';
+        hideError();
+        if (decryptedBody) decryptedBody.innerHTML = '';
+        if (unlockedCard) unlockedCard.classList.add('hidden');
+        if (lockCard) lockCard.classList.remove('hidden');
+      }
+
+      // Input clear error on typing
+      if (input) {
+        input.addEventListener('input', function() {
+          hideError();
+        });
+      }
+
+      // Eye toggle
+      if (eyeBtn && input) {
+        eyeBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          var isPassword = input.type === 'password';
+          input.type = isPassword ? 'text' : 'password';
+          if (eyeOpen && eyeClosed) {
+            if (isPassword) {
+              eyeOpen.classList.add('hidden');
+              eyeClosed.classList.remove('hidden');
+            } else {
+              eyeOpen.classList.remove('hidden');
+              eyeClosed.classList.add('hidden');
+            }
+          }
+        });
+      }
+
+      // Form submit
+      if (form && input) {
+        form.addEventListener('submit', function(e) {
+          e.preventDefault();
+          var pwd = input.value.trim();
+          if (!pwd) {
+            input.focus();
+            return;
+          }
+          hideError();
+          setLoading(true);
+
+          decryptAesGcm(encryptedData, pwd).then(function(html) {
+            setLoading(false);
+            try {
+              sessionStorage.setItem(cacheKey, pwd);
+            } catch (_) {}
+            showContent(html);
+          }).catch(function() {
+            setLoading(false);
+            showError();
+          });
+        });
+      }
+
+      // Relock button
+      if (relockBtn) {
+        relockBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          relock();
+        });
+      }
+
+      // Auto-unlock via session cache
+      try {
+        var cached = sessionStorage.getItem(cacheKey);
+        if (cached) {
+          decryptAesGcm(encryptedData, cached).then(function(html) {
+            showContent(html);
+          }).catch(function() {
+            sessionStorage.removeItem(cacheKey);
+          });
+        }
+      } catch (_) {}
+    }
+  }
+
+  customElements.define('encrypted-block', EncryptedBlockElement);
+}
+</script>
