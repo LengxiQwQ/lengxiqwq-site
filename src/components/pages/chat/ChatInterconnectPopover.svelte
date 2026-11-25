@@ -76,8 +76,8 @@ onMount(() => {
   >
     <!-- 顶栏标题 -->
     <div class="flex items-center justify-between gap-1.5 pt-3 pb-2 mb-2 border-b border-black/5 dark:border-white/10">
-      <div class="flex items-center gap-1.5 font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
-        <svg class="w-4 h-4 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <div class="flex items-center gap-1.5 font-bold text-base text-[var(--deep-text)] dark:text-white/90 shrink-0">
+        <svg class="w-5 h-5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
           <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
           <line x1="6" y1="1" x2="6" y2="4" />
@@ -91,11 +91,11 @@ onMount(() => {
           href="/posts/茶室点歌台在博客里一起听歌是怎样实现的/"
           target="_blank"
           rel="noopener noreferrer"
-          class="btn-regular chat-interconnect-header-link py-0.5 px-2 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-1 no-underline whitespace-nowrap"
+          class="btn-regular chat-interconnect-header-link py-px px-1.5 rounded-md text-[11px] font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-0.5 no-underline whitespace-nowrap"
           title="查看点歌台与跨站音乐分享接入文档"
         >
           <span>接入点歌台</span>
-          <svg class="w-3 h-3 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <svg class="w-2.5 h-2.5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
             <polyline points="15 3 21 3 21 9" />
             <line x1="10" y1="14" x2="21" y2="3" />
@@ -105,11 +105,11 @@ onMount(() => {
           href="https://rainzt.cn/posts/tingyu-tea-room-guide/"
           target="_blank"
           rel="noopener noreferrer"
-          class="btn-regular chat-interconnect-header-link py-0.5 px-2 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-1 no-underline whitespace-nowrap"
+          class="btn-regular chat-interconnect-header-link py-px px-1.5 rounded-md text-[11px] font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-0.5 no-underline whitespace-nowrap"
           title="查看互联加入指南"
         >
           <span>加入指南</span>
-          <svg class="w-3 h-3 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <svg class="w-2.5 h-2.5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
             <polyline points="15 3 21 3 21 9" />
             <line x1="10" y1="14" x2="21" y2="3" />
