@@ -449,7 +449,7 @@ async function handleSplitGuestEnter() {
       <div class="rounded-2xl border border-(--primary)/35 bg-(--primary)/8 px-3.5 py-3.5 space-y-3">
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-center gap-1.5 min-w-0">
-            <span class="text-sm font-bold text-(--deep-text) truncate">
+            <span class="chat-sheet-section-title text-sm font-bold text-(--deep-text) truncate">
               Waline 账号登录
             </span>
             <span class="shrink-0 px-2 py-0.5 rounded-full text-[11px] md:text-[10px] font-bold bg-(--primary) text-white leading-none">
@@ -513,10 +513,10 @@ async function handleSplitGuestEnter() {
           class="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-(--chat-divider-color) bg-transparent hover:bg-(--btn-regular-bg) text-left cursor-pointer transition-colors"
         >
           <div class="min-w-0">
-            <div class="text-[13px] md:text-xs font-medium text-(--chat-meta-color)">
+            <div class="chat-dialog-option-title text-[13px] md:text-xs font-medium text-(--chat-meta-color)">
               临时访客进入（无需账号）
             </div>
-            <div class="text-[12px] md:text-[10px] text-(--chat-meta-color)/80 truncate mt-0.5">
+            <div class="text-[12px] md:text-[10px] text-(--chat-meta-color)/80 truncate max-md:whitespace-normal mt-0.5">
               仅填昵称与邮箱快速发言，不支持导入与管理个人歌单
             </div>
           </div>

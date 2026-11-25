@@ -260,7 +260,7 @@ function handlePickMoment(item: MomentItem) {
         {#if searchQuery}
           <button
             type="button"
-            class="absolute right-2.5 w-4.5 h-4.5 flex items-center justify-center rounded-full text-[11px] text-[var(--chat-meta-color)] hover:text-[var(--skin-text)] hover:bg-[var(--btn-plain-bg-hover)] transition-colors cursor-pointer"
+            class="chat-share-search-clear absolute right-2.5 w-4.5 h-4.5 flex items-center justify-center rounded-full text-[11px] text-[var(--chat-meta-color)] hover:text-[var(--skin-text)] hover:bg-[var(--btn-plain-bg-hover)] transition-colors cursor-pointer"
             aria-label="清空搜索条件"
             onclick={() => {
               searchQuery = "";
@@ -301,7 +301,7 @@ function handlePickMoment(item: MomentItem) {
           </div>
           <button
             type="button"
-            class="px-4 py-1.5 text-xs font-semibold rounded-full bg-[var(--primary)] text-white hover:opacity-90 active:scale-95 transition-all shadow-sm cursor-pointer"
+            class="chat-dialog-action chat-dialog-primary-action px-4 py-1.5 text-xs font-semibold rounded-full bg-[var(--primary)] text-white hover:opacity-90 active:scale-95 transition-all shadow-sm cursor-pointer"
             onclick={() => void loadData()}
           >
             重新尝试
@@ -328,7 +328,7 @@ function handlePickMoment(item: MomentItem) {
             {#if searchQuery}
               <button
                 type="button"
-                class="text-xs text-[var(--primary)] hover:underline font-medium cursor-pointer"
+                class="chat-dialog-inline-action text-xs text-[var(--primary)] hover:underline font-medium cursor-pointer"
                 onclick={() => { searchQuery = ""; }}
               >
                 清空搜索词
@@ -372,7 +372,7 @@ function handlePickMoment(item: MomentItem) {
                 <!-- 文字排版（紧凑有度，标题+简介+底部日期与发送胶囊） -->
                 <div class="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.2 gap-1.5">
                   <div class="space-y-1">
-                    <strong class="text-[13.5px] font-bold text-[var(--skin-text)] group-hover:text-[var(--primary)] transition-colors line-clamp-1 tracking-tight leading-snug">
+                    <strong class="chat-dialog-option-title text-[13.5px] font-bold text-[var(--skin-text)] group-hover:text-[var(--primary)] transition-colors line-clamp-1 tracking-tight leading-snug">
                       {article.title}
                     </strong>
 
@@ -420,7 +420,7 @@ function handlePickMoment(item: MomentItem) {
             {#if searchQuery}
               <button
                 type="button"
-                class="text-xs text-[var(--primary)] hover:underline font-medium cursor-pointer"
+                class="chat-dialog-inline-action text-xs text-[var(--primary)] hover:underline font-medium cursor-pointer"
                 onclick={() => { searchQuery = ""; }}
               >
                 清空搜索词
@@ -463,7 +463,7 @@ function handlePickMoment(item: MomentItem) {
                 <div class="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.2 gap-1.5">
                   <div class="space-y-1">
                     <div class="flex items-center gap-1.5 min-w-0">
-                      <span class="text-xs font-bold text-[var(--skin-text)] group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
+                      <span class="chat-dialog-option-title text-xs font-bold text-[var(--skin-text)] group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
                         {moment.dateStr}
                       </span>
                       {#if moment.relativeTime}

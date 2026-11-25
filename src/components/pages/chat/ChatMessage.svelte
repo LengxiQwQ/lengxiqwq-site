@@ -27,6 +27,7 @@ import {
 	QUICK_REACTION_PRESETS,
 	resolveReactionDisplay,
 } from "./chatReactions";
+import { parseRecallNotice, parseRoomActivityActor } from "./chatRoomActivity";
 import {
 	type ChatShareData,
 	parseLxArticleShare,
@@ -82,6 +83,7 @@ interface Props {
 	onVotePoll?: (pollUid: string, answerId: string) => void;
 	onEndPoll?: (pollUid: string) => void;
 	onJumpToMessage?: (msgUid: string) => void;
+	jumpingToMessageUid?: string;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onMention?: (name: string, userKey?: string) => void;
 	onOpenMobileActions?: (
@@ -131,6 +133,7 @@ const {
 	onVotePoll,
 	onEndPoll,
 	onJumpToMessage,
+	jumpingToMessageUid = "",
 	onOpenUserProfile,
 	onMention,
 	onOpenMobileActions,
@@ -426,29 +429,26 @@ const roleBadge = $derived.by(() => {
 		? { label: message.badge, type: message.badgeType }
 		: null;
 });
-interface RecallNoticeParsed {
-	actorName: string;
-	targetName?: string;
-}
-
-const recallNoticeParsed = $derived.by<RecallNoticeParsed | null>(() => {
+const recallNoticeParsed = $derived(
+	message.kind === "system" ? parseRecallNotice(message.content) : null,
+);
+const systemActor = $derived.by(() => {
 	if (message.kind !== "system") return null;
-	const content = message.content?.trim() || "";
-	const adminMatch = content.match(/^(.+?)\s+撤回了\s+(.+?)\s+的一条消息$/);
-	if (adminMatch) {
-		return {
-			actorName: adminMatch[1].trim(),
-			targetName: adminMatch[2].trim(),
-		};
+	if (recallNoticeParsed) {
+		return { name: recallNoticeParsed.actorName, detail: "" };
 	}
-	const selfMatch = content.match(/^(.+?)\s+撤回了一条消息$/);
-	if (selfMatch) {
-		return {
-			actorName: selfMatch[1].trim(),
-		};
-	}
-	return null;
+	if (message.source !== "matrix" || !message.userKey || !message.name) return null;
+	const prefix = `${message.name} `;
+	return parseRoomActivityActor(message.content.trim(), message.name.trim()) ??
+		(message.content.startsWith(prefix)
+			? { name: message.name, detail: message.content.slice(prefix.length) }
+			: null);
 });
+const systemActorAvatar = $derived(
+	systemActor
+		? resolveUserProfileSeed(message.userKey, systemActor.name, message.avatar).seed.avatar
+		: undefined,
+);
 
 function handleOpenSystemUserProfile(name: string, explicitUserKey?: string) {
 	if (!onOpenUserProfile) return;
@@ -462,7 +462,7 @@ function handleOpenSystemUserProfile(name: string, explicitUserKey?: string) {
 	onOpenUserProfile({
 		userKey: key,
 		name: cleanName || "成员",
-		avatar: useMessageMeta ? message.avatar : undefined,
+		avatar: useMessageMeta ? systemActorAvatar : undefined,
 		url: useMessageMeta ? message.url : undefined,
 		badge: useMessageMeta ? roleBadge?.label || message.badge : undefined,
 		badgeType: useMessageMeta
@@ -805,9 +805,11 @@ function handleBubbleClick(e: MouseEvent) {
 
 {#snippet replyQuoteBlock()}
   {#if message.replyTo}
+    {@const locating = !message.replyTo.isRecalled && jumpingToMessageUid === message.replyTo.msgUid}
     <button
       type="button"
-      class="chat-reply-quote {isSelf ? 'self' : 'other'} {message.replyTo.isRecalled ? 'recalled' : ''}"
+      class="chat-reply-quote {isSelf ? 'self' : 'other'} {message.replyTo.isRecalled ? 'recalled' : ''} {locating ? 'pr-8!' : ''}"
+      aria-busy={locating}
       onclick={() => {
         if (message.replyTo) {
           if (!message.replyTo.isRecalled) {
@@ -820,6 +822,14 @@ function handleBubbleClick(e: MouseEvent) {
     >
       <span class="chat-reply-quote-author">{message.replyTo.name || "用户"}</span>
       <span class="chat-reply-quote-text">{replyPreviewText}</span>
+      {#if locating}
+        <span class="absolute right-2.5 top-0 bottom-0 flex items-center" aria-hidden="true">
+          <svg class="w-3 h-3 motion-safe:animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <circle class="opacity-25" cx="12" cy="12" r="10" />
+            <path stroke-linecap="round" d="M12 2a10 10 0 0 1 10 10" />
+          </svg>
+        </span>
+      {/if}
     </button>
   {/if}
 {/snippet}
@@ -1538,7 +1548,11 @@ function handleBubbleClick(e: MouseEvent) {
   {@const isMusicErrorSystem = /(匹配失败|音源解析失败|播放失败|不可用)/.test(message.content)}
   <div class="w-full flex justify-center my-1.5">
     <div class="chat-system-msg {isMusicErrorSystem ? 'chat-system-msg--error' : ''}">
-      <span class="w-1.5 h-1.5 rounded-full {isMusicErrorSystem ? 'bg-red-500' : 'bg-[var(--primary)]'} opacity-85 shrink-0"></span>
+      {#if systemActor}
+        <span class="shrink-0" aria-hidden="true">
+          <ChatAvatar src={systemActorAvatar} name={systemActor.name} size="2xs" />
+        </span>
+      {/if}
       {#if recallNoticeParsed}
         <span class="inline-flex flex-wrap items-center justify-center gap-x-1">
           <button
@@ -1557,6 +1571,15 @@ function handleBubbleClick(e: MouseEvent) {
           {:else}
             <span>撤回了一条消息</span>
           {/if}
+        </span>
+      {:else if systemActor}
+        <span>
+          <button
+            type="button"
+            class="chat-system-msg-link"
+            onclick={() => handleOpenSystemUserProfile(systemActor.name, message.userKey)}
+          >{systemActor.name}</button>
+          {systemActor.detail}
         </span>
       {:else}
         <span>{message.content}</span>

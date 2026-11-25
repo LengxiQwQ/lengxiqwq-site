@@ -165,7 +165,7 @@ function handleSubmit(e: SubmitEvent) {
 >
   {#if currentUser}
     <form class="flex-1 min-h-0 flex flex-col overflow-hidden" onsubmit={handleSubmit}>
-      <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3.5 sm:p-4 space-y-3">
+      <div class="chat-profile-fields flex-1 min-h-0 overflow-y-auto custom-scrollbar p-3.5 sm:p-4 space-y-3">
         <!-- 顶部通栏实时名片预览 -->
         <div class="rounded-xl bg-(--btn-regular-bg) px-3.5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
           <div class="flex items-center gap-3 min-w-0">
@@ -177,7 +177,7 @@ function handleSubmit(e: SubmitEvent) {
             />
             <div class="min-w-0">
               <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
-                <span class="text-xs font-bold text-[var(--deep-text)] truncate">
+                <span class="chat-sheet-primary text-xs font-bold text-[var(--deep-text)] truncate">
                   {draftNickname.trim() || currentUser.name}
                 </span>
                 <span class="chat-role-badge chat-role-badge--{roleBadge.type}">
@@ -227,7 +227,7 @@ function handleSubmit(e: SubmitEvent) {
             <div class="chat-settings-section-title">
               <span>基本资料</span>
             </div>
-            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
+            <div class="chat-profile-field-group rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
               <div>
                 <label for="profile-modal-nick" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                   展示昵称
@@ -263,7 +263,7 @@ function handleSubmit(e: SubmitEvent) {
             <div class="chat-settings-section-title">
               <span>主页与头像</span>
             </div>
-            <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
+            <div class="chat-profile-field-group rounded-xl bg-(--btn-regular-bg) px-3 py-2.5 space-y-2.5">
               <div>
                 <label for="profile-modal-url" class="block text-xs font-medium text-(--btn-content) opacity-85 mb-1">
                   个人主页（可选）
@@ -285,7 +285,7 @@ function handleSubmit(e: SubmitEvent) {
                   </label>
                   <button
                     type="button"
-                    class="text-[11px] font-medium text-(--primary) bg-transparent border-none cursor-pointer p-0 hover:underline"
+                    class="chat-dialog-inline-action text-[11px] font-medium text-(--primary) bg-transparent border-none cursor-pointer p-0 hover:underline"
                     onclick={() => {
                       draftAvatar = "";
                       avatarEdited = true;
@@ -317,15 +317,15 @@ function handleSubmit(e: SubmitEvent) {
               {#if draftStatus}
                 <button
                   type="button"
-                  class="ml-auto min-h-6 text-[11px] font-normal text-(--primary) hover:underline cursor-pointer"
+                  class="chat-dialog-inline-action ml-auto min-h-6 text-[11px] font-normal text-(--primary) hover:underline cursor-pointer"
                   onclick={() => (draftStatus = "")}
                 >
                   清除状态
                 </button>
               {/if}
             </div>
-            <div class="relative min-h-[7.25rem] flex-1 rounded-xl bg-(--btn-regular-bg)">
-              <div class="custom-scrollbar absolute inset-x-3 inset-y-2.5 grid grid-cols-4 auto-rows-[calc((100%-0.75rem)/3)] gap-1.5 overflow-y-auto pr-1">
+            <div class="chat-profile-badges relative min-h-[7.25rem] flex-1 rounded-xl bg-(--btn-regular-bg)">
+              <div class="chat-profile-status-grid custom-scrollbar absolute inset-x-3 inset-y-2.5 grid grid-cols-4 auto-rows-[calc((100%-0.75rem)/3)] gap-1.5 overflow-y-auto pr-1">
                 {#each CHAT_STATUS_PRESETS as preset (preset)}
                   <button
                     type="button"
@@ -382,7 +382,7 @@ function handleSubmit(e: SubmitEvent) {
               </div>
 
               <div class="space-y-1">
-                <div class="flex min-h-7 items-center justify-between gap-2">
+                <div class="flex min-h-7 flex-wrap md:flex-nowrap items-center justify-between gap-2">
                   <div class="text-xs font-medium text-(--btn-content) flex items-center gap-1.5 whitespace-nowrap">
                     <span>浏览器推送</span>
                     <span class="inline-flex size-3 items-center justify-center" role="status">
@@ -401,7 +401,7 @@ function handleSubmit(e: SubmitEvent) {
                     desktopNotificationMode !== "off" && !notificationSaving && !notificationTesting && notificationTestSeconds === 0}
                     <button
                       type="button"
-                      class="min-h-7 shrink-0 whitespace-nowrap text-[11px] text-(--primary) hover:underline cursor-pointer"
+                      class="chat-dialog-inline-action min-h-7 shrink-0 whitespace-nowrap text-[11px] text-(--primary) hover:underline cursor-pointer"
                       onclick={() => onTestNotification?.()}
                     >发送测试推送</button>
                   {:else}
@@ -413,7 +413,7 @@ function handleSubmit(e: SubmitEvent) {
                   {/if}
                 </div>
                 {#if desktopNotificationPermission === "denied"}
-                  <div class="text-[11px] text-red-500 dark:text-red-400 leading-tight">
+                  <div class="chat-profile-push-notice text-[11px] text-red-500 dark:text-red-400 leading-tight">
                     通知已被拦截，请点击地址栏网站权限图标设为允许
                   </div>
                 {/if}
@@ -421,7 +421,7 @@ function handleSubmit(e: SubmitEvent) {
                 <div class="grid grid-cols-3 gap-0.5 rounded-lg border border-black/5 bg-black/5 p-0.5 dark:border-white/10 dark:bg-white/5">
                   <button
                     type="button"
-                    class="flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
+                    class="chat-profile-notification-option flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
                       {desktopNotificationMode === 'off'
                         ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
                         : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
@@ -433,7 +433,7 @@ function handleSubmit(e: SubmitEvent) {
                   </button>
                   <button
                     type="button"
-                    class="flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
+                    class="chat-profile-notification-option flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
                       {desktopNotificationMode === 'mention'
                         ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
                         : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
@@ -445,7 +445,7 @@ function handleSubmit(e: SubmitEvent) {
                   </button>
                   <button
                     type="button"
-                    class="flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
+                    class="chat-profile-notification-option flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
                       {desktopNotificationMode === 'all'
                         ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
                         : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
@@ -457,9 +457,9 @@ function handleSubmit(e: SubmitEvent) {
                   </button>
                 </div>
                 {#if !isNotificationSupported}
-                  <p class="text-[11px] text-(--content-meta)">{notificationUnavailable}</p>
+                  <p class="chat-profile-push-notice text-[11px] text-(--content-meta)">{notificationUnavailable}</p>
                 {:else if notificationNeedsMigration}
-                  <p class="text-[11px] text-(--content-meta)">重新选择提醒档位，即可启用离开网页后仍能收到的浏览器推送。</p>
+                  <p class="chat-profile-push-notice text-[11px] text-(--content-meta)">重新选择提醒档位，即可启用离开网页后仍能收到的浏览器推送。</p>
                 {/if}
               </div>
             </div>
@@ -467,8 +467,8 @@ function handleSubmit(e: SubmitEvent) {
         </div>
       </div>
 
-      <div class="shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-(--chat-divider-color)">
-        <div class="flex items-center gap-2 shrink-0">
+      <div class="chat-profile-actions shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-t border-(--chat-divider-color)">
+        <div class="chat-profile-secondary-actions flex items-center gap-2 shrink-0">
           {#if onLogout}
             <button
               type="button"
@@ -503,14 +503,14 @@ function handleSubmit(e: SubmitEvent) {
         <div class="flex items-center gap-2 ml-auto flex-1 sm:flex-initial justify-end">
           <button
             type="button"
-            class="btn-regular flex-1 sm:flex-none md:min-w-24 h-9 px-4 rounded-xl text-xs font-medium active:scale-95 transition-all cursor-pointer border-none"
+            class="btn-regular flex-1 md:flex-none md:min-w-24 h-9 px-4 rounded-xl text-xs font-medium active:scale-95 transition-all cursor-pointer border-none"
             onclick={onClose}
           >
             取消
           </button>
           <button
             type="submit"
-            class="chat-send-btn flex-1 sm:flex-none md:min-w-28 h-9! px-5! rounded-xl! text-xs!"
+            class="chat-send-btn flex-1 md:flex-none md:min-w-28 h-9! px-5! rounded-xl! text-xs!"
           >
             保存资料
           </button>

@@ -28,6 +28,8 @@ interface Props {
 	roomId: string;
 	rootUid: string;
 	initialRootMessage?: ChatMessageRecord | null;
+	targetMessageUid?: string;
+	onJumpToMessage?: (msgUid: string) => void;
 	roomMessages: ChatMessageRecord[];
 	currentUser: ChatSessionUser | null;
 	mentionCandidates: ChatMentionCandidate[];
@@ -64,6 +66,8 @@ const {
 	roomId,
 	rootUid,
 	initialRootMessage = null,
+	targetMessageUid = "",
+	onJumpToMessage,
 	roomMessages,
 	currentUser,
 	mentionCandidates,
@@ -227,19 +231,97 @@ const threadReplies = $derived.by<ChatMessageRecord[]>(() => {
 	);
 });
 
+let highlightedMsgUid = $state("");
+let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+let positionedTarget = "";
+let cancelThreadScroll: (() => void) | undefined;
+
+function jumpToThreadMessage(msgUid: string, smooth = false) {
+	if (!listEl) return false;
+	const list = listEl;
+	const target = list.querySelector<HTMLElement>(
+		`[data-msg-uid="${CSS.escape(msgUid)}"]`,
+	);
+	if (!target) return false;
+	const rect = target.getBoundingClientRect();
+	const container = list.getBoundingClientRect();
+	const top = Math.max(0, Math.min(
+		list.scrollHeight - list.clientHeight,
+		list.scrollTop + rect.top + rect.height / 2 - (container.top + container.height / 2),
+	));
+	const highlight = () => {
+		highlightedMsgUid = msgUid;
+		clearTimeout(highlightTimer);
+		highlightTimer = setTimeout(() => { highlightedMsgUid = ""; }, 3800);
+	};
+	cancelThreadScroll?.();
+	if (
+		smooth &&
+		Math.abs(list.scrollTop - top) > 2 &&
+		!window.matchMedia("(prefers-reduced-motion: reduce)").matches
+	) {
+		highlightedMsgUid = "";
+		clearTimeout(highlightTimer);
+		const finish = () => {
+			cancelThreadScroll?.();
+			if (Math.abs(list.scrollTop - top) <= 2) highlight();
+		};
+		const fallback = setTimeout(finish, 800);
+		cancelThreadScroll = () => {
+			list.removeEventListener("scrollend", finish);
+			clearTimeout(fallback);
+			cancelThreadScroll = undefined;
+		};
+		list.addEventListener("scrollend", finish);
+		list.scrollTo({ top, behavior: "smooth" });
+	} else {
+		list.scrollTop = top;
+		highlight();
+	}
+	return true;
+}
+
+function handleJumpToReply(msgUid: string) {
+	const target = [liveRootMessage, ...threadReplies].find(
+		(message) => message?.msgUid === msgUid || message?.matrixEventId === msgUid,
+	);
+	if (!target || !jumpToThreadMessage(target.msgUid, true)) onJumpToMessage?.(msgUid);
+}
+
 $effect(() => {
-	if (!open) return;
+	if (!open) {
+		positionedTarget = "";
+		return;
+	}
 	const count = threadReplies.length;
-	if (count > lastReplyCount) {
-		lastReplyCount = count;
-		void tick().then(() => {
-			if (listEl) {
+	const shouldScrollToBottom = count > lastReplyCount;
+	lastReplyCount = count;
+	const target = targetMessageUid;
+	if (!target) positionedTarget = "";
+	if (target && target === positionedTarget) return;
+	if (!target && !shouldScrollToBottom) return;
+	let active = true;
+	void tick().then(() => {
+		if (active && listEl) {
+			if (target) {
+				if (jumpToThreadMessage(target, true)) positionedTarget = target;
+			} else {
 				listEl.scrollTop = listEl.scrollHeight;
 			}
-		});
-	} else {
-		lastReplyCount = count;
+		}
+	});
+	return () => { active = false; };
+});
+
+$effect(() => {
+	if (!open) {
+		clearTimeout(highlightTimer);
+		highlightedMsgUid = "";
 	}
+	return () => {
+		cancelThreadScroll?.();
+		clearTimeout(highlightTimer);
+	};
 });
 
 function clearComposer() {
@@ -384,6 +466,8 @@ const threadSubtitle = $derived.by(() => {
           <ChatMessage
             message={liveRootMessage}
             isSelf={rootIsSelf}
+            isHighlighted={highlightedMsgUid === liveRootMessage.msgUid}
+            onJumpToMessage={handleJumpToReply}
             isMentionedMe={isMentionedForUser(liveRootMessage, currentUser)}
             currentUserKey={currentUser?.userKey || ""}
             isAdmin={isAdmin}
@@ -465,6 +549,8 @@ const threadSubtitle = $derived.by(() => {
           <ChatMessage
             message={reply}
             isSelf={replyIsSelf}
+            isHighlighted={highlightedMsgUid === reply.msgUid}
+            onJumpToMessage={handleJumpToReply}
             isMentionedMe={isMentionedForUser(reply, currentUser)}
             currentUserKey={currentUser?.userKey || ""}
             isAdmin={isAdmin}

@@ -1,0 +1,311 @@
+diff --git a/server.mjs b/server.mjs
+--- a/server.mjs
++++ b/server.mjs
+@@ -12,6 +12,7 @@
+ import { WebSocketServer, WebSocket } from 'ws';
+ import { createMatrixMediaHandler } from './src/matrix-media.mjs';
+ import { parseMatrixRelayPrefix } from './src/matrix-relay-prefix.mjs';
++import { matrixRoomActivity } from './src/matrix-room-activity.mjs';
+ import { historicalReplyAttachmentFields, matrixReplyAttachmentFields, replyAttachmentFields } from './src/chat-attachment-kind.mjs';
+ 
+ import { QQMusicProvider } from './src/music/qq-music.mjs';
+@@ -2220,7 +2221,7 @@
+   const data = JSON.stringify(packet);
+   const isGlobalNotification =
+     packet &&
+-    (packet.type === 'chat:message' ||
++    ((packet.type === 'chat:message' && !isMatrixActivityRecord(packet.message)) ||
+       packet.type === 'chat:batch' ||
+       packet.type === 'chat:deleted' ||
+       packet.type === 'chat:recalled' ||
+@@ -5139,6 +5140,7 @@
+         const targetIdx = roomMsgs.findIndex((m) => m.msgUid === packet.msgUid);
+         if (targetIdx < 0) return;
+         const targetMsg = roomMsgs[targetIdx];
++        if (isMatrixActivityRecord(targetMsg)) return;
+ 
+         const isOwner = targetMsg.userKey === ws.user.userKey;
+         const isAdmin = Boolean(ws.user.isAdmin);
+@@ -5214,6 +5216,7 @@
+         const roomMsgs = messagesStore[ws.currentRoom] || [];
+         const targetMsg = roomMsgs.find((m) => matchMessageById(m, packet.msgUid));
+         if (!targetMsg) return;
++        if (isMatrixActivityRecord(targetMsg)) return;
+         if (!targetMsg.reactions || typeof targetMsg.reactions !== 'object') {
+           targetMsg.reactions = {};
+         }
+@@ -5301,6 +5304,7 @@
+         const roomMsgs = messagesStore[ws.currentRoom] || [];
+         const targetMsg = roomMsgs.find((m) => m.msgUid === packet.msgUid);
+         if (!targetMsg) return;
++        if (isMatrixActivityRecord(targetMsg)) return;
+         const isOwner = targetMsg.userKey === ws.user.userKey;
+         const isAdmin = Boolean(ws.user.isAdmin);
+         const canEdit = isAdmin || (isOwner && Date.now() - targetMsg.createdAt < 15 * 60 * 1000);
+@@ -5349,6 +5353,8 @@
+       if (packet.type === 'chat:pin' && packet.msgUid) {
+         if (!ws.user || !ws.user.isAdmin) return;
+         const isUnpin = Boolean(packet.unpin);
++        if (!isUnpin && messagesStore[ws.currentRoom]?.some((message) =>
++          isMatrixActivityRecord(message) && matchMessageById(message, packet.msgUid))) return;
+         let list = pinnedStore[ws.currentRoom] || [];
+         if (isUnpin) {
+           list = list.filter((id) => id !== packet.msgUid);
+@@ -7119,6 +7125,125 @@
+   }
+ }
+ 
++function isMatrixActivityRecord(message) {
++  return message?.kind === 'system' && message.source === 'matrix';
++}
++
++function matrixActivityName(matrixId) {
++  const localKey = resolveLocalUserKey(matrixId);
++  const localName = localKey && membersStore.find((member) => member.userKey === localKey)?.name;
++  return localName || matrixProfileCache.get(matrixId)?.displayname || matrixId;
++}
++
++const REDACTABLE_TIMELINE_TYPES = new Set([
++  'm.room.message', 'm.sticker', 'm.room.encrypted',
++  'm.poll.start', 'org.matrix.msc3381.poll.start'
++]);
++
++function roomActivityRecord(ev, history = false) {
++  if (!ev?.sender || !ev.event_id || !Number.isFinite(ev.origin_server_ts) ||
++      Math.abs(ev.origin_server_ts) > 8.64e15) return null;
++  let actorId = ev.sender;
++  let eventId = ev.event_id;
++  let activity = matrixRoomActivity(ev, matrixActivityName);
++  let mentionKeys = [];
++  const redaction = ev.unsigned?.redacted_because;
++  if (!activity && history && REDACTABLE_TIMELINE_TYPES.has(ev.type) &&
++      redaction?.sender && redaction.event_id &&
++      !messagesStore.interconnect.some((item) =>
++        item.recalledMsgUid === ev.event_id || matchMessageById(item, ev.event_id)
++      )) {
++    actorId = redaction.sender;
++    eventId = redaction.event_id;
++    const actor = matrixActivityName(actorId);
++    if (actorId === ev.sender) {
++      activity = { actor, text: actor + ' 撤回了一条消息' };
++    } else {
++      mentionKeys = [resolveLocalUserKey(ev.sender) || 'matrix:' + ev.sender];
++      activity = { actor, text: actor + ' 撤回了 ' + matrixActivityName(ev.sender) + ' 的一条消息' };
++    }
++  }
++  if (!activity) return null;
++  return {
++    id: ev.origin_server_ts,
++    msgUid: eventId,
++    matrixEventId: eventId,
++    kind: 'system',
++    source: 'matrix',
++    userKey: resolveLocalUserKey(actorId) || 'matrix:' + actorId,
++    name: activity.actor,
++    avatar: '',
++    url: '',
++    badge: '',
++    badgeType: 'tag',
++    isAdmin: false,
++    content: activity.text,
++    attachments: [],
++    mentions: [],
++    mentionKeys,
++    createdAt: ev.origin_server_ts
++  };
++}
++
++function insertMatrixActivity(message) {
++  const records = messagesStore.interconnect;
++  if (records.some((item) => matchMessageById(item, message.msgUid))) return false;
++  const later = records.findIndex((item) => item.createdAt > message.createdAt);
++  if (later < 0) records.push(message);
++  else records.splice(later, 0, message);
++  return true;
++}
++
++function publishMatrixActivity(message) {
++  broadcastToRoom('interconnect', { type: 'chat:message', roomId: 'interconnect', message });
++}
++
++async function fetchMatrixHistoryPage(from, limit, direction = 'b', to = '') {
++  const url = new URL(MATRIX_INTERNAL_URL + '/_matrix/client/v3/rooms/' + encodeURIComponent(MATRIX_ROOM_ID) + '/messages');
++  url.searchParams.set('dir', direction);
++  url.searchParams.set('limit', String(limit));
++  if (from) url.searchParams.set('from', from);
++  if (to) url.searchParams.set('to', to);
++  const res = await fetch(url, {
++    headers: { Authorization: 'Bearer ' + MATRIX_ADMIN_TOKEN },
++    signal: AbortSignal.timeout(8000)
++  });
++  return res.ok ? res.json() : null;
++}
++
++// Recover recent events skipped by older gateways without rewinding live sync.
++async function recoverRecentMatrixActivity() {
++  const visibleFloor = messagesStore.interconnect.at(-80)?.createdAt ?? 0;
++  let from = '';
++  for (let page = 0; page < 3; page++) {
++    const data = await fetchMatrixHistoryPage(from, 100);
++    if (!data) return;
++    for (const ev of (data.chunk || []).slice().reverse()) {
++      const notice = roomActivityRecord(ev, true);
++      if (!notice || !insertMatrixActivity(notice)) continue;
++      saveStoreDebounced();
++      if (notice.createdAt >= visibleFloor) publishMatrixActivity(notice);
++    }
++    if (!data.end || data.end === from) return;
++    from = data.end;
++  }
++}
++
++async function fillMatrixSyncGap(since, to) {
++  const events = [];
++  const visited = new Set();
++  let from = since;
++  while (from && from !== to) {
++    if (visited.has(from)) throw new Error('Matrix history cursor repeated');
++    visited.add(from);
++    const page = await fetchMatrixHistoryPage(from, 100, 'f', to);
++    if (!page || !Array.isArray(page.chunk)) throw new Error('Matrix timeline gap fetch failed');
++    for (const event of page.chunk) events.push(event);
++    from = page.end;
++  }
++  return events;
++}
++
+ let backfillInFlight = null;
+ async function backfillMatrixHistory(limit = 60) {
+   if (matrixPersist.syncState.backfillToken === '__EXHAUSTED__') return 0;
+@@ -7126,18 +7251,8 @@
+ 
+   backfillInFlight = (async () => {
+     try {
+-      const url = new URL(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/rooms/${encodeURIComponent(MATRIX_ROOM_ID)}/messages`);
+-      url.searchParams.set('dir', 'b');
+-      url.searchParams.set('limit', String(limit));
+-      if (matrixPersist.syncState.backfillToken) {
+-        url.searchParams.set('from', matrixPersist.syncState.backfillToken);
+-      }
+-      const res = await fetch(url.toString(), {
+-        headers: { Authorization: `Bearer ${MATRIX_ADMIN_TOKEN}` },
+-        signal: AbortSignal.timeout(8000)
+-      });
+-      if (!res.ok) return 0;
+-      const data = await res.json();
++      const data = await fetchMatrixHistoryPage(matrixPersist.syncState.backfillToken, limit);
++      if (!data) return 0;
+       const chunk = Array.isArray(data.chunk) ? data.chunk : [];
+       matrixPersist.syncState.backfillToken = data.end || '__EXHAUSTED__';
+       matrixPersist.saveSyncStateDebounced();
+@@ -7162,8 +7277,13 @@
+       // Process oldest-first so replyTo targets within the same chunk are found cleanly
+       const chrono = chunk.slice().reverse();
+       for (const ev of chrono) {
+-        if (!ev || !ev.event_id) continue;
+-        if (redactedTargets.has(ev.event_id)) continue;
++        if (!ev?.event_id || !ev.sender) continue;
++        const activity = roomActivityRecord(ev, true);
++        if (activity) {
++          if (insertMatrixActivity(activity)) added++;
++          continue;
++        }
++        if (redactedTargets.has(ev.event_id) || ev.unsigned?.redacted_because) continue;
+         if (ev.type === 'org.matrix.msc3381.poll.start' || ev.type === 'm.poll.start') {
+           if (existing.some((m) => matchMessageById(m, ev.event_id))) continue;
+           const pollStart = ev.content?.['org.matrix.msc3381.poll.start'] || ev.content?.['m.poll.start'] || ev.content;
+@@ -7262,13 +7382,12 @@
+       }
+ 
+       const data = await res.json();
+-      if (data.next_batch && data.next_batch !== nextBatch) {
+-        nextBatch = data.next_batch;
+-        matrixPersist.syncState.nextBatch = nextBatch;
+-        matrixPersist.saveSyncStateDebounced();
+-      }
+ 
+       const joinedRoom = data.rooms?.join?.[MATRIX_ROOM_ID];
++      const timeline = joinedRoom?.timeline;
++      const missedEvents = nextBatch && timeline?.limited && timeline.prev_batch
++        ? await fillMatrixSyncGap(nextBatch, timeline.prev_batch)
++        : [];
+       if (!matrixPersist.syncState.backfillToken && joinedRoom?.timeline?.prev_batch) {
+         matrixPersist.syncState.backfillToken = joinedRoom.timeline.prev_batch;
+         matrixPersist.saveSyncStateDebounced();
+@@ -7444,8 +7563,19 @@
+         }
+       }
+ 
+-      const roomEvents = data.rooms?.join?.[MATRIX_ROOM_ID]?.timeline?.events || [];
++      const roomEvents = [...missedEvents, ...(timeline?.events || [])];
++      const processedEventIds = new Set();
+       for (const ev of roomEvents) {
++        if (!ev?.event_id || !ev.sender || processedEventIds.has(ev.event_id)) continue;
++        processedEventIds.add(ev.event_id);
++        const activity = roomActivityRecord(ev);
++        if (activity) {
++          if (insertMatrixActivity(activity)) {
++            saveStoreDebounced();
++            publishMatrixActivity(activity);
++          }
++          continue;
++        }
+         // Matrix Reactions
+         if (ev.type === 'm.reaction') {
+           const rTxnId = ev.unsigned?.transaction_id || '';
+@@ -7669,18 +7799,20 @@
+             if (targetIdx >= 0) {
+               const targetMsg = interconnectMsgs.splice(targetIdx, 1)[0];
+               mentionMailer.removeMessageFromPending(targetMsg.msgUid);
+-              const senderName = ev.sender.split(':')[0].replace('@', '');
+-              const isSelf = ev.sender === MATRIX_ADMIN_USER_ID ||
+-                (targetMsg.userKey && targetMsg.userKey.includes(ev.sender));
++              const senderKey = resolveLocalUserKey(ev.sender) || 'matrix:' + ev.sender;
++              const senderName = matrixActivityName(ev.sender);
++              const isSelf = targetMsg.userKey === senderKey || targetMsg.userKey === ev.sender;
+               const content = isSelf
+                 ? `${targetMsg.name || senderName} 撤回了一条消息`
+                 : `${senderName} 撤回了 ${targetMsg.name || '成员'} 的一条消息`;
+               const noticeMsg = {
+                 id: targetMsg.id,
+                 recalledMsgUid: targetMsg.msgUid,
+-                msgUid: `sys_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
++                msgUid: ev.event_id,
++                matrixEventId: ev.event_id,
+                 kind: 'system',
+-                userKey: `matrix:${ev.sender}`,
++                source: 'matrix',
++                userKey: senderKey,
+                 name: senderName,
+                 avatar: '',
+                 url: '',
+@@ -7727,7 +7859,7 @@
+             const targetEventId = relates.event_id;
+             const interconnectMsgs = messagesStore.interconnect || [];
+             const { targetMsg } = await resolveTargetMsgByMatrixEventId(interconnectMsgs, targetEventId);
+-            if (targetMsg) {
++            if (targetMsg && !isMatrixActivityRecord(targetMsg)) {
+               const replaced = ev.content?.['m.new_content'];
+               if (!replaced || replaced.msgtype !== ev.content.msgtype || typeof replaced.body !== 'string') continue;
+               if (replaced.msgtype !== (targetMsg.msgType === 'emote' ? 'm.emote' : 'm.text')) continue;
+@@ -7853,6 +7985,12 @@
+         }
+       }
+ 
++      if (data.next_batch && data.next_batch !== nextBatch) {
++        nextBatch = data.next_batch;
++        matrixPersist.syncState.nextBatch = nextBatch;
++        matrixPersist.saveSyncStateDebounced();
++      }
++
+       if (presenceChanged) {
+         schedulePresenceBroadcast('interconnect', 350);
+       }
+@@ -7888,6 +8026,7 @@
+     }
+   }, 30000);
+   syncMatrix();
++  recoverRecentMatrixActivity().catch((err) => console.warn('[Matrix] Room activity recovery failed:', err.message));
+   recoverLegacyMatrixMentions().catch((err) => console.warn('[Matrix] Mention recovery failed:', err.message));
+   // Old versions stripped relay suffixes; recover only identities verified against their original event.
+   restoreRelayNames({

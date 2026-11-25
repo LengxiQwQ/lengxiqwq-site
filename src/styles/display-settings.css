@@ -175,3 +175,87 @@
 	align-items: center;
 	justify-content: center;
 }
+
+@media (width < 768px) {
+	#display-setting {
+		max-inline-size: calc(100% - 24px);
+		overscroll-behavior: contain;
+	}
+
+	#display-setting :is(.text-\[10px\], .text-\[11px\]) {
+		font-size: var(--mobile-type-caption);
+		line-height: 1.4;
+	}
+
+	#display-setting .text-xs {
+		font-size: var(--mobile-type-meta);
+		line-height: 1.4;
+	}
+
+	#display-setting .text-sm {
+		font-size: var(--mobile-type-label);
+	}
+
+	#display-setting .section-title {
+		font-size: var(--mobile-type-section);
+		font-weight: 700;
+		line-height: 1.35;
+	}
+
+	#display-setting button.text-xs {
+		min-block-size: 40px;
+		font-size: var(--mobile-type-label);
+		line-height: 1.25;
+	}
+
+	#display-setting :is(button.text-\[10px\], button.text-\[11px\]) {
+		min-block-size: 32px;
+		font-size: var(--mobile-type-meta);
+	}
+
+	#display-setting button:not(:disabled):is(.opacity-60, .opacity-65, .opacity-75, .opacity-85) {
+		opacity: 1;
+	}
+
+	#display-setting .display-settings-tab {
+		flex-direction: row;
+		gap: 4px;
+		padding: 6px 4px;
+	}
+
+	#display-setting .display-settings-tab svg {
+		font-size: 14px;
+	}
+
+	#display-setting .display-settings-tab > .truncate {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
+	#display-setting .display-settings-subtitle {
+		font-size: var(--mobile-type-label);
+		font-weight: 600;
+	}
+
+	#display-setting .display-settings-wallpaper-name {
+		font-size: var(--mobile-type-meta);
+	}
+
+	#display-setting .display-settings-wallpaper-type {
+		font-size: 11px;
+	}
+
+	#display-setting .section-title > button {
+		width: 32px;
+		height: 32px;
+	}
+
+	#display-setting .section-title #hueValue {
+		font-size: var(--mobile-type-meta);
+	}
+
+	#theme-mode-panel [role="menuitem"] {
+		min-block-size: 44px;
+		font-size: var(--mobile-type-label);
+	}
+}

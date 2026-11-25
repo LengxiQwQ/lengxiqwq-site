@@ -75,11 +75,11 @@ function handleImageError() {
 
 	<!-- 图片下方独立文字区（游戏名称与时长去重，仅展示一次） -->
 	<div class="p-3 flex flex-col justify-between flex-1 gap-1.5 bg-(--card-bg)">
-		<h4 class="font-bold text-xs md:text-sm text-neutral-800 dark:text-neutral-100 group-hover:text-(--primary) transition-colors line-clamp-1 leading-snug">
+		<h4 class="font-bold text-xs md:text-sm max-md:text-[length:var(--mobile-type-label)] text-neutral-800 dark:text-neutral-100 group-hover:text-(--primary) transition-colors line-clamp-1 leading-snug">
 			{game.name}
 		</h4>
 
-		<div class="flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400">
+		<div class="flex items-center justify-between text-[11px] max-md:text-[length:var(--mobile-type-meta)] text-neutral-500 dark:text-neutral-400">
 			<span class="truncate">
 				{i18n(I18nKey.steamTotalPlaytime)}: <strong class="text-neutral-700 dark:text-neutral-300 font-semibold">{game.playtime_hours}h</strong>
 			</span>

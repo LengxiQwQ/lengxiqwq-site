@@ -2,6 +2,7 @@
 import ChatModal from "./ChatModal.svelte";
 import ChatShareModal from "./ChatShareModal.svelte";
 import { flushSync, onMount, tick } from "svelte";
+import { SvelteSet } from "svelte/reactivity";
 import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar, {
 	canCorsDownscaleAvatar,
@@ -25,6 +26,7 @@ import {
 	trackBgImgAspectRatio,
 } from "./chatAppearance";
 import {
+	formatChatMessageTime,
 	getLocalSiteName,
 	isExternalMatrixIdentity,
 	isMentionedForUser,
@@ -59,6 +61,7 @@ import {
 } from "./chatImageLayout";
 import { setChatLightboxSourceProvider } from "./chatLightbox";
 import { getChatMarkdownLayout, getChatMessageAttachments } from "./chatMarkdown";
+import { groupRoomActivity, summarizeRoomActivity } from "./chatRoomActivity";
 import { closeChatActionSheet, fadeChatSheetBackdrop } from "./chatSheetMotion";
 import type {
 	ChatActiveThreadItem,
@@ -98,7 +101,6 @@ interface Props {
 	sessionUnreadSince?: number;
 	serverUnreadCount?: number;
 	serverUnreadUserCount?: number;
-	unreadJumpSeq?: number;
 	roomReady?: boolean;
 	roomInitSeq?: number;
 	currentUser: ChatSessionUser | null;
@@ -116,8 +118,12 @@ interface Props {
 	onVoteSkip?: () => void;
 	onPlayQueued?: (uid: string) => void;
 	onClearTargetMessage?: () => void;
-	onLoadHistory?: (sinceCreatedAt?: number, jumpTarget?: boolean) => void;
-	onMarkRead?: (timestamp: number, msgUid?: string) => void;
+	onLoadHistory?: () => Promise<boolean>;
+	onLoadHistoryForJump?: (
+		target: { uid?: string; since?: number },
+		stillCurrent: () => boolean,
+	) => Promise<boolean>;
+	onMarkRead?: (timestamp: number, msgUid?: string) => boolean;
 	stickerPacks: StickerPack[];
 	stickerMap: Map<string, StickerItem>;
 	enableImageUpload: boolean;
@@ -202,7 +208,6 @@ const {
 	sessionUnreadSince = 0,
 	serverUnreadCount = 0,
 	serverUnreadUserCount = 0,
-	unreadJumpSeq = 0,
 	roomReady = true,
 	roomInitSeq = 0,
 	currentUser = null,
@@ -221,6 +226,7 @@ const {
 	onPlayQueued,
 	onClearTargetMessage,
 	onLoadHistory,
+	onLoadHistoryForJump,
 	onMarkRead,
 	stickerPacks = [],
 	stickerMap,
@@ -540,17 +546,22 @@ function releaseMobileActions() {
 }
 
 let unreadBarDismissed = $state(false);
-let unfocusedArrivalUids: string[] = [];
-let unfocusedBanner = $state<{
+type UnfocusedArrival = {
 	firstUid: string;
+	firstAt: number;
+	lastUid: string;
 	count: number;
-} | null>(null);
+};
+let unfocusedArrival = $state.raw<UnfocusedArrival | null>(null);
+let unfocusedReadBoundary = $state.raw<{ firstUid: string; firstAt: number } | null>(null);
 let isLocatingTargetMessage = $state(false);
-let targetMessageNotFound = $state(false);
-let isJumpingToTarget = false;
+let timelineJump = $state.raw<{ uid?: string } | null>(null);
+const isJumpingToUnread = $derived(timelineJump !== null && !timelineJump.uid);
+let threadJumpUid = $state("");
 let isUnreadDividerInView = $state(false);
 let hasVisitedUnreadDivider = $state(false);
 let highlightUnreadDivider = $state(false);
+let checkingHistoryAfterScroll = false;
 let showScrollBottomBtn = $state(false);
 let newMessagesWhileScrolled = $state(0);
 let maxKnownCreatedAt = 0;
@@ -642,7 +653,6 @@ let mediaFileInputEl: HTMLInputElement | null = $state(null);
 let dockEl: HTMLDivElement | null = $state(null);
 let mentionHistoryWrapEl: HTMLDivElement | null = $state(null);
 let lastMentionSeq = 0;
-let lastUnreadJumpSeq = 0;
 let initializedRoom = "";
 let hydratedRoomKey = "";
 let hasInitialBottomScrolledForRoom = false;
@@ -650,17 +660,15 @@ let seenMessageUids = new Set<string>();
 let alertAutoHideTimer: number | null = null;
 let highlightClearTimer: number | null = null;
 let unreadHighlightTimer: number | null = null;
-const BOTTOM_SCROLL_TOLERANCE = 2;
-const BOTTOM_REENGAGE_GAP_PX = 24;
-const BOTTOM_RELEASE_GAP_PX = 48;
+const BOTTOM_SCROLL_TOLERANCE = 32;
 const EMPTY_READ_RECEIPTS: ChatReadReceipt[] = [];
 let isStickyAtBottom = $state(true);
+let reachedBottomByUser = $state(false);
 let suppressStickyScrollUntil = 0;
 const followsLayoutAtBottom = $derived(
 	isStickyAtBottom &&
 		!targetMessageUid &&
-		!highlightedMsgUid &&
-		!highlightUnreadDivider,
+		!timelineJump,
 );
 let lastScrollHeight = 0;
 let lastClientHeight = 0;
@@ -668,7 +676,6 @@ let prevObservedScrollTop = 0;
 let programmaticScrollUntil = 0;
 let isUserTouching = false;
 let touchMinY = 0;
-let touchDraggedUp = false;
 let isSmoothScrolling = false;
 
 const pinnedUidSet = $derived(new Set(pinnedUids));
@@ -692,6 +699,7 @@ function handleViewSource(message: ChatMessageRecord) {
 }
 
 function handleOpenThread(message: ChatMessageRecord) {
+	threadJumpUid = "";
 	const rootUid = message.threadRootUid || message.msgUid;
 	const rootMsg = message.threadRootUid
 		? (messages.find(
@@ -710,6 +718,7 @@ function handleOpenThreadByUid(
 	knownRoot?: ChatMessageRecord | null,
 ) {
 	if (!rootUid) return;
+	threadJumpUid = "";
 	activeThreadRootUid = rootUid;
 	activeThreadInitialRoot =
 		knownRoot ??
@@ -732,20 +741,8 @@ function readLastSeenAt(rId: string, uKey: string): number {
 	}
 }
 
-function writeLastSeenAt(rId: string, uKey: string, ts: number): void {
-	if (!uKey || !Number.isFinite(ts) || ts <= 0) return;
-	try {
-		const key = getLastSeenStorageKey(rId, uKey);
-		const prev = readLastSeenAt(rId, uKey);
-		if (ts > prev) {
-			localStorage.setItem(key, String(ts));
-		}
-	} catch {
-		// 忽略存储写入异常
-	}
-}
-
 function isChatPaneFocused(): boolean {
+	if (!isWindowFocused || !isChatTabActive) return false;
 	if (typeof document === "undefined" || typeof window === "undefined") {
 		return false;
 	}
@@ -753,8 +750,6 @@ function isChatPaneFocused(): boolean {
 	if (typeof document.hasFocus === "function" && !document.hasFocus()) {
 		return false;
 	}
-	if (!isWindowFocused) return false;
-	if (!isChatTabActive) return false;
 	if (document.querySelector(".fancybox__container, .chat-modal-backdrop")) {
 		return false;
 	}
@@ -947,13 +942,22 @@ const mergedActiveThreads = $derived.by<ChatActiveThreadItem[]>(() => {
 	);
 });
 
-const visibleMessages = $derived.by(() =>
+const ungroupedMessages = $derived.by(() =>
 	baseFilteredMessages.filter((msg) => {
 		if (!msg.threadRootUid) return true;
 		// 若原主题消息就在当前时间线中，则线程回复收纳到线程弹窗中显示，避免主时间线重复刷屏
 		return !loadedMainRootIds.has(msg.threadRootUid);
 	}),
 );
+const activityTimeline = $derived(groupRoomActivity(ungroupedMessages));
+const visibleMessages = $derived(activityTimeline.rows);
+const expandedActivity = new SvelteSet<string>();
+
+function toggleRoomActivity(events: ChatMessageRecord[], open: boolean) {
+	measuredMsgHeights.delete(events[0].msgUid);
+	if (open) expandedActivity.add(events[0].msgUid);
+	else for (const event of events) expandedActivity.delete(event.msgUid);
+}
 
 const hasTouchPointer =
 	typeof window !== "undefined" &&
@@ -1002,9 +1006,15 @@ function estimateImageHeight(
 }
 
 function estimateRowHeight(msg: ChatMessageRecord): number {
-	if (msg.kind === "system") return 46;
+	if (msg.kind === "system") {
+		const events = activityTimeline.groups.get(msg.msgUid);
+		const details = events?.some((event) => expandedActivity.has(event.msgUid))
+			? events.length * 40
+			: 0;
+		return 46 + details + (hasHistoryDivider(msg.msgUid) ? 34 : 0);
+	}
 	let h = 76;
-	if (firstUnreadMsgUid === msg.msgUid) h += 34;
+	if (hasHistoryDivider(msg.msgUid)) h += 34;
 	if (msg.replyTo) h += 44;
 	const { imageUrls, textLength } = getChatMarkdownLayout(
 		msg.content,
@@ -1123,6 +1133,8 @@ function maybeTriggerAutoLoadOlderHistory(allowCommitDeviation = false) {
 		!hasMoreHistory ||
 		isLoadingHistory ||
 		!hasInitialBottomScrolledForRoom ||
+		!isChatPaneFocused() ||
+		timelineJump ||
 		followsLayoutAtBottom ||
 		isShiftingWindow ||
 		(hasTouchPointer && (isActivelyScrolling || isUserTouching)) ||
@@ -1151,10 +1163,29 @@ function handleScrollSettled() {
 	}
 	isActivelyScrolling = false;
 	commitScrollDeviation();
-	if (followsLayoutAtBottom) snapScrollToBottom();
+	if (followsLayoutAtBottom) {
+		snapScrollToBottom();
+	} else if (
+		!timelineJump &&
+		!targetMessageUid &&
+		isChatPaneFocused() &&
+		renderedWindow.end >= visibleMessages.length &&
+		getScrollGap() <= BOTTOM_SCROLL_TOLERANCE
+	) {
+		suppressStickyScrollUntil = 0;
+		reachedBottomByUser = true;
+		snapScrollToBottom();
+	}
 	lastEdgeCheckScrollTop = -1;
 	checkVirtualWindowEdges(false);
 	maybeTriggerAutoLoadOlderHistory(true);
+	if (checkingHistoryAfterScroll) {
+		checkingHistoryAfterScroll = isLoadingHistory;
+		const scrollRoom = roomId;
+		void tick().then(() => {
+			if (roomId === scrollRoom) updateHistoryAfterManualScroll();
+		});
+	}
 }
 
 function scheduleScrollSettled() {
@@ -1396,28 +1427,49 @@ const hasUnloadedUnread = $derived(
 );
 
 const firstUnreadMsgUid = $derived.by(() => {
-	if (!sessionUnreadSince) return "";
-	const found = visibleMessages.find((m) => m.createdAt > sessionUnreadSince);
-	return found?.msgUid || "";
+	if (!sessionUnreadSince || hasUnloadedUnread) return "";
+	const found = ungroupedMessages.find((m) => m.createdAt > sessionUnreadSince);
+	return found ? (activityTimeline.rowByEvent.get(found.msgUid) ?? found.msgUid) : "";
 });
+
+const unfocusedDividerUid = $derived.by(() => {
+	const boundary = unfocusedReadBoundary;
+	if (!boundary) return "";
+	const first =
+		ungroupedMessages.find((message) => message.msgUid === boundary.firstUid) ??
+		ungroupedMessages.find((message) => message.createdAt >= boundary.firstAt);
+	return first ? (activityTimeline.rowByEvent.get(first.msgUid) ?? first.msgUid) : "";
+});
+const sessionDividerUid = $derived(
+	unfocusedDividerUid && unreadBarDismissed ? "" : firstUnreadMsgUid,
+);
+
+function hasHistoryDivider(uid: string): boolean {
+	return uid === sessionDividerUid || uid === unfocusedDividerUid;
+}
 
 const unreadBadgeCount = $derived.by(() => {
 	if (!sessionUnreadSince) return 0;
 	const loadedCount = visibleMessages.filter(
-		(m) => m.createdAt > sessionUnreadSince,
+		(m) =>
+			(activityTimeline.groups.get(m.msgUid)?.at(-1)?.createdAt ?? m.createdAt) >
+			sessionUnreadSince,
 	).length;
 	const serverCount = serverUnreadUserCount ?? 0;
 	return hasUnloadedUnread ? Math.max(loadedCount, serverCount) : loadedCount;
 });
 
+const UNREAD_JUMP_BAR_MIN_COUNT = 5;
 const showUnreadJumpBar = $derived(
 	Boolean(
 		sessionUnreadSince > 0 &&
 			unreadBadgeCount > 0 &&
 			!unreadBarDismissed &&
-			!unfocusedBanner &&
-			isStickyAtBottom &&
-			(hasUnloadedUnread || !isUnreadDividerInView),
+			(isJumpingToUnread ||
+				hasUnloadedUnread ||
+				(unreadBadgeCount >= UNREAD_JUMP_BAR_MIN_COUNT &&
+					!isUnreadDividerInView &&
+					!hasVisitedUnreadDivider)),
 	),
 );
 
@@ -1515,7 +1567,7 @@ const musicNoticesInMore = $derived(
 );
 const fitsMobileRoomAvatar = $derived(
 	mobileHeaderEndWidth > 0 &&
-		mobileRoomButtonWidth + (hasHeaderMentions ? mobileHeaderTarget : 0) + 40 <=
+		mobileRoomButtonWidth + (hasHeaderMentions ? mobileHeaderTarget : 0) + 44 <=
 			mobileRoomBudget,
 );
 
@@ -1855,7 +1907,7 @@ function detachFromBottom() {
 }
 
 function snapScrollToBottom() {
-	if (!messageContainer) return;
+	if (!messageContainer?.clientHeight) return;
 	const { scrollHeight, clientHeight, scrollTop } = messageContainer;
 	// The CSS-pixel heights are rounded, while scrollTop can be fractional.
 	if (scrollHeight - clientHeight - scrollTop > BOTTOM_SCROLL_TOLERANCE) {
@@ -1869,6 +1921,81 @@ function snapScrollToBottom() {
 	isStickyAtBottom = true;
 	showScrollBottomBtn = false;
 	newMessagesWhileScrolled = 0;
+	updateUnfocusedBoundary();
+	markCurrentRoomReadIfReady();
+}
+
+function atStartOfRoomHistory(container: HTMLElement): boolean {
+	return (
+		!hasMoreHistory &&
+		!isLoadingHistory &&
+		renderedWindow.start === 0 &&
+		container.scrollTop - scrollDeviation <= BOTTOM_SCROLL_TOLERANCE
+	);
+}
+
+function updateUnfocusedBoundary(manualScroll = false) {
+	const arrival = unfocusedArrival;
+	const container = messageContainer;
+	if (
+		!arrival ||
+		!container?.clientHeight ||
+		timelineJump ||
+		isSmoothScrolling ||
+		!isChatPaneFocused()
+	) return;
+	const bounds = container.getBoundingClientRect();
+	const viewportTop = bounds.top + chatHeaderStackHeight;
+	const atHistoryStart = manualScroll && atStartOfRoomHistory(container);
+	const first = container.querySelector(
+		`[data-vrow-uid="${CSS.escape(arrival.firstUid)}"]`,
+	);
+	const last = container.querySelector(
+		`[data-vrow-uid="${CSS.escape(arrival.lastUid)}"]`,
+	);
+	const firstBounds = first?.getBoundingClientRect();
+	const startVisible =
+		firstBounds &&
+		firstBounds.top >= viewportTop - BOTTOM_SCROLL_TOLERANCE &&
+		firstBounds.top + Math.min(16, firstBounds.height) <= bounds.bottom;
+	const allVisible =
+		startVisible &&
+		last &&
+		last.getBoundingClientRect().bottom <= bounds.bottom + BOTTOM_SCROLL_TOLERANCE;
+	if (!allVisible && !atHistoryStart) {
+		unfocusedReadBoundary = { firstUid: arrival.firstUid, firstAt: arrival.firstAt };
+	}
+	unfocusedArrival = null;
+}
+
+function updateUnreadDividerVisibility(manualScroll = false) {
+	const container = messageContainer;
+	const divider = sessionDividerUid
+		? container?.querySelector<HTMLElement>("[data-unread-divider]")
+		: null;
+	const bounds = container?.getBoundingClientRect();
+	const rect = divider?.getBoundingClientRect();
+	isUnreadDividerInView = Boolean(
+		bounds &&
+			rect &&
+			rect.top >= bounds.top + chatHeaderStackHeight - BOTTOM_SCROLL_TOLERANCE &&
+			rect.bottom <= bounds.bottom + BOTTOM_SCROLL_TOLERANCE,
+	);
+	if (
+		container &&
+		sessionDividerUid &&
+		!timelineJump &&
+		!isSmoothScrolling &&
+		isChatPaneFocused() &&
+		(isUnreadDividerInView || (manualScroll && atStartOfRoomHistory(container)))
+	) {
+		hasVisitedUnreadDivider = true;
+	}
+}
+
+function updateHistoryAfterManualScroll() {
+	updateUnfocusedBoundary(true);
+	updateUnreadDividerVisibility(true);
 }
 
 const READ_FOCUS_SETTLE_MS = 800;
@@ -1912,7 +2039,15 @@ function getLatestReadTargets(): {
 }
 
 function hasUnreadBlockingAutoRead(): boolean {
-	if (sessionUnreadSince <= 0 || unreadBadgeCount <= 0 || unreadBarDismissed) {
+	if (
+		sessionUnreadSince <= 0 ||
+		unreadBadgeCount <= 0 ||
+		reachedBottomByUser ||
+		unreadBarDismissed
+	) {
+		return false;
+	}
+	if (!hasUnloadedUnread && unreadBadgeCount < UNREAD_JUMP_BAR_MIN_COUNT) {
 		return false;
 	}
 	return (
@@ -1920,47 +2055,57 @@ function hasUnreadBlockingAutoRead(): boolean {
 	);
 }
 
-function markCurrentRoomReadIfReady(forceIgnoreSticky = false): void {
-	if (!roomReady || !currentUser) return;
-	// 无论是否强制忽略粘底状态，只要界面未真正处于前台聚焦，绝不标记已读
+function markCurrentRoomReadIfReady(): void {
 	if (!isChatPaneFocused()) {
 		paneFocusedSince = 0;
 		clearReadSettleTimer();
 		return;
 	}
-	if (!forceIgnoreSticky) {
-		if (targetMessageUid || !isStickyAtBottom) {
-			return;
+	if (
+		!roomReady ||
+		!messageContainer ||
+		messageContainer.clientHeight <= 0 ||
+		targetMessageUid ||
+		timelineJump ||
+		unfocusedArrival ||
+		isSmoothScrolling ||
+		isShiftingWindow ||
+		scrollDeviation !== 0 ||
+		renderedWindow.end < visibleMessages.length ||
+		(!isStickyAtBottom &&
+			(renderedWindow.start > 0 ||
+				messageContainer.scrollHeight - messageContainer.clientHeight >
+					BOTTOM_SCROLL_TOLERANCE)) ||
+		getScrollGap() > BOTTOM_SCROLL_TOLERANCE ||
+		hasUnreadBlockingAutoRead()
+	) {
+		return;
+	}
+
+	// 切回后留一点时间，避免切标签时路过就推进已读。
+	const now = Date.now();
+	if (paneFocusedSince <= 0) paneFocusedSince = now;
+	const elapsed = now - paneFocusedSince;
+	if (elapsed < READ_FOCUS_SETTLE_MS) {
+		if (readSettleTimer === null) {
+			readSettleTimer = window.setTimeout(() => {
+				readSettleTimer = null;
+				markCurrentRoomReadIfReady();
+			}, READ_FOCUS_SETTLE_MS - elapsed);
 		}
-		// 切回界面时要求持续聚焦满 READ_FOCUS_SETTLE_MS，防止切标签页路过误标已读
-		const now = Date.now();
-		if (paneFocusedSince <= 0) {
-			paneFocusedSince = now;
-		}
-		const elapsed = now - paneFocusedSince;
-		if (elapsed < READ_FOCUS_SETTLE_MS) {
-			if (readSettleTimer === null && typeof window !== "undefined") {
-				readSettleTimer = window.setTimeout(
-					() => {
-						readSettleTimer = null;
-						markCurrentRoomReadIfReady();
-					},
-					READ_FOCUS_SETTLE_MS - elapsed + 20,
-				);
-			}
-			return;
-		}
-	} else {
-		clearReadSettleTimer();
+		return;
 	}
 	const { tailTs, receiptMsg } = getLatestReadTargets();
 	const readTs = Math.max(tailTs, receiptMsg?.createdAt || 0);
 	if (readTs <= 0) return;
-	const seenKey = `${roomId}:${currentUser.userKey}:${receiptMsg?.msgUid || ""}:${readTs}`;
-	if (seenKey === lastWrittenSeenMsgKey && !forceIgnoreSticky) return;
+	const userKey = currentUser?.userKey || "guest";
+	const seenKey = `${roomId}:${userKey}:${receiptMsg?.msgUid || ""}:${readTs}`;
+	if (seenKey === lastWrittenSeenMsgKey) return;
+	if (!onMarkRead?.(readTs, receiptMsg?.msgUid)) return;
 	lastWrittenSeenMsgKey = seenKey;
-	writeLastSeenAt(roomId, currentUser.userKey, readTs);
-	onMarkRead?.(readTs, receiptMsg?.msgUid);
+	isStickyAtBottom = true;
+	showScrollBottomBtn = false;
+	newMessagesWhileScrolled = 0;
 	unreadBarDismissed = true;
 }
 
@@ -1975,7 +2120,8 @@ function handleMessageScroll() {
 	const viewportHeightChanged = lastClientHeight > 0 && ch !== lastClientHeight;
 	const layoutChanged =
 		viewportHeightChanged || (lastScrollHeight > 0 && sh !== lastScrollHeight);
-	const movedUpward = st < prevObservedScrollTop - 2;
+	const movedUpward = st < prevObservedScrollTop - 0.5;
+	const movedDownward = st > prevObservedScrollTop + 0.5;
 	// 视口变高时，浏览器会把旧滚动位置限制到新的底部，即使用户没有滑动。
 	const clampedByViewport =
 		viewportHeightChanged &&
@@ -1995,6 +2141,18 @@ function handleMessageScroll() {
 
 	if (isProgrammaticEcho || isShiftingWindow) {
 		return;
+	}
+
+	if (
+		(movedUpward || movedDownward) &&
+		(!layoutChanged || isUserTouching) &&
+		!timelineJump &&
+		!isSmoothScrolling &&
+		isChatPaneFocused() &&
+		(unfocusedArrival || showUnreadJumpBar)
+	) {
+		checkingHistoryAfterScroll = true;
+		updateHistoryAfterManualScroll();
 	}
 
 	if (
@@ -2022,32 +2180,33 @@ function handleMessageScroll() {
 		suppressStickyScrollUntil = 0;
 	}
 
-	if (Date.now() < suppressStickyScrollUntil) {
-		isStickyAtBottom = false;
-	} else if (
-		gap <= BOTTOM_REENGAGE_GAP_PX &&
+	const reachedBottom =
+		gap <= BOTTOM_SCROLL_TOLERANCE && scrollDeviation === 0;
+	if (
+		reachedBottom &&
+		movedDownward &&
+		!timelineJump &&
 		!isSmoothScrolling &&
-		!touchDraggedUp &&
-		scrollDeviation === 0
+		isChatPaneFocused()
 	) {
-		ensureTailWindowForBottom();
+		suppressStickyScrollUntil = 0;
+		reachedBottomByUser = true;
 		isStickyAtBottom = true;
-	} else if (
-		gap > BOTTOM_RELEASE_GAP_PX ||
-		(movedUpward && gap > BOTTOM_REENGAGE_GAP_PX)
-	) {
+		if (renderedWindow.end < visibleMessages.length) {
+			void scrollToBottom();
+			return;
+		}
+	} else if (!reachedBottom || Date.now() < suppressStickyScrollUntil) {
 		isStickyAtBottom = false;
 	}
 
-	if (isStickyAtBottom) {
+	if (isStickyAtBottom || gap <= BOTTOM_SCROLL_TOLERANCE) {
 		newMessagesWhileScrolled = 0;
 		showScrollBottomBtn = false;
-		if (gap <= 4) {
-			unfocusedBanner = null;
-		}
 		markCurrentRoomReadIfReady();
 	} else {
-		showScrollBottomBtn = gap > 180 || newMessagesWhileScrolled > 0;
+		showScrollBottomBtn =
+			gap > 180 || newMessagesWhileScrolled > 0;
 	}
 
 	// 每移动 ~96px 才做一次 O(1) 边界检测，接近顶部时及时补窗避免漏触发自动翻页
@@ -2074,6 +2233,7 @@ function ensureTailWindowForBottom() {
 }
 
 async function scrollToBottom(smooth = false) {
+	if (smooth && !isChatPaneFocused()) return;
 	suppressStickyScrollUntil = 0;
 	clearScrollEndTimer();
 	isActivelyScrolling = false;
@@ -2082,12 +2242,12 @@ async function scrollToBottom(smooth = false) {
 		applyStageTransform(0);
 		ensureTailWindowForBottom();
 		await tick();
-		if (!messageContainer) return;
+		if (!followsLayoutAtBottom || !messageContainer?.clientHeight) return;
 		snapScrollToBottom();
 		measureMountedRows();
 		if (typeof window !== "undefined") {
 			window.requestAnimationFrame(() => {
-				if (isStickyAtBottom && messageContainer) {
+				if (followsLayoutAtBottom) {
 					snapScrollToBottom();
 				}
 			});
@@ -2095,13 +2255,13 @@ async function scrollToBottom(smooth = false) {
 		return;
 	}
 
+	cancelProgrammaticScroll();
+	const seq = jumpSeq;
 	commitScrollDeviation();
-	const seq = ++jumpSeq;
-	showScrollBottomBtn = false;
-	newMessagesWhileScrolled = 0;
+	isStickyAtBottom = false;
 	ensureTailWindowForBottom();
 	await tick();
-	if (seq !== jumpSeq || !messageContainer) return;
+	if (seq !== jumpSeq || !messageContainer || !isChatPaneFocused()) return;
 	measureMountedRows();
 
 	const container = messageContainer;
@@ -2124,7 +2284,8 @@ async function scrollToBottom(smooth = false) {
 		true,
 	);
 	if (seq !== jumpSeq) return;
-	if (completed) {
+	if (completed && isChatPaneFocused()) {
+		reachedBottomByUser = true;
 		snapScrollToBottom();
 	}
 }
@@ -2142,7 +2303,10 @@ function smoothScrollContainerTo(
 		? Math.max(0, container.scrollHeight - container.clientHeight)
 		: targetTop;
 	const delta = initialTarget - startTop;
-	if (Math.abs(delta) <= 8) return Promise.resolve(true);
+	if (Math.abs(delta) <= 8) {
+		setScrollTopProgrammatically(initialTarget);
+		return Promise.resolve(true);
+	}
 
 	const duration = Math.min(
 		480,
@@ -2152,8 +2316,8 @@ function smoothScrollContainerTo(
 	return new Promise((resolve) => {
 		const startTime = performance.now();
 		const step = (now: number) => {
-			if (seq !== jumpSeq) {
-				isSmoothScrolling = false;
+			if (seq !== jumpSeq || !isChatPaneFocused()) {
+				if (seq === jumpSeq) isSmoothScrolling = false;
 				resolve(false);
 				return;
 			}
@@ -2192,167 +2356,161 @@ function ensureTargetIndexInWindow(targetIdx: number) {
 	windowEnd = nextEnd;
 }
 
-async function jumpToMessage(msgUid: string) {
-	const seq = ++jumpSeq;
-	clearScrollEndTimer();
-	isActivelyScrolling = false;
-	commitScrollDeviation();
-	closeAllHeaderMenus();
-	suppressStickyScrollUntil = Date.now() + 2500;
-	isStickyAtBottom = false;
-	const targetMsg = messages.find((m) => m.msgUid === msgUid);
-	if (currentUser && targetMsg) {
-		writeLastSeenAt(roomId, currentUser.userKey, targetMsg.createdAt);
+async function jumpToMessage(msgUid: string, smooth = false) {
+	if (await jumpInTimeline(msgUid, smooth)) {
+		unreadMentionUids = unreadMentionUids.filter((id) => id !== msgUid);
+		if (alertBannerUid === msgUid) alertBannerUid = null;
 	}
-	unreadMentionUids = unreadMentionUids.filter((id) => id !== msgUid);
-	if (alertBannerUid === msgUid) {
-		alertBannerUid = null;
-	}
-	if (alertAutoHideTimer !== null) {
-		window.clearTimeout(alertAutoHideTimer);
-		alertAutoHideTimer = null;
-	}
-	highlightedMsgUid = "";
-	if (highlightClearTimer !== null) {
-		window.clearTimeout(highlightClearTimer);
-		highlightClearTimer = null;
-	}
-	const targetIdx = visibleMessages.findIndex((m) => m.msgUid === msgUid);
-	ensureTargetIndexInWindow(targetIdx);
-	await tick();
-	if (seq !== jumpSeq) return;
-	measureMountedRows();
-	const container = messageContainer;
-	let el = container?.querySelector<HTMLElement>(
-		`[data-msg-uid="${CSS.escape(msgUid)}"]`,
-	);
-	if (!el || !container) {
-		return;
-	}
-
-	const cRect = container.getBoundingClientRect();
-	const eRect = el.getBoundingClientRect();
-	const rawTargetTop =
-		container.scrollTop +
-		(eRect.top + eRect.height / 2) -
-		(cRect.top + cRect.height / 2);
-	const maxScroll = Math.max(
-		0,
-		container.scrollHeight - container.clientHeight,
-	);
-	const targetTop = Math.max(0, Math.min(maxScroll, rawTargetTop));
-
-	const maxGlide = Math.max(800, container.clientHeight * 1.6);
-	if (Math.abs(targetTop - container.scrollTop) > maxGlide) {
-		const dir = targetTop > container.scrollTop ? -1 : 1;
-		setScrollTopProgrammatically(targetTop + dir * maxGlide);
-	}
-
-	const completed = await smoothScrollContainerTo(container, targetTop, seq);
-	if (!completed || seq !== jumpSeq) return;
-
-	// 二阶段真实 DOM 物理居中微调校准
-	await tick();
-	if (seq !== jumpSeq) return;
-	el = container.querySelector<HTMLElement>(
-		`[data-msg-uid="${CSS.escape(msgUid)}"]`,
-	);
-	if (el) {
-		const fcRect = container.getBoundingClientRect();
-		const feRect = el.getBoundingClientRect();
-		const finalDiff =
-			feRect.top + feRect.height / 2 - (fcRect.top + fcRect.height / 2);
-		if (Math.abs(finalDiff) > 1.5) {
-			setScrollTopProgrammatically(container.scrollTop + finalDiff);
-		}
-	}
-
-	highlightedMsgUid = msgUid;
-	highlightClearTimer = window.setTimeout(() => {
-		if (seq === jumpSeq) {
-			highlightedMsgUid = "";
-		}
-	}, 3800);
 }
 
-async function scrollToUnreadDivider() {
-	const seq = ++jumpSeq;
-	clearScrollEndTimer();
-	isActivelyScrolling = false;
-	commitScrollDeviation();
-	suppressStickyScrollUntil = Date.now() + 900;
-	isStickyAtBottom = false;
-	hasVisitedUnreadDivider = true;
-	unreadBarDismissed = true;
-	if (firstUnreadMsgUid) {
-		const idx = visibleMessages.findIndex(
-			(m) => m.msgUid === firstUnreadMsgUid,
-		);
-		ensureTargetIndexInWindow(idx);
-	}
-	await tick();
-	if (seq !== jumpSeq) return;
-	measureMountedRows();
-	const container = messageContainer;
-	const dividerEl = container?.querySelector<HTMLElement>(
-		"[data-unread-divider]",
-	);
-	if (dividerEl && container) {
-		const cRect = container.getBoundingClientRect();
-		const dRect = dividerEl.getBoundingClientRect();
-		const rawTargetTop =
-			container.scrollTop +
-			(dRect.top + dRect.height / 2) -
-			(cRect.top + cRect.height / 2);
-		const maxScroll = Math.max(
-			0,
-			container.scrollHeight - container.clientHeight,
-		);
-		const targetTop = Math.max(0, Math.min(maxScroll, rawTargetTop));
-		const maxGlide = Math.max(800, container.clientHeight * 1.6);
-		if (Math.abs(targetTop - container.scrollTop) > maxGlide) {
-			const dir = targetTop > container.scrollTop ? -1 : 1;
-			setScrollTopProgrammatically(targetTop + dir * maxGlide);
+async function jumpInTimeline(
+	msgUid?: string,
+	smooth = false,
+	alignStart = false,
+): Promise<boolean> {
+	if (!roomReady || (timelineJump && timelineJump.uid === msgUid)) return false;
+
+	const request = { uid: msgUid };
+	const jumpRoom = roomId;
+	const initSeq = roomInitSeq;
+	const stillCurrent = () =>
+		timelineJump === request && roomId === jumpRoom && roomInitSeq === initSeq;
+	cancelProgrammaticScroll();
+	timelineJump = request;
+	const findMessage = () =>
+		messages.find((m) => m.msgUid === msgUid || m.matrixEventId === msgUid);
+
+	try {
+		if ((msgUid ? !findMessage() : hasUnloadedUnread) && hasMoreHistory) {
+			if (isLoadingHistory) {
+				await onLoadHistory?.();
+				await tick();
+				if (!stillCurrent()) return false;
+			}
+			prepareHistoryScrollAnchor();
+			const loaded = await onLoadHistoryForJump?.(
+				msgUid ? { uid: msgUid } : { since: sessionUnreadSince },
+				stillCurrent,
+			);
+			await tick();
+			if (!stillCurrent()) return false;
+			if (!loaded) {
+				onNotify?.("历史消息加载失败，点击跳转重试");
+				return false;
+			}
 		}
-		await smoothScrollContainerTo(container, targetTop, seq);
-		if (seq !== jumpSeq) return;
-	} else if (container) {
-		await smoothScrollContainerTo(container, 0, seq);
-		if (seq !== jumpSeq) return;
+
+		const targetMsg = msgUid ? findMessage() : undefined;
+		const targetUid = targetMsg?.msgUid || (!msgUid ? firstUnreadMsgUid : "");
+		const rowUid = activityTimeline.rowByEvent.get(targetUid) ?? targetUid;
+		const targetIdx = visibleMessages.findIndex((m) => m.msgUid === rowUid);
+		if (msgUid && targetMsg?.threadRootUid && targetIdx < 0) {
+			handleOpenThread(targetMsg);
+			threadJumpUid = targetUid;
+			return true;
+		}
+		if (targetIdx < 0) {
+			onNotify?.(msgUid ? "找不到这条消息，可能已被撤回或删除" : "找不到未读起点");
+			return false;
+		}
+
+		const seq = ++jumpSeq;
+		clearScrollEndTimer();
+		isActivelyScrolling = false;
+		commitScrollDeviation();
+		closeAllHeaderMenus();
+		suppressStickyScrollUntil = Date.now() + 900;
+		isStickyAtBottom = false;
+		if (smooth && highlightedMsgUid === targetUid) highlightedMsgUid = "";
+		ensureTargetIndexInWindow(targetIdx);
+		const targetActivity = activityTimeline.groups.get(rowUid);
+		if (msgUid && !alignStart && targetActivity && targetActivity.length > 1 &&
+			!targetActivity.some((event) => expandedActivity.has(event.msgUid))) {
+			toggleRoomActivity(targetActivity, true);
+		}
+		await tick();
+		if (!stillCurrent() || seq !== jumpSeq) return false;
+
+		measureMountedRows();
+		const container = messageContainer;
+		const target = container?.querySelector<HTMLElement>(
+			alignStart
+				? "[data-away-divider]"
+				: msgUid
+					? `[data-msg-uid="${CSS.escape(targetUid)}"], [data-system-msg-uid="${CSS.escape(targetUid)}"]`
+					: "[data-unread-divider]",
+		);
+		if (!container || !target) {
+			onNotify?.("暂时无法定位，点击跳转重试");
+			return false;
+		}
+		const cRect = container.getBoundingClientRect();
+		const rect = target.getBoundingClientRect();
+		const offset = alignStart
+			? chatHeaderStackHeight + 12
+			: (cRect.height - rect.height) / 2;
+		const targetTop = Math.max(
+			0,
+			Math.min(
+				container.scrollHeight - container.clientHeight,
+				container.scrollTop + rect.top - cRect.top - offset,
+			),
+		);
+		if (smooth && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+			// Glide through the mounted rows near distant targets without animating across virtual spacers.
+			const maxGlide = Math.min(800, container.clientHeight * 1.25);
+			const distance = targetTop - container.scrollTop;
+			if (virtualEnabled && Math.abs(distance) > maxGlide) {
+				setScrollTopProgrammatically(targetTop - Math.sign(distance) * maxGlide);
+			}
+			const completed = await smoothScrollContainerTo(container, targetTop, seq);
+			if (!completed || !stillCurrent() || seq !== jumpSeq) return false;
+		} else {
+			setScrollTopProgrammatically(targetTop);
+		}
+		showScrollBottomBtn = getScrollGap() > 180 || newMessagesWhileScrolled > 0;
+
+		if (msgUid) {
+			highlightedMsgUid = targetUid;
+			if (highlightClearTimer !== null) window.clearTimeout(highlightClearTimer);
+			highlightClearTimer = window.setTimeout(() => {
+				highlightedMsgUid = "";
+			}, 3800);
+		} else {
+			hasVisitedUnreadDivider = true;
+			unreadBarDismissed = true;
+			highlightUnreadDivider = true;
+			if (unreadHighlightTimer !== null) window.clearTimeout(unreadHighlightTimer);
+			unreadHighlightTimer = window.setTimeout(() => {
+				highlightUnreadDivider = false;
+			}, 2200);
+		}
+		return true;
+	} finally {
+		if (timelineJump === request) timelineJump = null;
 	}
-	highlightUnreadDivider = true;
-	if (unreadHighlightTimer !== null) {
-		window.clearTimeout(unreadHighlightTimer);
-	}
-	unreadHighlightTimer = window.setTimeout(() => {
-		highlightUnreadDivider = false;
-	}, 2200);
 }
 
 function handleJumpToUnread() {
-	suppressStickyScrollUntil = Date.now() + 900;
-	isStickyAtBottom = false;
-	if (hasUnloadedUnread) {
-		onLoadHistory?.(sessionUnreadSince, true);
-		return;
-	}
-	void scrollToUnreadDivider();
+	void jumpInTimeline();
 }
 
 function dismissUnreadBar() {
+	if (isJumpingToUnread) timelineJump = null;
 	unreadBarDismissed = true;
-	markCurrentRoomReadIfReady(true);
-}
-
-function handleJumpToUnfocusedStart() {
-	if (!unfocusedBanner?.firstUid) return;
-	const uid = unfocusedBanner.firstUid;
-	unfocusedBanner = null;
-	void jumpToMessage(uid);
 }
 
 function triggerAutoLoadOlderHistory(manualClick = false) {
-	if (!hasMoreHistory || isLoadingHistory || !messageContainer) return;
+	if (!onLoadHistory || !hasMoreHistory || !messageContainer) {
+		return Promise.resolve(false);
+	}
+	if (isLoadingHistory) return onLoadHistory();
+	prepareHistoryScrollAnchor(manualClick);
+	return onLoadHistory();
+}
+
+function prepareHistoryScrollAnchor(manualClick = false) {
+	if (!messageContainer) return;
 	clearScrollEndTimer();
 	commitScrollDeviation();
 	isStickyAtBottom = false;
@@ -2377,18 +2535,10 @@ function triggerAutoLoadOlderHistory(manualClick = false) {
 		prevScrollTop: messageContainer.scrollTop,
 		manualClick,
 	};
-	onLoadHistory?.();
 }
 
 function dismissAlertBanner() {
 	if (activeAlertMessage) {
-		if (currentUser) {
-			writeLastSeenAt(
-				roomId,
-				currentUser.userKey,
-				activeAlertMessage.createdAt,
-			);
-		}
 		unreadMentionUids = unreadMentionUids.filter(
 			(id) => id !== activeAlertMessage.msgUid,
 		);
@@ -2655,6 +2805,10 @@ onMount(() => {
 		cancelProgrammaticScroll();
 		if (e.deltaY < 0) {
 			detachFromBottom();
+			if (showUnreadJumpBar) {
+				checkingHistoryAfterScroll = true;
+				scheduleScrollSettled();
+			}
 		}
 	};
 
@@ -2662,7 +2816,6 @@ onMount(() => {
 		cancelProgrammaticScroll();
 		if (e.touches.length === 1) {
 			isUserTouching = true;
-			touchDraggedUp = false;
 			touchMinY = e.touches[0].clientY;
 		}
 	};
@@ -2674,14 +2827,15 @@ onMount(() => {
 			touchMinY = curY;
 		}
 		if (curY - touchMinY > 6) {
-			touchDraggedUp = true;
 			detachFromBottom();
+			if (showUnreadJumpBar) {
+				checkingHistoryAfterScroll = true;
+			}
 		}
 	};
 
 	const handleContainerTouchEnd = () => {
 		isUserTouching = false;
-		touchDraggedUp = false;
 		scheduleScrollSettled();
 	};
 
@@ -2819,6 +2973,7 @@ $effect(() => {
 		lastWrittenSeenMsgKey = "";
 		seenMessageUids = new Set();
 		measuredMsgHeights.clear();
+		expandedActivity.clear();
 		clearScrollEndTimer();
 		clearReadSettleTimer();
 		isActivelyScrolling = false;
@@ -2829,6 +2984,9 @@ $effect(() => {
 		windowEnd = visLen;
 		prevVisibleCount = visLen;
 		historyScrollAnchor = null;
+		checkingHistoryAfterScroll = false;
+		timelineJump = null;
+		threadJumpUid = "";
 		prevObservedScrollTop = 0;
 		lastScrollHeight = 0;
 		lastClientHeight = 0;
@@ -2847,8 +3005,8 @@ $effect(() => {
 		showScrollBottomBtn = false;
 		newMessagesWhileScrolled = 0;
 		maxKnownCreatedAt = 0;
-		unfocusedArrivalUids = [];
-		unfocusedBanner = null;
+		unfocusedArrival = null;
+		unfocusedReadBoundary = null;
 		if (!targetMessageUid) {
 			void scrollToBottom();
 		}
@@ -2864,12 +3022,14 @@ $effect(() => {
 		const isFirstHydration = !hasInitialBottomScrolledForRoom;
 		hasInitialBottomScrolledForRoom = true;
 		lastWrittenSeenMsgKey = "";
-		unreadBarDismissed = false;
-		isUnreadDividerInView = false;
-		hasVisitedUnreadDivider = false;
+		reachedBottomByUser = false;
+		if (isFirstHydration) {
+			unreadBarDismissed = false;
+			isUnreadDividerInView = false;
+			hasVisitedUnreadDivider = false;
+		}
 		seenMessageUids = new Set(msgs.map((m) => m.msgUid));
 		maxKnownCreatedAt = msgs.reduce((max, m) => Math.max(max, m.createdAt), 0);
-		const latestCreatedAt = maxKnownCreatedAt;
 
 		if (visLen > VIRTUAL_ENABLE_THRESHOLD) {
 			virtualEnabled = true;
@@ -2917,12 +3077,6 @@ $effect(() => {
 					unreadMentionUids = [];
 					alertBannerUid = null;
 				}
-			} else if (
-				latestCreatedAt > 0 &&
-				isChatPaneFocused() &&
-				isStickyAtBottom
-			) {
-				writeLastSeenAt(currentRoomId, userKey, latestCreatedAt);
 			}
 		}
 
@@ -2954,8 +3108,9 @@ $effect(() => {
 				const anchor = historyScrollAnchor;
 				historyScrollAnchor = null;
 				measureMountedRows();
-				const anchorIdx = anchor.anchorUid
-					? visMsgs.findIndex((m) => m.msgUid === anchor.anchorUid)
+				const anchorRowUid = activityTimeline.rowByEvent.get(anchor.anchorUid) ?? anchor.anchorUid;
+				const anchorIdx = anchorRowUid
+					? visMsgs.findIndex((m) => m.msgUid === anchorRowUid)
 					: -1;
 				if (visLen > VIRTUAL_ENABLE_THRESHOLD || virtualEnabled) {
 					virtualEnabled = true;
@@ -2978,12 +3133,13 @@ $effect(() => {
 					windowStart = 0;
 					windowEnd = visLen;
 				}
+				const anchorJumpSeq = jumpSeq;
 				void tick().then(() => {
-					if (!messageContainer) return;
+					if (!messageContainer || roomId !== currentRoomId || jumpSeq !== anchorJumpSeq) return;
 					measureMountedRows();
-					const anchorEl = anchor.anchorUid
+					const anchorEl = anchorRowUid
 						? messageContainer.querySelector<HTMLElement>(
-								`[data-vrow-uid="${CSS.escape(anchor.anchorUid)}"]`,
+								`[data-vrow-uid="${CSS.escape(anchorRowUid)}"]`,
 							)
 						: null;
 					if (anchorEl && anchor.anchorOffsetInViewport !== null) {
@@ -3048,8 +3204,35 @@ $effect(() => {
 
 		// 2. 真正的新到达消息（底部实时推送）：
 		if (liveIncoming.length > 0) {
+			const focused = isChatPaneFocused();
+			const visibleIncoming = liveIncoming.filter((m) =>
+				!isMusicNoticeMessage(m) &&
+				(!m.threadRootUid || !loadedMainRootIds.has(m.threadRootUid)) &&
+				(activityTimeline.rowByEvent.get(m.msgUid) ?? m.msgUid) === m.msgUid,
+			);
+			if (!focused && visibleIncoming.length > 0) {
+				const previous = unfocusedArrival;
+				unfocusedArrival = {
+					firstUid: previous?.firstUid ?? visibleIncoming[0].msgUid,
+					firstAt: previous?.firstAt ?? visibleIncoming[0].createdAt,
+					lastUid: visibleIncoming[visibleIncoming.length - 1].msgUid,
+					count: (previous?.count ?? 0) + visibleIncoming.length,
+				};
+			}
+			const hasSelfMessage = liveIncoming.some((m) =>
+				currentUser && (
+					m.userKey === currentUser.userKey ||
+					(currentUser.isAdmin && (
+						m.isAdmin ||
+						m.userKey === "waline:1" ||
+						m.userKey === "@lengxiqwq:matrix.lengxiqwq.com" ||
+						m.userKey === "matrix:@lengxiqwq:matrix.lengxiqwq.com"
+					))
+				),
+			);
+			const canFollowLive = (followsLayoutAtBottom || hasSelfMessage) && !isUserTouching;
 			const canAutoReadLive =
-				isChatPaneFocused() && isStickyAtBottom && !hasUnreadBlockingAutoRead();
+				focused && canFollowLive && !hasUnreadBlockingAutoRead();
 			for (const m of liveIncoming) {
 				if (m.createdAt > maxKnownCreatedAt) {
 					maxKnownCreatedAt = m.createdAt;
@@ -3062,12 +3245,8 @@ $effect(() => {
 				}
 			}
 
-			if (canAutoReadLive) {
-				markCurrentRoomReadIfReady();
-			}
-
 			if (!virtualEnabled && visLen > VIRTUAL_ENABLE_THRESHOLD) {
-				if (isStickyAtBottom) {
+				if (isStickyAtBottom || hasSelfMessage) {
 					measureMountedRows();
 					virtualEnabled = true;
 					windowEnd = visLen;
@@ -3079,7 +3258,7 @@ $effect(() => {
 					}
 				}
 			} else if (virtualEnabled) {
-				if (isStickyAtBottom) {
+				if (isStickyAtBottom || hasSelfMessage) {
 					windowEnd = visLen;
 					if (windowEnd - windowStart > WINDOW_MAX_COUNT) {
 						measureMountedRows();
@@ -3094,29 +3273,24 @@ $effect(() => {
 			}
 			prevVisibleCount = visLen;
 
-			const visibleIncomingCount = liveIncoming.filter(
-				(m) => !isMusicNoticeMessage(m),
-			).length;
-			if (visibleIncomingCount > 0) {
-				const currentGap = getScrollGap();
-				const wasAtBottom =
-					isStickyAtBottom || currentGap <= BOTTOM_REENGAGE_GAP_PX;
-				if (wasAtBottom && !isUserTouching && !targetMessageUid) {
-					isStickyAtBottom = true;
-					showScrollBottomBtn = false;
-					newMessagesWhileScrolled = 0;
-					void scrollToBottom();
-					if (!isChatPaneFocused()) {
-						for (const m of liveIncoming) {
-							if (!isMusicNoticeMessage(m)) {
-								unfocusedArrivalUids.push(m.msgUid);
-							}
-						}
+			if (visibleIncoming.length > 0) {
+				if (canFollowLive) {
+					if (hasSelfMessage) {
+						isStickyAtBottom = true;
+						reachedBottomByUser = true;
+						unreadBarDismissed = true;
+						newMessagesWhileScrolled = 0;
+						showScrollBottomBtn = false;
 					}
+					void scrollToBottom();
 				} else {
-					// 用户在上方翻看历史消息：整体不用动，保留新消息提示
-					newMessagesWhileScrolled += visibleIncomingCount;
-					showScrollBottomBtn = true;
+					const countableIncomingCount = visibleIncoming.filter(
+						(m) => m.kind === "user" || m.kind === "poll",
+					).length;
+					if (countableIncomingCount > 0) {
+						newMessagesWhileScrolled += countableIncomingCount;
+						showScrollBottomBtn = true;
+					}
 				}
 			}
 		} else if (olderBatch.length === 0 && visLen !== prevVisibleCount) {
@@ -3168,33 +3342,12 @@ $effect(() => {
 	const focused = isChatPaneFocused();
 	if (!focused) {
 		paneFocusedSince = 0;
+		checkingHistoryAfterScroll = false;
 		clearReadSettleTimer();
 		return;
 	}
 	if (paneFocusedSince <= 0) {
 		paneFocusedSince = Date.now();
-	}
-	if (unfocusedArrivalUids.length > 0) {
-		const uids = [...unfocusedArrivalUids];
-		unfocusedArrivalUids = [];
-		const firstUid = uids[0];
-		void tick().then(() => {
-			if (!messageContainer || !isStickyAtBottom) return;
-			const el = messageContainer.querySelector<HTMLElement>(
-				`[data-msg-uid="${CSS.escape(firstUid)}"]`,
-			);
-			const cRect = messageContainer.getBoundingClientRect();
-			const isOffscreenAbove =
-				!el || el.getBoundingClientRect().bottom < cRect.top + 20;
-			if (isOffscreenAbove) {
-				unfocusedBanner = {
-					firstUid,
-					count: uids.length,
-				};
-			} else {
-				unfocusedBanner = null;
-			}
-		});
 	}
 	void visibleMessages;
 	void messages;
@@ -3202,7 +3355,22 @@ $effect(() => {
 	void hasVisitedUnreadDivider;
 	void unreadBarDismissed;
 	void isStickyAtBottom;
-	markCurrentRoomReadIfReady();
+	void unfocusedArrival;
+	void isLoadingHistory;
+	void tick().then(() => {
+		if (checkingHistoryAfterScroll && !isLoadingHistory) {
+			checkingHistoryAfterScroll = false;
+			updateHistoryAfterManualScroll();
+		} else {
+			updateUnreadDividerVisibility();
+		}
+		if (unfocusedArrival && followsLayoutAtBottom && isChatPaneFocused()) {
+			snapScrollToBottom();
+			return;
+		}
+		updateUnfocusedBoundary();
+		markCurrentRoomReadIfReady();
+	});
 });
 
 $effect(() => {
@@ -3261,89 +3429,44 @@ $effect(() => {
 });
 
 $effect(() => {
-	if (unreadJumpSeq > 0 && unreadJumpSeq !== lastUnreadJumpSeq) {
-		lastUnreadJumpSeq = unreadJumpSeq;
-		void scrollToUnreadDivider();
-	}
-});
-
-$effect(() => {
 	const container = messageContainer;
-	const markerUid = firstUnreadMsgUid;
+	const markerUid = sessionDividerUid;
+	const awayMarkerUid = unfocusedReadBoundary ? unfocusedDividerUid : "";
+	const headerHeight = chatHeaderStackHeight;
 	void renderedMessages;
-	if (
-		!container ||
-		!markerUid ||
-		hasUnloadedUnread ||
-		typeof IntersectionObserver === "undefined"
-	) {
+	const divider = markerUid ? container?.querySelector("[data-unread-divider]") : null;
+	const awayDivider = awayMarkerUid ? container?.querySelector("[data-away-divider]") : null;
+	if (!divider) {
 		isUnreadDividerInView = false;
-		return;
 	}
-	const dividerEl = container.querySelector<HTMLElement>(
-		"[data-unread-divider]",
-	);
-	if (!dividerEl) {
-		isUnreadDividerInView = false;
-		return;
-	}
+	if (!container || (!divider && !awayDivider) || typeof IntersectionObserver === "undefined") return;
 	const observer = new IntersectionObserver(
-		(entries) => {
-			for (const entry of entries) {
-				if (entry.isIntersecting) {
-					isUnreadDividerInView = true;
-					hasVisitedUnreadDivider = true;
-					observer.disconnect();
-				}
-			}
+		() => {
+			updateUnreadDividerVisibility();
+			updateUnfocusedBoundary();
 		},
-		{ root: container, threshold: 0.25 },
+		{ root: container, rootMargin: `-${headerHeight}px 0px 0px 0px`, threshold: [0, 1] },
 	);
-	observer.observe(dividerEl);
+	if (divider) observer.observe(divider);
+	if (awayDivider && awayDivider !== divider) observer.observe(awayDivider);
 	return () => observer.disconnect();
 });
 
 $effect(() => {
 	const deepTarget = targetMessageUid;
-	if (!deepTarget) {
+	const deepRoom = roomId;
+	if (!deepTarget || !roomReady || !messageContainer) return;
+	let active = true;
+	void tick().then(async () => {
+		if (!active) return;
+		isLocatingTargetMessage = true;
+		await jumpToMessage(deepTarget);
 		isLocatingTargetMessage = false;
-		return;
-	}
-
-	// 只要存在定位目标，锁定粘底逻辑，防止任何异步重排将视口扯回最底部
-	isStickyAtBottom = false;
-	suppressStickyScrollUntil = Date.now() + 2500;
-
-	const found = messages.some((m) => m.msgUid === deepTarget);
-	if (found) {
-		isLocatingTargetMessage = false;
-		targetMessageNotFound = false;
-		if (!isJumpingToTarget) {
-			isJumpingToTarget = true;
-			void tick().then(async () => {
-				await jumpToMessage(deepTarget);
-				isJumpingToTarget = false;
-				onClearTargetMessage?.();
-			});
-		}
-		return;
-	}
-
-	// 目标尚未在当前列表中：若房间已就绪且还有更早历史，自动追溯拉取更早批次历史
-	if (roomReady && messages.length > 0) {
-		if (hasMoreHistory) {
-			isLocatingTargetMessage = true;
-			targetMessageNotFound = false;
-			if (!isLoadingHistory) {
-				onLoadHistory?.();
-			}
-		} else if (!isLoadingHistory) {
-			// 已全部加载完毕仍未找到：说明该消息已被撤回或物理删除
-			isLocatingTargetMessage = false;
-			targetMessageNotFound = true;
+		if (active && roomId === deepRoom && targetMessageUid === deepTarget) {
 			onClearTargetMessage?.();
 		}
-	}
+	});
+	return () => { active = false; };
 });
 
 $effect(() => {
@@ -3651,14 +3774,6 @@ function handleStartEdit(msg: ChatMessageRecord) {
 	focusInput(true);
 }
 
-function handleJumpToReply(msgUid: string) {
-	if (messages.some((m) => m.msgUid === msgUid)) {
-		void jumpToMessage(msgUid);
-		return;
-	}
-	onNotify?.("原消息较早或已撤回");
-}
-
 let lastTypingSentAt = 0;
 function triggerTyping() {
 	if (onTyping) {
@@ -3722,6 +3837,13 @@ async function handleSend() {
 
 	const replyToUid = replyingTo?.msgUid || "";
 	onSendMessage(trimmed, attachments, mentionEntities, replyToUid || undefined);
+	isStickyAtBottom = true;
+	reachedBottomByUser = true;
+	unreadBarDismissed = true;
+	newMessagesWhileScrolled = 0;
+	showScrollBottomBtn = false;
+	timelineJump = null;
+	void scrollToBottom(false);
 	clearInput();
 	clearRoomDraft(roomId);
 	pendingImages = [];
@@ -3734,11 +3856,6 @@ async function handleSend() {
 	imageQuality = "compressed";
 	saveChatImageQuality(imageQuality);
 	activePopover = "none";
-	unreadBarDismissed = true;
-	unfocusedBanner = null;
-	unfocusedArrivalUids = [];
-	isStickyAtBottom = true;
-	void scrollToBottom();
 }
 
 function handleShareBlogContent(payload: string) {
@@ -3748,9 +3865,14 @@ function handleShareBlogContent(payload: string) {
 	}
 	const replyToUid = replyingTo?.msgUid || "";
 	onSendMessage(payload, [], [], replyToUid || undefined);
-	replyingTo = null;
 	isStickyAtBottom = true;
-	void scrollToBottom();
+	reachedBottomByUser = true;
+	unreadBarDismissed = true;
+	newMessagesWhileScrolled = 0;
+	showScrollBottomBtn = false;
+	timelineJump = null;
+	void scrollToBottom(false);
+	replyingTo = null;
 }
 
 function toggleMarkdownPreview() {
@@ -4559,7 +4681,7 @@ function removePendingImage(index: number) {
             <img
               src={getDownscaledAvatarUrl(effectiveRoomAvatar) || effectiveRoomAvatar}
               alt=""
-              class="size-8 shrink-0 rounded-lg object-cover"
+              class="size-[36px] shrink-0 rounded-lg object-cover"
               decoding="async"
               crossorigin={!getDownscaledAvatarUrl(effectiveRoomAvatar) && canCorsDownscaleAvatar(effectiveRoomAvatar) ? "anonymous" : undefined}
               onload={(event) => downscaleImgElementInPlace(event.currentTarget, effectiveRoomAvatar)}
@@ -4968,18 +5090,31 @@ function removePendingImage(index: number) {
     />
   </div>
 
+    {#snippet historyJumpSpinner()}
+      <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)] motion-safe:animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+        <circle class="opacity-25" cx="12" cy="12" r="10" />
+        <path stroke-linecap="round" d="M12 2a10 10 0 0 1 10 10" />
+      </svg>
+    {/snippet}
+
     <!-- 置顶消息横幅 (Pinned Messages，置于播放器下方) -->
     {#if currentPinnedMsg}
+      {@const locatingPin = timelineJump?.uid === currentPinnedMsg.msgUid}
       <div class="chat-pinned-banner">
         <button
           type="button"
           class="flex items-center gap-1.5 md:gap-2 truncate flex-1 chat-pinned-btn text-left bg-transparent border-none p-0 text-[var(--skin-text)] cursor-pointer min-w-0"
-          onclick={() => void jumpToMessage(currentPinnedMsg.msgUid)}
+          aria-busy={locatingPin}
+          onclick={() => void jumpToMessage(currentPinnedMsg.msgUid, true)}
         >
-          <svg class="w-3.5 h-3.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <line x1="12" y1="17" x2="12" y2="22" />
-            <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
-          </svg>
+          {#if locatingPin}
+            {@render historyJumpSpinner()}
+          {:else}
+            <svg class="w-3.5 h-3.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="12" y1="17" x2="12" y2="22" />
+              <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+            </svg>
+          {/if}
           <span class="font-semibold text-xs shrink-0">{currentPinnedMsg.name}:</span>
           <span class="truncate text-xs text-[var(--chat-meta-color)]">
             {currentPinnedMsg.content || (currentPinnedMsg.attachments?.length > 0 ? "[多媒体附件]" : "消息")}
@@ -5025,7 +5160,7 @@ function removePendingImage(index: number) {
 
   <!-- 消息展示流区域（含悬浮 切歌投票 / @你 / 未读定位 横幅） -->
   <div class="chat-messages-stream-layer relative flex-1 min-h-0 flex flex-col">
-    {#if skipVoteBanner || queueVoteBanners.length > 0 || activeAlertMessage || showUnreadJumpBar}
+    {#if skipVoteBanner || queueVoteBanners.length > 0 || activeAlertMessage || showUnreadJumpBar || isLocatingTargetMessage}
       <div class="chat-floating-alerts-stack">
         {#if skipVoteBanner}
           <div class="chat-mention-floating-bar" role="status" aria-live="polite">
@@ -5172,54 +5307,14 @@ function removePendingImage(index: number) {
               <span class="font-medium truncate">正在追溯历史记录，定位目标消息...</span>
             </div>
           </div>
-        {:else if targetMessageNotFound}
-          <div class="chat-mention-floating-bar" role="status" aria-live="polite">
-            <div class="flex-1 min-w-0 flex items-center gap-2 text-xs text-[var(--chat-meta-color)] py-0.5">
-              <span>该消息可能已被撤回或不存在</span>
-            </div>
-            <button
-              type="button"
-              class="w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] cursor-pointer shrink-0 text-xs"
-              aria-label="关闭提示"
-              onclick={() => { targetMessageNotFound = false; }}
-            >
-              ×
-            </button>
-          </div>
         {/if}
 
-        {#if unfocusedBanner}
+        {#if showUnreadJumpBar}
           <div class="chat-mention-floating-bar chat-unread-floating-bar" role="status" aria-live="polite">
             <button
               type="button"
-              class="flex-1 min-w-0 flex items-center gap-2 text-left bg-transparent border-none p-0 cursor-pointer text-inherit"
-              onclick={handleJumpToUnfocusedStart}
-            >
-              <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <polyline points="17 11 12 6 7 11" />
-                <polyline points="17 18 12 13 7 18" />
-              </svg>
-              <span class="font-semibold text-[var(--deep-text)] dark:text-white/90 truncate">
-                离开期间有 {unfocusedBanner.count} 条新消息
-              </span>
-              <span class="chat-mention-jump-pill shrink-0">
-                定位到未读起始 ↑
-              </span>
-            </button>
-            <button
-              type="button"
-              class="w-5 h-5 rounded-full flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] cursor-pointer shrink-0 text-xs"
-              aria-label="关闭提示"
-              onclick={() => { unfocusedBanner = null; }}
-            >
-              ×
-            </button>
-          </div>
-        {:else if showUnreadJumpBar}
-          <div class="chat-mention-floating-bar chat-unread-floating-bar" role="status" aria-live="polite">
-            <button
-              type="button"
-              disabled={isLoadingHistory}
+              aria-busy={isJumpingToUnread}
+              disabled={isJumpingToUnread}
               class="flex-1 min-w-0 flex items-center gap-2 text-left bg-transparent border-none p-0 cursor-pointer text-inherit disabled:opacity-60"
               onclick={handleJumpToUnread}
             >
@@ -5231,10 +5326,11 @@ function removePendingImage(index: number) {
                 离开期间有 {unreadBadgeCount} 条未读消息 ({formatUnreadTime(sessionUnreadSince)})
               </span>
               <span class="chat-mention-jump-pill shrink-0">
-                {#if isLoadingHistory}
-                  正在加载历史...
-                {:else if hasUnloadedUnread}
-                  查看历史消息 ({unreadBadgeCount}条) ↑
+                {#if isJumpingToUnread}
+                  <span class="inline-flex items-center gap-1.5">
+                    {@render historyJumpSpinner()}
+                    正在定位…
+                  </span>
                 {:else}
                   回到上次阅读位置 ↑
                 {/if}
@@ -5304,6 +5400,8 @@ function removePendingImage(index: number) {
           {/if}
           <div bind:this={windowTopMarkerEl} aria-hidden="true"></div>
           {#each renderedMessages as msg (msg.msgUid)}
+            {@const activity = activityTimeline.groups.get(msg.msgUid)}
+            {@const activityOpen = activity?.some((event) => expandedActivity.has(event.msgUid)) ?? false}
             {@const isSelf = Boolean(
               currentUser && (
                 msg.userKey === currentUser.userKey ||
@@ -5333,19 +5431,66 @@ function removePendingImage(index: number) {
               currentUser && msg.kind === "user" && isAdmin && roomId !== "interconnect",
             )}
             <div class="chat-message-row" data-vrow-uid={msg.msgUid}>
-              {#if firstUnreadMsgUid === msg.msgUid}
+              {#if hasHistoryDivider(msg.msgUid)}
                 <div
-                  data-unread-divider
-                  class="chat-unread-divider {highlightUnreadDivider ? 'highlight' : ''}"
+                  data-unread-divider={sessionDividerUid === msg.msgUid ? "" : undefined}
+                  data-away-divider={unfocusedDividerUid === msg.msgUid ? "" : undefined}
+                  class="chat-unread-divider {(sessionDividerUid === msg.msgUid && highlightUnreadDivider) || (unfocusedDividerUid === msg.msgUid && highlightedMsgUid === msg.msgUid) ? 'highlight' : ''}"
                   role="separator"
                 >
                   <span class="chat-unread-divider-line"></span>
                   <span class="chat-unread-divider-label">
-                    上次 {formatUnreadTime(sessionUnreadSince)} 阅读到这里
+                    {unfocusedDividerUid === msg.msgUid ? "上次看到这里" : `上次 ${formatUnreadTime(sessionUnreadSince)} 阅读到这里`}
                   </span>
                   <span class="chat-unread-divider-line"></span>
                 </div>
               {/if}
+              {#if activity && activity.length > 1}
+                <div class="chat-room-activity">
+                  <button
+                    type="button"
+                    class="chat-room-activity-toggle"
+                    aria-expanded={activityOpen}
+                    aria-controls={"room-activity-" + msg.msgUid}
+                    onclick={() => toggleRoomActivity(activity, !activityOpen)}
+                  >
+                    <span>
+                      {#each summarizeRoomActivity(activity) as summary, index (summary.event.msgUid)}
+                        {#if index > 0}；{/if}<span>{#if summary.actorName}<span class="chat-room-activity-avatar" aria-hidden="true"><ChatAvatar
+                          src={userProfileMap.get(summary.event.userKey)?.avatar ||
+                            userProfileMap.get(summary.event.userKey.startsWith("matrix:") ? summary.event.userKey.slice(7) : `matrix:${summary.event.userKey}`)?.avatar ||
+                            summary.event.avatar}
+                          name={summary.actorName}
+                          size="2xs"
+                        /></span>{/if}{summary.text}</span>
+                      {/each}
+                    </span>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                  </button>
+                  <ul id={"room-activity-" + msg.msgUid} class="chat-room-activity-list" hidden={!activityOpen}>
+                    {#if activityOpen}
+                      {#each activity as event (event.msgUid)}
+                        <li data-system-msg-uid={event.msgUid} class:chat-msg-jump-highlight={highlightedMsgUid === event.msgUid}>
+                          <ChatMessage
+                            message={event}
+                            isSelf={false}
+                            {stickerMap}
+                            {userProfileMap}
+                            {onOpenUserProfile}
+                          />
+                          <time datetime={new Date(event.createdAt).toISOString()}>
+                            {formatChatMessageTime(event.createdAt, nowMs)}
+                          </time>
+                        </li>
+                      {/each}
+                    {/if}
+                  </ul>
+                </div>
+              {:else}
+              <div data-system-msg-uid={msg.kind === "system" ? msg.msgUid : undefined}
+                class:chat-msg-jump-highlight={msg.kind === "system" && highlightedMsgUid === msg.msgUid}>
               <ChatMessage
                 message={msg}
                 isSelf={isSelf}
@@ -5378,11 +5523,14 @@ function removePendingImage(index: number) {
                 onReaction={onReaction}
                 onVotePoll={onVotePoll}
                 onEndPoll={onEndPoll}
-                onJumpToMessage={handleJumpToReply}
+                onJumpToMessage={(uid) => void jumpToMessage(uid, true)}
+                jumpingToMessageUid={timelineJump?.uid}
                 onOpenUserProfile={onOpenUserProfile}
                 onMention={onMentionUser}
                 onOpenMobileActions={handleOpenMobileActions}
               />
+              </div>
+              {/if}
             </div>
           {/each}
           <div bind:this={windowBottomMarkerEl} aria-hidden="true"></div>
@@ -5400,11 +5548,8 @@ function removePendingImage(index: number) {
           class="chat-scroll-bottom-btn"
           aria-label="滚动到底部最新消息"
           onclick={() => {
-            unreadBarDismissed = true;
-            unfocusedBanner = null;
-            unfocusedArrivalUids = [];
+            timelineJump = null;
             void scrollToBottom(true);
-            markCurrentRoomReadIfReady(true);
           }}
         >
           <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -6017,10 +6162,10 @@ function removePendingImage(index: number) {
               size="sm"
             />
             <div class="min-w-0 flex-1">
-              <div class="text-xs font-bold text-[var(--skin-text)] truncate">
+              <div class="chat-sheet-primary text-xs font-bold text-[var(--skin-text)] truncate">
                 {mobileActionTarget.senderDisplayName}
               </div>
-              <div class="text-xs text-[var(--chat-meta-color)] truncate mt-0.5">
+              <div class="chat-sheet-meta text-xs text-[var(--chat-meta-color)] truncate mt-0.5">
                 {previewText || "消息"}
               </div>
             </div>
@@ -6315,6 +6460,13 @@ function removePendingImage(index: number) {
       roomId={roomId}
       rootUid={activeThreadRootUid}
       initialRootMessage={activeThreadInitialRoot}
+      targetMessageUid={threadJumpUid}
+      onJumpToMessage={(uid) => {
+        activeThreadRootUid = "";
+        activeThreadInitialRoot = null;
+        threadJumpUid = "";
+        void jumpToMessage(uid, true);
+      }}
       roomMessages={messages}
       currentUser={currentUser}
       mentionCandidates={mergedMentionCandidates}
@@ -6330,6 +6482,7 @@ function removePendingImage(index: number) {
       onClose={() => {
         activeThreadRootUid = "";
         activeThreadInitialRoot = null;
+        threadJumpUid = "";
       }}
       onSendMessage={onSendMessage}
       onEditMessage={onEditMessage}

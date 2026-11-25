@@ -324,7 +324,7 @@ const modalSubtitle = $derived.by(() => {
               </div>
               <div class="flex-1 min-w-0 text-left">
                 <div class="flex items-center gap-1.5 min-w-0">
-                  <span class="text-xs font-semibold text-[var(--skin-text)] truncate">
+                  <span class="chat-activity-user-name text-xs font-semibold text-[var(--skin-text)] truncate">
                     {item.cleanName}
                   </span>
                   {#if item.isMe}

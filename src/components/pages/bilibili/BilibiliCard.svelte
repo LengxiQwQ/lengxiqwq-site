@@ -111,12 +111,12 @@ function getTypeColor(seasonType: number): string {
 	<!-- 底部信息 -->
 	<div class="p-3">
 		<!-- 标题 -->
-		<h3 class="mb-1 line-clamp-1 text-sm font-semibold text-neutral-900 dark:text-neutral-100" title={anime.title}>
+		<h3 class="mb-1 line-clamp-1 text-sm max-md:text-[length:var(--mobile-type-label)] font-semibold text-neutral-900 dark:text-neutral-100" title={anime.title}>
 			{anime.title}
 		</h3>
 		<!-- 原文标题 -->
 		{#if anime.originalTitle && anime.originalTitle !== anime.title}
-			<p class="mb-2 line-clamp-1 text-xs text-neutral-500 dark:text-neutral-400" title={anime.originalTitle}>
+			<p class="mb-2 line-clamp-1 text-xs max-md:text-[length:var(--mobile-type-meta)] text-neutral-500 dark:text-neutral-400" title={anime.originalTitle}>
 				{anime.originalTitle}
 			</p>
 		{/if}

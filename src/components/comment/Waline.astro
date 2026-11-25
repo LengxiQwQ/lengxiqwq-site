@@ -2470,21 +2470,21 @@ const config = {
       box-sizing: border-box !important;
     }
 
-    /* 3. 恢复移动端输入框精致小巧的自然字号（0.875rem / 14px），与评论正文比例和谐统一 */
+    /* 评论和回复沿用全站手机输入字号。 */
     #waline .wl-header input {
-      font-size: 0.875rem !important;
+      font-size: var(--mobile-type-input, 0.875rem) !important;
       padding: 0.45em 0.35em !important;
     }
 
     #waline .wl-editor {
-      font-size: 0.875rem !important;
+      font-size: var(--mobile-type-input, 0.875rem) !important;
       padding: 0.5rem 0.6rem !important;
       min-height: 5em !important;
       line-height: 1.5 !important;
     }
 
     #waline .wl-header label {
-      font-size: 0.75rem !important;
+      font-size: var(--mobile-type-label, 0.75rem) !important;
       padding: 0.45em 0.3em !important;
     }
 

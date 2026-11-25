@@ -56,6 +56,7 @@ import {
 	saveMemberBadges,
 	searchOnlineMusic,
 } from "./chatClient";
+import { appendTimelineMessage } from "./chatRoomActivity";
 import type {
 	ChatActiveThreadItem,
 	ChatCustomBadge,
@@ -232,6 +233,15 @@ function mergeRoomMessages(
 	hasMoreHistory: boolean,
 ): ChatMessageRecord[] {
 	if (!hasMoreHistory || cachedMessages.length === 0) return serverMessages;
+	const oldestServerMessage = serverMessages[0];
+	// Keep earlier pages on reconnect only when they connect to the new tail.
+	if (
+		!cachedMessages.some(
+			(message) => message.msgUid === oldestServerMessage?.msgUid,
+		)
+	) {
+		return serverMessages;
+	}
 	const seen = new Set(serverMessages.map((message) => message.msgUid));
 	const oldest = serverMessages[0]?.createdAt ?? Number.MAX_SAFE_INTEGER;
 	const older = cachedMessages.filter(
@@ -246,17 +256,43 @@ let hasMoreHistory = $state(false);
 let oldestHistoryId = $state(0);
 let isLoadingHistory = $state(false);
 let historyLoadTimeoutTimer: number | null = null;
+type HistoryBuffer = {
+	batches: ChatMessageRecord[][];
+	oldest?: ChatMessageRecord;
+	hasMore: boolean;
+};
+let pendingHistoryLoad: {
+	promise: Promise<boolean>;
+	resolve: (loaded: boolean) => void;
+	buffer?: HistoryBuffer;
+} | null = null;
 
-function clearHistoryLoadTimer() {
+function finishHistoryLoad(loaded = false) {
 	if (historyLoadTimeoutTimer !== null) {
 		window.clearTimeout(historyLoadTimeoutTimer);
 		historyLoadTimeoutTimer = null;
+	}
+	if (!pendingHistoryLoad?.buffer) isLoadingHistory = false;
+	pendingHistoryLoad?.resolve(loaded);
+	pendingHistoryLoad = null;
+}
+
+function prependHistory(batch: ChatMessageRecord[]) {
+	const existingIds = new Set(messages.map((message) => message.msgUid));
+	const prepended = batch.filter((message) => {
+		if (existingIds.has(message.msgUid)) return false;
+		existingIds.add(message.msgUid);
+		return true;
+	});
+	if (prepended.length > 0) {
+		messages = [...prepended, ...messages].sort(
+			(a, b) => a.createdAt - b.createdAt,
+		);
 	}
 }
 let sessionUnreadSince = $state(0);
 let serverUnreadCount = $state(0);
 let serverUnreadUserCount = $state(0);
-let unreadJumpSeq = $state(0);
 let roomInitSeq = $state(0);
 let isRoomReady = $state(false);
 let pinnedUids = $state<string[]>([]);
@@ -1654,6 +1690,7 @@ function clearReconnectTimer() {
 
 function handleNetworkOffline() {
 	if (isUnmounted) return;
+	finishHistoryLoad();
 	connectionState = "offline";
 	clearReconnectTimer();
 	const socket = ws;
@@ -1751,6 +1788,7 @@ function connectRoom(roomId: string) {
 
 		switch (packet.type) {
 			case "room:init": {
+				if (packet.roomId !== currentRoom) break;
 				currentUser = packet.self;
 				if (packet.self) {
 					persistStoredChatUser(packet.self);
@@ -1769,12 +1807,11 @@ function connectRoom(roomId: string) {
 				}
 				messages = mergeRoomMessages(
 					packet.messages,
-					roomMessageCache.get(packet.roomId) ?? [],
+					isRoomReady ? messages : [],
 					Boolean(packet.hasMoreHistory),
 				);
 				hasMoreHistory = Boolean(packet.hasMoreHistory);
-				clearHistoryLoadTimer();
-				isLoadingHistory = false;
+				finishHistoryLoad();
 				const userKey = packet.self?.userKey || "guest";
 				lastMarkedServerReadAt = 0;
 				lastMarkedServerReadUid = "";
@@ -1847,28 +1884,30 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "chat:history_batch": {
-				if (packet.roomId === currentRoom) {
-					clearHistoryLoadTimer();
-					isLoadingHistory = false;
-					hasMoreHistory = Boolean(packet.hasMoreHistory);
-					if (packet.messages.length > 0) {
-						const existingIds = new Set(messages.map((m) => m.msgUid));
-						const prepended = packet.messages.filter(
-							(m) => !existingIds.has(m.msgUid),
-						);
-						if (prepended.length > 0) {
-							messages = [...prepended, ...messages].sort(
-								(a, b) => a.createdAt - b.createdAt,
-							);
+				if (packet.roomId === currentRoom && isRoomReady) {
+					const buffer = pendingHistoryLoad?.buffer;
+					if (buffer) {
+						const oldest = packet.messages[0];
+						buffer.hasMore = Boolean(packet.hasMoreHistory);
+						if (oldest && oldest.msgUid !== buffer.oldest?.msgUid) {
+							buffer.oldest = oldest;
+							buffer.batches.push(packet.messages);
+							finishHistoryLoad(true);
+						} else if (!buffer.hasMore) {
+							finishHistoryLoad(true);
 						}
+						break;
 					}
+					const previousOldestUid = messages[0]?.msgUid;
+					hasMoreHistory = Boolean(packet.hasMoreHistory);
+					if (packet.messages.length > 0) prependHistory(packet.messages);
 					if (messages.length > 0) {
 						oldestHistoryId = messages[0].id;
 					} else if (packet.oldestHistoryId) {
 						oldestHistoryId = packet.oldestHistoryId;
 					}
-					if (packet.jumpTarget) {
-						unreadJumpSeq += 1;
+					if (!hasMoreHistory || messages[0]?.msgUid !== previousOldestUid) {
+						finishHistoryLoad(true);
 					}
 				}
 				break;
@@ -2133,9 +2172,9 @@ function connectRoom(roomId: string) {
 				const isCurrent = packet.roomId === currentRoom;
 				if (isCurrent) {
 					if (!messages.some((m) => m.msgUid === packet.message.msgUid)) {
-						messages = [...messages, packet.message];
+						messages = appendTimelineMessage(messages, packet.message);
 						if (
-							isDocumentHidden() &&
+							packet.message.kind !== "system" && isDocumentHidden() &&
 							isMentionedForUser(packet.message, currentUser)
 						) {
 							updateMentionDocumentTitle();
@@ -2147,7 +2186,7 @@ function connectRoom(roomId: string) {
 						cached &&
 						!cached.some((m) => m.msgUid === packet.message.msgUid)
 					) {
-						cacheRoomMessages(packet.roomId, [...cached, packet.message]);
+						cacheRoomMessages(packet.roomId, appendTimelineMessage(cached, packet.message));
 					}
 					if (packet.message.kind !== "system") {
 						const prevUids = roomUnreadUids[packet.roomId] || [];
@@ -2159,7 +2198,7 @@ function connectRoom(roomId: string) {
 						}
 					}
 					if (
-						isDocumentHidden() &&
+						packet.message.kind !== "system" && isDocumentHidden() &&
 						isMentionedForUser(packet.message, currentUser)
 					) {
 						updateMentionDocumentTitle();
@@ -2571,6 +2610,7 @@ function connectRoom(roomId: string) {
 
 	socket.addEventListener("close", () => {
 		if (ws !== socket || isUnmounted) return;
+		finishHistoryLoad();
 		if (!navigator.onLine) {
 			handleNetworkOffline();
 			return;
@@ -2632,8 +2672,7 @@ function handleRoomSelect(roomId: string) {
 	messages = roomMessageCache.get(roomId) ?? [];
 	hasMoreHistory = false;
 	oldestHistoryId = 0;
-	clearHistoryLoadTimer();
-	isLoadingHistory = false;
+	finishHistoryLoad();
 	pinnedUids = [];
 	pinnedDetails = [];
 	roomTopic = "";
@@ -2938,35 +2977,75 @@ function handleSendMessage(
 	sendPacket(packet);
 }
 
-function handleLoadHistory(sinceCreatedAt = 0, jumpTarget = false) {
-	if (isLoadingHistory) return;
-	const oldestMsg = messages[0];
+function handleLoadHistory(buffer?: HistoryBuffer): Promise<boolean> {
+	if (pendingHistoryLoad) return pendingHistoryLoad.promise;
+	if (!isRoomReady || !(buffer?.hasMore ?? hasMoreHistory)) {
+		return Promise.resolve(false);
+	}
+	const oldestMsg = buffer?.oldest ?? messages[0];
 	const oldestId = oldestMsg?.id || oldestHistoryId || 0;
 	const beforeUid = oldestMsg?.msgUid || "";
 	const beforeCreatedAt = oldestMsg?.createdAt || 0;
-	if (!beforeUid && !oldestId) return;
+	if (!beforeUid && !oldestId) return Promise.resolve(false);
+	let resolveHistory!: (loaded: boolean) => void;
+	const promise = new Promise<boolean>((resolve) => {
+		resolveHistory = resolve;
+	});
+	pendingHistoryLoad = { promise, resolve: resolveHistory, buffer };
 	isLoadingHistory = true;
-	clearHistoryLoadTimer();
-	historyLoadTimeoutTimer = window.setTimeout(() => {
-		isLoadingHistory = false;
-		historyLoadTimeoutTimer = null;
-	}, 10000);
+	historyLoadTimeoutTimer = window.setTimeout(finishHistoryLoad, 10000);
 	const ok = sendPacket({
 		type: "chat:load_history",
 		beforeId: oldestId,
 		beforeUid: beforeUid || undefined,
 		beforeCreatedAt: beforeCreatedAt > 0 ? beforeCreatedAt : undefined,
-		sinceCreatedAt: sinceCreatedAt > 0 ? sinceCreatedAt : undefined,
-		jumpTarget,
 	});
 	if (!ok) {
-		clearHistoryLoadTimer();
+		finishHistoryLoad();
+	}
+	return promise;
+}
+
+async function handleLoadHistoryForJump(
+	target: { uid?: string; since?: number },
+	stillCurrent: () => boolean,
+): Promise<boolean> {
+	if (pendingHistoryLoad) await pendingHistoryLoad.promise;
+	if (!stillCurrent()) return false;
+	const buffer: HistoryBuffer = {
+		batches: [],
+		oldest: messages[0],
+		hasMore: hasMoreHistory,
+	};
+	const matchesTarget = (message: ChatMessageRecord) =>
+		message.msgUid === target.uid || message.matrixEventId === target.uid;
+	let found = Boolean(target.uid && messages.some(matchesTarget));
+	let loaded = true;
+	try {
+		while (
+			buffer.hasMore &&
+			(target.uid ? !found : (buffer.oldest?.createdAt ?? 0) > (target.since ?? 0))
+		) {
+			loaded = await handleLoadHistory(buffer);
+			if (!loaded || !stillCurrent()) break;
+			const batch = buffer.batches.at(-1);
+			found = Boolean(target.uid && batch?.some(matchesTarget));
+		}
+		if (!stillCurrent()) return false;
+		// Publish all pages together so the visible rows stay mounted during the search.
+		if (buffer.batches.length > 0) {
+			prependHistory(buffer.batches.reverse().flat());
+			oldestHistoryId = messages[0]?.id ?? oldestHistoryId;
+		}
+		hasMoreHistory = buffer.hasMore;
+		return loaded;
+	} finally {
 		isLoadingHistory = false;
 	}
 }
 
-function handleMarkRead(timestamp: number, msgUid?: string) {
-	if (!isRoomReady || !Number.isFinite(timestamp) || timestamp <= 0) return;
+function handleMarkRead(timestamp: number, msgUid?: string): boolean {
+	if (!isRoomReady || !Number.isFinite(timestamp) || timestamp <= 0) return false;
 	// 严格门控：仅在连接正常、前台可见、窗口真正聚焦、未处于离开态、且聊天面板未被抽屉/分屏侧栏遮挡时才允许标记已读
 	if (
 		connectionState !== "connected" ||
@@ -2974,19 +3053,19 @@ function handleMarkRead(timestamp: number, msgUid?: string) {
 		!isEffectiveFocused ||
 		!isDocumentActivelyVisibleAndFocused()
 	) {
-		return;
+		return false;
 	}
 	if (!currentUser) {
 		persistUserLastSeen(currentRoom, "guest", timestamp);
-		return;
+		return true;
 	}
-	if (ws?.readyState !== WebSocket.OPEN) return;
+	if (ws?.readyState !== WebSocket.OPEN) return false;
 	const shouldSend =
 		timestamp > lastMarkedServerReadAt ||
 		(Boolean(msgUid) &&
 			msgUid !== lastMarkedServerReadUid &&
 			timestamp >= lastMarkedServerReadAt);
-	if (!shouldSend) return;
+	if (!shouldSend) return true;
 	// 确保服务端先收到当前连接的聚焦状态，再收到 chat:mark_read
 	reportFocusState();
 	lastMarkedServerReadAt = Math.max(lastMarkedServerReadAt, timestamp);
@@ -3001,6 +3080,7 @@ function handleMarkRead(timestamp: number, msgUid?: string) {
 			...(msgUid ? { msgUid } : {}),
 		}),
 	);
+	return true;
 }
 
 function handleRecallMessage(msgUid: string) {
@@ -3666,7 +3746,7 @@ onMount(() => {
 		}
 		isUnmounted = true;
 		updatePlaybackDiagnostic(null, null, "", false);
-		clearHistoryLoadTimer();
+		finishHistoryLoad();
 		clearAllTypingTimers();
 		if (secondaryStartupTimer !== null) {
 			window.clearTimeout(secondaryStartupTimer);
@@ -3835,7 +3915,6 @@ onMount(() => {
           sessionUnreadSince={sessionUnreadSince}
           serverUnreadCount={serverUnreadCount}
           serverUnreadUserCount={serverUnreadUserCount}
-          unreadJumpSeq={unreadJumpSeq}
           roomReady={isRoomReady}
           roomInitSeq={roomInitSeq}
           currentUser={currentUser}
@@ -3853,6 +3932,7 @@ onMount(() => {
           onVoteSkip={handleVoteSkip}
           onPlayQueued={handlePlayQueued}
           onLoadHistory={handleLoadHistory}
+          onLoadHistoryForJump={handleLoadHistoryForJump}
           onMarkRead={handleMarkRead}
           onClearTargetMessage={() => {
             targetMessageUid = "";

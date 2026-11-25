@@ -30,6 +30,33 @@
     'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
 }
 
+@media (width < 768px) {
+    :root {
+        --mobile-type-caption: 12px;
+        --mobile-type-meta: 13px;
+        --mobile-type-label: 14px;
+        --mobile-type-body: 15px;
+        --mobile-type-section: 16px;
+        --mobile-type-title: 18px;
+        --mobile-type-input: 16px;
+    }
+
+    @layer base {
+        /* 旧控件的字号工具类也可能带 !，用 base 层保证手机输入字号。 */
+        :is(
+            input:not([type]),
+            input:is([type="" i], [type="text" i], [type="search" i], [type="email" i], [type="password" i], [type="url" i], [type="tel" i], [type="number" i], [type="date" i], [type="datetime-local" i], [type="month" i], [type="week" i], [type="time" i]),
+            textarea,
+            select,
+            [contenteditable=""],
+            [contenteditable="true" i],
+            [contenteditable="plaintext-only" i]
+        ) {
+            font-size: var(--mobile-type-input) !important;
+        }
+    }
+}
+
 /* 自定义工具类 - Tailwind v4 使用 @utility 定义 */
 @utility expand-animation {
   position: relative;

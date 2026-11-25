@@ -199,6 +199,7 @@ let offlineListEl: HTMLDivElement | null = $state(null);
 let memberScrollTop = $state(0);
 let memberViewportH = $state(600);
 let offlineSectionOffset = $state(0);
+let offlineRowPitch = $state(OFFLINE_ROW_H);
 let memberScrollRaf: number | null = null;
 
 let spectatorScrollTop = $state(0);
@@ -222,7 +223,11 @@ function handleSpectatorScroll(e: Event) {
 }
 
 function measureOfflineOffset() {
-	if (offlineListEl) offlineSectionOffset = offlineListEl.offsetTop;
+	if (!offlineListEl) return;
+	offlineSectionOffset = offlineListEl.offsetTop;
+	offlineRowPitch =
+		Number.parseFloat(getComputedStyle(offlineListEl).getPropertyValue("--chat-offline-row-pitch")) ||
+		OFFLINE_ROW_H;
 }
 
 function syncMemberMetrics() {
@@ -278,7 +283,7 @@ $effect(() => {
 const offlineVirtual = $derived.by(() => {
 	const list = offlineMembers;
 	const len = list.length;
-	const rowH = OFFLINE_ROW_H;
+	const rowH = offlineRowPitch;
 	if (len <= VIRTUAL_OFFLINE_THRESHOLD) {
 		return offlineWindowMemo(list, `${len}:0:${len}:${rowH}`, () => ({
 			items: list,
@@ -424,7 +429,7 @@ function formatOfflineTime(ts?: number): string {
 <div class="flex flex-col h-full w-full select-none min-h-0">
   <!-- 面板顶栏 -->
   <div class="chat-panel-header">
-    <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 flex items-center gap-2">
+    <div class="chat-drawer-heading font-bold text-sm text-[var(--deep-text)] dark:text-white/90 flex items-center gap-2">
       {#if onCloseSplitRoom}
         <button
           type="button"
@@ -507,7 +512,7 @@ function formatOfflineTime(ts?: number): string {
         <img
           src={getDownscaledAvatarUrl(rawRoomAvatar) || rawRoomAvatar}
           alt={room.name}
-          class="w-9 h-9 md:w-8 md:h-8 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
+          class="chat-room-thumbnail w-9 h-9 md:w-8 md:h-8 rounded-lg object-cover shrink-0 ring-1 ring-black/10 dark:ring-white/15"
           loading="eager"
           fetchpriority="low"
           decoding="async"
@@ -519,7 +524,7 @@ function formatOfflineTime(ts?: number): string {
           }}
         />
       {:else}
-        <span class="w-9 h-9 md:w-8 md:h-8 rounded-lg flex items-center justify-center bg-black/5 dark:bg-white/10 font-mono text-sm font-bold opacity-70 shrink-0">#</span>
+        <span class="chat-room-thumbnail w-9 h-9 md:w-8 md:h-8 rounded-lg flex items-center justify-center bg-black/5 dark:bg-white/10 font-mono text-sm font-bold opacity-70 shrink-0">#</span>
       {/if}
       <div class="flex-1 min-w-0 flex flex-col">
         <span class="chat-room-item-name truncate leading-tight">#{room.name}</span>
@@ -614,7 +619,7 @@ function formatOfflineTime(ts?: number): string {
 
           <div
             bind:this={offlineListEl}
-            class="space-y-1 mt-0.5"
+            class="chat-offline-list space-y-1 mt-0.5"
             style="contain: layout style;"
           >
             {#if offlineVirtual.topSpacerPx > 0}
@@ -679,7 +684,7 @@ function formatOfflineTime(ts?: number): string {
 
           <div
             bind:this={offlineListEl}
-            class="space-y-1 mt-0.5"
+            class="chat-offline-list space-y-1 mt-0.5"
             style="contain: layout style;"
           >
             {#if offlineVirtual.topSpacerPx > 0}

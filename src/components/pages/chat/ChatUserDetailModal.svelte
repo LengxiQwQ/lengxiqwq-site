@@ -1543,7 +1543,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             <button
               type="button"
               disabled={mentionDisabled}
-              class="{mentionDisabled ? 'bg-black/5 dark:bg-white/5 text-[var(--chat-meta-color)] opacity-50 cursor-not-allowed select-none' : 'chat-send-btn'} flex-1 h-9! rounded-xl! text-xs! truncate px-3!"
+              class="{mentionDisabled ? 'chat-dialog-secondary-action bg-black/5 dark:bg-white/5 text-[var(--chat-meta-color)] opacity-50 cursor-not-allowed select-none' : 'chat-send-btn'} flex-1 h-9! rounded-xl! text-xs! truncate px-3!"
               aria-label={mentionDisabled ? "仅可在互联茶室中提及站外茶友" : `在聊天中 @${mentionDisplayName}`}
               onclick={() => {
                 if (mentionDisabled) return;

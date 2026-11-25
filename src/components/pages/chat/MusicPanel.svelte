@@ -596,7 +596,9 @@ let playlistMetaHeight = $state(0);
 let isCompactPlaylistHeader = $state(false);
 let playlistScrollTop = $state(0);
 let playlistViewportH = $state(480);
+let musicPanelEl: HTMLElement | null = $state(null);
 let playlistRowHeight = $state(52);
+let desktopPlaylistRowHeight = 52;
 let playlistScrollRaf: number | null = null;
 
 let historyScrollEl: HTMLDivElement | null = $state(null);
@@ -2450,16 +2452,20 @@ function handlePlaylistScroll(e: Event): void {
 	});
 }
 
-// 行高由容器宽度与断点确定一次即可，避免虚拟滚动换页时反复重建 ResizeObserver
+// 歌单与历史共用列表行距，跨手机断点时同步虚拟滚动的估算。
 $effect(() => {
-	const el = playlistScrollEl;
+	const el = musicPanelEl;
 	if (!el) return;
+	if (playlistScrollEl) desktopPlaylistRowHeight = 50;
+	const phoneQuery = window.matchMedia("(width < 768px)");
 	const syncRowH = () => {
-		const isDesktop = window.innerWidth >= 768;
-		const nextH = isDesktop ? 50 : 62;
-		if (nextH !== playlistRowHeight) playlistRowHeight = nextH;
+		playlistRowHeight =
+			Number.parseFloat(getComputedStyle(el).getPropertyValue("--chat-track-row-pitch")) ||
+			desktopPlaylistRowHeight;
 	};
 	syncRowH();
+	phoneQuery.addEventListener("change", syncRowH);
+	return () => phoneQuery.removeEventListener("change", syncRowH);
 });
 
 $effect(() => {
@@ -3339,8 +3345,20 @@ $effect(() => {
 });
 </script>
 
-<aside class="flex flex-col h-full w-full min-h-0 overflow-hidden select-none" aria-label="点歌台">
+<aside bind:this={musicPanelEl} class="chat-music-panel flex flex-col h-full w-full min-h-0 overflow-hidden select-none" aria-label="点歌台">
   <div class="chat-music-panel-topbar">
+  {#if onClose}
+    <button
+      type="button"
+      class="chat-tool-btn chat-panel-close-btn md:hidden"
+      aria-label="关闭点歌台"
+      onclick={onClose}
+    >
+      <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="m6 6 12 12M18 6 6 18" />
+      </svg>
+    </button>
+  {/if}
   <!-- 其他页签用迷你播放条替代标题 -->
   {#if activeTab !== "player" && currentPlay}
     <MiniPlayerBar
@@ -3362,24 +3380,11 @@ $effect(() => {
       onToggleListen={() => toggleListen()}
       onSkipTrack={onSkipTrack}
       onVoteSkip={onVoteSkip}
-      {onClose}
     />
   {:else}
   <!-- 顶栏标题 -->
   <div class="chat-panel-header">
-    <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 flex items-center gap-2">
-      {#if onClose}
-        <button
-          type="button"
-          class="chat-tool-btn chat-panel-close-btn shrink-0 md:hidden"
-          aria-label="关闭点歌台"
-          onclick={onClose}
-        >
-          <svg class="w-[1.15rem] h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-            <path d="m6 6 12 12M18 6 6 18" />
-          </svg>
-        </button>
-      {/if}
+    <div class="chat-drawer-heading font-bold text-sm text-[var(--deep-text)] dark:text-white/90 flex items-center gap-2">
       <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M9 18V5l12-2v13" />
         <circle cx="6" cy="18" r="3" />
@@ -3514,7 +3519,7 @@ $effect(() => {
     {@const action = rotationAction?.entryId === (item.entryId ?? item.id) ? rotationAction : undefined}
     {@const isCurrent = item.entryId ? currentPlay?.track.id === item.id : isTrackCurrent(toTrack)}
     <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-      <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
+      <div class="chat-music-thumb-small w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.pic}
           <img src={resolveMusicThumbUrl(item.pic)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
         {:else}
@@ -3641,8 +3646,8 @@ $effect(() => {
     {@const songLookupKey = song.id || getTrackTitleArtistKey(song.title, song.artist)}
     {@const isToggling = songLookupKey ? favoriteTogglingTrackIds.has(songLookupKey) : false}
     {@const hasSparkle = songLookupKey ? favSparkleTrackIds.has(songLookupKey) : false}
-    <div class="chat-virtual-row flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-      <div class="w-10 h-10 md:w-8 md:h-8 rounded-lg md:rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
+    <div class="chat-music-track-row chat-virtual-row flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+      <div class="chat-music-thumb w-10 h-10 md:w-8 md:h-8 rounded-lg md:rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
         <span class="text-xs text-(--primary)/70 select-none" aria-hidden="true">♪</span>
         {#if thumbCover}
           {#key thumbCover}
@@ -3862,7 +3867,7 @@ $effect(() => {
 
   {#snippet queuedTrackRow(item: QueueEntry)}
     <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-      <div class="w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
+      <div class="chat-music-thumb-small w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.track.cover}
           <img src={resolveMusicThumbUrl(item.track.cover)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
         {:else}
@@ -3919,7 +3924,7 @@ $effect(() => {
       <div class="px-4 pt-3 pb-1.5 shrink-0">
         <!-- 顶部行：左 w-20 正方形圆角大封面 + 右 三排文字（歌名、歌手/专辑、点歌人） -->
         <div class="flex items-center gap-3 mb-2.5">
-          <div class="relative shrink-0 w-20 h-20 rounded-xl overflow-hidden shadow-sm border border-black/5 dark:border-white/10 bg-(--primary)/10 flex items-center justify-center">
+          <div class="chat-music-player-cover relative shrink-0 w-20 h-20 rounded-xl overflow-hidden shadow-sm border border-black/5 dark:border-white/10 bg-(--primary)/10 flex items-center justify-center">
             <svg class="w-8 h-8 text-(--primary) opacity-40 absolute" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
             </svg>
@@ -3933,7 +3938,7 @@ $effect(() => {
             {/if}
           </div>
 
-          <div class="flex-1 min-w-0 h-20 flex flex-col justify-between py-0.5 select-text">
+          <div class="chat-music-player-details flex-1 min-w-0 h-20 flex flex-col justify-between py-0.5 select-text">
             <!-- 第一排：歌曲名称 -->
             <h3
               class="font-bold text-sm sm:text-base text-[var(--deep-text)] leading-snug truncate m-0 select-text cursor-text"
@@ -4339,7 +4344,7 @@ $effect(() => {
                 {#if musicState}
                   <button
                     type="button"
-                    class="chat-send-btn h-9! px-5! rounded-full! text-[13px]! gap-1.5"
+                    class="chat-send-btn h-9! px-5! rounded-full! text-[13px]! max-md:text-[14px]! gap-1.5"
                     onclick={() => switchMusicTab("search")}
                   >
                     <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -4879,7 +4884,7 @@ $effect(() => {
           onpointerleave={cancelPlaylistDetailPrefetch}
           onclick={() => openPlaylistDetail(pl.id, false, pl)}
         >
-          <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+          <div class="chat-music-thumb w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
             {#if pl.id === "pl_collective_favorites"}
               {@render collectiveCover()}
             {:else if pl.coverUrl}
@@ -5061,7 +5066,7 @@ $effect(() => {
           <!-- 第 2 行：封面图 + 歌单信息 (如果是共享歌单，操作按钮放在同一行右侧) -->
           <div class="flex items-center justify-between gap-2.5">
             <div class="flex items-center gap-2.5 min-w-0 flex-1">
-              <div class="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
+              <div class="chat-music-thumb w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
                 {#if selectedPlaylist.id === "pl_collective_favorites"}
                   {@render collectiveCover()}
                 {:else if selectedPlaylist.coverUrl}
@@ -5543,7 +5548,7 @@ $effect(() => {
             {#if playlistVirtual.topSpacerPx > 0}
               <div style="height: {playlistVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
             {/if}
-            <div class="space-y-0.5" style="contain: layout style;">
+            <div class="chat-music-track-list space-y-0.5" style="contain: layout style;">
               {#each playlistVirtual.items as item (`${selectedPlaylist.id}-${item.position}`)}
                 {@const track = toEnqueueableTrack(item, selectedPlaylist.id)}
                 {@const isCollective = selectedPlaylist.id === "pl_collective_favorites"}
@@ -5898,7 +5903,7 @@ $effect(() => {
         {#if historyVirtual.topSpacerPx > 0}
           <div style="height: {historyVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
         {/if}
-        <div class="space-y-0.5" style="contain: layout style;">
+        <div class="chat-music-track-list space-y-0.5" style="contain: layout style;">
           {#each historyVirtual.items as entry (`${entry.track.id}-${historyFilterType}-${historySort}-${selectedRequesterKey}`)}
             {@const subtitle = [
               entry.track.artist,
@@ -5948,12 +5953,12 @@ $effect(() => {
     {:else if rotationLoadError}
       <div class="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
         <p role="alert" class="m-0 text-[13px] text-red-500">{rotationLoadError}</p>
-        <button type="button" class="rounded-lg px-3 py-2 text-[13px] border border-[var(--chat-divider-color)]" onclick={() => void loadRotationSettings()}>重试</button>
+        <button type="button" class="chat-dialog-action rounded-lg px-3 py-2 text-[13px] border border-[var(--chat-divider-color)]" onclick={() => void loadRotationSettings()}>重试</button>
       </div>
     {:else}
     <form class="flex flex-1 flex-col min-h-0 overflow-hidden" onsubmit={(event) => { event.preventDefault(); void handleSaveRotation(); }}>
       <!-- 双栏主体容器：桌面端左右分割，移动端上下堆叠 -->
-      <div class="flex-1 min-h-0 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-[var(--chat-divider-color)] overflow-hidden">
+      <div class="chat-rotation-body flex-1 min-h-0 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-[var(--chat-divider-color)] overflow-hidden">
         <!-- 左栏：播放状态与轮播模式设置（移动端精简紧凑并横排展示） -->
         <div class="w-full md:w-[320px] lg:w-[340px] shrink-0 flex flex-col md:overflow-y-auto custom-scrollbar p-3 sm:p-3.5 md:p-4 space-y-2.5 md:space-y-4 bg-[var(--skin-surface)]">
           <!-- 当前播放状态卡片：桌面端展示，手机端隐藏以极大释放歌单选择空间 -->
@@ -5987,9 +5992,9 @@ $effect(() => {
           </section>
 
           <!-- 轮播模式单选组：手机端横排紧凑切换，去除冗余小字解释 -->
-          <fieldset class="border-0 p-0 m-0 space-y-1.5 md:space-y-2" disabled={rotationSaving}>
+          <fieldset class="chat-rotation-options border-0 p-0 m-0 space-y-1.5 md:space-y-2" aria-labelledby="chat-rotation-mode-title" disabled={rotationSaving}>
             <div class="flex items-center justify-between">
-              <legend class="text-[13.5px] sm:text-xs font-bold text-[var(--deep-text)]">轮播模式</legend>
+              <span id="chat-rotation-mode-title" class="chat-sheet-section-title text-[13.5px] sm:text-xs font-bold text-[var(--deep-text)]">轮播模式</span>
               <span class="hidden md:inline text-[11px] text-[var(--chat-meta-color)]">队列为空时策略</span>
             </div>
             <div class="grid grid-cols-3 gap-1.5 md:flex md:flex-col md:gap-2">
@@ -6014,10 +6019,10 @@ $effect(() => {
                 }
               ] as option (option.value)}
                 {@const isSelected = rotationMode === option.value}
-                <label class="group relative flex flex-col md:flex-row items-center md:items-start justify-center md:justify-start gap-1 md:gap-3 rounded-xl border py-2 px-2.5 md:p-3 cursor-pointer text-center md:text-left transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/40 hover:bg-(--btn-plain-bg-hover)'}">
+                <label class="chat-rotation-mode group relative flex flex-col md:flex-row items-center md:items-start justify-center md:justify-start gap-1 md:gap-3 rounded-xl border py-2 px-2.5 md:p-3 cursor-pointer text-center md:text-left transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/40 hover:bg-(--btn-plain-bg-hover)'}">
                   <input type="radio" name="rotation-mode" value={option.value} bind:group={rotationMode} class="sr-only md:not-sr-only md:mt-0.5 shrink-0 accent-(--primary)" />
                   <span class="min-w-0 flex-1 w-full">
-                    <span class="block text-[13.5px] sm:text-[13px] font-semibold truncate {isSelected ? 'text-(--primary)' : 'text-[var(--deep-text)]'}">
+                    <span class="chat-rotation-mode-title block text-[13.5px] sm:text-[13px] font-semibold truncate {isSelected ? 'text-(--primary)' : 'text-[var(--deep-text)]'}">
                       <span class="md:hidden">{option.shortTitle}</span>
                       <span class="hidden md:inline">{option.title}</span>
                     </span>
@@ -6031,14 +6036,14 @@ $effect(() => {
         </div>
 
         <!-- 右栏：专门显示歌单选择与预览 -->
-        <div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-[var(--chat-surface-soft)]/20">
+        <div class="chat-rotation-results flex-1 min-w-0 flex flex-col overflow-hidden bg-[var(--chat-surface-soft)]/20">
           {#if rotationMode === "playlist"}
             <!-- 指定歌单模式：支持搜索、全选/清空、多选列表 -->
             <div class="shrink-0 px-3 sm:px-4 py-2 sm:py-2.5 border-b border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/30">
-              <div class="flex items-center justify-between gap-2">
+              <div class="chat-rotation-toolbar flex items-center justify-between gap-2">
                 <!-- 标题与已选计数 -->
-                <div class="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                  <span class="text-[14px] sm:text-xs font-bold text-[var(--deep-text)] whitespace-nowrap">
+                <div class="chat-rotation-selection flex items-center gap-1.5 sm:gap-2 min-w-0">
+                  <span class="chat-sheet-section-title text-[14px] sm:text-xs font-bold text-[var(--deep-text)] whitespace-nowrap">
                     <span class="sm:hidden">选择歌单</span>
                     <span class="hidden sm:inline">选择轮播歌单</span>
                   </span>
@@ -6046,7 +6051,7 @@ $effect(() => {
                     已选 {validSelectedRotationIds.length} / {rotationChoices.length}
                   </span>
                 </div>
-                <!-- 桌面端搜索与按钮组 / 手机端全选与清空按钮（提高触控高度至 32px） -->
+                <!-- 桌面搜索和全选 / 清空操作 -->
                 <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
                   {#if rotationChoices.length > 3}
                     <div class="relative hidden md:block w-36">
@@ -6080,16 +6085,16 @@ $effect(() => {
                 </div>
               </div>
 
-              <!-- 手机端独立全宽搜索栏：36px 舒适高度，16px 字号彻底杜绝 iOS 自动放大视口 -->
+              <!-- 手机端独立的全宽搜索栏 -->
               {#if rotationChoices.length > 3}
-                <div class="relative w-full mt-2 md:hidden">
+                <div class="chat-rotation-search relative w-full mt-2 md:hidden">
                   <input
                     type="text"
                     bind:value={rotationPlaylistSearch}
                     placeholder="搜索歌单名称..."
                     class="w-full h-9 pl-8 pr-8 text-base rounded-xl border border-[var(--chat-divider-color)] bg-[var(--skin-surface)] text-[var(--skin-text)] focus:outline-none focus:border-(--primary) placeholder:text-[var(--chat-meta-color)] placeholder:text-xs"
                   />
-                  <svg class="w-3.5 h-3.5 absolute left-2.5 top-3 text-[var(--chat-meta-color)] pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <svg class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--chat-meta-color)] pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
                   </svg>
                   {#if rotationPlaylistSearch}
@@ -6107,9 +6112,9 @@ $effect(() => {
             </div>
 
             <fieldset class="flex-1 min-h-0 border-0 p-0 m-0 flex flex-col overflow-hidden" disabled={rotationSaving}>
-              <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2.5 sm:p-3 md:p-4 space-y-1.5 sm:space-y-2" onscroll={handleRotationScroll}>
+              <div class="chat-rotation-list flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2.5 sm:p-3 md:p-4 space-y-1.5 sm:space-y-2" onscroll={handleRotationScroll}>
                 {#if filteredRotationChoices.length === 0}
-                  <div class="flex flex-col items-center justify-center h-full min-h-[220px] text-center p-6 text-[var(--chat-meta-color)]">
+                  <div class="flex flex-col items-center justify-center min-h-full md:h-full md:min-h-[220px] text-center p-6 text-[var(--chat-meta-color)] max-md:[overflow-wrap:anywhere]">
                     {#if rotationPlaylistSearch.trim()}
                       <svg class="w-8 h-8 opacity-40 mb-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                         <circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" />
@@ -6126,10 +6131,10 @@ $effect(() => {
                   {#if rotationChoicesVirtual.topSpacerPx > 0}
                     <div style="height: {rotationChoicesVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
                   {/if}
-                  <div class="space-y-1.5 sm:space-y-2" style="contain: layout style;">
+                  <div class="chat-rotation-rows space-y-1.5 sm:space-y-2" style="contain: layout style;">
                     {#each rotationChoicesVirtual.items as playlist (playlist.id)}
                       {@const isSelected = rotationPlaylistIds.includes(playlist.id)}
-                      <label class="group flex items-center gap-2.5 sm:gap-3 p-2 sm:p-2.5 rounded-xl border cursor-pointer transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/30 hover:bg-(--btn-plain-bg-hover)'}">
+                      <label class="chat-rotation-row group flex items-center gap-2.5 sm:gap-3 p-2 sm:p-2.5 rounded-xl border cursor-pointer transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/30 hover:bg-(--btn-plain-bg-hover)'}">
                         <input
                           type="checkbox"
                           checked={isSelected}
@@ -6148,8 +6153,8 @@ $effect(() => {
                           {/if}
                         </div>
                         <div class="min-w-0 flex-1">
-                          <span class="block truncate text-[14px] sm:text-[13px] font-semibold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
-                          <div class="flex items-center gap-1.5 mt-0.5 text-xs text-[var(--chat-meta-color)]">
+                          <span class="chat-sheet-primary block truncate text-[14px] sm:text-[13px] font-semibold text-[var(--deep-text)] group-hover:text-(--primary) transition-colors">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
+                          <div class="chat-sheet-meta flex items-center gap-1.5 mt-0.5 text-xs text-[var(--chat-meta-color)]">
                             <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-[var(--chat-divider-color)]/70 text-[var(--chat-meta-color)]">
                               {formatPlatformLabel(playlist.platform)}
                             </span>
@@ -6170,8 +6175,8 @@ $effect(() => {
           {:else if rotationMode === "all"}
             <!-- 全部公开歌单模式：展示包含的所有歌单列表概览 -->
             <div class="shrink-0 flex items-center justify-between gap-2 px-3 sm:px-4 py-2 sm:py-2.5 border-b border-[var(--chat-divider-color)] bg-(--btn-regular-bg)/30">
-              <div class="flex items-center gap-2 min-w-0">
-                <span class="text-[13.5px] sm:text-xs font-bold text-[var(--deep-text)]">轮播歌曲来源</span>
+              <div class="chat-rotation-selection flex items-center gap-2 min-w-0">
+                <span class="chat-sheet-section-title text-[13.5px] sm:text-xs font-bold text-[var(--deep-text)]">轮播歌曲来源</span>
                 <span class="px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-medium bg-(--primary)/15 text-(--primary) whitespace-nowrap">
                   已全选（共 {rotationChoices.length} 个公开歌单）
                 </span>
@@ -6198,8 +6203,8 @@ $effect(() => {
                     {/if}
                   </div>
                   <div class="min-w-0 flex-1">
-                    <span class="block truncate text-[14px] sm:text-[13px] font-semibold text-[var(--deep-text)]">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
-                    <div class="flex items-center gap-1.5 mt-0.5 text-xs text-[var(--chat-meta-color)]">
+                    <span class="chat-sheet-primary block truncate text-[14px] sm:text-[13px] font-semibold text-[var(--deep-text)]">{playlist.id === "pl_collective_favorites" ? "全站收藏" : playlist.title}</span>
+                    <div class="chat-sheet-meta flex items-center gap-1.5 mt-0.5 text-xs text-[var(--chat-meta-color)]">
                       <span class="px-1.5 py-0.2 rounded text-[10px] font-medium bg-[var(--chat-divider-color)]/70 text-[var(--chat-meta-color)]">{formatPlatformLabel(playlist.platform)}</span>
                       <span>{playlist.trackCount} 首</span>
                       <span>·</span>
@@ -6229,7 +6234,7 @@ $effect(() => {
               </div>
               <button
                 type="button"
-                class="mt-1 px-3.5 py-1.5 text-xs font-semibold rounded-lg border border-(--primary)/30 text-(--primary) hover:bg-(--primary)/10 active:scale-95 transition-all"
+                class="chat-dialog-action mt-1 px-3.5 py-1.5 text-xs font-semibold rounded-lg border border-(--primary)/30 text-(--primary) hover:bg-(--primary)/10 active:scale-95 transition-all"
                 onclick={() => rotationMode = "playlist"}
               >
                 开启指定歌单轮播
@@ -6240,12 +6245,12 @@ $effect(() => {
       </div>
 
       <!-- 底部操作与状态栏 -->
-      <div class="shrink-0 flex items-center justify-between gap-2.5 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 border-t border-[var(--chat-divider-color)] bg-[var(--skin-surface)]">
-        <div class="min-w-0 flex-1 pr-1 sm:pr-2">
+      <div class="chat-rotation-actions shrink-0 flex items-center justify-between gap-2.5 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 border-t border-[var(--chat-divider-color)] bg-[var(--skin-surface)]">
+        <div class="chat-rotation-status min-w-0 flex-1 pr-1 sm:pr-2">
           {#if rotationError}
             <p role="alert" class="m-0 text-xs text-red-500 truncate">{rotationError}</p>
           {:else if rotationMode === "playlist" && validSelectedRotationIds.length === 0}
-            <p class="m-0 text-xs text-amber-500 truncate">⚠️ 请至少勾选一个歌单</p>
+            <p class="m-0 text-xs text-amber-500 max-md:text-amber-700 max-md:dark:text-amber-400 truncate">⚠️ 请至少勾选一个歌单</p>
           {:else}
             <div class="hidden sm:flex items-center gap-2 text-[11px] text-[var(--chat-meta-color)]">
               <span class="inline-flex items-center gap-1 font-medium text-[var(--deep-text)] shrink-0">
@@ -6272,7 +6277,7 @@ $effect(() => {
           <button
             type="submit"
             disabled={rotationSaving || !canSaveRotation}
-            class="rounded-lg border-none bg-(--primary) px-4 py-2 text-[13px] font-semibold text-white shadow-xs hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            class="chat-dialog-primary-action rounded-lg border-none bg-(--primary) px-4 py-2 text-[13px] font-semibold text-white shadow-xs hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           >
             {rotationSaving ? "保存中..." : "保存设置"}
           </button>

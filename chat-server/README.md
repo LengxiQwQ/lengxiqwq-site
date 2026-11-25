@@ -69,3 +69,6 @@ python3 scripts/backfill-chat-image-dimensions.py /path/to/chat-data-copy \
 `server.mjs` 里的 `LOTTIE_SPRITE_KEYS` 必须与 `src/components/pages/chat/stickerLoader.ts` 的同名数组保持一致，增删或调整表情顺序时要同时更新两处，并重新跑一次 `pnpm lottie:render`。
 
 出站 `m.sticker` 只在拿到真实 `mxc://` 时才发送；三步都失败时退回文字短码，不再发送占位的假 mxc 地址。网关侧依赖 VPS 自带 `/usr/bin/ffmpeg`（含 libwebp），可用 `curl -I https://chat-server.lengxiqwq.com/api/lottie/aini.webp` 验收兜底图。历史消息里已经上载的合集图不会自动修正。
+### Matrix 房间动态
+
+`gateway-matrix-room-activity.patch` 配合 `src/matrix-room-activity.mjs` 发布。补丁将 Matrix 实时事件及历史翻页中的房间动态写入互联茶室时间线。新版网关启动时检查最近三页 Matrix 历史，每页最多 100 个事件。发布候选先在当前网关入口副本校验补丁，再运行 `node --check server.mjs`。

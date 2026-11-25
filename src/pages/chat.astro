@@ -41,10 +41,6 @@ const stickerPackUrls = (commentConfig.waline?.emoji ?? []).filter(
             if (isIPhone) {
                 root.setAttribute("data-is-iphone", "true");
             }
-            var vp = document.querySelector('meta[name="viewport"]');
-            if (vp) {
-                vp.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover");
-            }
             try {
                 var wpCfg = chatWallpapers && typeof chatWallpapers === "object" ? chatWallpapers : { defaultOpacity: 0.42, defaults: {}, items: [] };
                 var wpItems = Array.isArray(wpCfg.items) ? wpCfg.items : [];

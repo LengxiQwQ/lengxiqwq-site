@@ -222,3 +222,9 @@ body.wallpaper-transparent .custom-md {
   }
 }
 
+@media (width < 768px) {
+  .custom-md.prose {
+    font-size: 16px;
+    line-height: 1.7;
+  }
+}

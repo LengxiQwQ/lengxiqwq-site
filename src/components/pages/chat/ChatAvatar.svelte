@@ -428,7 +428,7 @@ const fallbackTextColorClass = $derived(
   {/if}
 {:else}
   <!-- 极端离线/不可用兜底：中性灰色人像剪影 -->
-  <div
+  <span
     class="{boxClass} bg-neutral-200/90 dark:bg-neutral-800/90 inline-flex items-center justify-center shrink-0 {extraClass}"
     aria-label={alt || name || "默认头像"}
   >
@@ -440,5 +440,5 @@ const fallbackTextColorClass = $derived(
     >
       <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
     </svg>
-  </div>
+  </span>
 {/if}

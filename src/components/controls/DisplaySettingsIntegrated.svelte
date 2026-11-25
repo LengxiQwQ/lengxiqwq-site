@@ -1611,7 +1611,7 @@ $effect(() => {
 	<div class="flex gap-1 border-b border-black/5 dark:border-white/10 pt-3 pb-1 mb-3">
 		{#each visibleTabs as tab (tab.key)}
 			<button
-				class="focus-ring-inset flex-1 flex flex-col items-center justify-center gap-1.5 py-2 px-2 text-xs font-medium transition-colors rounded-lg min-w-0
+				class="display-settings-tab focus-ring-inset flex-1 flex flex-col items-center justify-center gap-1.5 py-2 px-2 text-xs font-medium transition-colors rounded-lg min-w-0
 					{activeTab === tab.key
 						? 'bg-(--btn-plain-bg-hover) text-(--primary)'
 						: 'text-gray-500 dark:text-gray-400 hover:bg-(--btn-plain-bg-hover) hover:text-gray-700 dark:hover:text-gray-300'}"
@@ -1714,7 +1714,7 @@ $effect(() => {
 					<!-- 四栏壁纸选择（线上/本地均可切换图片）与参数调校（仅本地 DEV 可用） -->
 					<div class="p-2 rounded-lg bg-black/[0.03] dark:bg-white/[0.04] border border-black/5 dark:border-white/10 space-y-2">
 						<div class="flex items-center justify-between gap-2">
-							<span class="text-[11px] font-medium text-(--btn-content) opacity-80">
+							<span class="display-settings-subtitle text-[11px] font-medium text-(--btn-content) opacity-80">
 								{isDev ? "四栏壁纸与固定参数（本地可调）" : "各栏壁纸选择"}
 							</span>
 							{#if isDev && isActivePanelTransformModified && activePresetItem && !activeSlotHasDevPreview}
@@ -1788,11 +1788,11 @@ $effect(() => {
 												}}
 											/>
 										{/if}
-										<span class="absolute bottom-0.5 right-0.5 px-1 py-px rounded text-[9px] leading-tight bg-black/60 text-white">
+										<span class="display-settings-wallpaper-type absolute bottom-0.5 right-0.5 px-1 py-px rounded text-[9px] leading-tight bg-black/60 text-white">
 											{wp.mode === "sticker" ? "贴纸" : "壁纸"}
 										</span>
 									</div>
-									<span class="px-1 py-0.5 text-[10px] truncate w-full text-(--btn-content) {isSelected ? 'text-(--primary) font-semibold' : ''}">
+								<span class="display-settings-wallpaper-name px-1 py-0.5 text-[10px] truncate w-full text-(--btn-content) {isSelected ? 'text-(--primary) font-semibold' : ''}">
 										{wp.name}
 									</span>
 								</button>

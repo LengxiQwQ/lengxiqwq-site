@@ -93,7 +93,7 @@ function handleSubmit() {
     <!-- 选项列表 -->
     <div>
       <div class="flex items-center justify-between mb-1.5">
-        <span class="text-xs font-semibold text-[var(--deep-text)] dark:text-white/90">
+        <span class="chat-dialog-option-title text-xs font-semibold text-[var(--deep-text)] dark:text-white/90">
           选项设置 <span class="text-red-500">*</span>
           <span class="text-[11px] font-normal text-[var(--chat-meta-color)]">
             ({options.length}/10)
@@ -102,7 +102,7 @@ function handleSubmit() {
         {#if options.length < 10}
           <button
             type="button"
-            class="text-xs text-[var(--skin-accent)] hover:underline border-none bg-transparent cursor-pointer font-medium"
+            class="chat-dialog-inline-action text-xs text-[var(--skin-accent)] hover:underline border-none bg-transparent cursor-pointer font-medium"
             onclick={addOption}
           >
             + 添加选项
@@ -141,7 +141,7 @@ function handleSubmit() {
     <!-- 投票模式与设置 -->
     <div class="rounded-xl bg-[var(--btn-regular-bg)] p-3 space-y-2.5">
       <div class="flex items-center justify-between">
-        <span class="text-xs font-medium text-[var(--deep-text)] dark:text-white/90">
+        <span class="chat-dialog-option-title text-xs font-medium text-[var(--deep-text)] dark:text-white/90">
           允许多选
         </span>
         <button

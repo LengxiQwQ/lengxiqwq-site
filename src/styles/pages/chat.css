@@ -852,6 +852,99 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	text-underline-offset: 2px;
 }
 
+.chat-room-activity {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	justify-items: center;
+	gap: 0.25rem;
+	margin: 0.375rem 0;
+}
+
+.chat-room-activity-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.375rem;
+	max-width: 100%;
+	min-width: 0;
+	min-height: 1.75rem;
+	padding: 0.25rem 0.75rem;
+	border: 0;
+	border-radius: 999px;
+	background: var(--skin-accent-soft);
+	color: var(--chat-meta-color);
+	font-size: 0.75rem;
+	cursor: pointer;
+}
+
+.chat-room-activity-toggle > span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.chat-room-activity-avatar {
+	display: inline-flex;
+	vertical-align: middle;
+	margin-inline-end: 0.25rem;
+}
+
+.chat-room-activity-toggle > svg {
+	flex-shrink: 0;
+}
+
+.chat-room-activity-toggle:hover {
+	color: var(--skin-accent);
+}
+
+.chat-room-activity-toggle:focus-visible {
+	outline: 2px solid var(--skin-accent);
+	outline-offset: 2px;
+}
+
+.chat-room-activity-toggle[aria-expanded="true"] > svg {
+	transform: rotate(180deg);
+}
+
+.chat-room-activity-list {
+	width: min(100%, 32rem);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.chat-room-activity-list li {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0 0.5rem;
+	border-bottom: 1px solid color-mix(in oklch, var(--chat-meta-color) 18%, transparent);
+}
+
+.chat-room-activity-list li > div {
+	flex: 1;
+	min-width: 0;
+	justify-content: flex-start;
+}
+
+.chat-room-activity-list .chat-system-msg {
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	background: transparent;
+	color: var(--chat-meta-color);
+	text-align: start;
+	overflow-wrap: anywhere;
+}
+
+.chat-room-activity-list time {
+	flex-shrink: 0;
+	color: var(--chat-meta-color);
+	font-size: 0.6875rem;
+	font-variant-numeric: tabular-nums;
+}
+
 /* ==========================================================================
    5. 底部输入与工具栏（保留经典工具栏质感，融入 Telegram 奶灰工作台）
    ========================================================================== */
@@ -2860,18 +2953,9 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 		padding: 0.85rem 0.95rem;
 	}
 
-	/* 仅针对 iPhone 苹果手机设备强制真实 16px（绕过全局 html 14px 基准导致 1rem=14px 的 iOS WebKit 聚焦自动放大视口陷阱；iPad、安卓及桌面端保持原本精致字号） */
-	html[data-is-iphone="true"] :is(#chat-page, #chat-modal-layer) :is(input, textarea, select),
-	html[data-is-iphone="true"] .chat-input-box,
-	html[data-is-iphone="true"] .chat-music-search,
-	html[data-is-iphone="true"] .chat-playlist-input,
-	html[data-is-iphone="true"] .chat-auth-input,
-	html[data-is-iphone="true"] .chat-topic-input {
-		font-size: 16px !important;
-	}
-
 	.chat-music-search {
 		padding: 0.52rem 2.1rem 0.52rem 2.25rem;
+		font-size-adjust: ic-width 0.875;
 	}
 
 	.chat-playlist-input {
@@ -3998,7 +4082,7 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 @media (width < 768px) {
 	html[data-chat-page] #chat-modal-layer {
 		--chat-modal-shade: rgb(8 13 23 / 0.4);
-		font-size: 15px;
+		font-size: var(--mobile-type-label);
 	}
 
 	.chat-modal-backdrop {
@@ -4060,46 +4144,306 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 	}
 
 	.chat-dialog-header h3 {
-		font-size: 18px !important;
+		font-size: var(--mobile-type-title);
+		font-weight: 700;
+		line-height: 1.3;
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
+	.chat-dialog-header p {
+		font-size: var(--mobile-type-meta);
+		line-height: 1.45;
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
+	.chat-dialog-content :is(.chat-settings-section-title, .chat-section-title, .chat-sheet-section-title) {
+		font-size: var(--mobile-type-section);
 		font-weight: 700;
 		line-height: 1.35;
 	}
 
-	.chat-dialog-header p {
-		font-size: 13px !important;
-		line-height: 1.4;
+	/* 旧弹窗仍使用紧凑的桌面字号类。单独标记的标题、按钮和说明可覆盖这里。 */
+	:where(.chat-dialog-content) .text-xs {
+		font-size: var(--mobile-type-meta);
+		line-height: 1.45;
 	}
 
-	/* 弹窗小节标题提升 */
-	#chat-modal-layer :is(.chat-settings-section-title, .chat-section-title) {
-		font-size: 15px !important;
-		font-weight: 700;
+	:where(.chat-dialog-content) .text-sm {
+		font-size: var(--mobile-type-label);
+		line-height: 1.45;
 	}
 
-	/* 弹窗内微小文字防过小兜底：移动端禁止低于 12px 的微雕文字 */
-	#chat-modal-layer .text-\[10px\],
-	#chat-modal-layer .text-\[11px\] {
-		font-size: 12px !important;
+	:where(.chat-dialog-content) :is(.text-\[10px\], .text-\[10\.5px\], .text-\[11px\], .text-\[11\.5px\], .text-\[12px\], .text-\[0\.625rem\], .text-\[0\.6875rem\]) {
+		font-size: var(--mobile-type-caption);
 	}
 
-	/* 移动端弹窗表单控件：基准 16px 杜绝 iOS 自动缩放视口，触摸高度适中 */
-	#chat-modal-layer .chat-auth-input,
-	#chat-modal-layer input:not([type="checkbox"]):not([type="radio"]),
-	#chat-modal-layer select {
-		font-size: 16px !important;
-		min-height: 42px;
+	.chat-dialog-content :is(.chat-auth-input, input:is([type="text"], [type="search"]), textarea, select, .chat-thread-textarea) {
+		min-block-size: 42px;
+		line-height: 1.375;
+		/* 视觉字号约 14px，保留 WebKit 聚焦判断用的 16px。 */
+		font-size-adjust: ic-width 0.875;
 	}
 
-	/* 移动端弹窗操作按钮：舒适触控 */
-	#chat-modal-layer .chat-send-btn {
-		font-size: 14.5px !important;
-		min-height: 42px;
+	.chat-dialog-content :is(.chat-auth-input, .chat-share-search-input)::placeholder {
+		color: var(--skin-text-mute);
+		opacity: 1;
+	}
+
+	.chat-dialog-content :is(label[for], .chat-dialog-option-title) {
+		font-size: var(--mobile-type-label);
+		font-weight: 600;
+		line-height: 1.35;
+	}
+
+	.chat-dialog-content :is(.btn-regular, .chat-send-btn, .chat-dialog-action, .chat-header-pill-btn) {
+		min-block-size: 44px;
+		font-weight: 600;
+		line-height: 1.25;
+	}
+
+	.chat-dialog-content :is(.btn-regular, .chat-dialog-action, .chat-dialog-inline-action, .chat-profile-notification-option, .chat-share-tab-btn) {
+		font-size: var(--mobile-type-label);
+	}
+
+	@layer base {
+		.chat-dialog-content :is(.chat-send-btn, .chat-dialog-primary-action, form .btn-regular[type="submit"]) {
+			font-size: var(--mobile-type-body) !important;
+		}
+
+		.chat-dialog-content :is(.chat-header-pill-btn, .chat-queue-toggle-btn, .chat-dialog-secondary-action) {
+			font-size: var(--mobile-type-label) !important;
+		}
+	}
+
+	.chat-dialog-content :is(.chat-sheet-primary, .chat-activity-user-name) {
+		font-size: var(--mobile-type-body);
+		line-height: 1.35;
+	}
+
+	.chat-dialog-content .chat-sheet-meta {
+		font-size: var(--mobile-type-caption);
+		line-height: 1.45;
+	}
+
+	.chat-profile-fields {
+		padding: 16px;
+	}
+
+	.chat-profile-field-group {
+		padding: 12px;
+	}
+
+	.chat-dialog-inline-action {
+		min-block-size: 32px;
+	}
+
+	.chat-dialog-content .chat-profile-secondary-actions .btn-regular {
+		min-block-size: 36px;
+		font-size: var(--mobile-type-meta);
+	}
+
+	.chat-profile-secondary-actions {
+		flex-wrap: wrap;
+	}
+
+	.chat-profile-notification-option {
+		min-block-size: 32px;
+	}
+
+	.chat-dialog-content .chat-profile-notification-option {
+		font-size: var(--mobile-type-meta);
+	}
+
+	.chat-profile-notification-option[aria-pressed="false"] {
+		opacity: 1;
+	}
+
+	.chat-profile-notification-option[aria-pressed="true"],
+	.chat-dialog-content :is(.chat-dialog-primary-action, .chat-thread-send-btn) {
+		color: var(--skin-on-accent);
+	}
+
+	.chat-profile-badges {
+		min-block-size: 0;
+	}
+
+	.chat-profile-status-grid {
+		position: static;
+		grid-auto-rows: auto;
+		overflow: visible;
+		padding: 8px 10px;
+	}
+
+	.chat-profile-status-grid > button {
+		min-block-size: 30px;
+		line-height: 1.25;
+	}
+
+	.chat-dialog-content .chat-profile-push-notice {
+		color: #92400e;
+		font-size: var(--mobile-type-caption);
+		padding: 4px 6px;
+		line-height: 1.45;
+	}
+
+	html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) .chat-dialog-content .chat-profile-push-notice {
+		color: #fbbf24;
+	}
+
+	.chat-profile-actions {
+		display: grid;
+		grid-template-columns: 1fr;
+		padding: 10px 16px;
+	}
+
+	.chat-profile-actions > :last-child {
+		width: 100%;
+		margin-inline-start: 0;
+	}
+
+	.chat-profile-actions > :first-child:not(:has(a, button)) {
+		display: none;
+	}
+
+	.chat-rotation-body {
+		overflow-y: auto;
+		overscroll-behavior: contain;
+	}
+
+	.chat-rotation-options {
+		min-inline-size: 0;
+	}
+
+	.chat-rotation-mode {
+		min-block-size: 44px;
+		padding-inline: 6px;
+		justify-content: center;
+	}
+
+	.chat-rotation-mode > span {
+		flex: none;
+	}
+
+	.chat-rotation-mode-title {
+		font-size: var(--mobile-type-label);
+		white-space: normal;
+	}
+
+	.chat-rotation-results {
+		min-block-size: 180px;
+	}
+
+	.chat-rotation-results .chat-sheet-primary {
+		font-size: var(--mobile-type-label);
+	}
+
+	.chat-rotation-mode:focus-within {
+		outline: 2px solid var(--skin-accent);
+		outline-offset: 2px;
+	}
+
+	.chat-rotation-toolbar,
+	.chat-rotation-selection {
+		flex-wrap: wrap;
+	}
+
+	.chat-rotation-toolbar button,
+	.chat-rotation-actions button {
+		min-block-size: 44px;
+		font-size: var(--mobile-type-label);
 		font-weight: 600;
 	}
 
-	#chat-modal-layer .btn-regular {
-		font-size: 14px;
-		min-height: 40px;
+	.chat-rotation-search input::placeholder {
+		font-size: inherit;
+	}
+
+	.chat-rotation-search button {
+		inset: 0 0 0 auto;
+		display: grid;
+		place-items: center;
+		width: 44px;
+		padding: 0;
+	}
+
+	.chat-rotation-search input {
+		padding-inline-end: 44px;
+	}
+
+	/* 虚拟列表每条占 62px，包含 6px 的行间距。 */
+	.chat-rotation-list > :not(:last-child),
+	.chat-rotation-rows > :not(:last-child) {
+		margin-block: 0;
+	}
+
+	.chat-rotation-rows {
+		display: grid;
+		row-gap: 6px;
+		padding-block-end: 6px;
+	}
+
+	.chat-rotation-row {
+		block-size: 56px;
+		padding-block: 4px;
+	}
+
+	.chat-rotation-row .chat-sheet-meta {
+		line-height: 1.25;
+	}
+
+	.chat-rotation-actions {
+		flex-wrap: wrap;
+	}
+
+	.chat-rotation-status {
+		flex-basis: 100%;
+	}
+
+	.chat-rotation-status:not(:has(> p)),
+	.chat-rotation-status > .hidden {
+		display: none;
+	}
+
+	.chat-rotation-status > p {
+		white-space: normal;
+		overflow-wrap: anywhere;
+	}
+
+	.chat-rotation-actions > :last-child {
+		flex: 1;
+	}
+
+	.chat-rotation-actions button {
+		flex: 1;
+	}
+
+	.chat-activity-modal-content {
+		display: flex;
+		min-height: 0;
+		flex-direction: column;
+	}
+
+	.chat-dialog-content .chat-activity-tabs {
+		flex-shrink: 0;
+	}
+
+	.chat-dialog-content .chat-activity-tab-btn {
+		min-height: 36px;
+		font-size: var(--mobile-type-label);
+	}
+
+	.chat-dialog-content .chat-activity-tab-btn > .text-xs {
+		font-size: inherit;
+	}
+
+	.chat-dialog-content .chat-activity-tab-count {
+		font-size: var(--mobile-type-caption);
+	}
+
+	.chat-dialog-content .chat-activity-user-row {
+		min-height: 48px;
 	}
 
 	/* 线程回复、源码等弹窗组件尺寸提升 */
@@ -4116,29 +4460,41 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 		padding: 0.4rem 0.65rem;
 	}
 
-	.chat-thread-textarea {
-		font-size: 16px !important;
-		min-height: 42px;
+	.chat-dialog-content .chat-thread-send-btn {
+		font-size: var(--mobile-type-body);
+		min-height: 44px;
 	}
 
-	.chat-thread-send-btn {
-		font-size: 14px;
-		height: 42px;
-	}
-
-	.chat-thread-auth-btn {
-		font-size: 14px;
+	.chat-dialog-content .chat-thread-auth-btn {
+		font-size: var(--mobile-type-label);
 		padding: 0.75rem 1rem;
 	}
 
-	.chat-source-tab {
-		font-size: 13.5px;
+	.chat-dialog-content .chat-source-tab {
+		font-size: var(--mobile-type-label);
 		padding: 0.45rem 0.8rem;
 	}
 
-	.chat-source-action-btn {
-		font-size: 13px;
-		min-height: 34px;
+	.chat-dialog-content :is(.chat-source-action-btn, .chat-share-tab-btn) {
+		font-size: var(--mobile-type-label);
+		font-weight: 600;
+		min-height: 36px;
+	}
+
+	.chat-dialog-content .chat-queue-toggle-btn {
+		min-height: 36px;
+		font-weight: 600;
+	}
+
+	.chat-share-search-input {
+		padding-inline-end: 44px;
+	}
+
+	.chat-share-search-clear {
+		inset-inline-end: 0;
+		width: 44px;
+		height: 44px;
+		font-size: 14px;
 	}
 
 	.chat-source-meta-bar {
@@ -6289,14 +6645,64 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 
 	.chat-kaomoji-item {
 		padding: 0.42rem 0.7rem;
-		font-size: 0.875rem;
 		border-radius: 0.55rem;
+		font-size: var(--mobile-type-label);
+		min-height: 32px;
 	}
 
 	.chat-picker-tab {
-		min-width: 2.75rem;
-		height: 2.375rem;
-		font-size: 0.8125rem;
+		min-width: 44px;
+		height: 38px;
+		font-size: var(--mobile-type-meta);
+	}
+
+	.chat-picker-body :is(.text-\[10px\], .text-\[11px\]) {
+		font-size: var(--mobile-type-meta);
+		line-height: 1.35;
+	}
+
+	.chat-mobile-action-sheet .chat-sheet-primary {
+		font-size: var(--mobile-type-body);
+	}
+
+	.chat-mobile-action-sheet .chat-sheet-meta {
+		font-size: var(--mobile-type-meta);
+	}
+
+	.chat-mobile-more-item {
+		min-height: 44px;
+		font-size: var(--mobile-type-label);
+	}
+
+	.chat-music-search.is-immersive {
+		min-block-size: 40px;
+	}
+
+	.chat-mobile-sheet-emoji-btn {
+		min-width: 44px;
+		min-height: 44px;
+		font-size: 22px;
+	}
+
+	.chat-mobile-sheet-action-btn {
+		height: auto;
+		min-height: 44px;
+		padding-block: 6px;
+		font-size: var(--mobile-type-label);
+	}
+
+	.chat-mobile-sheet-action-btn.is-warning {
+		color: color-mix(in oklab, var(--skin-text) 65%, #f59e0b);
+	}
+
+	.chat-mobile-sheet-action-btn.is-danger {
+		color: color-mix(in oklab, var(--skin-text) 55%, #ef4444);
+	}
+
+	.chat-quick-reactions-popover .chat-quick-reaction-btn {
+		width: 36px;
+		height: 36px;
+		font-size: 20px;
 	}
 
 	.chat-skip-pill {
@@ -6314,8 +6720,16 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	}
 
 	.chat-settings-popover .btn-regular {
-		min-height: 2.5rem;
-		font-size: 0.84375rem;
+		min-height: 40px;
+		font-size: var(--mobile-type-label);
+	}
+
+	.chat-interconnect-popover .text-xs {
+		font-size: var(--mobile-type-label);
+	}
+
+	.chat-interconnect-popover :is(.text-\[10px\], .text-\[11px\]) {
+		font-size: var(--mobile-type-meta);
 	}
 
 	.chat-mention-autocomplete {
@@ -6400,6 +6814,218 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	}
 }
 
+@media (width < 768px) {
+	.chat-panel-left {
+		--chat-offline-row-pitch: 50px;
+	}
+
+	:is(.chat-panel-left, .chat-music-panel) .chat-drawer-heading {
+		font-size: 16px;
+		line-height: 1.3;
+	}
+
+	:is(.chat-panel-left, .chat-music-panel) .chat-drawer-heading > svg {
+		width: 17px;
+		height: 17px;
+	}
+
+	.chat-panel-left .chat-drawer-heading {
+		font-size: 15px;
+	}
+
+	.chat-panel-left :is(.chat-room-content, .chat-self-footer) .chat-section-title {
+		font-size: 13px;
+		letter-spacing: 0;
+	}
+
+	.chat-panel-left .chat-room-content :is(.chat-room-item, .chat-user-item) {
+		font-size: 13.5px;
+		padding-block: 7px;
+	}
+
+	.chat-panel-left .chat-room-thumbnail {
+		width: 32px;
+		height: 32px;
+	}
+
+	.chat-panel-left .chat-room-content .chat-avatar-sm {
+		width: 32px;
+		height: 32px;
+	}
+
+	.chat-panel-left .chat-room-content .chat-user-item {
+		min-height: 46px;
+	}
+
+	.chat-panel-left .chat-room-content .chat-user-item > span > svg {
+		width: 16px;
+		height: 16px;
+	}
+
+	.chat-panel-left .chat-panel-header .chat-tool-btn > svg {
+		width: 17px;
+		height: 17px;
+	}
+
+	/* 虚拟滚动与实际行高共用 50px，包含行尾 4px 间距。 */
+	.chat-panel-left .chat-offline-list {
+		display: grid;
+	}
+
+	.chat-panel-left .chat-offline-list > * {
+		margin-block: 0;
+	}
+
+	.chat-panel-left .chat-offline-list > .chat-user-item {
+		block-size: calc(var(--chat-offline-row-pitch) - 4px);
+		margin-block-end: 4px;
+	}
+
+	.chat-panel-left :is(.chat-room-content, .chat-self-footer) .text-\[12px\],
+	.chat-panel-left .chat-connection-status {
+		font-size: 13px;
+	}
+
+	.chat-panel-left .chat-room-members .chat-user-item .text-\[12px\] {
+		font-size: 12px;
+	}
+
+	.chat-panel-left .chat-self-footer {
+		gap: 6px;
+		padding-block: 9px;
+	}
+
+	.chat-panel-left .chat-self-footer .chat-avatar {
+		width: 36px;
+		height: 36px;
+	}
+
+	.chat-music-panel-topbar {
+		position: relative;
+	}
+
+	.chat-music-panel-topbar > .chat-panel-close-btn {
+		position: absolute;
+		inset-block-start: 5px;
+		inset-inline-start: 12px;
+		z-index: 1;
+		width: 44px;
+		height: 44px;
+	}
+
+	.chat-music-panel-topbar:has(> .chat-panel-close-btn) > :is(.chat-mini-player, .chat-panel-header) {
+		padding-inline-start: 64px !important;
+	}
+
+	.chat-music-panel .chat-panel-close-btn > svg {
+		width: 21px;
+		height: 21px;
+	}
+
+	.chat-panel-left .chat-self-footer :is(.text-\[13px\], .text-\[14px\]) {
+		font-size: 14px;
+	}
+
+	.chat-panel-left .chat-self-footer .chat-queue-toggle-btn {
+		font-size: 14px;
+		min-height: 36px;
+	}
+
+	/* 尺寸只作用于点歌台内容区与播放栏，四个页签和弹窗各用原样式。 */
+	.chat-music-panel {
+		--chat-track-row-pitch: 62px;
+	}
+
+	:where(.chat-music-panel > :not(.chat-music-tabs, .chat-modal-backdrop)) :is(.text-\[10px\], .text-\[10\.5px\]) {
+		font-size: 11px;
+	}
+
+	:where(.chat-music-panel > :not(.chat-music-tabs, .chat-modal-backdrop)) :is(.text-\[11px\], .text-\[11\.5px\]) {
+		font-size: 12px;
+	}
+
+	:where(.chat-music-panel > :not(.chat-music-tabs, .chat-modal-backdrop)) :is(.text-xs, .text-\[12px\]) {
+		font-size: 13px;
+	}
+
+	:where(.chat-music-panel > :not(.chat-music-tabs, .chat-modal-backdrop)) .text-\[13px\] {
+		font-size: 14px;
+	}
+
+	:where(.chat-music-panel > :not(.chat-music-tabs, .chat-modal-backdrop)) :is(.text-sm, .text-\[13\.5px\], .text-\[14px\]) {
+		font-size: 14px;
+	}
+
+	:where(.chat-music-panel > :not(.chat-music-tabs, .chat-modal-backdrop)) svg:is(.w-3.h-3, .w-3\.5.h-3\.5, .size-3, .size-3\.5) {
+		width: 16px;
+		height: 16px;
+	}
+
+	:where(.chat-music-panel > :not(.chat-music-tabs, .chat-modal-backdrop)) svg:is(.w-4.h-4, .size-4) {
+		width: 17px;
+		height: 17px;
+	}
+
+	:where(.chat-music-panel > :not(.chat-music-tabs, .chat-modal-backdrop)) svg:is(.w-4\.5.h-4\.5, .w-5.h-5, .size-5) {
+		width: 19px;
+		height: 19px;
+	}
+
+	.chat-music-panel .chat-music-thumb {
+		width: 39px;
+		height: 39px;
+	}
+
+	.chat-music-panel :is(.chat-music-thumb-small, .chat-mini-player-info > :first-child) {
+		width: 32px;
+		height: 32px;
+	}
+
+	.chat-music-panel .chat-music-player-cover {
+		width: 78px;
+		height: 78px;
+	}
+
+	.chat-music-panel .chat-music-player-details {
+		height: auto;
+		min-height: 78px;
+	}
+
+	.chat-music-panel .chat-music-player-details > h3 {
+		font-size: 16px;
+	}
+
+	.chat-music-panel .chat-lyrics-scroll [role="option"] {
+		font-size: 14px;
+	}
+
+	.chat-music-panel .chat-lyrics-scroll [aria-selected="true"] {
+		font-size: 16px;
+	}
+
+	.chat-music-panel :is(.chat-play-btn, .chat-queue-toggle-btn, .chat-skip-pill) {
+		font-size: 14px;
+	}
+
+	.chat-music-panel .chat-listen-status {
+		block-size: 26px;
+	}
+
+	.chat-music-panel .chat-music-track-row {
+		min-height: calc(var(--chat-track-row-pitch) - 2px);
+	}
+
+	.chat-music-panel .chat-music-track-list {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.chat-music-panel .chat-music-track-list > .chat-music-track-row {
+		block-size: calc(var(--chat-track-row-pitch) - 2px);
+		margin-block: 0 2px;
+	}
+}
+
 /* 触屏设备（含手机与 iPad Safari）兜底：禁止双击放大、输入框聚焦自动放大，并停用桌面悬停小图标改用大操作菜单 */
 @media (hover: none) and (pointer: coarse) {
 	.chat-msg-floating-actions:not(.has-media-retry) {
@@ -6414,14 +7040,15 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 		touch-action: manipulation;
 	}
 
-	/* 仅针对 iPhone 苹果手机设备兜底 16px，并确保移动端登录框输入时不触发 iOS WebKit 聚焦自动缩放与视口错位 */
+	:is(#chat-page, #chat-modal-layer) .chat-auth-input {
+		scroll-margin-bottom: 1.5rem;
+	}
+}
+
+@media (width >= 768px) and (pointer: coarse) {
 	html[data-is-iphone="true"] :is(#chat-page, #chat-modal-layer) :is(input, textarea, select),
 	:is(#chat-page, #chat-modal-layer) .chat-auth-input {
 		font-size: 16px !important;
-	}
-
-	:is(#chat-page, #chat-modal-layer) .chat-auth-input {
-		scroll-margin-bottom: 1.5rem;
 	}
 }
 
