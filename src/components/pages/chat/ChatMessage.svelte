@@ -7,6 +7,7 @@ import ChatFileAttachment from "./ChatFileAttachment.svelte";
 import ChatImagePreview from "./ChatImagePreview.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessageActivityModal from "./ChatMessageActivityModal.svelte";
+import ChatMusicCard from "./ChatMusicCard.svelte";
 import ChatStickerPicker from "./ChatStickerPicker.svelte";
 import ChatStickerImage from "./ChatStickerImage.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
@@ -32,13 +33,17 @@ import {
 	type ChatShareData,
 	parseLxArticleShare,
 	parseLxMomentShare,
+	parseLxMusicShare,
 } from "./chatShareProtocol";
 import type {
 	ChatMessageRecord,
 	ChatReadReceipt,
 	ChatThreadSummary,
 	ChatUserDetailSeed,
+	RoomMusicState,
 } from "./chatTypes";
+import type { ChatMusicTrack } from "./musicTypes";
+import type { PlaylistAuth } from "./playlistClient";
 import LottieSticker from "./LottieSticker.svelte";
 import {
 	formatChatReplyPreview,
@@ -86,6 +91,15 @@ interface Props {
 	jumpingToMessageUid?: string;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 	onMention?: (name: string, userKey?: string) => void;
+	musicState?: RoomMusicState | null;
+	playlistAuth?: PlaylistAuth;
+	onEnqueueTrack?: (
+		track: ChatMusicTrack,
+		anchor?: HTMLElement,
+	) => Promise<boolean> | void;
+	onRequireAuth?: () => void;
+	onFavoriteChanged?: () => void;
+	onNotify?: (msg: string, tone?: "default" | "error" | "success") => void;
 	onOpenMobileActions?: (
 		message: ChatMessageRecord,
 		meta: {
@@ -136,6 +150,12 @@ const {
 	jumpingToMessageUid = "",
 	onOpenUserProfile,
 	onMention,
+	musicState = null,
+	playlistAuth,
+	onEnqueueTrack,
+	onRequireAuth,
+	onFavoriteChanged,
+	onNotify,
 	onOpenMobileActions,
 }: Props = $props();
 
@@ -326,7 +346,41 @@ const isStickerAttachmentOnly = $derived.by(() => {
 });
 
 const shareData = $derived<ChatShareData | null>(
-	parseLxArticleShare(message.content) ?? parseLxMomentShare(message.content),
+	parseLxArticleShare(message.content) ??
+		parseLxMomentShare(message.content) ??
+		parseLxMusicShare(message.content),
+);
+
+function matchesSharedMusic(
+	track: ChatMusicTrack | undefined | null,
+	shared: ChatShareData | null,
+): boolean {
+	if (!track || !shared || shared.kind !== "music") return false;
+	const sharedBare = (shared.sourceId || shared.id || "").replace(/^[a-z_]+:/i, "").trim();
+	const trackBare = (track.sourceId || track.id || "").replace(/^[a-z_]+:/i, "").trim();
+	if (shared.id && track.id && shared.id === track.id) return true;
+	if (sharedBare && trackBare && sharedBare === trackBare) return true;
+	const sTitle = (shared.title || "").trim().toLowerCase();
+	const tTitle = (track.title || "").trim().toLowerCase();
+	const sArtist = (shared.artist || "").trim().toLowerCase();
+	const tArtist = (track.artist || "").trim().toLowerCase();
+	return Boolean(sTitle && tTitle && sTitle === tTitle && (!sArtist || !tArtist || sArtist === tArtist));
+}
+
+const isSharedMusicCurrent = $derived(
+	Boolean(
+		shareData?.kind === "music" &&
+			matchesSharedMusic(musicState?.current?.track, shareData),
+	),
+);
+
+const isSharedMusicQueued = $derived(
+	Boolean(
+		shareData?.kind === "music" &&
+			(musicState?.queue ?? []).some((item) =>
+				matchesSharedMusic(item.track, shareData),
+			),
+	),
 );
 
 const formattedTime = $derived.by(() => {
@@ -1654,7 +1708,23 @@ function handleBubbleClick(e: MouseEvent) {
               {@render replyQuoteBlock()}
             {/if}
             {#if shareData}
-              <ChatArticleCard data={shareData} isSelf={true} />
+              {#if shareData.kind === "music"}
+                <ChatMusicCard
+                  data={shareData}
+                  isSelf={true}
+                  chatServerUrl={chatServerUrl}
+                  currentUserKey={currentUserKey}
+                  playlistAuth={playlistAuth}
+                  isCurrentPlaying={isSharedMusicCurrent}
+                  isQueued={isSharedMusicQueued}
+                  onEnqueueTrack={onEnqueueTrack}
+                  onRequireAuth={onRequireAuth}
+                  onFavoriteChanged={onFavoriteChanged}
+                  onNotify={onNotify}
+                />
+              {:else}
+                <ChatArticleCard data={shareData} isSelf={true} />
+              {/if}
             {:else if message.content.trim().length > 0}
               <div class={message.msgType === "emote" ? "italic opacity-90" : message.isEncryptedPlaceholder ? "opacity-75 text-xs" : ""}>
                 {#if message.msgType === "emote"}
@@ -1792,7 +1862,23 @@ function handleBubbleClick(e: MouseEvent) {
               {@render replyQuoteBlock()}
             {/if}
             {#if shareData}
-              <ChatArticleCard data={shareData} isSelf={false} />
+              {#if shareData.kind === "music"}
+                <ChatMusicCard
+                  data={shareData}
+                  isSelf={false}
+                  chatServerUrl={chatServerUrl}
+                  currentUserKey={currentUserKey}
+                  playlistAuth={playlistAuth}
+                  isCurrentPlaying={isSharedMusicCurrent}
+                  isQueued={isSharedMusicQueued}
+                  onEnqueueTrack={onEnqueueTrack}
+                  onRequireAuth={onRequireAuth}
+                  onFavoriteChanged={onFavoriteChanged}
+                  onNotify={onNotify}
+                />
+              {:else}
+                <ChatArticleCard data={shareData} isSelf={false} />
+              {/if}
             {:else if message.content.trim().length > 0}
               <div class={message.msgType === "emote" ? "italic opacity-90" : message.isEncryptedPlaceholder ? "opacity-75 text-xs" : ""}>
                 {#if message.msgType === "emote"}

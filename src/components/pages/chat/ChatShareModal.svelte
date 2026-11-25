@@ -1,17 +1,33 @@
 <script lang="ts">
 import ChatModal from "./ChatModal.svelte";
+import { searchOnlineMusic } from "./chatClient";
 import {
 	formatLxArticleShare,
 	formatLxMomentShare,
 } from "./chatShareProtocol";
+import type { RoomMusicState } from "./chatTypes";
+import type { ChatMusicTrack } from "./musicTypes";
+import type { PlaylistAuth } from "./playlistClient";
 
 interface Props {
 	open: boolean;
+	chatServerUrl?: string;
+	musicState?: RoomMusicState | null;
+	playlistAuth?: PlaylistAuth;
 	onClose: () => void;
 	onShare: (content: string) => void;
+	onShareMusicTrack?: (track: ChatMusicTrack) => Promise<boolean>;
 }
 
-const { open, onClose, onShare }: Props = $props();
+const {
+	open,
+	chatServerUrl = "",
+	musicState = null,
+	playlistAuth: _playlistAuth,
+	onClose,
+	onShare,
+	onShareMusicTrack,
+}: Props = $props();
 
 interface ArticleItem {
 	id: string;
@@ -34,10 +50,16 @@ interface MomentItem {
 	relativeTime: string;
 }
 
-let activeTab = $state<"articles" | "moments">("articles");
+let activeTab = $state<"articles" | "moments" | "music">("articles");
 let searchQuery = $state("");
 let articles = $state<ArticleItem[]>([]);
 let moments = $state<MomentItem[]>([]);
+let favoriteMusicTracks = $state<ChatMusicTrack[]>([]);
+let searchedMusicTracks = $state<ChatMusicTrack[]>([]);
+let isMusicSearching = $state(false);
+let musicFavoritesLoaded = $state(false);
+let musicSearchAbort: AbortController | null = null;
+let musicSearchTimer: ReturnType<typeof setTimeout> | null = null;
 let isLoading = $state(false);
 let loadError = $state("");
 let searchInputEl = $state<HTMLInputElement | null>(null);
@@ -184,12 +206,143 @@ function handlePickMoment(item: MomentItem) {
 	onShare(payload);
 	onClose();
 }
+
+const roomMusicTracks = $derived.by<Array<{ track: ChatMusicTrack; tag: string }>>(() => {
+	const result: Array<{ track: ChatMusicTrack; tag: string }> = [];
+	const seen = new Set<string>();
+	const pushTrack = (track: ChatMusicTrack | undefined | null, tag: string) => {
+		if (!track?.title) return;
+		const key = track.id || `${track.title}:${track.artist}`;
+		if (seen.has(key)) return;
+		seen.add(key);
+		result.push({ track, tag });
+	};
+	if (musicState?.current?.track) {
+		pushTrack(musicState.current.track, "正在播放");
+	}
+	for (const item of musicState?.queue ?? []) {
+		pushTrack(item.track, "待播队列");
+	}
+	return result;
+});
+
+const displayedMusicItems = $derived.by<Array<{ track: ChatMusicTrack; tag: string }>>(() => {
+	const q = searchQuery.trim();
+	if (q) {
+		const lower = q.toLowerCase();
+		const localMatched = [
+			...roomMusicTracks,
+			...favoriteMusicTracks.map((track) => ({ track, tag: "全站收藏" })),
+		].filter(
+			({ track }) =>
+				track.title.toLowerCase().includes(lower) ||
+				(track.artist || "").toLowerCase().includes(lower) ||
+				(track.album || "").toLowerCase().includes(lower),
+		);
+		const seen = new Set<string>();
+		const merged: Array<{ track: ChatMusicTrack; tag: string }> = [];
+		for (const item of [
+			...localMatched,
+			...searchedMusicTracks.map((track) => ({ track, tag: "在线搜索" })),
+		]) {
+			const key = item.track.id || `${item.track.title}:${item.track.artist}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			merged.push(item);
+		}
+		return merged;
+	}
+	const seen = new Set<string>();
+	const list: Array<{ track: ChatMusicTrack; tag: string }> = [];
+	for (const item of [
+		...roomMusicTracks,
+		...favoriteMusicTracks.map((track) => ({ track, tag: "全站收藏" })),
+	]) {
+		const key = item.track.id || `${item.track.title}:${item.track.artist}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		list.push(item);
+	}
+	return list;
+});
+
+async function loadFavoriteMusic() {
+	if (musicFavoritesLoaded || !chatServerUrl) return;
+	musicFavoritesLoaded = true;
+	try {
+		const base = chatServerUrl.replace(/\/+$/, "");
+		const resp = await fetch(`${base}/api/music/favorites/public`);
+		if (!resp.ok) return;
+		const json = (await resp.json().catch(() => null)) as {
+			ok?: boolean;
+			tracks?: ChatMusicTrack[];
+		} | null;
+		if (json?.ok && Array.isArray(json.tracks)) {
+			favoriteMusicTracks = json.tracks;
+		}
+	} catch {
+		// ignore
+	}
+}
+
+$effect(() => {
+	if (open && activeTab === "music") {
+		void loadFavoriteMusic();
+	}
+});
+
+$effect(() => {
+	if (!open || activeTab !== "music" || !chatServerUrl) return;
+	const q = searchQuery.trim();
+	if (musicSearchTimer) {
+		clearTimeout(musicSearchTimer);
+		musicSearchTimer = null;
+	}
+	musicSearchAbort?.abort();
+	musicSearchAbort = null;
+	if (!q) {
+		searchedMusicTracks = [];
+		isMusicSearching = false;
+		return;
+	}
+	isMusicSearching = true;
+	musicSearchTimer = setTimeout(() => {
+		const controller = new AbortController();
+		musicSearchAbort = controller;
+		void searchOnlineMusic(chatServerUrl, q, {
+			signal: controller.signal,
+		})
+			.then((res) => {
+				if (musicSearchAbort !== controller) return;
+				searchedMusicTracks = res.tracks || [];
+			})
+			.catch(() => {
+				if (musicSearchAbort === controller) searchedMusicTracks = [];
+			})
+			.finally(() => {
+				if (musicSearchAbort === controller) isMusicSearching = false;
+			});
+	}, 360);
+	return () => {
+		if (musicSearchTimer) {
+			clearTimeout(musicSearchTimer);
+			musicSearchTimer = null;
+		}
+		musicSearchAbort?.abort();
+	};
+});
+
+function handleSelectMusic(track: ChatMusicTrack) {
+	if (!onShareMusicTrack) return;
+	onClose();
+	void onShareMusicTrack(track);
+}
 </script>
 
 <ChatModal
   open={open}
   title="分享内容至聊天室"
-  subtitle="选择博客文章或即刻说说，生成专属图文卡片分享至房间"
+  subtitle="选择博客文章、即刻说说或音乐歌曲，生成专属卡片分享至房间"
   size="lg"
   mobile="expandable"
   onClose={onClose}
@@ -240,6 +393,24 @@ function handlePickMoment(item: MomentItem) {
             </span>
           {/if}
         </button>
+
+        {#if onShareMusicTrack}
+          <button
+            type="button"
+            class="chat-share-tab-btn flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer {activeTab === 'music' ? 'active text-[var(--skin-text)] shadow-xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
+            onclick={() => {
+              activeTab = "music";
+              searchInputEl?.focus();
+            }}
+          >
+            <svg class="w-3.5 h-3.5 {activeTab === 'music' ? 'text-[var(--primary)]' : 'text-[var(--chat-meta-color)]'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </svg>
+            <span>音乐点歌</span>
+          </button>
+        {/if}
       </div>
 
       <!-- 搜索过滤条 -->
@@ -253,7 +424,7 @@ function handlePickMoment(item: MomentItem) {
           bind:this={searchInputEl}
           type="text"
           bind:value={searchQuery}
-          placeholder={activeTab === 'articles' ? `搜索 ${articles.length ? `${articles.length} 篇` : ''}文章标题或分类...` : `搜索 ${moments.length ? `${moments.length} 条` : ''}说说内容或日期...`}
+          placeholder={activeTab === 'articles' ? `搜索 ${articles.length ? `${articles.length} 篇` : ''}文章标题或分类...` : activeTab === 'moments' ? `搜索 ${moments.length ? `${moments.length} 条` : ''}说说内容或日期...` : '搜索歌名、歌手或专辑...'}
           class="chat-share-search-input w-full h-8.5 pl-8.5 pr-8 text-xs bg-[var(--card-bg)] border border-[var(--skin-line)]/60 rounded-full text-[var(--skin-text)] placeholder:text-[var(--chat-meta-color)]/60 focus:outline-none transition-all duration-200"
         />
 
@@ -494,6 +665,67 @@ function handlePickMoment(item: MomentItem) {
             {/each}
           </div>
         {/if}
+      {:else if activeTab === "music"}
+        {#if isMusicSearching && displayedMusicItems.length === 0}
+          <div class="flex flex-col items-center justify-center py-16 text-center gap-2 text-xs text-[var(--chat-meta-color)]">
+            <svg class="w-5 h-5 animate-spin text-[var(--primary)]" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+            </svg>
+            <span>正在全网搜索歌曲...</span>
+          </div>
+        {:else if displayedMusicItems.length === 0}
+          <div class="flex flex-col items-center justify-center py-16 text-center gap-2">
+            <div class="text-2xl opacity-70">🎵</div>
+            <p class="text-sm font-bold text-[var(--skin-text)] m-0">
+              {searchQuery.trim() ? "没有找到匹配的歌曲" : "输入歌名或歌手搜索音乐"}
+            </p>
+            <p class="text-xs text-[var(--chat-meta-color)] m-0">
+              支持分享当前正在播放、全站收藏或在线搜索的歌曲（含 7 天试听直链）
+            </p>
+          </div>
+        {:else}
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {#each displayedMusicItems as item (`${item.track.id || item.track.title}:${item.tag}`)}
+              <button
+                type="button"
+                class="chat-share-card group flex items-center gap-3 p-3 rounded-2xl border border-[var(--skin-line)]/50 bg-[var(--card-bg)] hover:border-[var(--primary)]/50 transition-all text-left cursor-pointer"
+                onclick={() => handleSelectMusic(item.track)}
+              >
+                <div class="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-[var(--primary)]/12 flex items-center justify-center border border-black/8 dark:border-white/10">
+                  {#if item.track.cover}
+                    <img
+                      src={item.track.cover}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      class="w-full h-full object-cover"
+                    />
+                  {:else}
+                    <span class="text-base text-[var(--primary)]">♪</span>
+                  {/if}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="text-[13px] font-bold text-[var(--skin-text)] truncate">
+                      {item.track.title}
+                    </span>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--primary)]/12 text-[var(--primary)] font-semibold shrink-0">
+                      {item.tag}
+                    </span>
+                  </div>
+                  <div class="text-[11.5px] text-[var(--chat-meta-color)] truncate mt-0.5">
+                    {item.track.artist || "未知歌手"}{item.track.album ? ` · ${item.track.album}` : ""}
+                  </div>
+                </div>
+                <span class="flex items-center gap-0.5 font-bold text-[var(--primary)] text-[11px] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                  <span>分享</span>
+                  <span aria-hidden="true">↵</span>
+                </span>
+              </button>
+            {/each}
+          </div>
+        {/if}
       {/if}
     </div>
 
@@ -504,8 +736,10 @@ function handlePickMoment(item: MomentItem) {
         <span>
           {#if activeTab === "articles"}
             {filteredArticles.length} / {articles.length} 篇博文
-          {:else}
+          {:else if activeTab === "moments"}
             {filteredMoments.length} / {moments.length} 条说说
+          {:else}
+            {displayedMusicItems.length} 首可分享歌曲{isMusicSearching ? " · 搜索中..." : ""}
           {/if}
         </span>
       </div>

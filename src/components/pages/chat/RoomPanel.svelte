@@ -191,7 +191,22 @@ const VIRTUAL_OFFLINE_THRESHOLD = 10;
 const VIRTUAL_OFFLINE_OVERSCAN = 6;
 const VIRTUAL_OFFLINE_STEP = 4;
 const OFFLINE_ROW_H = 50;
+const OFFLINE_PAGE_SIZE = 50;
+const OFFLINE_LOAD_THRESHOLD_PX = 260;
 const offlineWindowMemo = createVirtualWindowMemo<ChatMentionCandidate>();
+
+let offlineLoadedCount = $state(OFFLINE_PAGE_SIZE);
+let lastOfflineLoadCheck = 0;
+
+$effect(() => {
+	currentRoom;
+	offlineLoadedCount = OFFLINE_PAGE_SIZE;
+	lastOfflineLoadCheck = 0;
+});
+
+const visibleOfflineMembers = $derived(
+	offlineMembers.slice(0, offlineLoadedCount),
+);
 
 let memberScrollEl: HTMLDivElement | null = $state(null);
 let combinedScrollEl: HTMLDivElement | null = $state(null);
@@ -230,10 +245,25 @@ function measureOfflineOffset() {
 		OFFLINE_ROW_H;
 }
 
+function maybeLoadMoreOfflineMembers(scrollEl: HTMLElement) {
+	if (offlineLoadedCount >= offlineMembers.length) return;
+	const now = performance.now();
+	if (now - lastOfflineLoadCheck < 150) return;
+	lastOfflineLoadCheck = now;
+	const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+	if (scrollHeight - (scrollTop + clientHeight) < OFFLINE_LOAD_THRESHOLD_PX) {
+		offlineLoadedCount = Math.min(
+			offlineMembers.length,
+			offlineLoadedCount + OFFLINE_PAGE_SIZE,
+		);
+	}
+}
+
 function syncMemberMetrics() {
 	const scrollEl = combinedScrollEl || memberScrollEl;
 	if (!scrollEl) return;
 	memberScrollTop = scrollEl.scrollTop;
+	maybeLoadMoreOfflineMembers(scrollEl);
 }
 
 function handleMemberScroll() {
@@ -281,7 +311,7 @@ $effect(() => {
 });
 
 const offlineVirtual = $derived.by(() => {
-	const list = offlineMembers;
+	const list = visibleOfflineMembers;
 	const len = list.length;
 	const rowH = offlineRowPitch;
 	if (len <= VIRTUAL_OFFLINE_THRESHOLD) {
@@ -632,12 +662,6 @@ function formatOfflineTime(ts?: number): string {
               <div style="height: {offlineVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
             {/if}
           </div>
-
-          {#if offlineMembers.length > VIRTUAL_OFFLINE_THRESHOLD}
-            <div class="py-2 text-center text-[11px] text-[var(--chat-meta-color)]/60">
-              已启用虚拟滚动 · 共 {offlineMembers.length} 位离线成员
-            </div>
-          {/if}
         </section>
       {/if}
 
@@ -697,12 +721,6 @@ function formatOfflineTime(ts?: number): string {
               <div style="height: {offlineVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
             {/if}
           </div>
-
-          {#if offlineMembers.length > VIRTUAL_OFFLINE_THRESHOLD}
-            <div class="py-2 text-center text-[11px] text-[var(--chat-meta-color)]/60">
-              已启用虚拟滚动 · 共 {offlineMembers.length} 位离线成员
-            </div>
-          {/if}
         </section>
       {/if}
     {/if}
@@ -1130,11 +1148,6 @@ function formatOfflineTime(ts?: number): string {
                 <div style="height: {spectatorVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
               {/if}
             </div>
-            {#if spectatorHistory.length > VIRTUAL_SPECTATOR_THRESHOLD}
-              <div class="py-2 text-center text-[11px] text-[var(--chat-meta-color)]/60">
-                已启用虚拟滚动 · 共 {spectatorHistory.length} 条旁观历史
-              </div>
-            {/if}
           {:else}
             <div class="px-2 py-4 text-center text-xs text-[var(--chat-meta-color)]">
               暂无旁观历史记录

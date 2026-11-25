@@ -130,6 +130,7 @@ interface Props {
 		options?: { signal?: AbortSignal; page?: number; provider?: "qq" | "netease" | "kugou" | "youtube" },
 	) => Promise<{ tracks: ChatMusicTrack[]; hasMore: boolean; page: number }>;
 	onEnqueueTrack: (track: ChatMusicTrack, anchor?: HTMLElement) => Promise<boolean>;
+	onShareTrack?: (track: ChatMusicTrack) => Promise<boolean>;
 	onRandomEnqueue: (playlistId: string) => Promise<boolean>;
 	isRandomizing: boolean;
 	onRemoveQueue: (uid: string) => void;
@@ -198,6 +199,7 @@ const {
 	initialListening = false,
 	onSearchOnline,
 	onEnqueueTrack,
+	onShareTrack,
 	onRandomEnqueue,
 	isRandomizing,
 	onRemoveQueue,
@@ -834,6 +836,96 @@ async function toggleFavoriteCurrentTrack(): Promise<void> {
 		isFavToggling = false;
 	}
 }
+
+let trackContextMenu = $state<{
+	track: ChatMusicTrack;
+	x: number;
+	y: number;
+} | null>(null);
+let trackLongPressTimer: ReturnType<typeof setTimeout> | null = null;
+let trackLongPressStart = { x: 0, y: 0 };
+
+function openTrackContextMenu(track: ChatMusicTrack, clientX: number, clientY: number) {
+	if (typeof window === "undefined") return;
+	const menuW = 196;
+	const menuH = 186;
+	const pad = 10;
+	const x = Math.min(Math.max(pad, clientX), Math.max(pad, window.innerWidth - menuW - pad));
+	const y = Math.min(Math.max(pad, clientY), Math.max(pad, window.innerHeight - menuH - pad));
+	trackContextMenu = { track, x, y };
+}
+
+function closeTrackContextMenu() {
+	trackContextMenu = null;
+}
+
+function cancelTrackLongPress() {
+	if (trackLongPressTimer) {
+		clearTimeout(trackLongPressTimer);
+		trackLongPressTimer = null;
+	}
+}
+
+function handleTrackRowContextMenu(event: MouseEvent, track: ChatMusicTrack) {
+	event.preventDefault();
+	event.stopPropagation();
+	openTrackContextMenu(track, event.clientX, event.clientY);
+}
+
+function handleTrackRowPointerDown(event: PointerEvent, track: ChatMusicTrack) {
+	if (event.pointerType !== "touch") return;
+	cancelTrackLongPress();
+	trackLongPressStart = { x: event.clientX, y: event.clientY };
+	const cx = event.clientX;
+	const cy = event.clientY;
+	trackLongPressTimer = setTimeout(() => {
+		trackLongPressTimer = null;
+		openTrackContextMenu(track, cx, cy);
+	}, 480);
+}
+
+function handleTrackRowPointerMove(event: PointerEvent) {
+	if (!trackLongPressTimer) return;
+	if (
+		Math.abs(event.clientX - trackLongPressStart.x) > 10 ||
+		Math.abs(event.clientY - trackLongPressStart.y) > 10
+	) {
+		cancelTrackLongPress();
+	}
+}
+
+async function copyTrackInfo(track: ChatMusicTrack) {
+	const text = `${track.title} - ${track.artist || "未知歌手"}`;
+	try {
+		await navigator.clipboard.writeText(text);
+		onNotify?.(`已复制：${text}`, "success");
+	} catch {
+		onNotify?.("复制失败，请手动复制", "error");
+	}
+}
+
+$effect(() => {
+	if (!trackContextMenu) return;
+	const onPointerDown = (e: PointerEvent) => {
+		const target = e.target as HTMLElement | null;
+		if (target?.closest("[data-track-context-menu]")) return;
+		trackContextMenu = null;
+	};
+	const onKeyDown = (e: KeyboardEvent) => {
+		if (e.key === "Escape") trackContextMenu = null;
+	};
+	const onScroll = () => {
+		trackContextMenu = null;
+	};
+	window.addEventListener("pointerdown", onPointerDown, true);
+	window.addEventListener("keydown", onKeyDown);
+	window.addEventListener("scroll", onScroll, true);
+	return () => {
+		window.removeEventListener("pointerdown", onPointerDown, true);
+		window.removeEventListener("keydown", onKeyDown);
+		window.removeEventListener("scroll", onScroll, true);
+	};
+});
 
 function handleFilterCollective(userKey: string): void {
 	showCollectiveUserDropdown = false;
@@ -3646,7 +3738,14 @@ $effect(() => {
     {@const songLookupKey = song.id || getTrackTitleArtistKey(song.title, song.artist)}
     {@const isToggling = songLookupKey ? favoriteTogglingTrackIds.has(songLookupKey) : false}
     {@const hasSparkle = songLookupKey ? favSparkleTrackIds.has(songLookupKey) : false}
-    <div class="chat-music-track-row chat-virtual-row flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+    <div
+      class="chat-music-track-row chat-virtual-row flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+      oncontextmenu={(event) => handleTrackRowContextMenu(event, song)}
+      onpointerdown={(event) => handleTrackRowPointerDown(event, song)}
+      onpointermove={handleTrackRowPointerMove}
+      onpointerup={cancelTrackLongPress}
+      onpointercancel={cancelTrackLongPress}
+    >
       <div class="chat-music-thumb w-10 h-10 md:w-8 md:h-8 rounded-lg md:rounded-md overflow-hidden shrink-0 relative bg-(--primary)/10 flex items-center justify-center">
         <span class="text-xs text-(--primary)/70 select-none" aria-hidden="true">♪</span>
         {#if thumbCover}
@@ -4111,39 +4210,31 @@ $effect(() => {
 
         <!-- 控制栏：左 视图切换（歌词/即将播放/并列） + 中 收听/静音 + 右 切歌/投票切歌 -->
         <div class="grid grid-cols-[1fr_auto_1fr] items-center py-1 gap-1.5">
-          <!-- 左：视图模式切换 + 收藏（位于两侧按钮中间，不靠边挤） -->
+          <!-- 左：分享（最左） + 收藏（其次），与右侧两键镜像对称 -->
           <div class="grid grid-cols-2 justify-items-center min-w-0">
-            <ChatTooltip text={playerPaneModeLabel}>
-              <button
-                type="button"
-                class="inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer {playerPaneMode !== 'split' ? 'text-(--primary)' : 'text-[var(--chat-meta-color)] hover:text-(--primary)'}"
-                aria-label={playerPaneModeLabel}
-                onclick={cyclePlayerPaneMode}
-              >
-                {#if playerPaneMode === "split"}
-                  <!-- 并列视图：上歌词 + 下列表 -->
-                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <rect x="3" y="4" width="18" height="16" rx="2.5" />
-                    <line x1="3" y1="13" x2="21" y2="13" />
-                    <line x1="7" y1="8.5" x2="17" y2="8.5" />
-                    <line x1="7" y1="16.5" x2="15" y2="16.5" />
+            {#if onShareTrack}
+              <ChatTooltip text="分享到聊天室">
+                <button
+                  type="button"
+                  disabled={!currentPlay}
+                  class="inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer text-[var(--chat-meta-color)] hover:text-(--primary) disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label="分享当前歌曲到聊天室"
+                  onclick={() => {
+                    if (currentPlay?.track) void onShareTrack(currentPlay.track);
+                  }}
+                >
+                  <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
                   </svg>
-                {:else if playerPaneMode === "lyrics"}
-                  <!-- 纯歌词视图 -->
-                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                    <line x1="4" y1="6" x2="20" y2="6" />
-                    <line x1="7" y1="10.5" x2="17" y2="10.5" />
-                    <line x1="5" y1="15" x2="19" y2="15" />
-                    <line x1="8" y1="19.5" x2="16" y2="19.5" />
-                  </svg>
-                {:else}
-                  <!-- 纯播放列表视图 -->
-                  <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                    <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
-                  </svg>
-                {/if}
-              </button>
-            </ChatTooltip>
+                </button>
+              </ChatTooltip>
+            {:else}
+              <span></span>
+            {/if}
 
             <!-- 🌟 收藏当前歌曲星星按钮（带蹦出星星粒子动效） -->
             <ChatTooltip text={isCurrentFavorited ? "取消收藏" : "全站收藏"}>
@@ -4399,32 +4490,70 @@ $effect(() => {
           </div>
         {/if}
 
-        {#if playerPaneMode !== "lyrics"}
-          <div
-            class="min-h-0 flex flex-col border-t border-[var(--chat-divider-color)] pt-2 pb-2 transition-[max-height] duration-200"
-            style={playerPaneMode === "split"
+        <div
+          class="min-h-0 flex flex-col border-t border-[var(--chat-divider-color)] pt-2 {playerPaneMode === 'lyrics' ? 'pb-1.5' : 'pb-2'} transition-[max-height] duration-200"
+          style={playerPaneMode === "lyrics"
+            ? "flex: 0 0 auto;"
+            : playerPaneMode === "split"
               ? (queueTab === "request" ? queue.length === 0 : rotationQueue.length === 0)
                 ? "flex: 0 0 auto;"
                 : "flex: 0 1 auto; max-height: 42%;"
               : "flex: 1 1 0%;"}
-          >
-            <div class="flex items-center justify-between mb-1.5 shrink-0 px-0.5">
+        >
+          <div class="flex items-center justify-between {playerPaneMode === 'lyrics' ? 'mb-0' : 'mb-1.5'} shrink-0 px-0.5">
+            <div class="flex items-center gap-1.5 min-w-0">
               <div class="inline-flex items-center p-0.5 rounded-lg bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 text-[12px]">
                 <button
                   type="button"
                   class="px-2.5 py-0.5 rounded-md transition-all cursor-pointer {queueTab === 'request' ? 'bg-white dark:bg-neutral-800 text-[var(--deep-text)] shadow-xs font-semibold' : 'text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
-                  onclick={() => selectQueueTab("request")}
+                  onclick={() => {
+                    selectQueueTab("request");
+                    if (playerPaneMode === "lyrics") playerPaneMode = "split";
+                  }}
                 >
                   点播
                 </button>
                 <button
                   type="button"
                   class="px-2.5 py-0.5 rounded-md transition-all cursor-pointer {queueTab === 'rotation' ? 'bg-white dark:bg-neutral-800 text-[var(--deep-text)] shadow-xs font-semibold' : 'text-[var(--chat-meta-color)] hover:text-[var(--deep-text)]'}"
-                  onclick={() => selectQueueTab("rotation")}
+                  onclick={() => {
+                    selectQueueTab("rotation");
+                    if (playerPaneMode === "lyrics") playerPaneMode = "split";
+                  }}
                 >
                   轮播
                 </button>
               </div>
+
+              <ChatTooltip text={playerPaneModeLabel}>
+                <button
+                  type="button"
+                  class="inline-flex h-7 w-7 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer {playerPaneMode !== 'split' ? 'text-(--primary)' : 'text-[var(--chat-meta-color)] hover:text-(--primary)'}"
+                  aria-label={playerPaneModeLabel}
+                  onclick={cyclePlayerPaneMode}
+                >
+                  {#if playerPaneMode === "split"}
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <rect x="3" y="4" width="18" height="16" rx="2.5" />
+                      <line x1="3" y1="13" x2="21" y2="13" />
+                      <line x1="7" y1="8.5" x2="17" y2="8.5" />
+                      <line x1="7" y1="16.5" x2="15" y2="16.5" />
+                    </svg>
+                  {:else if playerPaneMode === "lyrics"}
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                      <line x1="4" y1="6" x2="20" y2="6" />
+                      <line x1="7" y1="10.5" x2="17" y2="10.5" />
+                      <line x1="5" y1="15" x2="19" y2="15" />
+                      <line x1="8" y1="19.5" x2="16" y2="19.5" />
+                    </svg>
+                  {:else}
+                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <path d="M15 6H3v2h12V6zm0 4H3v2h12v-2zM3 16h8v-2H3v2zM17 6v8.18c-.31-.11-.65-.18-1-.18-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3V8h3V6h-5z" />
+                    </svg>
+                  {/if}
+                </button>
+              </ChatTooltip>
+            </div>
 
               {#if queueTab === "rotation"}
                 <div class="flex items-center gap-1.5">
@@ -4464,7 +4593,8 @@ $effect(() => {
               {/if}
             </div>
 
-            {#if queueTab === "request"}
+            {#if playerPaneMode !== "lyrics"}
+              {#if queueTab === "request"}
               {#if queue.length === 0}
                 <div class="{playerPaneMode === 'queue' ? 'flex-1' : ''} flex flex-col items-center justify-center gap-1 text-center px-3 pt-2 pb-5">
                   {#if currentPlay?.isFallback}
@@ -4535,8 +4665,8 @@ $effect(() => {
                 </div>
               {/if}
             {/if}
+            {/if}
           </div>
-        {/if}
       </div>
     </div>
   {:else if activeTab === "search"}
@@ -6286,5 +6416,105 @@ $effect(() => {
     </form>
     {/if}
   </ChatModal>
+
+  {#if trackContextMenu}
+    {@const ctxTrack = trackContextMenu.track}
+    {@const ctxIsFav = isTrackFavorited(ctxTrack)}
+    {@const ctxIsQueued = isTrackQueued(ctxTrack)}
+    {@const ctxIsCurrent = isTrackCurrent(ctxTrack)}
+    <div
+      data-track-context-menu
+      role="menu"
+      aria-label={`歌曲操作：${ctxTrack.title}`}
+      class="fixed z-[1200] w-48 rounded-xl border border-[var(--skin-line)]/80 bg-[var(--skin-surface,#ffffff)]/95 backdrop-blur-md shadow-xl p-1.5 text-[13px] text-[var(--deep-text)] select-none"
+      style="left: {trackContextMenu.x}px; top: {trackContextMenu.y}px;"
+    >
+      <div class="px-2.5 py-1.5 mb-1 border-b border-[var(--chat-divider-color)] min-w-0">
+        <div class="font-bold text-xs truncate">{ctxTrack.title}</div>
+        <div class="text-[11px] text-[var(--chat-meta-color)] truncate">{ctxTrack.artist || "未知歌手"}</div>
+      </div>
+
+      {#if onShareTrack}
+        <button
+          type="button"
+          role="menuitem"
+          class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left border-none bg-transparent text-inherit hover:bg-(--primary)/12 hover:text-(--primary) cursor-pointer transition-colors"
+          onclick={() => {
+            const target = ctxTrack;
+            closeTrackContextMenu();
+            void onShareTrack(target);
+          }}
+        >
+          <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="18" cy="5" r="3" />
+            <circle cx="6" cy="12" r="3" />
+            <circle cx="18" cy="19" r="3" />
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+          </svg>
+          <span>分享到聊天室</span>
+        </button>
+      {/if}
+
+      {#if !ctxIsCurrent}
+        <button
+          type="button"
+          role="menuitem"
+          class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left border-none bg-transparent text-inherit hover:bg-black/5 dark:hover:bg-white/8 cursor-pointer transition-colors"
+          onclick={(e) => {
+            const target = ctxTrack;
+            closeTrackContextMenu();
+            handleToggleQueueTrack(target, e.currentTarget);
+          }}
+        >
+          {#if ctxIsQueued}
+            <svg class="w-3.5 h-3.5 shrink-0 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span>移出待播队列</span>
+          {:else}
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span>加入待播队列</span>
+          {/if}
+        </button>
+      {/if}
+
+      <button
+        type="button"
+        role="menuitem"
+        class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left border-none bg-transparent text-inherit hover:bg-black/5 dark:hover:bg-white/8 cursor-pointer transition-colors"
+        onclick={() => {
+          const target = ctxTrack;
+          closeTrackContextMenu();
+          void handleToggleFavoriteTrack(target);
+        }}
+      >
+        <svg class="w-3.5 h-3.5 shrink-0 {ctxIsFav ? 'text-amber-400' : ''}" viewBox="0 0 24 24" fill={ctxIsFav ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
+        </svg>
+        <span>{ctxIsFav ? "取消收藏" : "收藏歌曲"}</span>
+      </button>
+
+      <button
+        type="button"
+        role="menuitem"
+        class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left border-none bg-transparent text-inherit hover:bg-black/5 dark:hover:bg-white/8 cursor-pointer transition-colors"
+        onclick={() => {
+          const target = ctxTrack;
+          closeTrackContextMenu();
+          void copyTrackInfo(target);
+        }}
+      >
+        <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+        <span>复制歌名与歌手</span>
+      </button>
+    </div>
+  {/if}
 
 </aside>

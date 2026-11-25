@@ -17,6 +17,16 @@ function label(value) {
   return typeof value === 'string' ? value.replace(/\s+/gu, ' ').trim().slice(0, 180) : '';
 }
 
+export async function completeMatrixMemberEvent(event, fetchEvent) {
+  const previousId = event?.unsigned?.replaces_state;
+  if (event?.type !== 'm.room.member' || event.unsigned?.redacted_because ||
+      event.unsigned?.prev_content || event.prev_content || typeof previousId !== 'string') return event;
+  const previous = await fetchEvent(previousId);
+  if (previous?.type !== event.type || previous.state_key !== event.state_key ||
+      !previous.content?.membership) return event;
+  return { ...event, unsigned: { ...event.unsigned, prev_content: previous.content } };
+}
+
 function memberActivity(event, displayName) {
   const current = event.content;
   const previous = event.unsigned?.prev_content ?? event.prev_content ?? {};

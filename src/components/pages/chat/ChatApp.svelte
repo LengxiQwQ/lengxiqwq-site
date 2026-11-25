@@ -57,6 +57,7 @@ import {
 	searchOnlineMusic,
 } from "./chatClient";
 import { appendTimelineMessage } from "./chatRoomActivity";
+import { buildMusicSharePayload } from "./chatShareProtocol";
 import type {
 	ChatActiveThreadItem,
 	ChatCustomBadge,
@@ -2875,7 +2876,7 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 		status: cleanStatus,
 		url: cleanUrl,
 		bio: cleanBio,
-		...(typeof draft.avatar === "string" && draft.avatar.trim()
+		...(typeof draft.avatar === "string"
 			? { avatar: draft.avatar.trim().slice(0, 400) }
 			: {}),
 		...(typeof draft.notifyEmail === "boolean"
@@ -2887,6 +2888,8 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 	if (currentUser.authType === "waline") {
 		syncChatUserToWalineStorage(updatedUser);
 		if (walineToken && walineServerUrl) {
+			const hasExplicitAvatar =
+				typeof draft.avatar === "string" && Boolean(draft.avatar.trim());
 			void fetch(`${normalizeServerUrl(walineServerUrl)}/api/user`, {
 				method: "PUT",
 				headers: {
@@ -2896,7 +2899,7 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 				body: JSON.stringify({
 					display_name: cleanNick,
 					url: cleanUrl,
-					avatar: updatedUser.avatar || "",
+					...(hasExplicitAvatar ? { avatar: updatedUser.avatar } : {}),
 				}),
 			}).catch(() => {});
 		}
@@ -2974,7 +2977,7 @@ function handleSendMessage(
 	if (threadRootUid) {
 		packet.threadRootUid = threadRootUid;
 	}
-	sendPacket(packet);
+	return sendPacket(packet);
 }
 
 function handleLoadHistory(buffer?: HistoryBuffer): Promise<boolean> {
@@ -3168,6 +3171,73 @@ function listenAfterSongRequest(room: string) {
 
 function handleEnqueueTrack(track: ChatMusicTrack, anchor?: HTMLElement): Promise<boolean> {
 	return sendSongRequest(track, { anchor });
+}
+
+let sharingMusicTrackKey = "";
+let mutedRoomAudioByPreview = false;
+
+$effect(() => {
+	if (typeof window === "undefined") return;
+	const onPreviewState = (event: Event) => {
+		const playing = Boolean(
+			(event as CustomEvent<{ playing?: boolean }>).detail?.playing,
+		);
+		if (!chatAudio) return;
+		if (playing) {
+			if (!chatAudio.muted && !chatAudio.paused) {
+				chatAudio.muted = true;
+				mutedRoomAudioByPreview = true;
+			}
+		} else if (mutedRoomAudioByPreview) {
+			mutedRoomAudioByPreview = false;
+			if (isListeningIntent) {
+				chatAudio.muted = false;
+			}
+		}
+	};
+	window.addEventListener("lx-chat-music-preview-state", onPreviewState);
+	return () => {
+		window.removeEventListener("lx-chat-music-preview-state", onPreviewState);
+		if (mutedRoomAudioByPreview && chatAudio) {
+			mutedRoomAudioByPreview = false;
+			chatAudio.muted = false;
+		}
+	};
+});
+async function handleShareMusicTrack(track: ChatMusicTrack): Promise<boolean> {
+	if (!currentUser) {
+		openAuthModal();
+		return false;
+	}
+	const key = track.id || `${track.title}:${track.artist}`;
+	if (sharingMusicTrackKey === key) return false;
+	sharingMusicTrackKey = key;
+	showNotice(`正在准备分享《${track.title}》...`, "default");
+	try {
+		const { content, hasSharedAudio } = await buildMusicSharePayload({
+			chatServerUrl: normalizedChatServer,
+			auth: currentAuth ?? undefined,
+			track,
+		});
+		const sent = handleSendMessage(content, [], []);
+		if (!sent) {
+			showNotice("发送失败，聊天连接暂时不可用，请重试", "error");
+			return false;
+		}
+		showNotice(
+			hasSharedAudio
+				? `已分享《${track.title}》到聊天室（7 天直链有效）`
+				: `已分享《${track.title}》到聊天室`,
+			"success",
+		);
+		return true;
+	} catch (error) {
+		console.warn("Unable to share music track", error);
+		showNotice("分享歌曲失败，请稍后重试", "error");
+		return false;
+	} finally {
+		if (sharingMusicTrackKey === key) sharingMusicTrackKey = "";
+	}
 }
 
 function handleRandomEnqueue(playlistId: string): Promise<boolean> {
@@ -3931,6 +4001,12 @@ onMount(() => {
           onSkipTrack={handleSkipTrack}
           onVoteSkip={handleVoteSkip}
           onPlayQueued={handlePlayQueued}
+          onEnqueueTrack={handleEnqueueTrack}
+          onShareMusicTrack={handleShareMusicTrack}
+          onFavoriteChanged={() => {
+            playlistRefreshSeq += 1;
+          }}
+          playlistAuth={currentAuth ?? undefined}
           onLoadHistory={handleLoadHistory}
           onLoadHistoryForJump={handleLoadHistoryForJump}
           onMarkRead={handleMarkRead}
@@ -4069,6 +4145,7 @@ onMount(() => {
         initialListening={isListeningIntent}
         onSearchOnline={handleSearchOnline}
         onEnqueueTrack={handleEnqueueTrack}
+        onShareTrack={handleShareMusicTrack}
         onRandomEnqueue={handleRandomEnqueue}
         isRandomizing={pendingRandomRequestId !== null}
         onNotify={showNotice}
@@ -4077,6 +4154,9 @@ onMount(() => {
         onPlaybackStatusChange={(status) => {
           mobilePlaybackStatus = status;
           const listening = Boolean(status.listenIntent && !status.isMuted && status.audioStatus !== "blocked");
+          if (listening && !mutedRoomAudioByPreview && typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("lx-chat-music-preview-stop"));
+          }
           const listenKey = currentRoom + ":" + listening;
           if (ws?.readyState === WebSocket.OPEN && listenKey !== lastListenPacket) {
             ws.send(JSON.stringify({ type: "music:listen", listening }));
@@ -4278,6 +4358,8 @@ onMount(() => {
     <ChatProfileModalComp
       open={showProfileModal}
       currentUser={currentUser}
+      chatServerUrl={normalizedChatServer}
+      auth={currentAuth}
       walineServerUrl={walineServerUrl}
       desktopNotificationMode={desktopNotificationMode}
       desktopNotificationPermission={desktopNotificationPermission}

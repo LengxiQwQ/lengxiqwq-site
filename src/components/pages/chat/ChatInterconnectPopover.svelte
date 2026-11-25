@@ -88,13 +88,13 @@ onMount(() => {
       </div>
       <div class="flex items-center gap-1.5 shrink-0">
         <a
-          href="https://app.element.io/"
+          href="/posts/茶室点歌台在博客里一起听歌是怎样实现的/"
           target="_blank"
           rel="noopener noreferrer"
           class="btn-regular py-0.5 px-2 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-1 no-underline"
-          title="前往 Element 网页端"
+          title="查看点歌台与跨站音乐分享接入文档"
         >
-          <span>Element</span>
+          <span>接入点歌台</span>
           <svg class="w-3 h-3 shrink-0 opacity-70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
             <polyline points="15 3 21 3 21 9" />

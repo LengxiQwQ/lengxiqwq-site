@@ -77,6 +77,8 @@ import type {
 	RoomMusicState,
 } from "./chatTypes";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
+import type { ChatMusicTrack } from "./musicTypes";
+import type { PlaylistAuth } from "./playlistClient";
 import {
 	formatChatReplyPreview,
 	getChatAttachmentKind,
@@ -117,6 +119,13 @@ interface Props {
 	onSkipTrack?: () => void;
 	onVoteSkip?: () => void;
 	onPlayQueued?: (uid: string) => void;
+	onEnqueueTrack?: (
+		track: ChatMusicTrack,
+		anchor?: HTMLElement,
+	) => Promise<boolean>;
+	onShareMusicTrack?: (track: ChatMusicTrack) => Promise<boolean>;
+	onFavoriteChanged?: () => void;
+	playlistAuth?: PlaylistAuth;
 	onClearTargetMessage?: () => void;
 	onLoadHistory?: () => Promise<boolean>;
 	onLoadHistoryForJump?: (
@@ -224,6 +233,10 @@ const {
 	onSkipTrack,
 	onVoteSkip,
 	onPlayQueued,
+	onEnqueueTrack,
+	onShareMusicTrack,
+	onFavoriteChanged,
+	playlistAuth,
 	onClearTargetMessage,
 	onLoadHistory,
 	onLoadHistoryForJump,
@@ -5522,6 +5535,12 @@ function removePendingImage(index: number) {
                 onPin={onPinMessage}
                 onReaction={onReaction}
                 onVotePoll={onVotePoll}
+                musicState={musicState}
+                playlistAuth={playlistAuth}
+                onEnqueueTrack={onEnqueueTrack}
+                onRequireAuth={onRequireAuth}
+                onFavoriteChanged={onFavoriteChanged}
+                onNotify={onNotify}
                 onEndPoll={onEndPoll}
                 onJumpToMessage={(uid) => void jumpToMessage(uid, true)}
                 jumpingToMessageUid={timelineJump?.uid}
@@ -6514,10 +6533,14 @@ function removePendingImage(index: number) {
   {#if showShareModal}
     <ChatShareModal
       open={showShareModal}
+      chatServerUrl={chatServerUrl}
+      musicState={musicState}
+      playlistAuth={playlistAuth}
       onClose={() => {
         showShareModal = false;
       }}
       onShare={handleShareBlogContent}
+      onShareMusicTrack={onShareMusicTrack}
     />
   {/if}
 </div>

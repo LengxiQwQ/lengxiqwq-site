@@ -112,7 +112,11 @@ export function summarizeRoomActivity(events: ChatMessageRecord[]): Array<{
 			? null
 			: parseRoomActivityActor(content, event.name?.trim());
 		const actorName = recall?.actorName ?? activity?.name;
-		const action = recall ? "撤回了消息" : activity?.action;
+		const action = recall
+			? "撤回了消息"
+			: activity?.detail.startsWith("将昵称改为「")
+				? activity.detail
+				: activity?.action;
 
 		const description = actorName ? `${actorName} ${action}` : content;
 		const key = actorName

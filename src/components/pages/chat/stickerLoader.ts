@@ -908,7 +908,19 @@ export function formatChatReplyPreview(
 	isRecalled = false,
 ): string {
 	if (isRecalled) return "原消息已撤回";
+	if (content.trimStart().startsWith("[LX:音乐分享]")) {
+		const firstQuote = content
+			.split(/\r?\n/)
+			.slice(1)
+			.map((l) => l.trim())
+			.find((l) => l.startsWith(">"));
+		const summary = firstQuote
+			? firstQuote.replace(/^>\s*/, "").replace(/^🎵\s*/, "").trim()
+			: "";
+		return summary ? `[音乐分享] ${summary}` : "[音乐分享]";
+	}
 	const readable = content
+		.replace(/<!--[\s\S]*?-->/g, "")
 		.replace(/\[lottie:([a-zA-Z0-9-]+)\]/g, (_full, name) => {
 			const key = String(name).toLowerCase();
 			return `[${LOTTIE_LABELS[key] || name}]`;

@@ -5,7 +5,7 @@ diff --git a/server.mjs b/server.mjs
  import { WebSocketServer, WebSocket } from 'ws';
  import { createMatrixMediaHandler } from './src/matrix-media.mjs';
  import { parseMatrixRelayPrefix } from './src/matrix-relay-prefix.mjs';
-+import { matrixRoomActivity } from './src/matrix-room-activity.mjs';
++import { completeMatrixMemberEvent, matrixRoomActivity } from './src/matrix-room-activity.mjs';
  import { historicalReplyAttachmentFields, matrixReplyAttachmentFields, replyAttachmentFields } from './src/chat-attachment-kind.mjs';
  
  import { QQMusicProvider } from './src/music/qq-music.mjs';
@@ -51,7 +51,7 @@ diff --git a/server.mjs b/server.mjs
          let list = pinnedStore[ws.currentRoom] || [];
          if (isUnpin) {
            list = list.filter((id) => id !== packet.msgUid);
-@@ -7119,6 +7125,125 @@
+@@ -7119,6 +7125,135 @@
    }
  }
  
@@ -70,12 +70,13 @@ diff --git a/server.mjs b/server.mjs
 +  'm.poll.start', 'org.matrix.msc3381.poll.start'
 +]);
 +
-+function roomActivityRecord(ev, history = false) {
++async function roomActivityRecord(ev, history = false) {
 +  if (!ev?.sender || !ev.event_id || !Number.isFinite(ev.origin_server_ts) ||
 +      Math.abs(ev.origin_server_ts) > 8.64e15) return null;
 +  let actorId = ev.sender;
 +  let eventId = ev.event_id;
-+  let activity = matrixRoomActivity(ev, matrixActivityName);
++  const complete = await completeMatrixMemberEvent(ev, async (id) => (await fetchMatrixRawEvent(id)).event);
++  let activity = matrixRoomActivity(complete, matrixActivityName);
 +  let mentionKeys = [];
 +  const redaction = ev.unsigned?.redacted_because;
 +  if (!activity && history && REDACTABLE_TIMELINE_TYPES.has(ev.type) &&
@@ -94,15 +95,24 @@ diff --git a/server.mjs b/server.mjs
 +    }
 +  }
 +  if (!activity) return null;
++  const localKey = resolveLocalUserKey(actorId);
++  const localAvatar = localKey && membersStore.find((member) => member.userKey === localKey)?.avatar;
++  const actorMemberEvent = ev.type === 'm.room.member' && ev.state_key === actorId;
++  const rawAvatar = actorMemberEvent
++    ? (ev.content?.avatar_url || complete.unsigned?.prev_content?.avatar_url || '')
++    : (matrixProfileCache.get(actorId)?.avatar_url || '');
++  const avatar = typeof rawAvatar === 'string' && rawAvatar.startsWith('mxc://')
++    ? mxcToHttp(rawAvatar)
++    : sanitizeSafeUrl(typeof rawAvatar === 'string' ? rawAvatar : '', false);
 +  return {
 +    id: ev.origin_server_ts,
 +    msgUid: eventId,
 +    matrixEventId: eventId,
 +    kind: 'system',
 +    source: 'matrix',
-+    userKey: resolveLocalUserKey(actorId) || 'matrix:' + actorId,
++    userKey: localKey || 'matrix:' + actorId,
 +    name: activity.actor,
-+    avatar: '',
++    avatar: localAvatar || avatar,
 +    url: '',
 +    badge: '',
 +    badgeType: 'tag',
@@ -149,7 +159,7 @@ diff --git a/server.mjs b/server.mjs
 +    const data = await fetchMatrixHistoryPage(from, 100);
 +    if (!data) return;
 +    for (const ev of (data.chunk || []).slice().reverse()) {
-+      const notice = roomActivityRecord(ev, true);
++      const notice = await roomActivityRecord(ev, true);
 +      if (!notice || !insertMatrixActivity(notice)) continue;
 +      saveStoreDebounced();
 +      if (notice.createdAt >= visibleFloor) publishMatrixActivity(notice);
@@ -177,7 +187,7 @@ diff --git a/server.mjs b/server.mjs
  let backfillInFlight = null;
  async function backfillMatrixHistory(limit = 60) {
    if (matrixPersist.syncState.backfillToken === '__EXHAUSTED__') return 0;
-@@ -7126,18 +7251,8 @@
+@@ -7126,18 +7261,8 @@
  
    backfillInFlight = (async () => {
      try {
@@ -198,14 +208,14 @@ diff --git a/server.mjs b/server.mjs
        const chunk = Array.isArray(data.chunk) ? data.chunk : [];
        matrixPersist.syncState.backfillToken = data.end || '__EXHAUSTED__';
        matrixPersist.saveSyncStateDebounced();
-@@ -7162,8 +7277,13 @@
+@@ -7162,8 +7287,13 @@
        // Process oldest-first so replyTo targets within the same chunk are found cleanly
        const chrono = chunk.slice().reverse();
        for (const ev of chrono) {
 -        if (!ev || !ev.event_id) continue;
 -        if (redactedTargets.has(ev.event_id)) continue;
 +        if (!ev?.event_id || !ev.sender) continue;
-+        const activity = roomActivityRecord(ev, true);
++        const activity = await roomActivityRecord(ev, true);
 +        if (activity) {
 +          if (insertMatrixActivity(activity)) added++;
 +          continue;
@@ -214,7 +224,7 @@ diff --git a/server.mjs b/server.mjs
          if (ev.type === 'org.matrix.msc3381.poll.start' || ev.type === 'm.poll.start') {
            if (existing.some((m) => matchMessageById(m, ev.event_id))) continue;
            const pollStart = ev.content?.['org.matrix.msc3381.poll.start'] || ev.content?.['m.poll.start'] || ev.content;
-@@ -7262,13 +7382,12 @@
+@@ -7262,13 +7392,12 @@
        }
  
        const data = await res.json();
@@ -232,7 +242,7 @@ diff --git a/server.mjs b/server.mjs
        if (!matrixPersist.syncState.backfillToken && joinedRoom?.timeline?.prev_batch) {
          matrixPersist.syncState.backfillToken = joinedRoom.timeline.prev_batch;
          matrixPersist.saveSyncStateDebounced();
-@@ -7444,8 +7563,19 @@
+@@ -7444,8 +7573,19 @@
          }
        }
  
@@ -242,7 +252,7 @@ diff --git a/server.mjs b/server.mjs
        for (const ev of roomEvents) {
 +        if (!ev?.event_id || !ev.sender || processedEventIds.has(ev.event_id)) continue;
 +        processedEventIds.add(ev.event_id);
-+        const activity = roomActivityRecord(ev);
++        const activity = await roomActivityRecord(ev);
 +        if (activity) {
 +          if (insertMatrixActivity(activity)) {
 +            saveStoreDebounced();
@@ -253,7 +263,7 @@ diff --git a/server.mjs b/server.mjs
          // Matrix Reactions
          if (ev.type === 'm.reaction') {
            const rTxnId = ev.unsigned?.transaction_id || '';
-@@ -7669,18 +7799,20 @@
+@@ -7669,18 +7809,20 @@
              if (targetIdx >= 0) {
                const targetMsg = interconnectMsgs.splice(targetIdx, 1)[0];
                mentionMailer.removeMessageFromPending(targetMsg.msgUid);
@@ -279,7 +289,7 @@ diff --git a/server.mjs b/server.mjs
                  name: senderName,
                  avatar: '',
                  url: '',
-@@ -7727,7 +7859,7 @@
+@@ -7727,7 +7869,7 @@
              const targetEventId = relates.event_id;
              const interconnectMsgs = messagesStore.interconnect || [];
              const { targetMsg } = await resolveTargetMsgByMatrixEventId(interconnectMsgs, targetEventId);
@@ -288,7 +298,7 @@ diff --git a/server.mjs b/server.mjs
                const replaced = ev.content?.['m.new_content'];
                if (!replaced || replaced.msgtype !== ev.content.msgtype || typeof replaced.body !== 'string') continue;
                if (replaced.msgtype !== (targetMsg.msgType === 'emote' ? 'm.emote' : 'm.text')) continue;
-@@ -7853,6 +7985,12 @@
+@@ -7853,6 +7995,12 @@
          }
        }
  
@@ -301,7 +311,7 @@ diff --git a/server.mjs b/server.mjs
        if (presenceChanged) {
          schedulePresenceBroadcast('interconnect', 350);
        }
-@@ -7888,6 +8026,7 @@
+@@ -7888,6 +8036,7 @@
      }
    }, 30000);
    syncMatrix();

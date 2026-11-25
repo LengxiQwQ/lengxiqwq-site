@@ -12,10 +12,13 @@ function topChatModal(): HTMLDivElement | undefined {
 
 function syncModalStack(): void {
 	const top = topChatModal();
+	const preserveBehind = Boolean(
+		top?.hasAttribute("data-chat-preserve-behind"),
+	);
 	for (const modal of activeChatModals) {
 		const behind = modal !== top;
 		modal.inert = behind;
-		modal.toggleAttribute("data-chat-modal-behind", behind);
+		modal.toggleAttribute("data-chat-modal-behind", behind && !preserveBehind);
 	}
 	const root = document.documentElement;
 	if (top) {
@@ -40,11 +43,14 @@ interface Props {
 	subtitle?: string;
 	ariaLabel?: string;
 	size?: "sm" | "md" | "lg";
+	dialogClass?: string;
 	mobile?: "compact" | "expandable" | "full";
 	fillHeightOnDesktop?: boolean;
 	lockedMinHeight?: number;
 	topPriority?: boolean;
+	preserveBehind?: boolean;
 	showBackButton?: boolean;
+	hideBackButton?: boolean;
 	onBack?: () => void;
 	onClose: () => void;
 	headerExtra?: Snippet;
@@ -57,11 +63,14 @@ const {
 	subtitle = "",
 	ariaLabel = "",
 	size = "sm",
+	dialogClass = "",
 	mobile = "compact",
 	fillHeightOnDesktop = false,
 	lockedMinHeight = 0,
 	topPriority = false,
+	preserveBehind = false,
 	showBackButton = false,
+	hideBackButton = false,
 	onBack,
 	onClose,
 	headerExtra,
@@ -209,6 +218,7 @@ const sizeClass = $derived(
     use:placeBackdrop
     out:fadeChatSheetBackdrop
     class="chat-modal-backdrop {topPriority ? 'chat-modal-backdrop--top' : ''}"
+    data-chat-preserve-behind={preserveBehind ? "true" : undefined}
     role="presentation"
     onpointerdown={handlePointerDown}
     onclick={handleBackdropClick}
@@ -216,7 +226,7 @@ const sizeClass = $derived(
     <div
       bind:this={dialogEl}
       out:slideChatSheetOut
-      class="chat-dialog-card {sizeClass} {fillHeightOnDesktop ? 'chat-dialog-card--fill-md' : ''}"
+      class="chat-dialog-card {sizeClass} {fillHeightOnDesktop ? 'chat-dialog-card--fill-md' : ''} {dialogClass}"
       data-chat-sheet={mobile}
       class:chat-sheet-expanded={expanded}
       class:chat-sheet-dragging={Boolean(dragStart)}
@@ -246,7 +256,7 @@ const sizeClass = $derived(
       {/if}
       <header class="chat-dialog-header shrink-0 flex items-center justify-between gap-2.5 px-3.5 py-3 border-b border-(--chat-divider-color)">
         <div class="flex items-center gap-2 min-w-0 flex-1">
-          {#if isStackedChild || showBackButton || Boolean(onBack)}
+          {#if !hideBackButton && (isStackedChild || showBackButton || Boolean(onBack))}
             <button
               type="button"
               class="chat-tool-btn chat-dialog-back shrink-0"
