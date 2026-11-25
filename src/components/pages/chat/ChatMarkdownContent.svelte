@@ -59,6 +59,10 @@ function getInlineChildren(token: Token): Token[] | undefined {
 	}
 	return undefined;
 }
+
+function stripHtmlComments(raw: string): string {
+	return raw.replace(/<!--[\s\S]*?-->/g, "");
+}
 </script>
 
 {#snippet renderInlineList(tokens: Token[])}
@@ -116,8 +120,15 @@ function getInlineChildren(token: Token): Token[] | undefined {
       {/if}
     {:else if tok.type === "escape"}
       {(tok as Tokens.Escape).text}
+    {:else if tok.type === "checkbox"}
+      <!-- checkbox rendered by list item -->
     {:else if tok.type === "html"}
-      {restoreChatMarkdownLiterals(tok.raw, ast)}
+      {@const cleanedHtml = stripHtmlComments(restoreChatMarkdownLiterals(tok.raw, ast))}
+      {#if /^<br\s*\/?>$/i.test(cleanedHtml.trim())}
+        <br />
+      {:else if cleanedHtml.length > 0}
+        {cleanedHtml}
+      {/if}
     {:else if tok.type === "text"}
       {@const children = getInlineChildren(tok)}
       {#if children && children.length > 0}
@@ -244,8 +255,13 @@ function getInlineChildren(token: Token): Token[] | undefined {
       </div>
     {:else if tok.type === "hr"}
       <hr class="chat-md-hr" />
+    {:else if tok.type === "checkbox" || tok.type === "def"}
+      <!-- checkbox rendered by list item; link reference definitions stay hidden -->
     {:else if tok.type === "html"}
-      <p class="chat-md-p">{restoreChatMarkdownLiterals(tok.raw, ast)}</p>
+      {@const cleanedHtml = stripHtmlComments(restoreChatMarkdownLiterals(tok.raw, ast)).trim()}
+      {#if cleanedHtml.length > 0}
+        <p class="chat-md-p">{cleanedHtml}</p>
+      {/if}
     {:else}
       <p class="chat-md-p">{restoreChatMarkdownLiterals(tok.raw, ast)}</p>
     {/if}

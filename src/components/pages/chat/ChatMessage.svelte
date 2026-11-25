@@ -32,6 +32,7 @@ import { parseRecallNotice, parseRoomActivityActor } from "./chatRoomActivity";
 import {
 	type ChatShareData,
 	parseLxArticleShare,
+	parseLxFriendShare,
 	parseLxMomentShare,
 	parseLxMusicShare,
 } from "./chatShareProtocol";
@@ -348,6 +349,7 @@ const isStickerAttachmentOnly = $derived.by(() => {
 const shareData = $derived<ChatShareData | null>(
 	parseLxArticleShare(message.content) ??
 		parseLxMomentShare(message.content) ??
+		parseLxFriendShare(message.content) ??
 		parseLxMusicShare(message.content),
 );
 
@@ -468,7 +470,10 @@ const effectiveSenderUrl = $derived.by(() => {
 	return sanitizeChatUrl(externalOrigin?.site?.url, false);
 });
 
-const safeAttachments = $derived(getChatMessageAttachments(message, stickerMap));
+const safeAttachments = $derived.by(() => {
+	const list = getChatMessageAttachments(message, stickerMap);
+	return shareData ? list.filter((att) => att.type !== "image") : list;
+});
 
 const roleBadge = $derived.by(() => {
 	if (isExternal) return null;

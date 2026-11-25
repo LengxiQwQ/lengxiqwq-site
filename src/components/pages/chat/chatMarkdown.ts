@@ -123,6 +123,10 @@ export function getChatMarkdownLayout(
 	marked.walkTokens(
 		marked.lexer(content, { gfm: true, breaks: true }),
 		(token) => {
+			if (token.type === "html" && /^<!--[\s\S]*-->$/.test(token.raw.trim())) {
+				textLength -= token.raw.length;
+				return;
+			}
 			if (token.type !== "image") return;
 			const url = isSafeImageUrl(token.href);
 			if (!url) return;

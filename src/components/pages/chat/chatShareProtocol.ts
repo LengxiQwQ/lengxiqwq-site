@@ -1,5 +1,6 @@
 export const LX_ARTICLE_SHARE_TAG = "[LX:文章分享]";
 export const LX_MOMENT_SHARE_TAG = "[LX:动态分享]";
+export const LX_FRIEND_SHARE_TAG = "[LX:友链分享]";
 export const LX_MUSIC_SHARE_TAG = "[LX:音乐分享]";
 
 export interface ChatArticleShareData {
@@ -17,6 +18,15 @@ export interface ChatMomentShareData {
 	content: string;
 	url: string;
 	cover?: string;
+	host: string;
+}
+
+export interface ChatFriendShareData {
+	kind: "friend";
+	name: string;
+	description: string;
+	url: string;
+	avatar?: string;
 	host: string;
 }
 
@@ -41,6 +51,7 @@ export interface ChatMusicShareData {
 export type ChatShareData =
 	| ChatArticleShareData
 	| ChatMomentShareData
+	| ChatFriendShareData
 	| ChatMusicShareData;
 
 export function extractHostname(rawUrl: string): string {
@@ -175,6 +186,123 @@ export function parseLxMomentShare(raw: string): ChatMomentShareData | null {
 		cover,
 		host,
 	};
+}
+
+function isHttpOrRootPath(raw: string): boolean {
+	return (
+		raw.startsWith("http://") ||
+		raw.startsWith("https://") ||
+		raw.startsWith("/")
+	);
+}
+
+/**
+ * 解析 [LX:友链分享]
+ * 优先从末尾隐藏注释 <!--lx-friend:...--> 读取完整结构化字段（含 desc、avatar）；
+ * 兼容 3 行引用（> 名称 / > 链接 / > 头像）与 4 行引用（> 名称 / > 简介 / > 链接 / > 头像）。
+ */
+export function parseLxFriendShare(raw: string): ChatFriendShareData | null {
+	const text = String(raw || "")
+		.replace(/^\uFEFF/, "")
+		.trim();
+	if (!text) return null;
+
+	const lines = text.split(/\r?\n/);
+	if (String(lines[0] || "").trim() !== LX_FRIEND_SHARE_TAG) return null;
+
+	const commentMatch = text.match(/<!--\s*lx-friend:([A-Za-z0-9_-]+)\s*-->/);
+	if (commentMatch?.[1]) {
+		try {
+			const parsed = JSON.parse(decodeBase64UrlUtf8(commentMatch[1])) as Record<
+				string,
+				unknown
+			>;
+			const url =
+				typeof parsed.url === "string" ? parsed.url.trim() : "";
+			if (url && isHttpOrRootPath(url)) {
+				const name =
+					typeof parsed.name === "string" && parsed.name.trim()
+						? parsed.name.trim()
+						: extractHostname(url) || "友链分享";
+				const description =
+					typeof parsed.desc === "string"
+						? parsed.desc.trim()
+						: typeof parsed.description === "string"
+							? parsed.description.trim()
+							: "";
+				const avatarRaw =
+					typeof parsed.avatar === "string" ? parsed.avatar.trim() : "";
+				const avatar = avatarRaw
+					? cleanShareCoverUrl(avatarRaw) || undefined
+					: undefined;
+				return {
+					kind: "friend",
+					name,
+					description,
+					url,
+					avatar,
+					host: extractHostname(url),
+				};
+			}
+		} catch {
+			// Fall back to quoted lines
+		}
+	}
+
+	const quotes = parseLxQuotedLines(raw, LX_FRIEND_SHARE_TAG);
+	if (!quotes || quotes.length < 2) return null;
+
+	const name = quotes[0] || "友链分享";
+	let description = "";
+	let rawUrl = "";
+	let avatar: string | undefined;
+
+	if (isHttpOrRootPath(quotes[1] || "")) {
+		rawUrl = quotes[1];
+		avatar = quotes[2] ? cleanShareCoverUrl(quotes[2]) || undefined : undefined;
+	} else if (quotes.length >= 3 && isHttpOrRootPath(quotes[2] || "")) {
+		description = quotes[1] || "";
+		rawUrl = quotes[2];
+		avatar = quotes[3] ? cleanShareCoverUrl(quotes[3]) || undefined : undefined;
+	} else {
+		return null;
+	}
+
+	return {
+		kind: "friend",
+		name,
+		description,
+		url: rawUrl,
+		avatar,
+		host: extractHostname(rawUrl),
+	};
+}
+
+/**
+ * 组装 [LX:友链分享] 文本
+ */
+export function formatLxFriendShare(data: {
+	name: string;
+	description?: string;
+	url: string;
+	avatar?: string;
+}): string {
+	const name = (data.name || "").trim() || "友链分享";
+	const description = (data.description || "").trim();
+	const url = (data.url || "").trim();
+	const avatar = (data.avatar || "").trim();
+
+	const lines = [LX_FRIEND_SHARE_TAG, `> ${name}`, `> ${url}`];
+	if (avatar) {
+		lines.push(`> ${avatar}`);
+	}
+	if (description) {
+		const encoded = encodeBase64UrlUtf8(
+			JSON.stringify({ name, desc: description, url, ...(avatar ? { avatar } : {}) }),
+		);
+		lines.push(`<!--lx-friend:${encoded}-->`);
+	}
+	return lines.join("\n");
 }
 
 /**
