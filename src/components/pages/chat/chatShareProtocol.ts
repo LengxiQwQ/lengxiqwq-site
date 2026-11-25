@@ -54,6 +54,15 @@ export type ChatShareData =
 	| ChatFriendShareData
 	| ChatMusicShareData;
 
+export function parseLxShareCard(raw: string): ChatShareData | null {
+	return (
+		parseLxArticleShare(raw) ??
+		parseLxMomentShare(raw) ??
+		parseLxFriendShare(raw) ??
+		parseLxMusicShare(raw)
+	);
+}
+
 export function extractHostname(rawUrl: string): string {
 	try {
 		const u = new URL(

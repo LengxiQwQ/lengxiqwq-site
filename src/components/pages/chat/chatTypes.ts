@@ -295,6 +295,9 @@ export interface ChatThreadSummary {
 	participants: ChatThreadParticipant[];
 }
 
+export const RECENT_CHAT_WINDOW_MS: number = 48 * 60 * 60 * 1000;
+export const RECENT_MUSIC_SHARE_WINDOW_MS: number = 5 * 24 * 60 * 60 * 1000;
+
 export interface ChatActiveThreadItem {
 	rootUid: string;
 	rootMessage: ChatMessageRecord | null;

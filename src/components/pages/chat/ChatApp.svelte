@@ -57,7 +57,12 @@ import {
 	searchOnlineMusic,
 } from "./chatClient";
 import { appendTimelineMessage } from "./chatRoomActivity";
-import { buildMusicSharePayload } from "./chatShareProtocol";
+import { privateMusic } from "./chatPrivateMusic.svelte";
+import { buildMusicSharePayload, parseLxShareCard } from "./chatShareProtocol";
+import {
+	RECENT_CHAT_WINDOW_MS,
+	RECENT_MUSIC_SHARE_WINDOW_MS,
+} from "./chatTypes";
 import type {
 	ChatActiveThreadItem,
 	ChatCustomBadge,
@@ -113,7 +118,7 @@ const {
 	enableImageUpload = true,
 	stickerPackUrls = ["/assets/stickers/qq", "/assets/stickers/bmoji", "/assets/stickers/miku"],
 	musicTracks = [],
-	initialMusicVolume = 1,
+	initialMusicVolume = 0.8,
 	interconnectSites = [],
 	siteAvatar = "",
 }: Props = $props();
@@ -261,6 +266,8 @@ type HistoryBuffer = {
 	batches: ChatMessageRecord[][];
 	oldest?: ChatMessageRecord;
 	hasMore: boolean;
+	targetUid?: string;
+	sinceCreatedAt?: number;
 };
 let pendingHistoryLoad: {
 	promise: Promise<boolean>;
@@ -351,6 +358,62 @@ let noticeTone = $state<"default" | "error" | "success">("default");
 let targetMessageUid = $state("");
 let showInterconnect = $state(false);
 let activeThreads = $state<ChatActiveThreadItem[]>([]);
+let recentMentions = $state<ChatMessageRecord[]>([]);
+let recentShares = $state<ChatMessageRecord[]>([]);
+
+function upsertRecentRecord(
+	list: ChatMessageRecord[],
+	msg: ChatMessageRecord,
+	limit: number,
+	getWindowMs?: (item: ChatMessageRecord) => number,
+): ChatMessageRecord[] {
+	const now = Date.now();
+	const withinWindow = (item: ChatMessageRecord) => {
+		const win = getWindowMs ? getWindowMs(item) : RECENT_CHAT_WINDOW_MS;
+		return (item.createdAt || 0) >= now - win;
+	};
+	const next = list.filter((m) => m.msgUid !== msg.msgUid && withinWindow(m));
+	if (withinWindow(msg) && !msg.recalledMsgUid) {
+		next.unshift(msg);
+	}
+	return next
+		.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+		.slice(0, limit);
+}
+
+function getShareWindowMs(item: ChatMessageRecord): number {
+	const share = parseLxShareCard(item.content);
+	return share?.kind === "music"
+		? RECENT_MUSIC_SHARE_WINDOW_MS
+		: RECENT_CHAT_WINDOW_MS;
+}
+
+function syncRecentFeedsForMessage(msg: ChatMessageRecord) {
+	if (msg.recalledMsgUid || msg.kind !== "user") {
+		recentMentions = recentMentions.filter((m) => m.msgUid !== msg.msgUid);
+		recentShares = recentShares.filter((m) => m.msgUid !== msg.msgUid);
+		return;
+	}
+	if (isMentionedForUser(msg, currentUser)) {
+		recentMentions = upsertRecentRecord(recentMentions, msg, 100);
+	} else {
+		recentMentions = recentMentions.filter((m) => m.msgUid !== msg.msgUid);
+	}
+	if (parseLxShareCard(msg.content)) {
+		recentShares = upsertRecentRecord(recentShares, msg, 120, getShareWindowMs);
+	} else {
+		recentShares = recentShares.filter((m) => m.msgUid !== msg.msgUid);
+	}
+}
+
+function removeRecentFeedsByUid(msgUid: string) {
+	if (recentMentions.some((m) => m.msgUid === msgUid)) {
+		recentMentions = recentMentions.filter((m) => m.msgUid !== msgUid);
+	}
+	if (recentShares.some((m) => m.msgUid === msgUid)) {
+		recentShares = recentShares.filter((m) => m.msgUid !== msgUid);
+	}
+}
 let totalChatterCount = $state(0);
 let playlistRefreshSeq = $state(0);
 let musicPanelRef: {
@@ -1296,6 +1359,23 @@ function clearRotationAction() {
 	rotationOfferPlayUid = "";
 }
 
+function createMusicRequestId(): string {
+	if (typeof crypto !== "undefined") {
+		if (typeof crypto.randomUUID === "function") {
+			return crypto.randomUUID();
+		}
+		if (typeof crypto.getRandomValues === "function") {
+			const bytes = new Uint8Array(16);
+			crypto.getRandomValues(bytes);
+			bytes[6] = (bytes[6] & 0x0f) | 0x40;
+			bytes[8] = (bytes[8] & 0x3f) | 0x80;
+			const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+			return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+		}
+	}
+	return `req-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function sendRotationRequest(track: RotationQueueItem, choiceId?: string) {
 	if (!currentUser) {
 		openAuthModal();
@@ -1305,7 +1385,7 @@ function sendRotationRequest(track: RotationQueueItem, choiceId?: string) {
 	const entryId = track.entryId ?? track.id;
 	const offer = choiceId ? rotationAction?.offer : undefined;
 	if (choiceId && !offer) return;
-	const requestId = crypto.randomUUID();
+	const requestId = createMusicRequestId();
 	const playUid = musicState?.current?.uid ?? "";
 	const command = offer
 		? { type: "music:confirm_rotation", offerId: offer.token, choiceId }
@@ -1856,6 +1936,8 @@ function connectRoom(roomId: string) {
 				if (packet.musicAudience) musicAudience = packet.musicAudience;
 				oldestHistoryId = messages[0]?.id ?? packet.oldestHistoryId ?? 0;
 				activeThreads = packet.activeThreads ?? [];
+				recentMentions = packet.recentMentions ?? [];
+				recentShares = packet.recentShares ?? [];
 				pinnedUids = packet.pinnedUids ?? [];
 				pinnedDetails = packet.pinnedDetails ?? [];
 				roomTopic = packet.topic ?? "";
@@ -1949,8 +2031,12 @@ function connectRoom(roomId: string) {
 					sessionUnreadSince = 0;
 					serverUnreadCount = 0;
 					serverUnreadUserCount = 0;
+					recentMentions = [];
 					roomInitSeq += 1;
 				} else if (!packet.roomId || packet.roomId === currentRoom) {
+					if (Array.isArray(packet.recentMentions)) {
+						recentMentions = packet.recentMentions;
+					}
 					if (packet.readReceipts) {
 						readReceipts = packet.readReceipts;
 					}
@@ -2175,6 +2261,7 @@ function connectRoom(roomId: string) {
 				if (isCurrent) {
 					if (!messages.some((m) => m.msgUid === packet.message.msgUid)) {
 						messages = appendTimelineMessage(messages, packet.message);
+						syncRecentFeedsForMessage(packet.message);
 						if (
 							packet.message.kind !== "system" && isDocumentHidden() &&
 							isMentionedForUser(packet.message, currentUser)
@@ -2211,6 +2298,7 @@ function connectRoom(roomId: string) {
 			case "chat:updated": {
 				if (packet.roomId !== currentRoom) break;
 				const updated = packet.message;
+				syncRecentFeedsForMessage(updated);
 				messages = messages.map((message) => {
 					if (message.msgUid === updated.msgUid) return updated;
 					if (message.replyTo?.msgUid !== updated.msgUid) return message;
@@ -2233,6 +2321,7 @@ function connectRoom(roomId: string) {
 				const notice =
 					packet.type === "chat:recalled" ? packet.notice : undefined;
 				if (packet.roomId === currentRoom) {
+					removeRecentFeedsByUid(packet.msgUid);
 					messages = messages
 						.flatMap((m) =>
 							m.msgUid === packet.msgUid ? (notice ? [notice] : []) : [m],
@@ -2279,6 +2368,7 @@ function connectRoom(roomId: string) {
 			}
 			case "chat:reaction_updated": {
 				if (packet.roomId === currentRoom) {
+					removeRecentFeedsByUid(packet.msgUid);
 					messages = messages.map((m) =>
 						m.msgUid === packet.msgUid
 							? { ...m, reactions: packet.reactions }
@@ -2293,9 +2383,10 @@ function connectRoom(roomId: string) {
 						.replace(/\s+/g, " ")
 						.trim()
 						.slice(0, 120);
+					let editedRecord: ChatMessageRecord | null = null;
 					messages = messages.map((m) => {
 						if (m.msgUid === packet.msgUid) {
-							return {
+							editedRecord = {
 								...m,
 								content: packet.content,
 								mentionKeys: packet.mentionKeys,
@@ -2303,6 +2394,7 @@ function connectRoom(roomId: string) {
 								isEdited: true,
 								editedAt: packet.editedAt,
 							};
+							return editedRecord;
 						}
 						if (m.replyTo && m.replyTo.msgUid === packet.msgUid) {
 							return {
@@ -2312,6 +2404,36 @@ function connectRoom(roomId: string) {
 						}
 						return m;
 					});
+					if (editedRecord) {
+						syncRecentFeedsForMessage(editedRecord);
+					} else {
+						recentMentions = recentMentions
+							.map((m) =>
+								m.msgUid === packet.msgUid
+									? {
+											...m,
+											content: packet.content,
+											mentionKeys: packet.mentionKeys,
+											mentionEntities: packet.mentionEntities,
+											isEdited: true,
+											editedAt: packet.editedAt,
+										}
+									: m,
+							)
+							.filter((m) => isMentionedForUser(m, currentUser));
+						recentShares = recentShares
+							.map((m) =>
+								m.msgUid === packet.msgUid
+									? {
+											...m,
+											content: packet.content,
+											isEdited: true,
+											editedAt: packet.editedAt,
+										}
+									: m,
+							)
+							.filter((m) => Boolean(parseLxShareCard(m.content)));
+					}
 				}
 				break;
 			}
@@ -2379,6 +2501,7 @@ function connectRoom(roomId: string) {
 			}
 			case "chat:poll_updated": {
 				if (packet.roomId === currentRoom) {
+					removeRecentFeedsByUid(packet.msgUid);
 					messages = messages.map((m) =>
 						m.msgUid === packet.msgUid && m.poll
 							? {
@@ -3003,6 +3126,8 @@ function handleLoadHistory(buffer?: HistoryBuffer): Promise<boolean> {
 		beforeId: oldestId,
 		beforeUid: beforeUid || undefined,
 		beforeCreatedAt: beforeCreatedAt > 0 ? beforeCreatedAt : undefined,
+		...(buffer?.targetUid ? { targetUid: buffer.targetUid, jumpTarget: true } : {}),
+		...(buffer?.sinceCreatedAt ? { sinceCreatedAt: buffer.sinceCreatedAt, jumpTarget: true } : {}),
 	});
 	if (!ok) {
 		finishHistoryLoad();
@@ -3020,6 +3145,8 @@ async function handleLoadHistoryForJump(
 		batches: [],
 		oldest: messages[0],
 		hasMore: hasMoreHistory,
+		targetUid: target.uid,
+		sinceCreatedAt: target.since,
 	};
 	const matchesTarget = (message: ChatMessageRecord) =>
 		message.msgUid === target.uid || message.matrixEventId === target.uid;
@@ -3189,6 +3316,7 @@ $effect(() => {
 	window.addEventListener("lx-chat-music-preview-state", onPreviewState);
 	return () => {
 		window.removeEventListener("lx-chat-music-preview-state", onPreviewState);
+		privateMusic.resetSessionState();
 	};
 });
 async function handleShareMusicTrack(track: ChatMusicTrack): Promise<boolean> {
@@ -3247,7 +3375,7 @@ async function sendSongRequest(
 		return false;
 	}
 	const room = currentRoom;
-	const requestId = crypto.randomUUID();
+	const requestId = createMusicRequestId();
 	return new Promise<boolean>((resolve) => {
 		const reportUnsent = (message: string) => {
 			if (room !== currentRoom) return;
@@ -4020,6 +4148,8 @@ onMount(() => {
           pinnedUids={pinnedUids}
           pinnedDetails={pinnedDetails}
           activeThreads={activeThreads}
+          recentMentions={recentMentions}
+          recentShares={recentShares}
           roomTopic={roomTopic}
           typingUsers={typingUsers}
           readReceipts={readReceipts}
@@ -4283,7 +4413,7 @@ onMount(() => {
             {/if}
           </p>
         </div>
-        <button type="button" class="chat-queue-icon-btn shrink-0" aria-label="关闭版本选择" disabled={rotationAction?.pending} onclick={closeRotationOffer}>
+        <button type="button" class="chat-queue-icon-btn chat-version-close-btn shrink-0" aria-label="关闭版本选择" disabled={rotationAction?.pending} onclick={closeRotationOffer}>
           <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
             <path d="m6 6 12 12M18 6 6 18" />
           </svg>

@@ -1,109 +1,11 @@
-<script module lang="ts">
-let stopCurrentMusicPreview: (() => void) | undefined;
-
-const PREVIEW_VOLUME_KEY = "lx_chat_music_preview_volume";
-const PREVIEW_MUTED_KEY = "lx_chat_music_preview_muted";
-
-function readStoredPreviewVolume(): number {
-	if (typeof window === "undefined") return 0.7;
-	try {
-		const rawStr = window.localStorage.getItem(PREVIEW_VOLUME_KEY);
-		if (rawStr === null || rawStr.trim() === "") return 0.7;
-		const raw = Number(rawStr);
-		if (Number.isFinite(raw) && raw >= 0 && raw <= 1) return raw;
-	} catch {
-		// ignore
-	}
-	return 0.7;
-}
-
-function readStoredPreviewMuted(): boolean {
-	if (typeof window === "undefined") return false;
-	try {
-		return window.localStorage.getItem(PREVIEW_MUTED_KEY) === "1";
-	} catch {
-		return false;
-	}
-}
-
-function persistPreviewAudioPrefs(vol: number, muted: boolean) {
-	if (typeof window === "undefined") return;
-	try {
-		window.localStorage.setItem(PREVIEW_VOLUME_KEY, String(vol));
-		window.localStorage.setItem(PREVIEW_MUTED_KEY, muted ? "1" : "0");
-	} catch {
-		// ignore
-	}
-}
-
-function notifyRoomPreviewState(playing: boolean) {
-	if (typeof window === "undefined") return;
-	window.dispatchEvent(
-		new CustomEvent("lx-chat-music-preview-state", { detail: { playing } }),
-	);
-}
-
-interface CardLyricLine {
-	time: number;
-	text: string;
-}
-
-const cardLyricsCache = new Map<string, CardLyricLine[]>();
-
-function parseCardLrc(raw: string): CardLyricLine[] {
-	const timeReg = /\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g;
-	const offsetReg = /^\[offset:([+-]?\d+)\]$/i;
-	let offsetSec = 0;
-	const entries: CardLyricLine[] = [];
-
-	for (const rawLine of raw.split(/\r?\n/)) {
-		const trimmed = rawLine.trim();
-		if (!trimmed) continue;
-		const offsetMatch = trimmed.match(offsetReg);
-		if (offsetMatch) {
-			offsetSec = Number.parseInt(offsetMatch[1], 10) / 1000;
-			continue;
-		}
-		const timestamps: number[] = [];
-		timeReg.lastIndex = 0;
-		let match: RegExpExecArray | null = timeReg.exec(rawLine);
-		while (match !== null) {
-			const min = Number.parseInt(match[1], 10);
-			const sec = Number.parseInt(match[2], 10);
-			const msRaw = match[3] ?? "0";
-			const ms =
-				msRaw.length === 1
-					? Number.parseInt(msRaw, 10) * 100
-					: msRaw.length === 2
-						? Number.parseInt(msRaw, 10) * 10
-						: Number.parseInt(msRaw, 10);
-			timestamps.push(Math.max(0, min * 60 + sec + ms / 1000 + offsetSec));
-			match = timeReg.exec(rawLine);
-		}
-		if (timestamps.length === 0) continue;
-		const text = rawLine.replace(timeReg, "").trim();
-		if (!text) continue;
-		for (const t of timestamps) {
-			entries.push({ time: t, text });
-		}
-	}
-
-	entries.sort((a, b) => a.time - b.time);
-	const deduped: CardLyricLine[] = [];
-	for (const item of entries) {
-		const prev = deduped[deduped.length - 1];
-		if (prev && Math.abs(prev.time - item.time) < 0.08) {
-			continue;
-		}
-		deduped.push(item);
-	}
-	return deduped;
-}
-</script>
-
 <script lang="ts">
-import { onDestroy, onMount } from "svelte";
 import type { ChatMusicShareData } from "./chatShareProtocol";
+import {
+	formatPrivateMusicSec,
+	privateMusic,
+	resolveMusicExternalHref,
+	toChatMusicTrack,
+} from "./chatPrivateMusic.svelte";
 import type { ChatMusicTrack } from "./musicTypes";
 import {
 	fetchFavoriteTrackStatus,
@@ -113,6 +15,10 @@ import {
 
 interface Props {
 	data: ChatMusicShareData;
+	msgUid?: string;
+	senderName?: string;
+	senderAvatar?: string;
+	senderUserKey?: string;
 	isSelf?: boolean;
 	chatServerUrl?: string;
 	currentUserKey?: string;
@@ -130,6 +36,10 @@ interface Props {
 
 const {
 	data,
+	msgUid = "",
+	senderName = "",
+	senderAvatar = "",
+	senderUserKey = "",
 	isSelf = false,
 	chatServerUrl = "",
 	currentUserKey = "",
@@ -142,23 +52,13 @@ const {
 	onNotify,
 }: Props = $props();
 
-let coverFailed = $state(false);
-let audioEl = $state<HTMLAudioElement | null>(null);
-let isPlaying = $state(false);
-let isLoadingAudio = $state(false);
-let isEnqueuing = $state(false);
-let audioError = $state("");
-let currentTimeSec = $state(0);
-let durationSec = $state(0);
-let isSeeking = $state(false);
-let seekIgnoreUntil = 0;
-let scrubberEl = $state<HTMLDivElement | null>(null);
-let pendingSeekSec: number | null = null;
-let resolvedFallbackUrl = $state("");
+const isThisCardActive = $derived(privateMusic.isTrackMatching(data, msgUid));
 
-// Volume state
-let previewVolume = $state(readStoredPreviewVolume());
-let isPreviewMuted = $state(readStoredPreviewMuted());
+let coverFailed = $state(false);
+let isEnqueuing = $state(false);
+let isSeeking = $state(false);
+let previewSeekSec = $state<number | null>(null);
+let scrubberEl = $state<HTMLDivElement | null>(null);
 let isDraggingVolume = $state(false);
 let volumeSliderEl = $state<HTMLDivElement | null>(null);
 
@@ -167,23 +67,25 @@ let isFavorited = $state(false);
 let isFavoriteToggling = $state(false);
 let favCheckedKey = "";
 
-// Lyrics state
-let lyrics = $state<CardLyricLine[]>([]);
-let lyricsStatus = $state<"idle" | "loading" | "ready" | "empty">("idle");
-let lyricAbort: AbortController | null = null;
-
-$effect(() => {
-	if (!durationSec && data.durationSec && data.durationSec > 0) {
-		durationSec = data.durationSec;
-	}
-});
-
-$effect(() => {
-	if (audioEl) {
-		audioEl.volume = previewVolume;
-		audioEl.muted = isPreviewMuted || previewVolume === 0;
-	}
-});
+const isPlaying = $derived(isThisCardActive && privateMusic.isPlaying);
+const isLoadingAudio = $derived(isThisCardActive && privateMusic.isLoading);
+const isBufferingSlow = $derived(isThisCardActive && privateMusic.isBufferingSlow && !isPlaying);
+const audioError = $derived(isThisCardActive ? privateMusic.audioError : "");
+const currentTimeSec = $derived(
+	isSeeking && previewSeekSec !== null
+		? previewSeekSec
+		: isThisCardActive
+			? privateMusic.currentTimeSec
+			: 0,
+);
+const durationSec = $derived(
+	isThisCardActive ? privateMusic.durationSec : data.durationSec || 0,
+);
+const previewVolume = $derived(privateMusic.volume);
+const isPreviewMuted = $derived(privateMusic.isMuted);
+const activeLyricText = $derived(
+	isThisCardActive ? privateMusic.activeLyricText : "",
+);
 
 const effectiveDuration = $derived(
 	durationSec > 0 ? durationSec : data.durationSec || 0,
@@ -196,7 +98,7 @@ const progressPercent = $derived(
 );
 
 const effectiveVolumePercent = $derived(
-	isPreviewMuted ? 0 : Math.round(previewVolume * 100),
+	Math.round(previewVolume * 100),
 );
 
 const platformLabel = $derived.by(() => {
@@ -210,72 +112,30 @@ const platformLabel = $derived.by(() => {
 });
 
 const artistText = $derived((data.artist || "").trim() || "未知歌手");
-const externalHref = $derived(data.sourceUrl || data.url || "");
+const externalHref = $derived(resolveMusicExternalHref(data));
 const alreadyInRoom = $derived(isCurrentPlaying || isQueued);
 
-const activeLyricText = $derived.by(() => {
-	if (lyrics.length === 0) return "";
-	const t = currentTimeSec + 0.15;
-	let matched = -1;
-	for (let i = 0; i < lyrics.length; i += 1) {
-		if (lyrics[i].time <= t) {
-			matched = i;
-		} else {
-			break;
-		}
-	}
-	return matched >= 0 ? lyrics[matched].text : lyrics[0]?.text || "";
-});
-
-// 第一行展示内容：播放前显示歌曲名；点击播放后显示实时同步歌词（无歌词时回退歌名）
+// 第一行展示内容：保持歌曲名稳定展示，仅在报错或出现实时同步歌词时切换（避免加载状态来回闪烁）
 const topLineContent = $derived.by(() => {
 	if (audioError) {
 		return { text: audioError, tone: "error" as const };
 	}
-	if (isLoadingAudio && !isPlaying) {
-		return { text: "正在加载音频...", tone: "muted" as const };
-	}
-	if (isPlaying || currentTimeSec > 0) {
-		if (activeLyricText) {
-			return { text: activeLyricText, tone: "lyric" as const };
-		}
-		if (lyricsStatus === "loading") {
-			return { text: "歌词加载中...", tone: "muted" as const };
-		}
-		return { text: data.title || "未命名歌曲", tone: "title" as const };
+	if ((isPlaying || currentTimeSec > 0) && activeLyricText) {
+		return { text: activeLyricText, tone: "lyric" as const };
 	}
 	return { text: data.title || "未命名歌曲", tone: "title" as const };
 });
 
 const showSongArtistSubline = $derived(topLineContent.tone !== "title");
 
-function formatSec(sec: number): string {
-	if (!Number.isFinite(sec) || sec <= 0) return "0:00";
-	const total = Math.floor(sec);
-	const m = Math.floor(total / 60);
-	const s = total % 60;
-	return `${m}:${String(s).padStart(2, "0")}`;
-}
+const formatSec = formatPrivateMusicSec;
 
 function toMusicTrack(): ChatMusicTrack {
-	return {
-		id:
-			data.id ||
-			`${data.provider || data.sourcePlatform || "track"}:${data.sourceId || data.title}`,
-		provider: data.provider || data.sourcePlatform || undefined,
-		sourceId: data.sourceId || undefined,
-		sourcePlatform: data.sourcePlatform || data.provider || undefined,
-		title: data.title || "未命名歌曲",
-		artist: data.artist || "未知歌手",
-		album: data.album || "",
-		cover: data.cover || "",
-		url: data.sourceUrl || data.url || "",
-		durationSec: effectiveDuration || 0,
-	};
+	return toChatMusicTrack(data, effectiveDuration || 0);
 }
 
 $effect(() => {
-	const trackId = data.id || "";
+	const trackId = toChatMusicTrack(data).id || "";
 	const userKey = currentUserKey || "";
 	const server = (chatServerUrl || "").trim();
 	const key = `${server}|${trackId}|${userKey}`;
@@ -297,259 +157,16 @@ $effect(() => {
 		});
 });
 
-function resolveLyricUrl(): string {
-	const base = (chatServerUrl || "").replace(/\/+$/, "");
-	if (!base) return "";
-	let provider = (data.provider || data.sourcePlatform || "").toLowerCase();
-	let bareId = (data.sourceId || "").trim();
-	if (!bareId && data.id) {
-		const idx = data.id.indexOf(":");
-		if (idx > 0) {
-			if (!provider) provider = data.id.slice(0, idx).toLowerCase();
-			bareId = data.id.slice(idx + 1).trim();
-		} else {
-			bareId = data.id.trim();
-		}
-	}
-	if (!provider || !bareId) return "";
-	return `${base}/api/music/lyric?provider=${encodeURIComponent(provider)}&id=${encodeURIComponent(bareId)}`;
-}
-
-async function ensureLyricsLoaded() {
-	if (lyricsStatus === "ready" || lyricsStatus === "loading") return;
-	const url = resolveLyricUrl();
-	if (!url) {
-		lyricsStatus = "empty";
-		return;
-	}
-	const cached = cardLyricsCache.get(url);
-	if (cached) {
-		lyrics = cached;
-		lyricsStatus = cached.length > 0 ? "ready" : "empty";
-		return;
-	}
-	lyricsStatus = "loading";
-	lyricAbort?.abort();
-	const controller = new AbortController();
-	lyricAbort = controller;
-	try {
-		const resp = await fetch(url, { signal: controller.signal });
-		if (!resp.ok) {
-			lyricsStatus = "empty";
-			return;
-		}
-		const text = await resp.text();
-		if (lyricAbort !== controller) return;
-		const parsed = parseCardLrc(text);
-		cardLyricsCache.set(url, parsed);
-		lyrics = parsed;
-		lyricsStatus = parsed.length > 0 ? "ready" : "empty";
-	} catch {
-		if (lyricAbort === controller) {
-			lyricsStatus = "empty";
-		}
-	}
-}
-
-function stopAudio(resetTime = false, notifyRoom = true) {
-	const wasActive = isPlaying || isLoadingAudio;
-	if (audioEl) {
-		audioEl.pause();
-		if (resetTime) {
-			try {
-				audioEl.currentTime = 0;
-			} catch {
-				// ignore
-			}
-			currentTimeSec = 0;
-		}
-	}
-	isPlaying = false;
-	isLoadingAudio = false;
-	pendingSeekSec = null;
-	if (stopCurrentMusicPreview === pauseSelf) {
-		stopCurrentMusicPreview = undefined;
-		if (notifyRoom && wasActive) {
-			notifyRoomPreviewState(false);
-		}
-	}
-}
-
-function pauseSelf() {
-	stopAudio(false, false);
-}
-
-async function fetchFallbackPreviewUrl(): Promise<string> {
-	if (resolvedFallbackUrl) return resolvedFallbackUrl;
-	const base = (chatServerUrl || "").replace(/\/+$/, "");
-	if (!base) return "";
-	const resp = await fetch(`${base}/api/music/preview`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ track: toMusicTrack() }),
-	});
-	if (!resp.ok) return "";
-	const json = (await resp.json().catch(() => null)) as {
-		ok?: boolean;
-		streamUrl?: string;
-		proxyUrl?: string;
-		directUrl?: string;
-		durationSec?: number;
-	} | null;
-	if (!json?.ok) return "";
-	if (json.durationSec && !durationSec) {
-		durationSec = json.durationSec;
-	}
-	const nextUrl = json.streamUrl || json.proxyUrl || json.directUrl || "";
-	if (nextUrl) resolvedFallbackUrl = nextUrl;
-	return nextUrl;
-}
-
-function applyPendingSeek(player: HTMLAudioElement) {
-	if (pendingSeekSec === null) return;
-	if (Number.isFinite(player.duration) && player.duration > 0) {
-		const target = Math.min(player.duration, Math.max(0, pendingSeekSec));
-		pendingSeekSec = null;
-		try {
-			player.currentTime = target;
-			currentTimeSec = target;
-		} catch {
-			// ignore
-		}
-	}
-}
-
-function bindAudioEvents(player: HTMLAudioElement, allowFallback: boolean) {
-	player.ontimeupdate = () => {
-		if (audioEl !== player || isSeeking || Date.now() < seekIgnoreUntil) return;
-		currentTimeSec = player.currentTime || 0;
-	};
-	player.onloadedmetadata = () => {
-		if (audioEl !== player) return;
-		if (Number.isFinite(player.duration) && player.duration > 0) {
-			durationSec = player.duration;
-		}
-		applyPendingSeek(player);
-	};
-	player.onplaying = () => {
-		if (audioEl !== player) return;
-		applyPendingSeek(player);
-		isLoadingAudio = false;
-		isPlaying = true;
-		audioError = "";
-		notifyRoomPreviewState(true);
-	};
-	player.onwaiting = () => {
-		if (audioEl !== player) return;
-		isLoadingAudio = true;
-	};
-	player.onpause = () => {
-		if (audioEl !== player) return;
-		isPlaying = false;
-		isLoadingAudio = false;
-	};
-	player.onended = () => {
-		if (audioEl !== player) return;
-		stopAudio(true, true);
-	};
-	player.onerror = async () => {
-		if (audioEl !== player) return;
-		if (allowFallback) {
-			try {
-				isLoadingAudio = true;
-				const fallbackUrl = await fetchFallbackPreviewUrl();
-				if (fallbackUrl && fallbackUrl !== player.src) {
-					const fallbackPlayer = new Audio(fallbackUrl);
-					fallbackPlayer.preload = "auto";
-					fallbackPlayer.volume = previewVolume;
-					fallbackPlayer.muted = isPreviewMuted || previewVolume === 0;
-					audioEl = fallbackPlayer;
-					bindAudioEvents(fallbackPlayer, false);
-					await fallbackPlayer.play();
-					return;
-				}
-			} catch {
-				// fall through to error state
-			}
-		}
-		stopAudio(false, true);
-		audioError = "试听暂不可用";
-	};
-}
-
-async function startPlayback(seekToSec?: number) {
-	audioError = "";
-	void ensureLyricsLoaded();
-	if (typeof seekToSec === "number" && Number.isFinite(seekToSec)) {
-		pendingSeekSec = seekToSec;
-		currentTimeSec = seekToSec;
-	}
-
-	// Sync latest volume preference across cards
-	previewVolume = readStoredPreviewVolume();
-	isPreviewMuted = readStoredPreviewMuted();
-
-	stopCurrentMusicPreview?.();
-	stopCurrentMusicPreview = pauseSelf;
-	notifyRoomPreviewState(true);
-
-	if (audioEl && audioEl.src && !audioEl.error) {
-		audioEl.volume = previewVolume;
-		audioEl.muted = isPreviewMuted || previewVolume === 0;
-		applyPendingSeek(audioEl);
-		isLoadingAudio = true;
-		try {
-			await audioEl.play();
-			return;
-		} catch {
-			// reload below
-		}
-	}
-
-	isLoadingAudio = true;
-	let primaryUrl = data.sharedAudioUrl || "";
-	let allowFallback = true;
-
-	if (!primaryUrl) {
-		allowFallback = false;
-		try {
-			primaryUrl = await fetchFallbackPreviewUrl();
-		} catch {
-			primaryUrl = "";
-		}
-	}
-
-	if (!primaryUrl) {
-		isLoadingAudio = false;
-		audioError = "暂无试听音源";
-		notifyRoomPreviewState(false);
-		return;
-	}
-
-	const player = new Audio(primaryUrl);
-	player.preload = "auto";
-	player.volume = previewVolume;
-	player.muted = isPreviewMuted || previewVolume === 0;
-	audioEl = player;
-	bindAudioEvents(player, allowFallback);
-
-	try {
-		await player.play();
-	} catch {
-		if (!allowFallback) {
-			stopAudio(false, true);
-			audioError = "试听启动失败";
-		}
-	}
-}
-
 async function togglePreview(event: MouseEvent) {
 	event.stopPropagation();
-	if (isPlaying || isLoadingAudio) {
-		stopAudio(false, true);
-		return;
-	}
-	await startPlayback();
+	await privateMusic.playOrToggle({
+		data,
+		msgUid,
+		senderName,
+		senderAvatar,
+		senderUserKey,
+		chatServerUrl: chatServerUrl || "",
+	});
 }
 
 // Progress scrubber handlers (zero-lag pointer capture)
@@ -563,21 +180,21 @@ function getRatioFromPointer(el: HTMLElement | null, clientX: number): number {
 function commitSeekToRatio(ratio: number) {
 	const total = effectiveDuration || 0;
 	if (total <= 0) return;
-	const targetSec = ratio * total;
-	currentTimeSec = targetSec;
-	seekIgnoreUntil = Date.now() + 260;
-	if (audioEl && Number.isFinite(audioEl.duration) && audioEl.duration > 0) {
-		try {
-			audioEl.currentTime = Math.min(audioEl.duration, Math.max(0, targetSec));
-		} catch {
-			// ignore
-		}
-		if (!isPlaying && !isLoadingAudio) {
-			void startPlayback(targetSec);
-		}
-	} else {
-		void startPlayback(targetSec);
+	previewSeekSec = null;
+	if (isThisCardActive) {
+		privateMusic.setScrubbing(false);
+		privateMusic.commitScrubRatio(ratio, true);
+		return;
 	}
+	void privateMusic.playOrToggle({
+		data,
+		msgUid,
+		senderName,
+		senderAvatar,
+		senderUserKey,
+		chatServerUrl: chatServerUrl || "",
+		seekToSec: Math.min(1, Math.max(0, ratio)) * total,
+	});
 }
 
 function handleScrubberPointerDown(event: PointerEvent) {
@@ -585,6 +202,9 @@ function handleScrubberPointerDown(event: PointerEvent) {
 	event.stopPropagation();
 	event.preventDefault();
 	isSeeking = true;
+	if (isThisCardActive) {
+		privateMusic.setScrubbing(true);
+	}
 	try {
 		scrubberEl?.setPointerCapture(event.pointerId);
 	} catch {
@@ -592,7 +212,7 @@ function handleScrubberPointerDown(event: PointerEvent) {
 	}
 	const ratio = getRatioFromPointer(scrubberEl, event.clientX);
 	if (effectiveDuration > 0) {
-		currentTimeSec = ratio * effectiveDuration;
+		previewSeekSec = ratio * effectiveDuration;
 	}
 }
 
@@ -601,7 +221,7 @@ function handleScrubberPointerMove(event: PointerEvent) {
 	event.stopPropagation();
 	const ratio = getRatioFromPointer(scrubberEl, event.clientX);
 	if (effectiveDuration > 0) {
-		currentTimeSec = ratio * effectiveDuration;
+		previewSeekSec = ratio * effectiveDuration;
 	}
 }
 
@@ -609,6 +229,9 @@ function handleScrubberPointerUp(event: PointerEvent) {
 	if (!isSeeking) return;
 	event.stopPropagation();
 	isSeeking = false;
+	if (isThisCardActive) {
+		privateMusic.setScrubbing(false);
+	}
 	try {
 		scrubberEl?.releasePointerCapture(event.pointerId);
 	} catch {
@@ -622,13 +245,14 @@ function handleScrubberPointerCancel(event: PointerEvent) {
 	if (!isSeeking) return;
 	event.stopPropagation();
 	isSeeking = false;
+	previewSeekSec = null;
+	if (isThisCardActive) {
+		privateMusic.setScrubbing(false);
+	}
 	try {
 		scrubberEl?.releasePointerCapture(event.pointerId);
 	} catch {
 		// ignore
-	}
-	if (audioEl) {
-		currentTimeSec = audioEl.currentTime || 0;
 	}
 }
 
@@ -646,29 +270,12 @@ function handleScrubberKeyDown(event: KeyboardEvent) {
 
 // Volume handlers (zero-lag pointer capture)
 function applyVolume(ratio: number) {
-	const clamped = Math.min(1, Math.max(0, ratio));
-	previewVolume = clamped;
-	isPreviewMuted = clamped === 0;
-	if (audioEl) {
-		audioEl.volume = clamped;
-		audioEl.muted = clamped === 0;
-	}
-	persistPreviewAudioPrefs(previewVolume, isPreviewMuted);
+	privateMusic.setVolume(ratio);
 }
 
 function togglePreviewMute(event: MouseEvent) {
 	event.stopPropagation();
-	if (isPreviewMuted || previewVolume === 0) {
-		isPreviewMuted = false;
-		if (previewVolume === 0) previewVolume = 0.7;
-	} else {
-		isPreviewMuted = true;
-	}
-	if (audioEl) {
-		audioEl.volume = previewVolume;
-		audioEl.muted = isPreviewMuted || previewVolume === 0;
-	}
-	persistPreviewAudioPrefs(previewVolume, isPreviewMuted);
+	privateMusic.toggleMute();
 }
 
 function handleVolumePointerDown(event: PointerEvent) {
@@ -720,7 +327,7 @@ function handleVolumeKeyDown(event: KeyboardEvent) {
 	else return;
 	event.preventDefault();
 	event.stopPropagation();
-	applyVolume((isPreviewMuted ? 0 : previewVolume) + delta);
+	applyVolume(previewVolume + delta);
 }
 
 async function handleToggleFavorite(event: MouseEvent) {
@@ -739,7 +346,7 @@ async function handleToggleFavorite(event: MouseEvent) {
 			track: toMusicTrack(),
 			userKey: currentUserKey,
 		});
-		isFavorited = Boolean(res.isFavorited);
+		isFavorited = Boolean(res.favorited);
 		onFavoriteChanged?.();
 		onNotify?.(
 			isFavorited
@@ -767,36 +374,19 @@ async function handleEnqueue(event: MouseEvent) {
 		if (res === true) {
 			onNotify?.(`已将《${data.title}》加入点歌台队列`, "success");
 		}
+	} catch (err) {
+		onNotify?.(
+			err instanceof Error ? err.message : "点歌请求发送失败，请重试",
+			"error",
+		);
 	} finally {
 		isEnqueuing = false;
 	}
 }
-
-onMount(() => {
-	const onExternalStop = () => {
-		if (isPlaying || isLoadingAudio) {
-			stopAudio(false, false);
-		}
-	};
-	window.addEventListener("lx-chat-music-preview-stop", onExternalStop);
-	return () => {
-		window.removeEventListener("lx-chat-music-preview-stop", onExternalStop);
-	};
-});
-
-onDestroy(() => {
-	lyricAbort?.abort();
-	stopAudio(true, true);
-	if (audioEl) {
-		audioEl.removeAttribute("src");
-		audioEl.load();
-		audioEl = null;
-	}
-});
 </script>
 
 <div
-  class="chat-music-card relative overflow-hidden rounded-2xl text-left transition-all duration-200 {isSelf ? 'chat-music-card--self' : 'chat-music-card--peer'} {isPlaying ? 'chat-music-card--playing' : ''}"
+  class="chat-music-card relative overflow-hidden rounded-2xl text-left transition-colors duration-200 {isSelf ? 'chat-music-card--self' : 'chat-music-card--peer'} {isPlaying ? 'chat-music-card--playing' : ''}"
   role="region"
   aria-label={`音乐分享：${data.title} - ${data.artist}`}
 >
@@ -829,20 +419,18 @@ onDestroy(() => {
         onclick={(e) => e.stopPropagation()}
       >
         <div
-          class="text-[13.5px] font-bold leading-snug truncate transition-colors duration-200 {topLineContent.tone === 'lyric'
+          class="text-[13.5px] font-bold h-5 leading-5 truncate transition-colors duration-200 {topLineContent.tone === 'lyric'
             ? 'text-(--primary)'
             : topLineContent.tone === 'error'
               ? 'text-amber-600 dark:text-amber-400'
-              : topLineContent.tone === 'muted'
-                ? 'text-[var(--chat-meta-color)] font-medium'
-                : 'text-[var(--deep-text)]'}"
+              : 'text-[var(--deep-text)]'}"
           title={topLineContent.text}
           aria-live="polite"
         >
           {topLineContent.text}
         </div>
 
-        <div class="flex items-center min-w-0 text-[12px] leading-tight overflow-hidden">
+        <div class="flex items-center min-w-0 h-4 text-[12px] leading-4 overflow-hidden">
           {#if showSongArtistSubline}
             <span
               class="font-medium text-[var(--deep-text)] truncate shrink-0 max-w-[68%]"
@@ -867,17 +455,17 @@ onDestroy(() => {
         </div>
       </div>
 
-      <!-- 右侧：博客原生同款底色圆形播放/暂停键 -->
+      <!-- 右侧：博客原生同款底色圆角矩形播放/暂停键 -->
       <button
         type="button"
-        class="chat-music-play-btn w-10 h-10 rounded-full inline-flex items-center justify-center border-none cursor-pointer transition-all duration-200 active:scale-95 shrink-0 select-none {isPlaying
+        class="chat-music-play-btn w-10 h-10 rounded-xl inline-flex items-center justify-center border-none cursor-pointer transition-[background-color,color,transform] duration-150 active:scale-95 shrink-0 select-none {isPlaying
           ? 'bg-(--primary) text-white hover:brightness-110'
           : 'bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) active:bg-(--btn-regular-bg-active) text-(--primary)'}"
         aria-label={isPlaying ? `暂停 ${data.title}` : `试听 ${data.title}`}
         onclick={togglePreview}
       >
-        {#if isLoadingAudio}
-          <svg class="w-[18px] h-[18px] block animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        {#if isBufferingSlow}
+          <svg class="w-[17px] h-[17px] block animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.6" opacity="0.28" />
             <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" />
           </svg>
@@ -895,41 +483,37 @@ onDestroy(() => {
     </div>
 
     <!-- 进度条 + 下方：左侧时间 / 右侧迷你音量调节 -->
-    <div class="flex flex-col gap-1 min-w-0 group/scrubber select-none pt-0.5">
-      <div
-        bind:this={scrubberEl}
-        role="slider"
-        tabindex="0"
-        aria-label="拖动调整试听进度"
-        aria-valuemin={0}
-        aria-valuemax={Math.round(effectiveDuration)}
-        aria-valuenow={Math.round(currentTimeSec)}
-        class="relative flex items-center h-3.5 w-full min-w-0 cursor-pointer touch-none"
-        onclick={(e) => e.stopPropagation()}
-        onpointerdown={handleScrubberPointerDown}
-        onpointermove={handleScrubberPointerMove}
-        onpointerup={handleScrubberPointerUp}
-        onpointercancel={handleScrubberPointerCancel}
-        onkeydown={handleScrubberKeyDown}
-      >
-        <div class="w-full h-1 bg-neutral-300/60 dark:bg-neutral-500/40 rounded-full overflow-hidden pointer-events-none">
-          {#if isLoadingAudio && currentTimeSec === 0}
-            <div class="chat-music-track-loading h-full w-1/3 bg-(--primary) rounded-full"></div>
-          {:else}
-            <div
-              class="h-full bg-(--primary) rounded-full"
-              style="width: {progressPercent}%;"
-            ></div>
-          {/if}
-        </div>
+    <div class="flex flex-col gap-1 min-w-0 select-none pt-1">
+      <div class="py-1.5">
         <div
-          class="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 bg-(--primary) ring-2 ring-white dark:ring-neutral-800 rounded-full shadow-sm {isSeeking ? 'scale-110' : isPlaying || currentTimeSec > 0 ? 'scale-100 transition-transform duration-150' : 'scale-0 group-hover/scrubber:scale-100 transition-transform duration-150'}"
-          style="left: {progressPercent}%;"
-          aria-hidden="true"
-        ></div>
+          bind:this={scrubberEl}
+          role="slider"
+          tabindex="0"
+          aria-label="拖动调整试听进度"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(effectiveDuration)}
+          aria-valuenow={Math.round(currentTimeSec)}
+          class="chat-slim-slider {isSeeking ? 'chat-slim-slider--dragging' : ''}"
+          style="--pct: {progressPercent / 100};"
+          onclick={(e) => e.stopPropagation()}
+          onpointerdown={handleScrubberPointerDown}
+          onpointermove={handleScrubberPointerMove}
+          onpointerup={handleScrubberPointerUp}
+          onpointercancel={handleScrubberPointerCancel}
+          onkeydown={handleScrubberKeyDown}
+        >
+          {#if isLoadingAudio && currentTimeSec === 0}
+            <div class="w-full h-full rounded-full overflow-hidden pointer-events-none">
+              <div class="chat-music-track-loading h-full w-1/3 bg-(--primary) rounded-full"></div>
+            </div>
+          {:else}
+            <div class="chat-slim-slider-fill"></div>
+          {/if}
+          <div class="chat-slim-slider-thumb"></div>
+        </div>
       </div>
 
-      <div class="flex items-center justify-between gap-2 h-4.5">
+      <div class="flex items-center justify-between gap-2 h-5">
         <div class="text-[10.5px] leading-none text-neutral-400 flex items-center gap-1.5 min-w-0 truncate">
           <span class="font-mono tabular-nums inline-flex items-center gap-1 shrink-0">
             <span class="text-neutral-600 dark:text-neutral-300">{formatSec(currentTimeSec)}</span>
@@ -940,8 +524,8 @@ onDestroy(() => {
           <span class="truncate text-neutral-500 dark:text-neutral-400">{platformLabel}</span>
         </div>
 
-        <!-- 博客同款迷你试听音量调节 -->
-        <div class="flex items-center gap-1.5 shrink-0 group/vol">
+        <!-- 与「分享音乐」/「点歌台」一致的音量调节 -->
+        <div class="flex items-center gap-1.5 shrink-0 h-full">
           <button
             type="button"
             class="inline-flex items-center justify-center w-5 h-5 rounded-md border-none bg-transparent text-neutral-400 hover:text-(--primary) cursor-pointer transition-colors p-0"
@@ -959,33 +543,27 @@ onDestroy(() => {
             {/if}
           </button>
 
-          <div
-            bind:this={volumeSliderEl}
-            role="slider"
-            tabindex="0"
-            aria-label="试听音量"
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={effectiveVolumePercent}
-            class="relative flex items-center w-16 h-4 cursor-pointer touch-none"
-            onclick={(e) => e.stopPropagation()}
-            onpointerdown={handleVolumePointerDown}
-            onpointermove={handleVolumePointerMove}
-            onpointerup={handleVolumePointerUp}
-            onpointercancel={handleVolumePointerCancel}
-            onkeydown={handleVolumeKeyDown}
-          >
-            <div class="w-full h-1 bg-neutral-300/60 dark:bg-neutral-500/40 rounded-full overflow-hidden pointer-events-none">
-              <div
-                class="h-full bg-(--primary) rounded-full"
-                style="width: {effectiveVolumePercent}%;"
-              ></div>
-            </div>
+          <div class="w-16 flex items-center">
             <div
-              class="pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 bg-(--primary) ring-2 ring-white dark:ring-neutral-800 rounded-full shadow-xs {isDraggingVolume ? 'scale-110' : 'scale-0 group-hover/vol:scale-100 transition-transform duration-150'}"
-              style="left: {effectiveVolumePercent}%;"
-              aria-hidden="true"
-            ></div>
+              bind:this={volumeSliderEl}
+              role="slider"
+              tabindex="0"
+              aria-label="试听音量"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={effectiveVolumePercent}
+              class="chat-slim-slider {isDraggingVolume ? 'chat-slim-slider--dragging' : ''}"
+              style="--pct: {effectiveVolumePercent / 100};"
+              onclick={(e) => e.stopPropagation()}
+              onpointerdown={handleVolumePointerDown}
+              onpointermove={handleVolumePointerMove}
+              onpointerup={handleVolumePointerUp}
+              onpointercancel={handleVolumePointerCancel}
+              onkeydown={handleVolumeKeyDown}
+            >
+              <div class="chat-slim-slider-fill"></div>
+              <div class="chat-slim-slider-thumb"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -1061,7 +639,7 @@ onDestroy(() => {
           aria-label="在新窗口打开原曲链接"
           onclick={(e) => e.stopPropagation()}
         >
-          <span class="truncate">原曲</span>
+          <span class="truncate">查看原曲</span>
           <svg class="w-3 h-3 block shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
             <polyline points="15 3 21 3 21 9" />

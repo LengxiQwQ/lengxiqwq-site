@@ -31,10 +31,7 @@ import {
 import { parseRecallNotice, parseRoomActivityActor } from "./chatRoomActivity";
 import {
 	type ChatShareData,
-	parseLxArticleShare,
-	parseLxFriendShare,
-	parseLxMomentShare,
-	parseLxMusicShare,
+	parseLxShareCard,
 } from "./chatShareProtocol";
 import type {
 	ChatMessageRecord,
@@ -347,10 +344,7 @@ const isStickerAttachmentOnly = $derived.by(() => {
 });
 
 const shareData = $derived<ChatShareData | null>(
-	parseLxArticleShare(message.content) ??
-		parseLxMomentShare(message.content) ??
-		parseLxFriendShare(message.content) ??
-		parseLxMusicShare(message.content),
+	parseLxShareCard(message.content),
 );
 
 function matchesSharedMusic(
@@ -660,9 +654,14 @@ function resolveReactionUsers(users: string[]): ReactionUserItem[] {
 	return list;
 }
 
-let pointerStartPos: { id: number; x: number; y: number } | null = null;
-let longPressTimer: number | null = null;
-let pendingBubbleClick: "tap" | "long-press" | null = null;
+let pointerStartPos: {
+	id: number;
+	x: number;
+	y: number;
+	startedAt: number;
+	hadSelection: boolean;
+} | null = null;
+let pendingBubbleClick = false;
 
 let showActivityModal = $state(false);
 let activityModalTab = $state<string>("read");
@@ -743,17 +742,9 @@ function handleReactionClick(e: MouseEvent, emoji: string) {
 	onReaction?.(message.msgUid, emoji);
 }
 
-function clearLongPress() {
-	if (longPressTimer !== null) {
-		window.clearTimeout(longPressTimer);
-		longPressTimer = null;
-	}
-}
-
 function cancelBubblePress() {
-	clearLongPress();
 	pointerStartPos = null;
-	pendingBubbleClick = null;
+	pendingBubbleClick = false;
 }
 
 $effect(() => cancelBubblePress);
@@ -763,6 +754,19 @@ function isBubbleActionTarget(target: EventTarget | null) {
 		target instanceof Element &&
 		!target.closest("a, button, video, audio, input, textarea, [data-chat-image], .chat-msg-floating-actions")
 	);
+}
+
+function isMobileActionMode() {
+	return (
+		Boolean(onOpenMobileActions) &&
+		typeof window !== "undefined" &&
+		window.matchMedia("(width < 768px), (pointer: coarse)").matches
+	);
+}
+
+function hasNonEmptySelection() {
+	if (typeof window === "undefined") return false;
+	return Boolean(window.getSelection()?.toString().trim());
 }
 
 function triggerMobileActions() {
@@ -777,6 +781,8 @@ function triggerMobileActions() {
 	});
 }
 
+const MOBILE_TAP_MAX_DURATION_MS = 350;
+
 function handleBubblePointerDown(e: PointerEvent) {
 	if (!e.isPrimary) return;
 	cancelBubblePress();
@@ -789,14 +795,13 @@ function handleBubblePointerDown(e: PointerEvent) {
 	) {
 		return;
 	}
-	pointerStartPos = { id: e.pointerId, x: e.clientX, y: e.clientY };
-	longPressTimer = window.setTimeout(() => {
-		longPressTimer = null;
-		pointerStartPos = null;
-		if (window.getSelection()?.toString().trim()) return;
-		pendingBubbleClick = "long-press";
-		triggerMobileActions();
-	}, 460);
+	pointerStartPos = {
+		id: e.pointerId,
+		x: e.clientX,
+		y: e.clientY,
+		startedAt: performance.now(),
+		hadSelection: hasNonEmptySelection(),
+	};
 }
 
 function isSameBubblePress(e: PointerEvent) {
@@ -816,26 +821,35 @@ function handleBubblePointerLeave(e: PointerEvent) {
 }
 
 function handleBubblePointerUp(e: PointerEvent) {
-	if (pointerStartPos?.id !== e.pointerId) return;
-	const isTap = isSameBubblePress(e);
+	if (!pointerStartPos || pointerStartPos.id !== e.pointerId) return;
+	const isShortTap =
+		!pointerStartPos.hadSelection &&
+		isSameBubblePress(e) &&
+		performance.now() - pointerStartPos.startedAt < MOBILE_TAP_MAX_DURATION_MS &&
+		!hasNonEmptySelection();
 	cancelBubblePress();
-	if (isTap) pendingBubbleClick = "tap";
+	if (isShortTap) pendingBubbleClick = true;
+}
+
+function handleBubbleContextMenu(e: MouseEvent) {
+	if (!isMobileActionMode()) return;
+	if (
+		e.target instanceof Element &&
+		e.target.closest("img.chat-sticker-large, .chat-sticker-inline, .chat-sticker-only-wrap")
+	) {
+		e.preventDefault();
+		e.stopPropagation();
+	}
 }
 
 function handleBubbleClick(e: MouseEvent) {
-	const pendingClick = pendingBubbleClick;
-	pendingBubbleClick = null;
-	// Let the actual tap finish before mounting an overlay over its target.
-	if (pendingClick === "long-press") {
-		e.preventDefault();
-		e.stopPropagation();
-		return;
-	}
+	const isTap = pendingBubbleClick;
+	pendingBubbleClick = false;
 	if (
-		pendingClick === "tap" &&
+		isTap &&
 		!e.defaultPrevented &&
 		isBubbleActionTarget(e.target) &&
-		!window.getSelection()?.toString().trim()
+		!hasNonEmptySelection()
 	) {
 		triggerMobileActions();
 	}
@@ -922,29 +936,31 @@ function handleBubbleClick(e: MouseEvent) {
       <!-- 快捷表情反应 -->
       {#if onReaction}
         <div class="relative inline-flex items-center" bind:this={reactionEl}>
-          <button
-            type="button"
-            class="chat-action-icon-btn {showQuickReaction || showReactionPicker ? 'active' : ''}"
-            aria-label="表情回应"
-            onclick={(e) => {
-              e.stopPropagation();
-              showMoreActions = false;
-              if (showQuickReaction) {
-                closeReactionMenus();
-              } else {
-                showQuickReaction = true;
-              }
-            }}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M22 11v1a10 10 0 1 1-9-10" />
-              <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-              <line x1="9" y1="9" x2="9.01" y2="9" />
-              <line x1="15" y1="9" x2="15.01" y2="9" />
-              <path d="M16 5h6" />
-              <path d="M19 2v6" />
-            </svg>
-          </button>
+          <ChatTooltip text="表情回应" disabled={showQuickReaction || showMoreActions || showReactionPicker}>
+            <button
+              type="button"
+              class="chat-action-icon-btn {showQuickReaction || showReactionPicker ? 'active' : ''}"
+              aria-label="表情回应"
+              onclick={(e) => {
+                e.stopPropagation();
+                showMoreActions = false;
+                if (showQuickReaction) {
+                  closeReactionMenus();
+                } else {
+                  showQuickReaction = true;
+                }
+              }}
+            >
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M22 11v1a10 10 0 1 1-9-10" />
+                <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                <line x1="9" y1="9" x2="9.01" y2="9" />
+                <line x1="15" y1="9" x2="15.01" y2="9" />
+                <path d="M16 5h6" />
+                <path d="M19 2v6" />
+              </svg>
+            </button>
+          </ChatTooltip>
 
           {#if showQuickReaction}
             <div
@@ -1689,11 +1705,13 @@ function handleBubbleClick(e: MouseEvent) {
       <!-- svelte-ignore a11y_click_events_have_key_events (This click completes a pointer gesture. Nested message controls keep their own keyboard handling.) -->
       <div
         class="relative max-w-full chat-msg-bubble-wrap"
+        data-mobile-actions={onOpenMobileActions ? "" : undefined}
         onpointerdown={handleBubblePointerDown}
         onpointermove={handleBubblePointerMove}
         onpointerup={handleBubblePointerUp}
         onpointerleave={handleBubblePointerLeave}
         onpointercancel={cancelBubblePress}
+        oncontextmenu={handleBubbleContextMenu}
         onclick={handleBubbleClick}
       >
         {#if actionsMounted || showQuickReaction || showMoreActions || showReactionPicker || mediaRetries.size > 0}
@@ -1716,6 +1734,10 @@ function handleBubbleClick(e: MouseEvent) {
               {#if shareData.kind === "music"}
                 <ChatMusicCard
                   data={shareData}
+                  msgUid={message.msgUid}
+                  senderName={externalOrigin?.cleanName || message.name}
+                  senderAvatar={message.avatar}
+                  senderUserKey={message.userKey}
                   isSelf={true}
                   chatServerUrl={chatServerUrl}
                   currentUserKey={currentUserKey}
@@ -1829,11 +1851,13 @@ function handleBubbleClick(e: MouseEvent) {
       <!-- svelte-ignore a11y_click_events_have_key_events (This click completes a pointer gesture. Nested message controls keep their own keyboard handling.) -->
       <div
         class="relative max-w-full chat-msg-bubble-wrap"
+        data-mobile-actions={onOpenMobileActions ? "" : undefined}
         onpointerdown={handleBubblePointerDown}
         onpointermove={handleBubblePointerMove}
         onpointerup={handleBubblePointerUp}
         onpointerleave={handleBubblePointerLeave}
         onpointercancel={cancelBubblePress}
+        oncontextmenu={handleBubbleContextMenu}
         onclick={handleBubbleClick}
       >
         {#if actionsMounted || showQuickReaction || showMoreActions || showReactionPicker || mediaRetries.size > 0}
@@ -1870,6 +1894,10 @@ function handleBubbleClick(e: MouseEvent) {
               {#if shareData.kind === "music"}
                 <ChatMusicCard
                   data={shareData}
+                  msgUid={message.msgUid}
+                  senderName={externalOrigin?.cleanName || message.name}
+                  senderAvatar={message.avatar}
+                  senderUserKey={message.userKey}
                   isSelf={false}
                   chatServerUrl={chatServerUrl}
                   currentUserKey={currentUserKey}

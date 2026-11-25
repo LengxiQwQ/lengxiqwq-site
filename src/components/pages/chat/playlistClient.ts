@@ -99,9 +99,10 @@ const PLATFORM_LABELS: Record<string, string> = {
 	collective: "茶室",
 };
 
-export function formatPlatformLabel(platform: string): string {
-	const key = platform.trim().toLowerCase();
-	return PLATFORM_LABELS[key] || (platform ? platform.toUpperCase() : "外链");
+export function formatPlatformLabel(platform?: string | null): string {
+	const raw = (platform || "").trim();
+	const key = raw.toLowerCase();
+	return PLATFORM_LABELS[key] || (raw ? raw.toUpperCase() : "外链");
 }
 
 function normalizePlaylistOutPlaylist(

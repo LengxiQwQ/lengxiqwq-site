@@ -901,6 +901,112 @@ export function getChatReplyAttachmentKind(
 	return reply.hasImage ? "attachment" : null;
 }
 
+const LX_SHARE_PREVIEW_LABELS: Record<string, string> = {
+	"[LX:文章分享]": "文章分享",
+	"[LX:动态分享]": "动态分享",
+	"[LX:友链分享]": "友链分享",
+	"[LX:音乐分享]": "音乐分享",
+};
+
+function formatLxSharePreview(content: string): string | null {
+	const trimmed = content.replace(/^\uFEFF/, "").trimStart();
+	const tag = Object.keys(LX_SHARE_PREVIEW_LABELS).find((t) =>
+		trimmed.startsWith(t),
+	);
+	if (!tag) return null;
+
+	const label = LX_SHARE_PREVIEW_LABELS[tag];
+	const rest = trimmed
+		.slice(tag.length)
+		.replace(/<!--[\s\S]*?-->/g, "")
+		.trim();
+	const rawSegments = rest.includes("\n")
+		? rest.split(/\r?\n/)
+		: rest.split(/\s+>(?:\s+|$)/);
+	const quotes = rawSegments
+		.map((s) => s.replace(/^>\s*/, "").trim())
+		.filter(Boolean);
+
+	if (tag === "[LX:音乐分享]") {
+		const summary = quotes[0] ? quotes[0].replace(/^🎵\s*/, "").trim() : "";
+		return summary ? `[${label}] ${summary}` : `[${label}]`;
+	}
+	if (tag === "[LX:动态分享]") {
+		const bodyLine = quotes[1];
+		const isUrl = Boolean(bodyLine && /^(?:https?:\/\/|\/)/i.test(bodyLine));
+		const summary =
+			bodyLine && !isUrl && bodyLine !== "暂无内容" ? bodyLine : quotes[0] || "";
+		return summary ? `[${label}] ${summary}` : `[${label}]`;
+	}
+	const summary = quotes[0] || "";
+	return summary ? `[${label}] ${summary}` : `[${label}]`;
+}
+
+function stripMarkdownForReplyPreview(text: string): string {
+	return (
+		text
+			.replace(/<!--[\s\S]*?-->/g, "")
+			// 代码块：保留简短代码预览或占位符（兼容 120 字截断的未闭合代码块）
+			.replace(/```[a-zA-Z0-9_-]*\s*([\s\S]*?)```/g, (_m, code) => {
+				const inner = String(code || "").replace(/\s+/g, " ").trim();
+				return inner ? `[代码] ${inner}` : "[代码块]";
+			})
+			.replace(/~~~[a-zA-Z0-9_-]*\s*([\s\S]*?)~~~/g, (_m, code) => {
+				const inner = String(code || "").replace(/\s+/g, " ").trim();
+				return inner ? `[代码] ${inner}` : "[代码块]";
+			})
+			.replace(/(?:^|\s)(?:```|~~~)[a-zA-Z0-9_-]*\s*/g, " [代码] ")
+			// 行级前缀（标题、引用、任务列表、无序/有序列表、分隔线；兼容服务端压平后的多段标题）
+			.replace(/^[ \t]*#{1,6}[ \t]+/gm, "")
+			.replace(/(^|\s)#{1,6}[ \t]+(?=\S)/g, "$1")
+			.replace(/^(?:[ \t]*>[ \t]?)+/gm, "")
+			.replace(/^[ \t]*[-*+][ \t]+\[[ xX]\][ \t]+/gm, "")
+			.replace(/^[ \t]*(?:[-*+]|\d+\.)[ \t]+/gm, "")
+			.replace(/^[ \t]*(?:[-*_]){3,}[ \t]*$/gm, "")
+			// 图片与链接（先图片后链接）
+			.replace(/!\[([^\]]*)\]\(([^)]*)\)/g, (_m, alt, rawUrl) => {
+				const cleanAlt = String(alt || "").trim();
+				const url = String(rawUrl || "").trim();
+				if (
+					cleanAlt &&
+					/\/(?:stickers|waline-emojis|owo)\//i.test(url)
+				) {
+					return `[${cleanAlt}]`;
+				}
+				if (
+					cleanAlt &&
+					!/^(?:图|图片|image|img|封面|avatar)$/i.test(cleanAlt)
+				) {
+					return `[图片:${cleanAlt}]`;
+				}
+				return "[图片]";
+			})
+			.replace(/!\[([^\]]*)\]\(https?:\/\/[^\s)]*$/g, "[图片]")
+			.replace(/\[([^\]]*)\]\([^)]*\)/g, (_m, label) => {
+				return String(label || "").trim() || "[链接]";
+			})
+			.replace(/\[([^\]]+)\]\(https?:\/\/[^\s)]*$/g, "$1")
+			.replace(/<(https?:\/\/[^\s>]+)>/g, "$1")
+			// 行内代码、加粗、斜体、删除线与转义字符（按 URL 分段避免破坏 URL 中的 _ * ~）
+			.split(/(https?:\/\/[^\s<>()]+)/g)
+			.map((part, idx) => {
+				if (idx % 2 === 1) return part;
+				return part
+					.replace(/`([^`\n]+)`/g, "$1")
+					.replace(/\*\*([^*\n]+)\*\*/g, "$1")
+					.replace(/__([^_\n]+)__/g, "$1")
+					.replace(/(?<![\d\\])\*([^*\n]+?)\*(?!\d)/g, "$1")
+					.replace(
+						/(^|[\s(（【「"'])_([^_\n]+?)_(?=$|[\s.,!?;:。)）】」"'])/g,
+						"$1$2",
+					)
+					.replace(/~~([^~\n]+)~~/g, "$1")
+					.replace(/\\([\\`*_{}[\]()#+\-.!>~|])/g, "$1");
+			})
+			.join("")
+	);
+}
+
 export function formatChatReplyPreview(
 	content: string,
 	stickerMap?: Map<string, StickerItem>,
@@ -908,18 +1014,10 @@ export function formatChatReplyPreview(
 	isRecalled = false,
 ): string {
 	if (isRecalled) return "原消息已撤回";
-	if (content.trimStart().startsWith("[LX:音乐分享]")) {
-		const firstQuote = content
-			.split(/\r?\n/)
-			.slice(1)
-			.map((l) => l.trim())
-			.find((l) => l.startsWith(">"));
-		const summary = firstQuote
-			? firstQuote.replace(/^>\s*/, "").replace(/^🎵\s*/, "").trim()
-			: "";
-		return summary ? `[音乐分享] ${summary}` : "[音乐分享]";
-	}
-	const readable = content
+	const sharePreview = formatLxSharePreview(content);
+	if (sharePreview) return sharePreview;
+
+	const withStickers = content
 		.replace(/<!--[\s\S]*?-->/g, "")
 		.replace(/\[lottie:([a-zA-Z0-9-]+)\]/g, (_full, name) => {
 			const key = String(name).toLowerCase();
@@ -938,7 +1036,9 @@ export function formatChatReplyPreview(
 				return `[${LOTTIE_LABELS[key] || lottieMatch[1]}]`;
 			}
 			return `[${fallbackName}]`;
-		})
+		});
+
+	const readable = stripMarkdownForReplyPreview(withStickers)
 		.replace(/\s+/g, " ")
 		.trim();
 	const label = attachmentKind ? attachmentPreviewLabels[attachmentKind] : "";

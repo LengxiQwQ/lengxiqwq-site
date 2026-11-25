@@ -65,6 +65,7 @@ import ChatModal from "./ChatModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import { positionChatFloating } from "./chatFloating";
 import { fetchMusicHistory, formatClockSeconds, readStoredGuestToken } from "./chatClient";
+import { privateMusic } from "./chatPrivateMusic.svelte";
 import type {
 	ChatMentionCandidate,
 	ChatOnlineMember,
@@ -195,7 +196,7 @@ const {
 	mentionMembers = [],
 	clockOffsetMs = 0,
 	serverNow,
-	initialVolume = 1,
+	initialVolume = 0.8,
 	initialListening = false,
 	onSearchOnline,
 	onEnqueueTrack,
@@ -224,21 +225,6 @@ const {
 	onShuffleRotation,
 	onClose,
 }: Props = $props();
-
-const initVol = untrack(() => {
-	try {
-		if (typeof window !== "undefined" && window.sessionStorage) {
-			const saved = window.sessionStorage.getItem("chat:player:volume");
-			if (saved !== null) {
-				const n = Number.parseFloat(saved);
-				if (Number.isFinite(n)) return Math.min(1, Math.max(0, n));
-			}
-		}
-	} catch {
-		// Ignore storage error
-	}
-	return Number.isFinite(initialVolume) ? Math.min(1, Math.max(0, initialVolume)) : 1;
-});
 
 type MusicTab = "player" | "search" | "playlist" | "history";
 type HistorySortMode = "recent" | "count";
@@ -338,7 +324,7 @@ function cyclePlayerPaneMode() {
 	}
 }
 let localDuration = $state(0);
-let volume = $state(initVol);
+const volume = $derived(privateMusic.volume);
 let coverLoadFailed = $state(false);
 
 // 搜索相关状态
@@ -402,9 +388,6 @@ const currentProviderOption = $derived(
 );
 
 // 歌单相关状态
-let featuredCollapsed = $state(false);
-let myCollapsed = $state(false);
-let membersCollapsed = $state(false);
 let featuredPlaylists = $state<PlaylistSummary[]>([]);
 let myPlaylists = $state<PlaylistSummary[]>([]);
 let membersPlaylists = $state<PlaylistSummary[]>([]);
@@ -841,6 +824,8 @@ let trackContextMenu = $state<{
 	track: ChatMusicTrack;
 	x: number;
 	y: number;
+	rawX: number;
+	rawY: number;
 } | null>(null);
 let trackLongPressTimer: ReturnType<typeof setTimeout> | null = null;
 let trackLongPressStart = { x: 0, y: 0 };
@@ -850,9 +835,50 @@ function openTrackContextMenu(track: ChatMusicTrack, clientX: number, clientY: n
 	const menuW = 196;
 	const menuH = 186;
 	const pad = 10;
-	const x = Math.min(Math.max(pad, clientX), Math.max(pad, window.innerWidth - menuW - pad));
-	const y = Math.min(Math.max(pad, clientY), Math.max(pad, window.innerHeight - menuH - pad));
-	trackContextMenu = { track, x, y };
+	const x =
+		clientX + menuW + pad > window.innerWidth
+			? Math.max(pad, clientX - menuW)
+			: Math.max(pad, clientX);
+	const y =
+		clientY + menuH + pad > window.innerHeight
+			? Math.max(pad, clientY - menuH)
+			: Math.max(pad, clientY);
+	trackContextMenu = { track, x, y, rawX: clientX, rawY: clientY };
+}
+
+function placeTrackContextMenu(node: HTMLDivElement) {
+	const layer = document.getElementById("chat-modal-layer") ?? document.body;
+	if (node.parentElement !== layer) {
+		layer.appendChild(node);
+	}
+	const alignToViewport = () => {
+		if (!trackContextMenu || typeof window === "undefined") return;
+		const rect = node.getBoundingClientRect();
+		const menuW = rect.width || 192;
+		const menuH = rect.height || 186;
+		const pad = 10;
+		const { rawX, rawY } = trackContextMenu;
+		const nextX =
+			rawX + menuW + pad > window.innerWidth
+				? Math.max(pad, rawX - menuW)
+				: Math.max(pad, rawX);
+		const nextY =
+			rawY + menuH + pad > window.innerHeight
+				? Math.max(pad, rawY - menuH)
+				: Math.max(pad, rawY);
+		if (nextX !== trackContextMenu.x || nextY !== trackContextMenu.y) {
+			trackContextMenu = { ...trackContextMenu, x: nextX, y: nextY };
+		}
+	};
+	alignToViewport();
+	return {
+		update() {
+			alignToViewport();
+		},
+		destroy() {
+			node.remove();
+		},
+	};
 }
 
 function closeTrackContextMenu() {
@@ -1407,7 +1433,7 @@ const progressRatio = $derived(
 		? Math.min(1, Math.max(0, roomElapsed / effectiveDuration))
 		: 0,
 );
-const volumeRatio = $derived(isListening ? volume : 0);
+const volumeRatio = $derived(volume);
 
 const queuedTrackIds = $derived(new Set(queue.map((item) => item.track.id)));
 
@@ -2792,6 +2818,7 @@ async function scrollLyricToCenter(index: number, instant = false) {
 function updateMediaSessionMetadata() {
 	if (typeof navigator === "undefined" || !("mediaSession" in navigator) || typeof MediaMetadata === "undefined")
 		return;
+	if (privateMusic.ownsMediaSession) return;
 	if (!hasJoinedAudio || !currentPlay) return;
 
 	const coverUrl = currentPlay.track.cover
@@ -2841,6 +2868,7 @@ function unregisterMediaSessionHandlers() {
 function registerMediaSessionHandlers() {
 	if (typeof navigator === "undefined" || !("mediaSession" in navigator))
 		return;
+	if (privateMusic.ownsMediaSession) return;
 
 	const actions: [MediaSessionAction, MediaSessionActionHandler | null][] = [
 		["play", () => {
@@ -2861,6 +2889,13 @@ function registerMediaSessionHandlers() {
 			// Some browser implementations expose only a subset of media actions.
 		}
 	}
+	if (typeof navigator.mediaSession.setPositionState === "function") {
+		try {
+			navigator.mediaSession.setPositionState();
+		} catch {
+			// ignore
+		}
+	}
 }
 
 function muteLocally() {
@@ -2872,10 +2907,12 @@ function startOrResumeAudio() {
 	if (typeof window !== "undefined") {
 		window.dispatchEvent(new CustomEvent("lx-chat-music-preview-stop"));
 	}
-	if (volume === 0) volume = 0.5;
+	if (volume === 0) {
+		privateMusic.setVolume(0.5, { unmuteIfActive: false });
+	}
 	hasJoinedAudio = true;
 	audioEl.muted = false;
-	player?.setVolume(volume);
+	player?.setVolume(privateMusic.volume);
 	player?.listen();
 	registerMediaSessionHandlers();
 	updateMediaSessionMetadata();
@@ -2932,22 +2969,14 @@ function handleVolumeKeyDown(e: KeyboardEvent) {
 
 function handleVolumeInput(value: number) {
 	const clamped = Math.min(1, Math.max(0, value));
-	volume = clamped;
-	try {
-		if (typeof window !== "undefined" && window.sessionStorage) {
-			window.sessionStorage.setItem("chat:player:volume", String(clamped));
-		}
-	} catch {
-		// Ignore storage error
-	}
-	if (clamped > 0 && !isListening) {
-		startOrResumeAudio();
-	} else if (clamped === 0 && isListening) {
-		muteLocally();
-	} else if (player) {
-		player.setVolume(clamped);
-	}
+	privateMusic.setVolume(clamped, { unmuteIfActive: false });
+	player?.setVolume(clamped);
 }
+
+$effect(() => {
+	const loudness = volume;
+	player?.setVolume(loudness);
+});
 
 // The controller exclusively owns playback; this effect only supplies room state.
 $effect(() => {
@@ -3404,7 +3433,13 @@ $effect(() => {
 	untrack(() => {
 		controller.setVolume(volume);
 		controller.setTrack(currentPlay);
-		if (shouldInitialListen) { hasJoinedAudio = true; controller.listen(); }
+		if (shouldInitialListen) {
+			if (typeof window !== "undefined") {
+				window.dispatchEvent(new CustomEvent("lx-chat-music-preview-stop"));
+			}
+			hasJoinedAudio = true;
+			controller.listen();
+		}
 	});
 	return () => { controller.destroy(); if (player === controller) player = undefined; };
 });
@@ -3604,11 +3639,22 @@ $effect(() => {
   {/snippet}
 
   {#snippet rotationTrackRow(item: RotationQueueItem, index?: number)}
+    {@const normalizedProvider =
+      item.sourcePlatform === "netease" || item.id.startsWith("netease:")
+        ? "netease"
+        : item.sourcePlatform === "kugou" || item.id.startsWith("kugou:")
+          ? "kugou"
+          : item.sourcePlatform === "youtube" || item.id.startsWith("youtube:")
+            ? "youtube"
+            : item.sourcePlatform === "local" || item.id.startsWith("local:")
+              ? "local"
+              : "qq"}
     {@const toTrack: ChatMusicTrack = {
       id: item.id,
-      provider: "qq",
-      sourceId: item.sourceTrackId || item.id.replace(/^qq:/, ""),
+      provider: normalizedProvider,
+      sourceId: item.sourceTrackId || item.id.replace(/^[a-z_]+:/i, ""),
       sourcePlatform: (item.sourcePlatform as any) || "qqmusic",
+      playlistId: item.sourcePlaylistId,
       title: item.title,
       artist: item.artist,
       album: item.album || "",
@@ -3617,7 +3663,14 @@ $effect(() => {
     }}
     {@const action = rotationAction?.entryId === (item.entryId ?? item.id) ? rotationAction : undefined}
     {@const isCurrent = item.entryId ? currentPlay?.track.id === item.id : isTrackCurrent(toTrack)}
-    <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+    <div
+      class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+      oncontextmenu={(event) => handleTrackRowContextMenu(event, toTrack)}
+      onpointerdown={(event) => handleTrackRowPointerDown(event, toTrack)}
+      onpointermove={handleTrackRowPointerMove}
+      onpointerup={cancelTrackLongPress}
+      onpointercancel={cancelTrackLongPress}
+    >
       <div class="chat-music-thumb-small w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.pic}
           <img src={resolveMusicThumbUrl(item.pic)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
@@ -3972,7 +4025,14 @@ $effect(() => {
   {/snippet}
 
   {#snippet queuedTrackRow(item: QueueEntry)}
-    <div class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
+    <div
+      class="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+      oncontextmenu={(event) => handleTrackRowContextMenu(event, item.track)}
+      onpointerdown={(event) => handleTrackRowPointerDown(event, item.track)}
+      onpointermove={handleTrackRowPointerMove}
+      onpointerup={cancelTrackLongPress}
+      onpointercancel={cancelTrackLongPress}
+    >
       <div class="chat-music-thumb-small w-8 h-8 rounded-md overflow-hidden shrink-0 bg-(--primary)/10 flex items-center justify-center">
         {#if item.track.cover}
           <img src={resolveMusicThumbUrl(item.track.cover)} alt="" loading="lazy" decoding="async" class="w-full h-full object-cover" />
@@ -4029,7 +4089,14 @@ $effect(() => {
     <div class="flex-1 min-h-0 flex flex-col">
       <div class="px-4 pt-3 pb-1.5 shrink-0">
         <!-- 顶部行：左 w-20 正方形圆角大封面 + 右 三排文字（歌名、歌手/专辑、点歌人） -->
-        <div class="flex items-center gap-3 mb-2.5">
+        <div
+          class="flex items-center gap-3 mb-2.5"
+          oncontextmenu={(event) => currentPlay?.track && handleTrackRowContextMenu(event, currentPlay.track)}
+          onpointerdown={(event) => currentPlay?.track && handleTrackRowPointerDown(event, currentPlay.track)}
+          onpointermove={handleTrackRowPointerMove}
+          onpointerup={cancelTrackLongPress}
+          onpointercancel={cancelTrackLongPress}
+        >
           <div class="chat-music-player-cover relative shrink-0 w-20 h-20 rounded-xl overflow-hidden shadow-sm border border-black/5 dark:border-white/10 bg-(--primary)/10 flex items-center justify-center">
             <svg class="w-8 h-8 text-(--primary) opacity-40 absolute" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
@@ -4220,12 +4287,12 @@ $effect(() => {
           <!-- 左：分享（最左） + 收藏（其次），与右侧两键镜像对称 -->
           <div class="grid grid-cols-2 justify-items-center min-w-0">
             {#if onShareTrack}
-              <ChatTooltip text="分享到聊天室">
+              <ChatTooltip text="分享到茶室">
                 <button
                   type="button"
                   disabled={!currentPlay}
                   class="inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer text-[var(--chat-meta-color)] hover:text-(--primary) disabled:opacity-40 disabled:cursor-not-allowed"
-                  aria-label="分享当前歌曲到聊天室"
+                  aria-label="分享当前歌曲到茶室"
                   onclick={() => {
                     if (currentPlay?.track) void onShareTrack(currentPlay.track);
                   }}
@@ -4250,7 +4317,7 @@ $effect(() => {
                   type="button"
                   disabled={Boolean(currentUser && !currentPlay)}
                   aria-busy={isFavToggling}
-                  class="chat-current-favorite inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer disabled:cursor-not-allowed {isCurrentFavorited ? 'text-amber-400' : 'text-[var(--chat-meta-color)] hover:text-amber-400'}"
+                  class="chat-current-favorite inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer disabled:cursor-not-allowed {isCurrentFavorited ? 'text-amber-400 hover:text-amber-500' : 'text-[var(--chat-meta-color)] hover:text-amber-400'}"
                   data-favorited={isCurrentFavorited}
                   aria-label={isCurrentFavorited ? "取消收藏当前歌曲" : "收藏当前歌曲"}
                   onclick={toggleFavoriteCurrentTrack}
@@ -5712,69 +5779,37 @@ $effect(() => {
           <div class="text-[13px] xl:text-[12px] text-red-500 px-1">{playlistsError}</div>
         {/if}
 
-        <!-- 段落 1：房间精选（可折叠） -->
+        <!-- 段落 1：房间精选 -->
         <section class="space-y-1.5">
-          <button
-            type="button"
-            class="w-full flex items-center justify-between gap-2 bg-transparent border-none p-0 cursor-pointer text-left"
-            aria-expanded={!featuredCollapsed}
-            onclick={() => (featuredCollapsed = !featuredCollapsed)}
-          >
-            <span class="flex items-center gap-1.5 min-w-0">
-              <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">精选歌单</span>
-              {#if featuredPlaylists.length > 0}
-                <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{featuredPlaylists.length}</span>
-              {/if}
-            </span>
-            <svg
-              class="w-3.5 h-3.5 shrink-0 text-[var(--chat-meta-color)] transition-transform {featuredCollapsed ? '-rotate-90' : ''}"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          {#if !featuredCollapsed}
-            {#if isLoadingPlaylists && featuredPlaylists.length === 0}
-              <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">加载中...</div>
-            {:else if featuredPlaylists.length === 0}
-              <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-3 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] text-center">
-                这个房间还没有精选歌单
-              </div>
-            {:else}
-              <div class="space-y-1.5">
-                {#each featuredPlaylists as pl (pl.id)}
-                  {@render playlistSummaryCard(pl, Boolean(pl.ownerName))}
-                {/each}
-              </div>
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">精选歌单</span>
+            {#if featuredPlaylists.length > 0}
+              <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{featuredPlaylists.length}</span>
             {/if}
+          </div>
+          {#if isLoadingPlaylists && featuredPlaylists.length === 0}
+            <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">加载中...</div>
+          {:else if featuredPlaylists.length === 0}
+            <div class="rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-[var(--card-bg)]/30 p-3 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] text-center">
+              这个房间还没有精选歌单
+            </div>
+          {:else}
+            <div class="space-y-1.5">
+              {#each featuredPlaylists as pl (pl.id)}
+                {@render playlistSummaryCard(pl, Boolean(pl.ownerName))}
+              {/each}
+            </div>
           {/if}
         </section>
 
         <!-- 段落 2：我的歌单（导入入口常驻在列表上方） -->
         <section class="space-y-1.5">
-          <button
-            type="button"
-            class="w-full flex items-center justify-between gap-2 bg-transparent border-none p-0 cursor-pointer text-left"
-            aria-expanded={!myCollapsed}
-            onclick={() => (myCollapsed = !myCollapsed)}
-          >
-            <span class="flex items-center gap-1.5 min-w-0">
-              <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">我的歌单</span>
-              {#if personalPlaylistAuth && myPlaylists.length > 0}
-                <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{myPlaylists.length}</span>
-              {/if}
-            </span>
-            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--chat-meta-color)] transition-transform {myCollapsed ? '-rotate-90' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          {#if !myCollapsed}
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">我的歌单</span>
+            {#if personalPlaylistAuth && myPlaylists.length > 0}
+              <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{myPlaylists.length}</span>
+            {/if}
+          </div>
           {#if !personalPlaylistAuth}
             <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0 px-2 py-1">
               {currentUser ? "正在确认聊天室身份…" : "旁观模式可浏览公开歌单。加入聊天室后可导入自己的歌单。"}
@@ -5793,28 +5828,16 @@ $effect(() => {
               </div>
             {/if}
           {/if}
-          {/if}
         </section>
 
         <!-- 段落 3：成员歌单（按成员分组，扁平列表） -->
         <section class="space-y-2">
-          <button
-            type="button"
-            class="w-full flex items-center justify-between gap-2 bg-transparent border-none p-0 cursor-pointer text-left"
-            aria-expanded={!membersCollapsed}
-            onclick={() => (membersCollapsed = !membersCollapsed)}
-          >
-            <span class="flex items-center gap-1.5 min-w-0">
-              <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">成员歌单</span>
-              {#if membersPlaylists.length > 0}
-                <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{membersPlaylists.length}</span>
-              {/if}
-            </span>
-            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--chat-meta-color)] transition-transform {membersCollapsed ? '-rotate-90' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          {#if !membersCollapsed}
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="text-[13px] xl:text-[12px] font-bold text-[var(--deep-text)]">成员歌单</span>
+            {#if membersPlaylists.length > 0}
+              <span class="text-[12px] xl:text-[11px] font-semibold text-[var(--chat-meta-color)] tabular-nums">{membersPlaylists.length}</span>
+            {/if}
+          </div>
           {#if isLoadingPlaylists && membersPlaylists.length === 0}
             <div class="text-center py-4 text-[13px] xl:text-[12px] text-[var(--chat-meta-color)]">加载中...</div>
           {:else if memberPlaylistGroups.length === 0}
@@ -5845,7 +5868,6 @@ $effect(() => {
                 </div>
               {/each}
             </div>
-          {/if}
           {/if}
         </section>
       </div>
@@ -6429,13 +6451,15 @@ $effect(() => {
     {@const ctxIsFav = isTrackFavorited(ctxTrack)}
     {@const ctxIsQueued = isTrackQueued(ctxTrack)}
     {@const ctxIsCurrent = isTrackCurrent(ctxTrack)}
-    <div
-      data-track-context-menu
-      role="menu"
-      aria-label={`歌曲操作：${ctxTrack.title}`}
-      class="fixed z-[1200] w-48 rounded-xl border border-[var(--skin-line)]/80 bg-[var(--skin-surface,#ffffff)]/95 backdrop-blur-md shadow-xl p-1.5 text-[13px] text-[var(--deep-text)] select-none"
-      style="left: {trackContextMenu.x}px; top: {trackContextMenu.y}px;"
-    >
+    {#key `${trackContextMenu.rawX}-${trackContextMenu.rawY}-${ctxTrack.id}`}
+      <div
+        use:placeTrackContextMenu
+        data-track-context-menu
+        role="menu"
+        aria-label={`歌曲操作：${ctxTrack.title}`}
+        class="pointer-events-auto fixed z-[1200] w-48 rounded-xl border border-[var(--skin-line)]/80 bg-[var(--skin-surface,#ffffff)]/95 backdrop-blur-md shadow-xl p-1.5 text-[13px] text-[var(--deep-text)] select-none"
+        style="left: {trackContextMenu.x}px; top: {trackContextMenu.y}px;"
+      >
       <div class="px-2.5 py-1.5 mb-1 border-b border-[var(--chat-divider-color)] min-w-0">
         <div class="font-bold text-xs truncate">{ctxTrack.title}</div>
         <div class="text-[11px] text-[var(--chat-meta-color)] truncate">{ctxTrack.artist || "未知歌手"}</div>
@@ -6463,7 +6487,7 @@ $effect(() => {
         </button>
       {/if}
 
-      {#if !ctxIsCurrent}
+      {#if !ctxIsCurrent && !(ctxIsQueued && !canToggleCatalogTrack(ctxTrack))}
         <button
           type="button"
           role="menuitem"
@@ -6522,6 +6546,7 @@ $effect(() => {
         <span>复制歌名与歌手</span>
       </button>
     </div>
+    {/key}
   {/if}
 
 </aside>

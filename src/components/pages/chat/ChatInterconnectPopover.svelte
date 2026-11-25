@@ -91,7 +91,7 @@ onMount(() => {
           href="/posts/茶室点歌台在博客里一起听歌是怎样实现的/"
           target="_blank"
           rel="noopener noreferrer"
-          class="btn-regular py-0.5 px-2 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-1 no-underline"
+          class="btn-regular chat-interconnect-header-link py-0.5 px-2 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-1 no-underline whitespace-nowrap"
           title="查看点歌台与跨站音乐分享接入文档"
         >
           <span>接入点歌台</span>
@@ -105,7 +105,7 @@ onMount(() => {
           href="https://rainzt.cn/posts/tingyu-tea-room-guide/"
           target="_blank"
           rel="noopener noreferrer"
-          class="btn-regular py-0.5 px-2 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-1 no-underline"
+          class="btn-regular chat-interconnect-header-link py-0.5 px-2 rounded-lg text-xs font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-1 no-underline whitespace-nowrap"
           title="查看互联加入指南"
         >
           <span>加入指南</span>
@@ -117,11 +117,13 @@ onMount(() => {
         </a>
         <button
           type="button"
-          class="w-6 h-6 rounded-md flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer text-sm"
+          class="chat-popover-close-btn"
           aria-label="关闭"
           onclick={onClose}
         >
-          ✕
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
         </button>
       </div>
     </div>

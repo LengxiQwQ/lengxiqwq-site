@@ -111,6 +111,15 @@ const isNotifyDisabled = $derived(isIsolatedGuest || isEmailUndeliverable);
 
 const notificationUnavailable = $derived(chatPushUnavailableReason());
 const isNotificationSupported = $derived(notificationUnavailable === null);
+const isPushPermissionDenied = $derived(
+	desktopNotificationPermission === "denied",
+);
+const isPushDisabled = $derived(
+	!isNotificationSupported || isPushPermissionDenied,
+);
+const effectiveNotificationMode = $derived<ChatDesktopNotificationMode>(
+	isPushDisabled ? "off" : desktopNotificationMode,
+);
 
 const safeDisplayUrl = $derived(sanitizeChatUrl(draftUrl, false));
 
@@ -299,7 +308,7 @@ function handleDone() {
 }
 
 async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
-	if (!isNotificationSupported) return;
+	if (isPushDisabled) return;
 	if (
 		mode !== "off" &&
 		typeof Notification !== "undefined" &&
@@ -343,10 +352,10 @@ async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
 >
   {#if currentUser}
     <div class="flex-1 min-h-0 flex flex-col overflow-hidden">
-      <div class="chat-profile-fields flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 sm:p-5 space-y-5">
+      <div class="chat-profile-fields flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 sm:p-5 space-y-4 sm:space-y-5">
         <!-- 1. 顶部身份名片（64px 大头像 + 昵称 + 状态 + 悬浮编辑浮层） -->
         <section bind:this={heroEl} class="chat-profile-hero">
-          <div class="flex items-center gap-4 min-w-0">
+          <div class="flex items-center gap-3 sm:gap-4 min-w-0">
             <button
               type="button"
               class="chat-profile-avatar-btn shrink-0"
@@ -452,7 +461,7 @@ async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
                 </button>
 
                 {#if accountOriginText}
-                  <span class="text-xs text-[var(--chat-meta-color)] truncate">
+                  <span class="text-xs text-[var(--chat-meta-color)] min-w-0 max-w-full truncate">
                     {accountOriginText}
                   </span>
                 {/if}
@@ -659,86 +668,103 @@ async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
             </div>
 
             <!-- 浏览器推送 -->
-            <div class="chat-profile-setting-block">
+            <div class="chat-profile-setting-block {isPushDisabled ? 'is-disabled' : ''}">
               <div class="flex min-h-6 sm:min-h-7 flex-wrap sm:flex-nowrap items-center justify-between gap-2">
-                <div class="chat-profile-setting-title text-xs font-medium text-(--btn-content) flex items-center gap-1.5 whitespace-nowrap">
-                  <span>浏览器推送</span>
-                  <span class="inline-flex size-3 items-center justify-center" role="status">
-                    {#if notificationSaving}
+                <div class="chat-profile-setting-title text-xs font-medium text-(--btn-content) flex items-center gap-1.5 min-w-0">
+                  <span class={isPushDisabled ? "opacity-65" : ""}>浏览器推送</span>
+                  {#if notificationSaving}
+                    <span class="inline-flex size-3 items-center justify-center shrink-0" role="status">
                       <span class="size-3 border-2 border-current border-r-transparent rounded-full motion-safe:animate-spin" aria-hidden="true"></span>
                       <span class="sr-only">正在同步提醒档位</span>
-                    {/if}
-                  </span>
-                  {#if desktopNotificationPermission === "denied"}
-                    <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20">
+                    </span>
+                  {/if}
+                  {#if isPushPermissionDenied}
+                    <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-500 dark:text-red-400 border border-red-500/20 shrink-0">
                       权限受阻
+                    </span>
+                  {:else if !isNotificationSupported}
+                    <span class="text-[10px] font-normal px-1.5 py-0.5 rounded-full bg-black/8 dark:bg-white/10 text-(--content-meta) border border-black/8 dark:border-white/10 shrink-0">
+                      当前不可用
                     </span>
                   {/if}
                 </div>
-                {#if isNotificationSupported && desktopNotificationPermission === "granted" &&
-                  desktopNotificationMode !== "off" && !notificationSaving && !notificationTesting && notificationTestSeconds === 0}
-                  <button
-                    type="button"
-                    class="chat-dialog-inline-action min-h-7 shrink-0 whitespace-nowrap text-[11px] text-(--primary) hover:underline cursor-pointer bg-transparent border-none p-0"
-                    onclick={() => onTestNotification?.()}
-                  >发送测试推送</button>
-                {:else}
-                  <span class="inline-flex min-h-7 shrink-0 items-center whitespace-nowrap text-[11px] text-(--content-meta)">
-                    发送测试推送{#if notificationTestSeconds > 0}
-                      <span class="ml-0.5 tabular-nums">（{notificationTestSeconds} 秒）</span>
-                    {/if}
-                  </span>
+                {#if !isPushDisabled && desktopNotificationPermission === "granted" && effectiveNotificationMode !== "off"}
+                  {#if !notificationSaving && !notificationTesting && notificationTestSeconds === 0}
+                    <button
+                      type="button"
+                      class="chat-dialog-inline-action min-h-7 shrink-0 whitespace-nowrap text-[11px] text-(--primary) hover:underline cursor-pointer bg-transparent border-none p-0"
+                      onclick={() => onTestNotification?.()}
+                    >发送测试推送</button>
+                  {:else}
+                    <span class="inline-flex min-h-7 shrink-0 items-center whitespace-nowrap text-[11px] text-(--content-meta)">
+                      发送测试推送{#if notificationTestSeconds > 0}
+                        <span class="ml-0.5 tabular-nums">（{notificationTestSeconds} 秒）</span>
+                      {/if}
+                    </span>
+                  {/if}
                 {/if}
               </div>
 
-              {#if desktopNotificationPermission === "denied"}
-                <div class="chat-profile-push-notice text-[11px] text-red-500 dark:text-red-400 leading-tight">
+              {#if isPushPermissionDenied}
+                <div class="chat-profile-push-notice is-error text-[11px] text-red-500 dark:text-red-400 leading-tight">
                   通知已被拦截，请点击地址栏网站权限图标设为允许
                 </div>
               {/if}
 
-              <div class="grid grid-cols-3 gap-0.5 rounded-lg border border-black/5 bg-black/5 p-0.5 dark:border-white/10 dark:bg-white/5">
+              <div
+                class="grid grid-cols-3 gap-0.5 sm:gap-0.5 rounded-lg border border-black/5 bg-black/5 p-0.5 dark:border-white/10 dark:bg-white/5 {isPushDisabled ? 'opacity-50 cursor-not-allowed select-none' : ''}"
+                aria-disabled={isPushDisabled ? "true" : undefined}
+              >
                 <button
                   type="button"
-                  class="chat-profile-notification-option flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
-                    {desktopNotificationMode === 'off'
-                      ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
-                      : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
-                  aria-pressed={desktopNotificationMode === "off"}
+                  disabled={isPushDisabled}
+                  class="chat-profile-notification-option flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all border-none
+                    {isPushDisabled
+                      ? 'bg-black/8 dark:bg-white/10 text-(--content-meta) cursor-not-allowed'
+                      : effectiveNotificationMode === 'off'
+                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold cursor-pointer'
+                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer'}"
+                  aria-pressed={effectiveNotificationMode === "off"}
                   onclick={() => handleSelectNotificationMode("off")}
                 >
-                  <Icon icon="mingcute:notification-off-line" class="size-3 shrink-0" />
+                  <Icon icon="mingcute:notification-off-line" class="size-3.5 sm:size-3 shrink-0" />
                   <span>关闭</span>
                 </button>
                 <button
                   type="button"
-                  class="chat-profile-notification-option flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
-                    {desktopNotificationMode === 'mention'
-                      ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
-                      : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
-                  aria-pressed={desktopNotificationMode === "mention"}
+                  disabled={isPushDisabled}
+                  class="chat-profile-notification-option flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all border-none
+                    {isPushDisabled
+                      ? 'bg-transparent text-(--content-meta) cursor-not-allowed'
+                      : effectiveNotificationMode === 'mention'
+                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold cursor-pointer'
+                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer'}"
+                  aria-pressed={effectiveNotificationMode === "mention"}
                   onclick={() => handleSelectNotificationMode("mention")}
                 >
-                  <Icon icon="mingcute:notification-newdot-line" class="size-3 shrink-0" />
+                  <Icon icon="mingcute:notification-newdot-line" class="size-3.5 sm:size-3 shrink-0" />
                   <span>仅提及</span>
                 </button>
                 <button
                   type="button"
-                  class="chat-profile-notification-option flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all cursor-pointer border-none
-                    {desktopNotificationMode === 'all'
-                      ? 'bg-[var(--primary)] text-white shadow-xs font-semibold'
-                      : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}"
-                  aria-pressed={desktopNotificationMode === "all"}
+                  disabled={isPushDisabled}
+                  class="chat-profile-notification-option flex min-h-7 items-center justify-center gap-1 rounded-md px-1 text-xs font-medium whitespace-nowrap transition-all border-none
+                    {isPushDisabled
+                      ? 'bg-transparent text-(--content-meta) cursor-not-allowed'
+                      : effectiveNotificationMode === 'all'
+                        ? 'bg-[var(--primary)] text-white shadow-xs font-semibold cursor-pointer'
+                        : 'bg-transparent text-(--btn-content) opacity-75 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer'}"
+                  aria-pressed={effectiveNotificationMode === "all"}
                   onclick={() => handleSelectNotificationMode("all")}
                 >
-                  <Icon icon="mingcute:bell-ringing-line" class="size-3 shrink-0" />
+                  <Icon icon="mingcute:bell-ringing-line" class="size-3.5 sm:size-3 shrink-0" />
                   <span>全部消息</span>
                 </button>
               </div>
 
               {#if !isNotificationSupported}
                 <p class="chat-profile-push-notice text-[11px] text-(--content-meta) m-0">{notificationUnavailable}</p>
-              {:else if notificationNeedsMigration}
+              {:else if !isPushPermissionDenied && notificationNeedsMigration}
                 <p class="chat-profile-push-notice text-[11px] text-(--content-meta) m-0">重新选择提醒档位，即可启用离开网页后仍能收到的浏览器推送。</p>
               {/if}
             </div>
@@ -751,18 +777,18 @@ async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
           {#if onLogout}
             <button
               type="button"
-              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 text-red-500 hover:text-red-600 hover:bg-red-500/10 active:scale-95 transition-all cursor-pointer border-none shrink-0"
+              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center justify-center gap-1.5 text-red-500 hover:text-red-600 hover:bg-red-500/10 active:scale-95 transition-all cursor-pointer border-none min-w-0"
               onclick={() => {
                 onLogout();
                 onClose();
               }}
             >
-              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                 <polyline points="16 17 21 12 16 7" />
                 <line x1="21" y1="12" x2="9" y2="12" />
               </svg>
-              <span>退出登录</span>
+              <span class="truncate">退出登录</span>
             </button>
           {/if}
 
@@ -771,10 +797,10 @@ async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
               href={walineProfileUrl}
               target="_blank"
               rel="noopener noreferrer"
-              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center gap-1.5 no-underline shrink-0"
+              class="btn-regular h-9 px-3 rounded-xl text-xs font-medium inline-flex items-center justify-center gap-1.5 no-underline min-w-0"
             >
-              <span>{currentUser.authType === "waline" ? "Waline 个人中心" : "前往 Waline 平台"}</span>
-              <span class="text-[11px] opacity-80">↗</span>
+              <span class="truncate">{currentUser.authType === "waline" ? "Waline 个人中心" : "前往 Waline 平台"}</span>
+              <span class="text-[11px] opacity-80 shrink-0">↗</span>
             </a>
           {/if}
         </div>

@@ -4,6 +4,11 @@ import type {
 	ChatFriendShareData,
 	ChatMomentShareData,
 } from "./chatShareProtocol";
+import {
+	fetchShareThumbsCached,
+	getCachedShareThumbs,
+	resolveShareThumbUrl,
+} from "./chatShareThumbs";
 
 interface Props {
 	data: ChatArticleShareData | ChatMomentShareData | ChatFriendShareData;
@@ -12,7 +17,20 @@ interface Props {
 
 const { data, isSelf = false }: Props = $props();
 
+let coverFallbackOriginal = $state(false);
 let coverFailed = $state(false);
+let localThumbs = $state<Record<string, string>>(getCachedShareThumbs());
+
+$effect(() => {
+	const raw = rawMediaSrc;
+	coverFallbackOriginal = false;
+	coverFailed = false;
+	if (!raw.startsWith("/")) return;
+	if (Object.keys(localThumbs).length > 0) return;
+	void fetchShareThumbsCached().then((map) => {
+		if (Object.keys(map).length > 0) localThumbs = map;
+	});
+});
 
 const title = $derived(
 	data.kind === "article"
@@ -38,11 +56,29 @@ const badgeLabel = $derived(
 			: "动态分享",
 );
 
-const mediaSrc = $derived(
-	data.kind === "friend" ? data.avatar : data.cover,
+const rawMediaSrc = $derived(
+	data.kind === "friend" ? data.avatar || "" : data.cover || "",
 );
 
+const thumbPreset = $derived(
+	data.kind === "friend" ? "card-avatar" : "card-cover",
+);
+
+const mediaSrc = $derived.by(() => {
+	if (!rawMediaSrc) return "";
+	if (coverFallbackOriginal) return rawMediaSrc;
+	return resolveShareThumbUrl(rawMediaSrc, thumbPreset, localThumbs);
+});
+
 const hasCover = $derived(Boolean(mediaSrc && !coverFailed));
+
+function handleMediaError() {
+	if (!coverFallbackOriginal && mediaSrc && mediaSrc !== rawMediaSrc) {
+		coverFallbackOriginal = true;
+		return;
+	}
+	coverFailed = true;
+}
 </script>
 
 <a
@@ -64,10 +100,8 @@ const hasCover = $derived(Boolean(mediaSrc && !coverFailed));
             height="56"
             loading="lazy"
             decoding="async"
-            class="chat-article-cover-img w-full h-full object-cover block"
-            onerror={() => {
-              coverFailed = true;
-            }}
+            class="w-full h-full object-cover block"
+            onerror={handleMediaError}
           />
         {:else}
           <svg class="w-6 h-6 text-[var(--primary)]/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -112,10 +146,8 @@ const hasCover = $derived(Boolean(mediaSrc && !coverFailed));
           alt=""
           loading="lazy"
           decoding="async"
-          class="chat-article-cover-img w-full h-full object-cover block"
-          onerror={() => {
-            coverFailed = true;
-          }}
+          class="w-full h-full object-cover block"
+          onerror={handleMediaError}
         />
         <div class="absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent pointer-events-none opacity-60"></div>
       </div>
@@ -193,18 +225,6 @@ const hasCover = $derived(Boolean(mediaSrc && !coverFailed));
     box-shadow: 0 8px 24px -4px rgba(var(--primary-rgb, 100, 100, 100), 0.18);
     /* 确保悬停时不产生任何位移 */
     transform: none !important;
-  }
-
-  /* 封面图片平滑缩放动效（鼠标悬停平滑放大，移开立即缩回） */
-  .chat-article-cover-img {
-    transform: scale(1);
-    transform-origin: center center;
-    transition: transform 300ms cubic-bezier(0.2, 0, 0, 1);
-    will-change: transform;
-  }
-
-  .chat-article-card:hover .chat-article-cover-img {
-    transform: scale(1.06);
   }
 
   .chat-article-title {

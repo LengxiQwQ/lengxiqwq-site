@@ -62,7 +62,20 @@ import {
 import { setChatLightboxSourceProvider } from "./chatLightbox";
 import { getChatMarkdownLayout, getChatMessageAttachments } from "./chatMarkdown";
 import { groupRoomActivity, summarizeRoomActivity } from "./chatRoomActivity";
+import {
+	formatPrivateMusicSec,
+	getPrivateTrackKey,
+	privateMusic,
+	resolveMusicExternalHref,
+} from "./chatPrivateMusic.svelte";
+import { parseLxShareCard } from "./chatShareProtocol";
+import type { ChatMusicShareData, ChatShareData } from "./chatShareProtocol";
+import { getCachedShareThumbs, resolveShareThumbUrl } from "./chatShareThumbs";
 import { closeChatActionSheet, fadeChatSheetBackdrop } from "./chatSheetMotion";
+import {
+	RECENT_CHAT_WINDOW_MS,
+	RECENT_MUSIC_SHARE_WINDOW_MS,
+} from "./chatTypes";
 import type {
 	ChatActiveThreadItem,
 	ChatMentionCandidate,
@@ -146,6 +159,8 @@ interface Props {
 	pinnedUids?: string[];
 	pinnedDetails?: ChatMessageRecord[];
 	activeThreads?: ChatActiveThreadItem[];
+	recentMentions?: ChatMessageRecord[];
+	recentShares?: ChatMessageRecord[];
 	roomTopic?: string;
 	typingUsers?: string[];
 	readReceipts?: Record<string, ChatReadReceipt[]>;
@@ -253,6 +268,8 @@ const {
 	pinnedUids = [],
 	pinnedDetails = [],
 	activeThreads = [],
+	recentMentions = [],
+	recentShares = [],
 	roomTopic = "",
 	typingUsers = [],
 	readReceipts = {},
@@ -462,6 +479,17 @@ let mentionActiveIndex = $state(-1);
 
 let showMentionHistory = $state(false);
 let showThreadListMenu = $state(false);
+let showShareHistory = $state(false);
+let shareFilterKind = $state<"all" | "article" | "moment" | "friend">("all");
+let shareFailedThumbs = $state<Record<string, boolean>>({});
+let showSharedMusicMenu = $state(false);
+let sharedMusicWrapEl: HTMLDivElement | null = $state(null);
+let sharedMusicFailedCovers = $state<Record<string, boolean>>({});
+let sharedMusicScrubberEl = $state<HTMLDivElement | null>(null);
+let sharedMusicSeeking = $state(false);
+let sharedMusicSeekPreviewSec = $state<number | null>(null);
+let sharedMusicVolEl = $state<HTMLDivElement | null>(null);
+let sharedMusicDraggingVol = $state(false);
 /**
  * 点歌记录顶栏功能开关：
  * 设为 false 时，不加载组件、不渲染 DOM、不执行排序与未读数计算，完全节省空间与内存。
@@ -475,10 +503,12 @@ let showMobileMoreMenu = $state(false);
 let mobileMoreMenuWrapEl: HTMLDivElement | null = $state(null);
 let mobileMoreTrigger: HTMLButtonElement | null = $state(null);
 let chatHeaderWidth = $state(0);
+let viewportWidth = $state(0);
 let chatHeaderStackHeight = $state(54);
 let mobileHeaderEndWidth = $state(0);
 let mobileRoomContentWidth = $state(0);
 let threadListWrapEl: HTMLDivElement | null = $state(null);
+let shareHistoryWrapEl: HTMLDivElement | null = $state(null);
 let sourceModalMessage = $state<ChatMessageRecord | null>(null);
 let activeThreadRootUid = $state("");
 let activeThreadInitialRoot = $state<ChatMessageRecord | null>(null);
@@ -923,9 +953,16 @@ function getThreadSummaryForMessage(
 }
 
 const mergedActiveThreads = $derived.by<ChatActiveThreadItem[]>(() => {
+	const cutoff = nowMs + clockOffsetMs - RECENT_CHAT_WINDOW_MS;
+	const recalledIds = new Set<string>();
+	for (const m of messages) {
+		if (m.recalledMsgUid) recalledIds.add(m.recalledMsgUid);
+	}
 	const byRoot = new Map<string, ChatActiveThreadItem>();
 	for (const item of activeThreads) {
 		if (!item?.rootUid || !item.summary || item.summary.count <= 0) continue;
+		if (recalledIds.has(item.rootUid)) continue;
+		if ((item.summary.latestReply?.createdAt || 0) < cutoff) continue;
 		byRoot.set(item.rootUid, item);
 	}
 	const rootMsgMap = new Map<string, ChatMessageRecord>();
@@ -937,6 +974,8 @@ const mergedActiveThreads = $derived.by<ChatActiveThreadItem[]>(() => {
 	}
 	for (const [rootUid, summary] of liveThreadSummaryMap.entries()) {
 		if (!summary || summary.count <= 0) continue;
+		if (recalledIds.has(rootUid)) continue;
+		if ((summary.latestReply?.createdAt || 0) < cutoff) continue;
 		const existing = byRoot.get(rootUid);
 		const rootMessage =
 			rootMsgMap.get(rootUid) ?? existing?.rootMessage ?? null;
@@ -1552,9 +1591,362 @@ function isDirectToMe(msg: ChatMessageRecord): boolean {
 	return isMentionedToMe(msg) || isReplyToMe(msg);
 }
 
-const mentionsToMe = $derived(messages.filter(isMentionedToMe));
+const recentCutoffMs = $derived(nowMs + clockOffsetMs - RECENT_CHAT_WINDOW_MS);
+const recentMusicShareCutoffMs = $derived(
+	nowMs + clockOffsetMs - RECENT_MUSIC_SHARE_WINDOW_MS,
+);
+
+const mentionsToMe = $derived.by<ChatMessageRecord[]>(() => {
+	if (!currentUser) return [];
+	const recalledIds = new Set<string>();
+	for (const m of messages) {
+		if (m.recalledMsgUid) recalledIds.add(m.recalledMsgUid);
+	}
+	const byUid = new Map<string, ChatMessageRecord>();
+	for (const m of recentMentions) {
+		if (!m?.msgUid || recalledIds.has(m.msgUid)) continue;
+		if ((m.createdAt || 0) < recentCutoffMs) continue;
+		if (isMentionedToMe(m)) byUid.set(m.msgUid, m);
+	}
+	for (const m of messages) {
+		if (!m?.msgUid || recalledIds.has(m.msgUid)) continue;
+		if ((m.createdAt || 0) < recentCutoffMs) continue;
+		if (isMentionedToMe(m)) {
+			byUid.set(m.msgUid, m);
+		} else {
+			byUid.delete(m.msgUid);
+		}
+	}
+	return Array.from(byUid.values()).sort(
+		(a, b) => (a.createdAt || 0) - (b.createdAt || 0),
+	);
+});
+
+interface RecentShareEntry {
+	message: ChatMessageRecord;
+	share: ChatShareData;
+}
+
+interface RecentMusicShareEntry {
+	message: ChatMessageRecord;
+	share: ChatMusicShareData;
+}
+
+const recentShareEntries = $derived.by<RecentShareEntry[]>(() => {
+	const recalledIds = new Set<string>();
+	for (const m of messages) {
+		if (m.recalledMsgUid) recalledIds.add(m.recalledMsgUid);
+	}
+	const minCutoff = Math.min(recentCutoffMs, recentMusicShareCutoffMs);
+	const byUid = new Map<string, ChatMessageRecord>();
+	for (const m of recentShares) {
+		if (!m?.msgUid || recalledIds.has(m.msgUid)) continue;
+		if ((m.createdAt || 0) < minCutoff) continue;
+		if (m.kind === "user" && !m.recalledMsgUid) byUid.set(m.msgUid, m);
+	}
+	for (const m of messages) {
+		if (!m?.msgUid || recalledIds.has(m.msgUid)) continue;
+		if ((m.createdAt || 0) < minCutoff) continue;
+		if (m.kind === "user" && !m.recalledMsgUid) {
+			byUid.set(m.msgUid, m);
+		} else {
+			byUid.delete(m.msgUid);
+		}
+	}
+	const entries: RecentShareEntry[] = [];
+	for (const message of byUid.values()) {
+		const share = parseLxShareCard(message.content);
+		if (share) {
+			entries.push({ message, share });
+		}
+	}
+	return entries.sort(
+		(a, b) => (b.message.createdAt || 0) - (a.message.createdAt || 0),
+	);
+});
+
+const recentNonMusicShareEntries = $derived.by<RecentShareEntry[]>(() =>
+	recentShareEntries.filter(
+		(entry) =>
+			entry.share.kind !== "music" &&
+			(entry.message.createdAt || 0) >= recentCutoffMs,
+	),
+);
+
+const recentMusicShareEntries = $derived.by<RecentMusicShareEntry[]>(() =>
+	recentShareEntries.filter(
+		(entry): entry is RecentMusicShareEntry =>
+			entry.share.kind === "music" &&
+			(entry.message.createdAt || 0) >= recentMusicShareCutoffMs,
+	),
+);
+
+const shareKindCounts = $derived.by(() => {
+	const counts = {
+		all: recentNonMusicShareEntries.length,
+		article: 0,
+		moment: 0,
+		friend: 0,
+	};
+	for (const item of recentNonMusicShareEntries) {
+		if (item.share.kind !== "music") {
+			counts[item.share.kind] += 1;
+		}
+	}
+	return counts;
+});
+
+const effectiveShareFilter = $derived.by<
+	"all" | "article" | "moment" | "friend"
+>(() => {
+	if (shareFilterKind === "all") return "all";
+	return shareKindCounts[shareFilterKind] > 0 ? shareFilterKind : "all";
+});
+
+const filteredShareEntries = $derived.by<RecentShareEntry[]>(() => {
+	if (effectiveShareFilter === "all") return recentNonMusicShareEntries;
+	return recentNonMusicShareEntries.filter(
+		(entry) => entry.share.kind === effectiveShareFilter,
+	);
+});
+
+const activePrivateTrack = $derived(privateMusic.activeData);
+const activePrivateDuration = $derived(privateMusic.effectiveDuration);
+const activePrivateCurrentSec = $derived(
+	sharedMusicSeeking && sharedMusicSeekPreviewSec !== null
+		? sharedMusicSeekPreviewSec
+		: privateMusic.currentTimeSec,
+);
+const activePrivateProgressRatio = $derived(
+	activePrivateDuration > 0
+		? Math.min(1, Math.max(0, activePrivateCurrentSec / activePrivateDuration))
+		: 0,
+);
+const activePrivateVolumeRatio = $derived(
+	Math.min(1, Math.max(0, privateMusic.volume)),
+);
+const activePrivateVolumePct = $derived(Math.round(activePrivateVolumeRatio * 100));
+const activePrivateTopLine = $derived.by(() => {
+	if (!activePrivateTrack) {
+		return { text: "", tone: "title" as const };
+	}
+	if (privateMusic.audioError) {
+		return { text: privateMusic.audioError, tone: "error" as const };
+	}
+	if ((privateMusic.isPlaying || activePrivateCurrentSec > 0) && privateMusic.activeLyricText) {
+		return { text: privateMusic.activeLyricText, tone: "lyric" as const };
+	}
+	return { text: activePrivateTrack.title || "未命名歌曲", tone: "title" as const };
+});
+const showActivePrivateSongSubline = $derived(
+	activePrivateTopLine.tone !== "title",
+);
+const activePrivateExternalHref = $derived(
+	activePrivateTrack ? resolveMusicExternalHref(activePrivateTrack) : "",
+);
+const activePrivatePillCoverUrl = $derived.by(() => {
+	if (!activePrivateTrack?.cover) return "";
+	const key = getPrivateTrackKey(activePrivateTrack);
+	return sharedMusicFailedCovers[key] ? "" : activePrivateTrack.cover;
+});
+const activePrivatePlatformLabel = $derived.by(() => {
+	if (!activePrivateTrack) return "";
+	const p = (
+		activePrivateTrack.provider ||
+		activePrivateTrack.sourcePlatform ||
+		""
+	).toLowerCase();
+	if (p === "qq" || p === "tencent") return "QQ音乐";
+	if (p === "netease" || p === "ncm") return "网易云";
+	if (p === "kugou") return "酷狗";
+	if (p === "youtube" || p === "yt") return "YouTube";
+	if (p === "local") return "本地音源";
+	return activePrivateTrack.host || (p ? p.toUpperCase() : "音乐");
+});
+
+function getSharedRatioFromPointer(
+	el: HTMLElement | null,
+	clientX: number,
+): number {
+	if (!el) return 0;
+	const rect = el.getBoundingClientRect();
+	if (rect.width <= 0) return 0;
+	return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+}
+
+function handleSharedMusicScrubDown(event: PointerEvent) {
+	if (event.button !== 0 && event.pointerType === "mouse") return;
+	if (!activePrivateTrack || activePrivateDuration <= 0) return;
+	event.stopPropagation();
+	event.preventDefault();
+	sharedMusicSeeking = true;
+	privateMusic.setScrubbing(true);
+	try {
+		sharedMusicScrubberEl?.setPointerCapture(event.pointerId);
+	} catch {
+		// ignore
+	}
+	const ratio = getSharedRatioFromPointer(sharedMusicScrubberEl, event.clientX);
+	sharedMusicSeekPreviewSec = ratio * activePrivateDuration;
+}
+
+function handleSharedMusicScrubMove(event: PointerEvent) {
+	if (!sharedMusicSeeking || activePrivateDuration <= 0) return;
+	event.stopPropagation();
+	const ratio = getSharedRatioFromPointer(sharedMusicScrubberEl, event.clientX);
+	sharedMusicSeekPreviewSec = ratio * activePrivateDuration;
+}
+
+function handleSharedMusicScrubUp(event: PointerEvent) {
+	if (!sharedMusicSeeking) return;
+	event.stopPropagation();
+	sharedMusicSeeking = false;
+	sharedMusicSeekPreviewSec = null;
+	privateMusic.setScrubbing(false);
+	try {
+		sharedMusicScrubberEl?.releasePointerCapture(event.pointerId);
+	} catch {
+		// ignore
+	}
+	const ratio = getSharedRatioFromPointer(sharedMusicScrubberEl, event.clientX);
+	privateMusic.commitScrubRatio(ratio, true);
+}
+
+function handleSharedMusicScrubCancel(event: PointerEvent) {
+	if (!sharedMusicSeeking) return;
+	event.stopPropagation();
+	sharedMusicSeeking = false;
+	sharedMusicSeekPreviewSec = null;
+	privateMusic.setScrubbing(false);
+	try {
+		sharedMusicScrubberEl?.releasePointerCapture(event.pointerId);
+	} catch {
+		// ignore
+	}
+}
+
+function handleSharedMusicScrubKeyDown(event: KeyboardEvent) {
+	if (!activePrivateTrack || activePrivateDuration <= 0) return;
+	let delta = 0;
+	if (event.key === "ArrowRight") delta = 5;
+	else if (event.key === "ArrowLeft") delta = -5;
+	else return;
+	event.preventDefault();
+	event.stopPropagation();
+	const next = Math.min(
+		activePrivateDuration,
+		Math.max(0, activePrivateCurrentSec + delta),
+	);
+	privateMusic.commitScrubRatio(next / activePrivateDuration, true);
+}
+
+function handleSharedMusicVolDown(event: PointerEvent) {
+	if (event.button !== 0 && event.pointerType === "mouse") return;
+	event.stopPropagation();
+	event.preventDefault();
+	sharedMusicDraggingVol = true;
+	try {
+		sharedMusicVolEl?.setPointerCapture(event.pointerId);
+	} catch {
+		// ignore
+	}
+	privateMusic.setVolume(
+		getSharedRatioFromPointer(sharedMusicVolEl, event.clientX),
+	);
+}
+
+function handleSharedMusicVolMove(event: PointerEvent) {
+	if (!sharedMusicDraggingVol) return;
+	event.stopPropagation();
+	privateMusic.setVolume(
+		getSharedRatioFromPointer(sharedMusicVolEl, event.clientX),
+	);
+}
+
+function handleSharedMusicVolUp(event: PointerEvent) {
+	if (!sharedMusicDraggingVol) return;
+	event.stopPropagation();
+	sharedMusicDraggingVol = false;
+	try {
+		sharedMusicVolEl?.releasePointerCapture(event.pointerId);
+	} catch {
+		// ignore
+	}
+	privateMusic.setVolume(
+		getSharedRatioFromPointer(sharedMusicVolEl, event.clientX),
+	);
+}
+
+function handleSharedMusicVolCancel(event: PointerEvent) {
+	if (!sharedMusicDraggingVol) return;
+	event.stopPropagation();
+	sharedMusicDraggingVol = false;
+	try {
+		sharedMusicVolEl?.releasePointerCapture(event.pointerId);
+	} catch {
+		// ignore
+	}
+}
+
+function handleSharedMusicVolKeyDown(event: KeyboardEvent) {
+	let delta = 0;
+	if (event.key === "ArrowRight" || event.key === "ArrowUp") delta = 0.05;
+	else if (event.key === "ArrowLeft" || event.key === "ArrowDown") delta = -0.05;
+	else return;
+	event.preventDefault();
+	event.stopPropagation();
+	privateMusic.setVolume(privateMusic.volume + delta);
+}
+
+async function handleLocateActivePrivateTrack() {
+	const uid = privateMusic.activeMsgUid;
+	if (!uid) return;
+	const found =
+		messages.find((m) => m.msgUid === uid) ??
+		recentShares.find((m) => m.msgUid === uid) ??
+		null;
+	if (found) {
+		await handleLocateFeedMessage(found);
+		return;
+	}
+	closeAllHeaderMenus();
+	await jumpToMessage(uid);
+}
+
 const hasHeaderThreads = $derived(mergedActiveThreads.length > 0);
 const hasHeaderMentions = $derived(Boolean(currentUser && mentionsToMe.length));
+const hasHeaderShares = $derived(recentNonMusicShareEntries.length > 0);
+const hasHeaderSharedMusic = $derived(
+	recentMusicShareEntries.length > 0 || Boolean(activePrivateTrack),
+);
+const compactHeaderPills = $derived.by(() => {
+	if (chatHeaderWidth <= 0 || (viewportWidth > 0 && viewportWidth < 768)) {
+		return false;
+	}
+	const pillCount =
+		(hasHeaderThreads ? 1 : 0) +
+		(hasHeaderMentions ? 1 : 0) +
+		(hasHeaderShares ? 1 : 0) +
+		(hasHeaderSharedMusic ? 1 : 0) +
+		(ENABLE_HEADER_MUSIC_NOTICES ? 1 : 0);
+	if (pillCount === 0) return false;
+	const wideDesktop = viewportWidth === 0 || viewportWidth >= 1024;
+	const hasSplitTrigger = viewportWidth > 0 && viewportWidth < 1100;
+	const isTopicVisible = wideDesktop && Boolean(effectiveSubtitle?.trim());
+	const leftEstimate =
+		(hasSplitTrigger ? 44 : 0) +
+		(wideDesktop ? 44 : 0) +
+		(isInterconnectRoom ? (wideDesktop ? 172 : 116) : 84) +
+		(isTopicVisible ? 150 : 0);
+	const rightEstimate =
+		(hasHeaderThreads ? 104 : 0) +
+		(hasHeaderMentions ? 92 : 0) +
+		(hasHeaderShares ? 104 : 0) +
+		(hasHeaderSharedMusic ? 104 : 0) +
+		(ENABLE_HEADER_MUSIC_NOTICES ? 104 : 0) +
+		92;
+	return chatHeaderWidth < leftEstimate + rightEstimate + 48;
+});
 const mobileOnlineLabel = $derived(
 	`${onlineCount}/${totalChatterCount > 0 ? totalChatterCount : "—"} 人在线`,
 );
@@ -1565,21 +1957,38 @@ const mobileRoomBudget = $derived(
 );
 const mobileRoomButtonWidth = $derived(mobileRoomContentWidth + 8);
 const threadInMore = $derived(mobileHeaderEndWidth > 0 && hasHeaderThreads);
+const sharesInMore = $derived(mobileHeaderEndWidth > 0 && hasHeaderShares);
+const showMobilePlayingMusicPill = $derived(
+	mobileHeaderEndWidth > 0 && hasHeaderSharedMusic && privateMusic.isPlaying,
+);
+const musicSharesInMore = $derived(
+	mobileHeaderEndWidth > 0 &&
+		hasHeaderSharedMusic &&
+		!showMobilePlayingMusicPill,
+);
+const mobileMusicPillReserve = $derived(
+	showMobilePlayingMusicPill ? mobileHeaderTarget : 0,
+);
 const mentionsInMore = $derived(
 	mobileHeaderEndWidth > 0 &&
 		hasHeaderMentions &&
 		unreadMentionUids.length === 0 &&
-		mobileRoomButtonWidth + mobileHeaderTarget > mobileRoomBudget,
+		mobileRoomButtonWidth + mobileHeaderTarget + mobileMusicPillReserve >
+			mobileRoomBudget,
 );
 const musicNoticesInMore = $derived(
 	ENABLE_HEADER_MUSIC_NOTICES &&
 		mobileHeaderEndWidth > 0 &&
 		unreadMusicNoticeCount === 0 &&
-		mobileRoomButtonWidth + mobileHeaderTarget > mobileRoomBudget,
+		mobileRoomButtonWidth + mobileHeaderTarget + mobileMusicPillReserve >
+			mobileRoomBudget,
 );
 const fitsMobileRoomAvatar = $derived(
 	mobileHeaderEndWidth > 0 &&
-		mobileRoomButtonWidth + (hasHeaderMentions ? mobileHeaderTarget : 0) + 44 <=
+		mobileRoomButtonWidth +
+			(hasHeaderMentions ? mobileHeaderTarget : 0) +
+			mobileMusicPillReserve +
+			44 <=
 			mobileRoomBudget,
 );
 
@@ -2375,6 +2784,76 @@ async function jumpToMessage(msgUid: string, smooth = false) {
 	}
 }
 
+async function handleLocateFeedMessage(msg: ChatMessageRecord) {
+	closeAllHeaderMenus();
+	if (msg.threadRootUid && !loadedMainRootIds.has(msg.threadRootUid)) {
+		const rootMsg =
+			messages.find(
+				(m) =>
+					m.msgUid === msg.threadRootUid ||
+					m.matrixEventId === msg.threadRootUid,
+			) ?? null;
+		activeThreadRootUid = msg.threadRootUid;
+		activeThreadInitialRoot = rootMsg;
+		threadJumpUid = msg.msgUid;
+		unreadMentionUids = unreadMentionUids.filter((id) => id !== msg.msgUid);
+		if (alertBannerUid === msg.msgUid) alertBannerUid = null;
+		return;
+	}
+	await jumpToMessage(msg.msgUid);
+}
+
+function getShareCardPresentation(share: ChatShareData): {
+	kindLabel: string;
+	kindClass: string;
+	title: string;
+	subtitle: string;
+	thumbUrl: string;
+	externalHref: string;
+} {
+	if (share.kind === "article") {
+		return {
+			kindLabel: "文章",
+			kindClass: "is-article",
+			title: share.title || "未命名文章",
+			subtitle: share.description || share.host || "文章分享",
+			thumbUrl: share.cover || "",
+			externalHref: sanitizeChatUrl(share.url, true),
+		};
+	}
+	if (share.kind === "moment") {
+		return {
+			kindLabel: "动态",
+			kindClass: "is-moment",
+			title: share.content || share.date || "动态分享",
+			subtitle: share.date ? `${share.date}${share.host ? ` · ${share.host}` : ""}` : share.host || "动态分享",
+			thumbUrl: share.cover || "",
+			externalHref: sanitizeChatUrl(share.url, true),
+		};
+	}
+	if (share.kind === "friend") {
+		return {
+			kindLabel: "友链",
+			kindClass: "is-friend",
+			title: share.name || "友链分享",
+			subtitle: share.description || share.host || "站点友链",
+			thumbUrl: share.avatar || "",
+			externalHref: sanitizeChatUrl(share.url, true),
+		};
+	}
+	const rawExternal =
+		share.sourceUrl ||
+		(share.url && !share.url.includes("/api/music/shared/") ? share.url : "");
+	return {
+		kindLabel: "音乐",
+		kindClass: "is-music",
+		title: share.title || "未命名歌曲",
+		subtitle: [share.artist, share.album].filter(Boolean).join(" · ") || "音乐分享",
+		thumbUrl: share.cover || "",
+		externalHref: sanitizeChatUrl(rawExternal, false),
+	};
+}
+
 async function jumpInTimeline(
 	msgUid?: string,
 	smooth = false,
@@ -2888,6 +3367,26 @@ onMount(() => {
 	const handlePointerDown = (e: PointerEvent) => {
 		const target = e.target as HTMLElement | null;
 		if (!target) return;
+		if (e.button === 0) {
+			const sel = window.getSelection();
+			if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+				const anchorEl =
+					sel.anchorNode instanceof Element
+						? sel.anchorNode
+						: sel.anchorNode?.parentElement;
+				const isInEditableSelection = Boolean(
+					anchorEl?.closest("input, textarea, [contenteditable]"),
+				);
+				const isInSelectableArea = Boolean(
+					target.closest(
+						"input, textarea, select, [contenteditable], .chat-input-box, .chat-thread-textarea, .chat-json-pre, .chat-source-meta-id, .chat-bubble .chat-md-body, .chat-bubble .chat-md-pre-wrap, .chat-bubble .chat-reply-quote-text",
+					),
+				);
+				if (!isInEditableSelection && !isInSelectableArea) {
+					sel.removeAllRanges();
+				}
+			}
+		}
 		if (!dockEl?.contains(target)) {
 			activePopover = "none";
 			mentionMenuOpen = false;
@@ -2896,13 +3395,22 @@ onMount(() => {
 		const insideMore = mobileMoreMenuWrapEl?.contains(target);
 		const insideMention = mentionHistoryWrapEl?.contains(target);
 		const insideThread = threadListWrapEl?.contains(target);
+		const insideShare = shareHistoryWrapEl?.contains(target);
+		const insideSharedMusic = sharedMusicWrapEl?.contains(target);
 		const insideMusicNotice =
 			ENABLE_HEADER_MUSIC_NOTICES && musicNoticeWrapEl?.contains(target);
 
 		// 仅当点击真正发生在所有顶栏菜单及触发器外部时，才在 pointerdown 阶段关闭。
 		// 如果点击命中任何一个顶栏菜单包装容器（包含其触发按钮），交给按钮自身的点击事件原子切换，
 		// 避免移动端触屏在 pointerdown 阶段提前销毁 DOM 打断后续 click 事件导致必须按两次或切换冲突。
-		if (!insideMore && !insideMention && !insideThread && !insideMusicNotice) {
+		if (
+			!insideMore &&
+			!insideMention &&
+			!insideThread &&
+			!insideShare &&
+			!insideSharedMusic &&
+			!insideMusicNotice
+		) {
 			closeAllHeaderMenus();
 		}
 	};
@@ -2927,11 +3435,15 @@ onMount(() => {
 		}
 	};
 
+	const recentWindowTimer = window.setInterval(() => {
+		nowMs = Date.now();
+	}, 60_000);
 	window.addEventListener("dragover", preventWindowDrag);
 	window.addEventListener("drop", preventWindowDrag);
 	document.addEventListener("pointerdown", handlePointerDown);
 	document.addEventListener("keydown", handleDocKeydown);
 	return () => {
+		window.clearInterval(recentWindowTimer);
 		window.clearTimeout(idleLottieTimer);
 		window.removeEventListener("dragover", preventWindowDrag);
 		window.removeEventListener("drop", preventWindowDrag);
@@ -3013,6 +3525,11 @@ $effect(() => {
 		activeThreadRootUid = "";
 		activeThreadInitialRoot = null;
 		showThreadListMenu = false;
+		showShareHistory = false;
+		shareFilterKind = "all";
+		shareFailedThumbs = {};
+		showSharedMusicMenu = false;
+		sharedMusicFailedCovers = {};
 		unreadBarDismissed = false;
 		isUnreadDividerInView = false;
 		hasVisitedUnreadDivider = false;
@@ -3078,13 +3595,26 @@ $effect(() => {
 			// 优先采用服务端已读与本地已读的较新时间戳
 			const baselineSeen = Math.max(sessionUnreadSince, savedLastSeen);
 			if (baselineSeen > 0) {
+				const hydrationCutoff = nowMs + clockOffsetMs - RECENT_CHAT_WINDOW_MS;
+				const knownByUid = new Map<string, ChatMessageRecord>();
+				for (const m of recentMentions) {
+					if (m?.msgUid && (m.createdAt || 0) >= hydrationCutoff) {
+						knownByUid.set(m.msgUid, m);
+					}
+				}
+				for (const m of msgs) {
+					if (m?.msgUid) knownByUid.set(m.msgUid, m);
+				}
 				// 仅当离线期间确实有未读且有人 @自己 或 回复自己 时，才在初次进入时弹出横幅
-				const missedMentions = msgs.filter(
-					(m) =>
-						isDirectToMe(m) &&
-						m.createdAt > baselineSeen &&
-						m.msgUid !== targetMessageUid,
-				);
+				const missedMentions = Array.from(knownByUid.values())
+					.filter(
+						(m) =>
+							isDirectToMe(m) &&
+							m.createdAt > baselineSeen &&
+							m.createdAt >= hydrationCutoff &&
+							m.msgUid !== targetMessageUid,
+					)
+					.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
 				if (missedMentions.length > 0) {
 					unreadMentionUids = missedMentions.map((m) => m.msgUid);
 					alertBannerUid = missedMentions[missedMentions.length - 1].msgUid;
@@ -4228,6 +4758,8 @@ function closeAllHeaderMenus() {
 	showMobileMoreMenu = false;
 	showMentionHistory = false;
 	showThreadListMenu = false;
+	showShareHistory = false;
+	showSharedMusicMenu = false;
 	showMusicNoticeMenu = false;
 }
 
@@ -4236,6 +4768,8 @@ function toggleMobileMoreMenu() {
 		showMobileMoreMenu ||
 		(threadInMore && showThreadListMenu) ||
 		(mentionsInMore && showMentionHistory) ||
+		(sharesInMore && showShareHistory) ||
+		(musicSharesInMore && showSharedMusicMenu) ||
 		(ENABLE_HEADER_MUSIC_NOTICES &&
 			musicNoticesInMore &&
 			showMusicNoticeMenu);
@@ -4248,7 +4782,7 @@ function toggleMobileMoreMenu() {
 }
 
 function toggleHeaderList(
-	list: "threads" | "mentions" | "musicNotices",
+	list: "threads" | "mentions" | "shares" | "sharedMusic" | "musicNotices",
 	fromMore = false,
 ) {
 	if (list === "threads") {
@@ -4259,6 +4793,14 @@ function toggleHeaderList(
 		const willOpen = !showMentionHistory;
 		closeAllHeaderMenus();
 		showMentionHistory = willOpen;
+	} else if (list === "shares") {
+		const willOpen = !showShareHistory;
+		closeAllHeaderMenus();
+		showShareHistory = willOpen;
+	} else if (list === "sharedMusic") {
+		const willOpen = !showSharedMusicMenu;
+		closeAllHeaderMenus();
+		showSharedMusicMenu = willOpen;
 	} else if (list === "musicNotices") {
 		if (!ENABLE_HEADER_MUSIC_NOTICES) return;
 		const willOpen = !showMusicNoticeMenu;
@@ -4299,6 +4841,8 @@ function removePendingImage(index: number) {
 	uploadNote = describePendingImages();
 }
 </script>
+
+<svelte:window bind:innerWidth={viewportWidth} />
 
 <div
   class="flex flex-col h-full w-full min-h-0 relative"
@@ -4362,88 +4906,686 @@ function removePendingImage(index: number) {
     </div>
   {/if}
   {#snippet headerThreadList(reference?: HTMLElement | null)}
-    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="活跃线程回复列表">
-      <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
-        <span>活跃线程回复</span>
-        <span>{mergedActiveThreads.length} 个</span>
+    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-mention-history-menu" role="menu" aria-label="最近 48 小时线程列表">
+      <div class="chat-share-menu-head">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+            <path d="M8 9h8" />
+            <path d="M8 13h5" />
+          </svg>
+          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">最近 48 小时线程</span>
+        </div>
+        <span class="chat-music-notice-pill tabular-nums">{mergedActiveThreads.length} 个</span>
       </div>
-      <div class="my-0.5 border-t border-black/5 dark:border-white/10"></div>
-      {#each mergedActiveThreads as item (item.rootUid)}
-        {@const rootMsg = item.rootMessage}
-        {@const latest = item.summary.latestReply}
-        <button
-          type="button"
-          role="menuitem"
-          class="chat-requester-option items-start! py-2! md:py-1.5!"
-          onclick={() => handleOpenThreadByUid(item.rootUid, rootMsg)}
-        >
-          <div class="flex items-start gap-2 min-w-0 flex-1">
-            <ChatAvatar
-              src={rootMsg?.avatar || latest?.avatar || ""}
-              name={rootMsg?.name || latest?.name || "线程"}
-              size="xs"
-              class="mt-0.5"
-            />
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-1">
-                <span class="font-semibold truncate text-xs md:text-[11px]">
-                  {rootMsg?.name || "主题消息"}
-                </span>
-                <span class="text-[11px] md:text-[10px] text-[var(--primary)] font-semibold tabular-nums shrink-0">
-                  {item.summary.count} 条回复
-                </span>
-              </div>
-              <div class="text-xs md:text-[11px] opacity-80 truncate mt-0.5">
-                {rootMsg
-                  ? formatChatReplyPreview(rootMsg.content, stickerMap, getChatAttachmentKind(rootMsg.attachments))
-                  : (latest?.content || "点击查看线程")}
-              </div>
-              {#if latest}
-                <div class="text-[11px] md:text-[10px] opacity-65 truncate mt-0.5">
-                  最新 {latest.name}：{formatChatReplyPreview(latest.content, stickerMap, getChatReplyAttachmentKind(latest))}
+      <div class="my-1.5 mr-1 shrink-0 border-t border-[var(--chat-divider-color)]"></div>
+      <div class="chat-history-menu-list custom-scrollbar">
+        {#each mergedActiveThreads as item (item.rootUid)}
+          {@const rootMsg = item.rootMessage}
+          {@const latest = item.summary.latestReply}
+          <button
+            type="button"
+            role="menuitem"
+            class="chat-share-card-row items-start!"
+            onclick={() => handleOpenThreadByUid(item.rootUid, rootMsg)}
+          >
+            <div class="flex items-start gap-2.5 min-w-0 flex-1">
+              <ChatAvatar
+                src={rootMsg?.avatar || latest?.avatar || ""}
+                name={rootMsg?.name || latest?.name || "线程"}
+                size="sm"
+                class="mt-0.5 shrink-0"
+              />
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="font-semibold truncate text-xs text-[var(--deep-text)] dark:text-white/95">
+                    {rootMsg?.name || "主题消息"}
+                  </span>
+                  <span class="chat-share-card-badge is-article shrink-0 tabular-nums">
+                    {item.summary.count} 条回复
+                  </span>
                 </div>
-              {/if}
+                <div class="text-[11px] text-[var(--chat-meta-color)] line-clamp-2 mt-0.5 leading-snug opacity-90">
+                  {rootMsg
+                    ? formatChatReplyPreview(rootMsg.content, stickerMap, getChatAttachmentKind(rootMsg.attachments))
+                    : latest
+                      ? formatChatReplyPreview(latest.content, stickerMap, getChatReplyAttachmentKind(latest))
+                      : "点击查看线程"}
+                </div>
+                {#if latest}
+                  <div class="text-[10.5px] text-[var(--chat-meta-color)] opacity-80 mt-1 flex items-center justify-between gap-2">
+                    <span class="truncate">最新 {latest.name}：{formatChatReplyPreview(latest.content, stickerMap, getChatReplyAttachmentKind(latest))}</span>
+                    <span class="shrink-0 tabular-nums">{formatUnreadTime(latest.createdAt)}</span>
+                  </div>
+                {/if}
+              </div>
             </div>
-          </div>
-        </button>
-      {/each}
+          </button>
+        {/each}
+      </div>
     </div>
   {/snippet}
 
   {#snippet headerMentionList(reference?: HTMLElement | null)}
-    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-requester-menu chat-mention-history-menu custom-scrollbar" role="menu" aria-label="被提及的消息列表">
-      <div class="px-2 py-1 text-[11px] md:text-[10px] font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
-        <span>近期提及你的消息</span>
-        <span>{mentionsToMe.length}条</span>
+    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-mention-history-menu" role="menu" aria-label="最近 48 小时提及列表">
+      <div class="chat-share-menu-head">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M16 8v5a2 2 0 0 0 4 0v-1a8 8 0 1 0-3 6.25" />
+          </svg>
+          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">最近 48 小时提及</span>
+        </div>
+        <span class="chat-music-notice-pill tabular-nums">{mentionsToMe.length} 条</span>
       </div>
-      <div class="my-0.5 border-t border-black/5 dark:border-white/10"></div>
-      {#each mentionsToMe.slice().reverse() as item (item.msgUid)}
-        {@const isUnread = unreadMentionSet.has(item.msgUid)}
-        <button
-          type="button"
-          role="menuitem"
-          class="chat-requester-option items-start! py-2! md:py-1.5! {isUnread ? 'active' : ''}"
-          onclick={() => void jumpToMessage(item.msgUid)}
-        >
-          <div class="flex items-start gap-2 min-w-0 flex-1">
-            <ChatAvatar
-              src={item.avatar}
-              name={item.name}
-              size="xs"
-              class="mt-0.5"
-            />
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center justify-between gap-1">
-                <span class="font-semibold truncate text-xs md:text-[11px]">{item.name}</span>
-                <span class="text-[11px] md:text-[10px] opacity-70 tabular-nums shrink-0">{formatShortTime(item.createdAt)}</span>
+      <div class="my-1.5 mr-1 shrink-0 border-t border-[var(--chat-divider-color)]"></div>
+      <div class="chat-history-menu-list custom-scrollbar">
+        {#each mentionsToMe.slice().reverse() as item (item.msgUid)}
+          {@const isUnread = unreadMentionSet.has(item.msgUid)}
+          <button
+            type="button"
+            role="menuitem"
+            class="chat-share-card-row items-start! {isUnread ? 'is-active' : ''}"
+            onclick={() => void handleLocateFeedMessage(item)}
+          >
+            <div class="flex items-start gap-2.5 min-w-0 flex-1">
+              <ChatAvatar
+                src={item.avatar}
+                name={item.name}
+                size="sm"
+                class="mt-0.5 shrink-0"
+              />
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    {#if isUnread}
+                      <span class="chat-share-card-badge is-article shrink-0">未读</span>
+                    {/if}
+                    <span class="font-semibold truncate text-xs text-[var(--deep-text)] dark:text-white/95">{item.name}</span>
+                  </div>
+                  <span class="text-[10.5px] text-[var(--chat-meta-color)] tabular-nums shrink-0 opacity-80">{formatUnreadTime(item.createdAt)}</span>
+                </div>
+                <div class="text-[11px] text-[var(--chat-meta-color)] line-clamp-2 mt-0.5 leading-snug opacity-90">
+                  {formatChatReplyPreview(item.content, stickerMap, getChatAttachmentKind(item.attachments))}
+                </div>
               </div>
-              <div class="text-xs md:text-[11px] opacity-80 truncate mt-0.5">
-                {item.content || "[图片消息]"}
+            </div>
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/snippet}
+
+  {#snippet headerShareList(reference?: HTMLElement | null)}
+    {@const filterTabs = [
+      { id: "all" as const, label: "全部", count: shareKindCounts.all },
+      { id: "article" as const, label: "文章", count: shareKindCounts.article },
+      { id: "moment" as const, label: "动态", count: shareKindCounts.moment },
+      { id: "friend" as const, label: "友链", count: shareKindCounts.friend },
+    ].filter((tab) => tab.id === "all" || tab.count > 0)}
+    <div
+      data-chat-floating
+      use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }}
+      class="chat-share-history-menu"
+      role="menu"
+      aria-label="最近 48 小时分享卡片"
+    >
+      <div class="chat-share-menu-head">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="14" height="14" rx="2.5" />
+            <path d="M7 20h11a2.5 2.5 0 0 0 2.5-2.5V7" />
+          </svg>
+          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">最近 48 小时分享</span>
+        </div>
+        <span class="chat-music-notice-pill tabular-nums">{filteredShareEntries.length} 张</span>
+      </div>
+
+      {#if filterTabs.length > 2}
+        <div class="chat-share-filter-row" role="tablist" aria-label="按类型筛选分享卡片">
+          {#each filterTabs as tab (tab.id)}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={effectiveShareFilter === tab.id}
+              class="chat-share-filter-chip {effectiveShareFilter === tab.id ? 'is-active' : ''}"
+              onclick={() => (shareFilterKind = tab.id)}
+            >
+              <span>{tab.label}</span>
+              <span class="tabular-nums opacity-75">{tab.count}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="my-1.5 mr-1 shrink-0 border-t border-[var(--chat-divider-color)]"></div>
+
+      <div class="chat-history-menu-list custom-scrollbar">
+        {#each filteredShareEntries as entry (entry.message.msgUid)}
+          {@const meta = getShareCardPresentation(entry.share)}
+          {@const thumbDisplayUrl = meta.thumbUrl ? resolveShareThumbUrl(meta.thumbUrl, "square-sm", getCachedShareThumbs()) : ""}
+          {@const hasThumb = Boolean(thumbDisplayUrl && !shareFailedThumbs[meta.thumbUrl])}
+          <div class="chat-share-card-row group">
+            <div class="chat-share-card-main">
+              <div class="chat-share-card-thumb shrink-0">
+                {#if hasThumb}
+                  <img
+                    src={thumbDisplayUrl}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    class="w-full h-full object-cover"
+                    onerror={(event) => {
+                      const el = event.currentTarget;
+                      if (el.getAttribute("src") !== meta.thumbUrl && meta.thumbUrl) {
+                        el.src = meta.thumbUrl;
+                        return;
+                      }
+                      shareFailedThumbs = { ...shareFailedThumbs, [meta.thumbUrl]: true };
+                    }}
+                  />
+                {:else if entry.share.kind === "friend"}
+                  <svg class="w-5 h-5 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
+                {:else if entry.share.kind === "moment"}
+                  <svg class="w-5 h-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+                  </svg>
+                {:else}
+                  <svg class="w-5 h-5 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                {/if}
+              </div>
+              <div class="min-w-0 flex-1 text-left">
+                <div class="flex items-center gap-1.5 min-w-0 leading-[1.35]">
+                  <span class="chat-share-card-badge {meta.kindClass} shrink-0">{meta.kindLabel}</span>
+                  {#if meta.externalHref}
+                    <a
+                      href={meta.externalHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="chat-share-card-stretched font-semibold text-xs text-[var(--deep-text)] dark:text-white/95 truncate"
+                      aria-label={`打开${meta.kindLabel}：${meta.title}`}
+                    >
+                      {meta.title}
+                    </a>
+                  {:else}
+                    <button
+                      type="button"
+                      class="chat-share-card-stretched font-semibold text-xs text-[var(--deep-text)] dark:text-white/95 truncate border-none bg-transparent p-0 text-left"
+                      aria-label={`定位到聊天：${meta.title}`}
+                      onclick={() => void handleLocateFeedMessage(entry.message)}
+                    >
+                      {meta.title}
+                    </button>
+                  {/if}
+                </div>
+                {#if meta.subtitle}
+                  <div class="text-[11px] leading-[1.35] text-[var(--chat-meta-color)] truncate mt-0.5 opacity-90">
+                    {meta.subtitle}
+                  </div>
+                {/if}
+                <div class="flex items-center justify-between gap-2 mt-1 text-[10px] leading-tight text-[var(--chat-meta-color)]">
+                  <div class="inline-flex items-center gap-0.5 min-w-0">
+                    <ChatAvatar src={entry.message.avatar} name={entry.message.name} size="2xs" class="w-3! h-3! opacity-80" />
+                    <button
+                      type="button"
+                      class="chat-share-card-sharer-btn inline-flex items-center min-w-0 px-1 py-0.5 rounded-md border-none bg-transparent hover:bg-[var(--btn-plain-bg-hover)] hover:text-[var(--primary)] opacity-80 hover:opacity-100 text-inherit cursor-pointer transition-colors"
+                      aria-label={`查看 ${entry.message.name} 的个人资料`}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        closeAllHeaderMenus();
+                        handleOpenNoticeUserProfile(
+                          entry.message.name,
+                          entry.message.userKey,
+                          entry.message.avatar,
+                        );
+                      }}
+                    >
+                      <span class="truncate">{entry.message.name}</span>
+                    </button>
+                  </div>
+                  <span class="shrink-0 tabular-nums opacity-75">{formatUnreadTime(entry.message.createdAt)}</span>
+                </div>
+              </div>
+            </div>
+            <div class="chat-share-card-actions shrink-0">
+              <button
+                type="button"
+                class="chat-queue-icon-btn w-9! h-9! rounded-xl!"
+                aria-label={`定位到聊天：${meta.title}`}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  void handleLocateFeedMessage(entry.message);
+                }}
+              >
+                <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/snippet}
+
+  {#snippet headerSharedMusicList(reference?: HTMLElement | null)}
+    {@const activeCoverKey = activePrivateTrack ? getPrivateTrackKey(activePrivateTrack) : ""}
+    {@const hasActiveCover = Boolean(activePrivateTrack?.cover && !sharedMusicFailedCovers[activeCoverKey])}
+    {@const activeSenderSource = privateMusic.activeMsgUid ? (messages.find((m) => m.msgUid === privateMusic.activeMsgUid) ?? recentShares.find((m) => m.msgUid === privateMusic.activeMsgUid) ?? null) : null}
+    {@const activeSenderDisplayName = privateMusic.activeSenderName || activeSenderSource?.name || ""}
+    {@const activeSenderDisplayAvatar = privateMusic.activeSenderAvatar || activeSenderSource?.avatar || ""}
+    {@const activeSenderDisplayUserKey = privateMusic.activeSenderUserKey || activeSenderSource?.userKey || ""}
+    <div
+      data-chat-floating
+      use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }}
+      class="chat-shared-music-menu"
+      role="dialog"
+      aria-label="分享音乐与私有播放器"
+    >
+      <div class="chat-private-player-card">
+        <div class="flex items-center justify-between gap-2 min-h-[30px] pb-2 border-b border-[var(--chat-divider-color)]">
+          {#if activePrivateTrack}
+            <div class="flex items-center gap-1 min-w-0 text-xs">
+              {#if activeSenderDisplayName}
+                <span class="text-[var(--chat-meta-color)] shrink-0">来自：</span>
+                <ChatAvatar
+                  src={activeSenderDisplayAvatar}
+                  name={activeSenderDisplayName}
+                  size="2xs"
+                />
+                <button
+                  type="button"
+                  class="inline-flex items-center min-w-0 px-1.5 py-0.5 -ml-0.5 rounded-md border-none bg-transparent hover:bg-[var(--btn-plain-bg-hover)] font-bold text-[var(--deep-text)] dark:text-white/90 hover:text-[var(--primary)] cursor-pointer transition-colors"
+                  aria-label={`查看 ${activeSenderDisplayName} 的个人资料`}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    closeAllHeaderMenus();
+                    handleOpenNoticeUserProfile(
+                      activeSenderDisplayName,
+                      activeSenderDisplayUserKey,
+                      activeSenderDisplayAvatar,
+                    );
+                  }}
+                >
+                  <span class="truncate">{activeSenderDisplayName}</span>
+                </button>
+              {:else}
+                <span class="font-bold text-[var(--deep-text)] dark:text-white/90 truncate">
+                  私有播放
+                </span>
+              {/if}
+            </div>
+            <div class="flex items-center gap-1 shrink-0">
+              {#if privateMusic.activeMsgUid}
+                <button
+                  type="button"
+                  class="chat-queue-icon-btn w-6.5! h-6.5! rounded-lg!"
+                  aria-label={`定位到聊天：${activePrivateTrack.title}`}
+                  onclick={() => void handleLocateActivePrivateTrack()}
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                </button>
+              {/if}
+              {#if activePrivateExternalHref}
+                <a
+                  href={activePrivateExternalHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="chat-queue-icon-btn w-6.5! h-6.5! rounded-lg! no-underline!"
+                  aria-label={`打开原曲链接：${activePrivateTrack.title}`}
+                  onclick={(e) => e.stopPropagation()}
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                </a>
+              {/if}
+            </div>
+          {:else}
+            <span class="text-xs font-bold text-[var(--deep-text)] dark:text-white/90 truncate">
+              私有播放器
+            </span>
+          {/if}
+        </div>
+
+        <div class="flex items-center gap-3 pt-2.5 min-w-0">
+          {#if activePrivateTrack}
+            <button
+              type="button"
+              class="chat-private-cover-btn relative shrink-0 w-[52px] h-[52px] rounded-xl overflow-hidden border border-black/8 dark:border-white/10 bg-(--primary)/10 shadow-xs flex items-center justify-center select-none cursor-pointer p-0"
+              aria-label={privateMusic.isPlaying ? `暂停私有播放：${activePrivateTrack.title}` : `继续私有播放：${activePrivateTrack.title}`}
+              onclick={(e) => {
+                e.stopPropagation();
+                void privateMusic.toggleActivePlay();
+              }}
+            >
+              {#if hasActiveCover}
+                <img
+                  src={activePrivateTrack.cover}
+                  alt={activePrivateTrack.title}
+                  class="chat-private-cover-img w-full h-full object-cover block"
+                  onerror={() => {
+                    sharedMusicFailedCovers = { ...sharedMusicFailedCovers, [activeCoverKey]: true };
+                  }}
+                />
+              {:else}
+                <svg class="w-6 h-6 block text-(--primary) opacity-60" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+                </svg>
+              {/if}
+              <span
+                class="chat-private-cover-overlay {privateMusic.isBufferingSlow && !privateMusic.isPlaying ? 'is-visible' : ''}"
+                aria-hidden="true"
+              >
+                {#if privateMusic.isBufferingSlow && !privateMusic.isPlaying}
+                  <svg class="w-5 h-5 block animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.6" opacity="0.32" />
+                    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" />
+                  </svg>
+                {:else if privateMusic.isPlaying}
+                  <svg class="chat-cover-cue-icon w-5 h-5 block" viewBox="0 0 24 24" fill="currentColor">
+                    <rect x="5.5" y="4.5" width="4.5" height="15" rx="1.6" />
+                    <rect x="14" y="4.5" width="4.5" height="15" rx="1.6" />
+                  </svg>
+                {:else}
+                  <svg class="chat-cover-cue-icon w-5 h-5 block" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8.2 5.45c0-1.08 1.19-1.74 2.11-1.17l9.28 5.79c.86.54.86 1.8 0 2.34l-9.28 5.79c-.92.57-2.11-.09-2.11-1.17V5.45z" />
+                  </svg>
+                {/if}
+              </span>
+            </button>
+          {:else}
+            <div class="w-[52px] h-[52px] rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-black/[0.03] dark:bg-white/[0.04] flex items-center justify-center shrink-0 select-none">
+              <svg class="w-5.5 h-5.5 text-[var(--primary)] opacity-60" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+              </svg>
+            </div>
+          {/if}
+
+          <div class="min-w-0 flex-1 flex flex-col justify-center gap-1">
+            {#if activePrivateTrack}
+              {@const activeArtistText = (activePrivateTrack.artist || "").trim() || "未知歌手"}
+              <div
+                class="text-[13.5px] font-bold leading-snug truncate transition-colors duration-200 {activePrivateTopLine.tone === 'error'
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : activePrivateTopLine.tone === 'muted'
+                    ? 'text-[var(--chat-meta-color)] font-medium'
+                    : 'text-[var(--deep-text)] dark:text-white/92'}"
+                title={activePrivateTopLine.text}
+                aria-live="polite"
+              >
+                {activePrivateTopLine.text}
+              </div>
+
+              <div class="flex items-center min-w-0 text-[12px] leading-tight overflow-hidden">
+                {#if showActivePrivateSongSubline}
+                  <span class="font-medium text-[var(--deep-text)] dark:text-white/85 truncate shrink-0 max-w-[66%]" title={activePrivateTrack.title}>
+                    {activePrivateTrack.title || "未命名歌曲"}
+                  </span>
+                  <span class="text-[var(--chat-meta-color)] truncate min-w-0 flex-1" title={activeArtistText}>
+                    &nbsp;-&nbsp;{activeArtistText}
+                  </span>
+                {:else}
+                  <span class="text-[var(--chat-meta-color)] truncate min-w-0 flex-1" title={activeArtistText}>
+                    {activeArtistText}
+                  </span>
+                {/if}
+              </div>
+            {:else}
+              <div class="text-[13.5px] font-bold leading-snug truncate text-[var(--deep-text)] dark:text-white/90">
+                暂无正在私有播放的音乐
+              </div>
+              <div class="text-[12px] leading-tight truncate text-[var(--chat-meta-color)]">
+                点击下方曲目封面或聊天音乐卡片即可试听
+              </div>
+            {/if}
+          </div>
+        </div>
+
+        <div class="pt-3 pb-1">
+          {#if activePrivateTrack}
+            <div
+              bind:this={sharedMusicScrubberEl}
+              role="slider"
+              tabindex="0"
+              aria-label="私有试听播放进度"
+              aria-valuemin={0}
+              aria-valuemax={Math.round(activePrivateDuration || 0)}
+              aria-valuenow={Math.round(activePrivateCurrentSec)}
+              class="chat-slim-slider {sharedMusicSeeking ? 'chat-slim-slider--dragging' : ''}"
+              style="--pct: {activePrivateProgressRatio};"
+              onclick={(e) => e.stopPropagation()}
+              onpointerdown={handleSharedMusicScrubDown}
+              onpointermove={handleSharedMusicScrubMove}
+              onpointerup={handleSharedMusicScrubUp}
+              onpointercancel={handleSharedMusicScrubCancel}
+              onkeydown={handleSharedMusicScrubKeyDown}
+            >
+              {#if privateMusic.isLoading && activePrivateProgressRatio === 0}
+                <div class="w-full h-full rounded-full overflow-hidden pointer-events-none">
+                  <div class="chat-music-track-loading h-full w-1/3 bg-(--primary) rounded-full"></div>
+                </div>
+              {:else}
+                <div class="chat-slim-slider-fill"></div>
+              {/if}
+              <div class="chat-slim-slider-thumb"></div>
+            </div>
+          {:else}
+            <div
+              class="chat-slim-slider opacity-50 pointer-events-none"
+              style="--pct: 0;"
+              aria-hidden="true"
+            >
+              <div class="chat-slim-slider-fill"></div>
+            </div>
+          {/if}
+        </div>
+
+        <div class="flex items-center justify-between gap-2 text-[var(--chat-meta-color)] h-6 pt-0.5 select-none">
+          <div class="text-[11px] font-medium flex items-center gap-1.5 min-w-0 truncate">
+            <span class="font-mono tabular-nums inline-flex items-center gap-1 shrink-0">
+              <span class={activePrivateTrack ? "text-[var(--deep-text)] dark:text-white/85" : "opacity-65"}>
+                {formatPrivateMusicSec(activePrivateTrack ? activePrivateCurrentSec : 0)}
+              </span>
+              <span class="opacity-40" aria-hidden="true">/</span>
+              <span class={activePrivateTrack ? "" : "opacity-65"}>
+                {formatPrivateMusicSec(activePrivateTrack ? activePrivateDuration : 0)}
+              </span>
+            </span>
+            {#if activePrivateTrack && activePrivatePlatformLabel}
+              <span class="opacity-45 shrink-0" aria-hidden="true">·</span>
+              <span class="truncate">{activePrivatePlatformLabel}</span>
+            {/if}
+          </div>
+
+          <div class="flex items-center gap-1.5 shrink-0 h-full">
+            <button
+              type="button"
+              class="hover:text-(--primary) transition-colors p-0.5 rounded-md flex items-center border-none bg-transparent text-inherit cursor-pointer"
+              aria-label={privateMusic.isMuted || activePrivateVolumePct === 0 ? "取消静音" : "静音"}
+              onclick={(e) => {
+                e.stopPropagation();
+                privateMusic.toggleMute();
+              }}
+            >
+              {#if privateMusic.isMuted || activePrivateVolumePct === 0}
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+                </svg>
+              {:else}
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+                </svg>
+              {/if}
+            </button>
+            <div class="w-16 flex items-center">
+              <div
+                bind:this={sharedMusicVolEl}
+                role="slider"
+                tabindex="0"
+                aria-label="私有试听音量"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={activePrivateVolumePct}
+                class="chat-slim-slider {sharedMusicDraggingVol ? 'chat-slim-slider--dragging' : ''}"
+                style="--pct: {activePrivateVolumeRatio};"
+                onclick={(e) => e.stopPropagation()}
+                onpointerdown={handleSharedMusicVolDown}
+                onpointermove={handleSharedMusicVolMove}
+                onpointerup={handleSharedMusicVolUp}
+                onpointercancel={handleSharedMusicVolCancel}
+                onkeydown={handleSharedMusicVolKeyDown}
+              >
+                <div class="chat-slim-slider-fill"></div>
+                <div class="chat-slim-slider-thumb"></div>
               </div>
             </div>
           </div>
-        </button>
-      {/each}
+        </div>
+      </div>
+
+      {#if recentMusicShareEntries.length > 0}
+        <div class="shrink-0 flex items-center justify-between px-1.5 pt-2.5 pb-1.5 text-[11px] text-[var(--chat-meta-color)] font-medium">
+          <span>最近 5 天分享曲目</span>
+          <span class="tabular-nums">{recentMusicShareEntries.length} 首</span>
+        </div>
+        <div class="chat-shared-music-list custom-scrollbar">
+          {#each recentMusicShareEntries as entry (entry.message.msgUid)}
+            {@const coverKey = getPrivateTrackKey(entry.share)}
+            {@const hasThumb = Boolean(entry.share.cover && !sharedMusicFailedCovers[coverKey])}
+            {@const isRowMatched = privateMusic.isTrackMatching(entry.share, entry.message.msgUid)}
+            {@const isRowPlaying = isRowMatched && privateMusic.isPlaying}
+            {@const isRowLoading = isRowMatched && privateMusic.isBufferingSlow}
+            <div class="chat-share-card-row group {isRowMatched ? 'is-active' : ''}">
+              <div class="chat-share-card-main">
+                <button
+                  type="button"
+                  class="chat-share-card-thumb chat-shared-music-thumb-btn shrink-0 relative cursor-pointer p-0"
+                  aria-label={isRowPlaying ? `暂停 ${entry.share.title}` : `私有播放 ${entry.share.title}`}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    void privateMusic.playOrToggle({
+                      data: entry.share,
+                      msgUid: entry.message.msgUid,
+                      senderName: entry.message.name,
+                      senderAvatar: entry.message.avatar,
+                      senderUserKey: entry.message.userKey,
+                      chatServerUrl,
+                    });
+                  }}
+                >
+                  {#if hasThumb}
+                    <img
+                      src={entry.share.cover}
+                      alt=""
+                      loading="lazy"
+                      decoding="async"
+                      class="chat-shared-music-thumb-img w-full h-full object-cover"
+                      onerror={() => {
+                        sharedMusicFailedCovers = { ...sharedMusicFailedCovers, [coverKey]: true };
+                      }}
+                    />
+                  {:else}
+                    <svg class="w-4 h-4 text-[var(--primary)] opacity-80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M9 18V5l12-2v13" />
+                      <circle cx="6" cy="18" r="3" />
+                      <circle cx="18" cy="16" r="3" />
+                    </svg>
+                  {/if}
+                  <span
+                    class="chat-shared-music-thumb-overlay {isRowLoading && !isRowPlaying ? 'is-visible' : ''}"
+                    aria-hidden="true"
+                  >
+                    {#if isRowLoading && !isRowPlaying}
+                      <svg class="w-4 h-4 block animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.32" />
+                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                      </svg>
+                    {:else if isRowPlaying}
+                      <svg class="chat-cover-cue-icon w-4 h-4 block" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="5.5" y="4.5" width="4.5" height="15" rx="1.6" />
+                        <rect x="14" y="4.5" width="4.5" height="15" rx="1.6" />
+                      </svg>
+                    {:else}
+                      <svg class="chat-cover-cue-icon w-4 h-4 block" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8.2 5.45c0-1.08 1.19-1.74 2.11-1.17l9.28 5.79c.86.54.86 1.8 0 2.34l-9.28 5.79c-.92.57-2.11-.09-2.11-1.17V5.45z" />
+                      </svg>
+                    {/if}
+                  </span>
+                </button>
+                <div class="min-w-0 flex-1 text-left">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <div class="min-w-0 truncate text-xs leading-tight">
+                      <span class="font-semibold {isRowMatched ? 'text-[var(--primary)]' : 'text-[var(--deep-text)] dark:text-white/95'}">
+                        {entry.share.title || "未命名歌曲"}
+                      </span>
+                      <span class="text-[var(--chat-meta-color)] font-normal">
+                        {" - "}{entry.share.artist || "未知歌手"}
+                      </span>
+                    </div>
+                    {#if isRowMatched}
+                      <span class="chat-shared-music-status-badge shrink-0">
+                        {isRowPlaying ? "播放中" : "已暂停"}
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="flex items-center justify-between gap-2 mt-1 text-[10.5px] text-[var(--chat-meta-color)] opacity-85">
+                    <div class="inline-flex items-center gap-0.5 min-w-0">
+                      <ChatAvatar src={entry.message.avatar} name={entry.message.name} size="2xs" class="w-3.5! h-3.5!" />
+                      <button
+                        type="button"
+                        class="inline-flex items-center min-w-0 px-1 py-0.5 rounded-md border-none bg-transparent hover:bg-[var(--btn-plain-bg-hover)] hover:text-[var(--primary)] text-inherit cursor-pointer transition-colors"
+                        aria-label={`查看 ${entry.message.name} 的个人资料`}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          closeAllHeaderMenus();
+                          handleOpenNoticeUserProfile(
+                            entry.message.name,
+                            entry.message.userKey,
+                            entry.message.avatar,
+                          );
+                        }}
+                      >
+                        <span class="truncate">{entry.message.name}</span>
+                      </button>
+                    </div>
+                    <span class="shrink-0 tabular-nums">{formatUnreadTime(entry.message.createdAt)}</span>
+                  </div>
+                </div>
+              </div>
+              <div class="chat-share-card-actions shrink-0">
+                <button
+                  type="button"
+                  class="chat-queue-icon-btn w-9! h-9! rounded-xl!"
+                  aria-label={`定位到聊天：${entry.share.title}`}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    void handleLocateFeedMessage(entry.message);
+                  }}
+                >
+                  <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/snippet}
 
@@ -4451,11 +5593,11 @@ function removePendingImage(index: number) {
     <div
       data-chat-floating
       use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }}
-      class="chat-music-notice-menu custom-scrollbar"
+      class="chat-music-notice-menu"
       role="menu"
       aria-label="点歌记录列表"
     >
-      <div class="chat-music-notice-header">
+      <div class="chat-music-notice-header shrink-0">
         <div class="flex items-center gap-1.5 min-w-0">
           <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M9 18V5l12-2v13" />
@@ -4482,7 +5624,7 @@ function removePendingImage(index: number) {
         {/if}
       </div>
 
-      <div class="my-1.5 border-t border-[var(--chat-divider-color)]"></div>
+      <div class="my-1.5 shrink-0 border-t border-[var(--chat-divider-color)]"></div>
 
       {#if sortedMusicNotices.length === 0}
         <div class="chat-music-notice-empty">
@@ -4507,7 +5649,7 @@ function removePendingImage(index: number) {
           {/if}
         </div>
       {:else}
-        <div class="chat-music-notice-list flex flex-col gap-2">
+        <div class="chat-music-notice-list custom-scrollbar flex flex-col gap-2">
           {#each sortedMusicNotices as item (item.msgUid)}
             {@const parsed = parseMusicNoticeContent(item.content)}
             {@const extraTrack = getSongExtraInfo(parsed.songTitle)}
@@ -4520,25 +5662,17 @@ function removePendingImage(index: number) {
             <div class="chat-music-notice-card group">
               <!-- 卡片顶部：点歌人 + 动作标签 + 时间 -->
               <div class="flex items-center justify-between gap-1.5 mb-1.5">
-                <div class="flex items-center gap-1.5 min-w-0">
-                  <button
-                    type="button"
-                    class="chat-music-notice-avatar-btn shrink-0"
-                    title={`查看 ${actorDisplayName} 的资料`}
-                    onclick={() => {
-                      handleOpenNoticeUserProfile(actorDisplayName, item.userKey, actorAvatar);
-                    }}
-                  >
-                    <ChatAvatar
-                      src={actorAvatar}
-                      name={actorDisplayName}
-                      size="xs"
-                    />
-                  </button>
+                <div class="flex items-center gap-1 min-w-0">
+                  <ChatAvatar
+                    src={actorAvatar}
+                    name={actorDisplayName}
+                    size="xs"
+                  />
 
                   <button
                     type="button"
-                    class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 hover:text-[var(--primary)] hover:underline truncate bg-transparent border-none p-0 cursor-pointer text-left transition-colors"
+                    class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 hover:text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] rounded-md px-1.5 py-0.5 truncate bg-transparent border-none cursor-pointer text-left transition-colors"
+                    aria-label={`查看 ${actorDisplayName} 的个人资料`}
                     onclick={() => {
                       handleOpenNoticeUserProfile(actorDisplayName, item.userKey, actorAvatar);
                     }}
@@ -4633,7 +5767,11 @@ function removePendingImage(index: number) {
   <!-- 顶部悬浮毛玻璃层（小标题栏 + 置顶横幅） -->
   <div class="chat-header-stack" bind:clientHeight={chatHeaderStackHeight}>
     <!-- 顶栏 -->
-    <div class="chat-panel-header chat-window-header" bind:clientWidth={chatHeaderWidth}>
+    <div
+      class="chat-panel-header chat-window-header"
+      class:is-compact-pills={compactHeaderPills}
+      bind:clientWidth={chatHeaderWidth}
+    >
     <div class="flex items-center gap-2 min-w-0 flex-1">
       <button
         type="button"
@@ -4806,21 +5944,23 @@ function removePendingImage(index: number) {
     <div class="chat-window-header-actions flex items-center gap-1.5 shrink-0">
       {#if hasHeaderThreads}
         <div class="chat-desktop-only relative shrink-0" bind:this={threadListWrapEl}>
-          <button
-            type="button"
-            class="chat-header-pill-btn"
-            aria-expanded={showThreadListMenu}
-            aria-label="查看活跃线程回复"
-            onclick={() => toggleHeaderList("threads")}
-          >
-            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              <path d="M8 9h8" />
-              <path d="M8 13h5" />
-            </svg>
-            <span class="font-bold text-[var(--primary)]">线程回复</span>
-            <span class="text-[11px] md:text-[10px] opacity-75 tabular-nums">{mergedActiveThreads.length}</span>
-          </button>
+          <ChatTooltip text="最近 48 小时线程" position="bottom" disabled={!compactHeaderPills || showThreadListMenu}>
+            <button
+              type="button"
+              class="chat-header-pill-btn {showThreadListMenu ? 'active' : ''}"
+              aria-expanded={showThreadListMenu}
+              aria-label="查看最近 48 小时线程回复"
+              onclick={() => toggleHeaderList("threads")}
+            >
+              <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                <path d="M8 9h8" />
+                <path d="M8 13h5" />
+              </svg>
+              <span class="chat-header-pill-label font-bold text-[var(--primary)]">线程回复</span>
+              <span class="text-[11px] md:text-[10px] opacity-75 tabular-nums">{mergedActiveThreads.length}</span>
+            </button>
+          </ChatTooltip>
 
           {#if showThreadListMenu && !threadInMore}
             {@render headerThreadList()}
@@ -4836,7 +5976,7 @@ function removePendingImage(index: number) {
           class="chat-mobile-header-action"
           class:is-active={showInterconnect}
           aria-label="更多聊天室选项"
-          aria-expanded={showMobileMoreMenu || (threadInMore && showThreadListMenu) || (mentionsInMore && showMentionHistory) || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu)}
+          aria-expanded={showMobileMoreMenu || (threadInMore && showThreadListMenu) || (mentionsInMore && showMentionHistory) || (sharesInMore && showShareHistory) || (musicSharesInMore && showSharedMusicMenu) || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu)}
           data-floating-panel-no-expanded
           bind:this={mobileMoreTrigger}
           onclick={toggleMobileMoreMenu}
@@ -4858,7 +5998,7 @@ function removePendingImage(index: number) {
                     <path d="M8 9h8" />
                     <path d="M8 13h5" />
                   </svg>
-                  <span>活跃线程回复</span>
+                  <span>线程回复</span>
                 </span>
                 <span class="chat-mobile-more-count">{mergedActiveThreads.length}</span>
               </button>
@@ -4870,9 +6010,34 @@ function removePendingImage(index: number) {
                     <circle cx="12" cy="12" r="4" />
                     <path d="M16 8v5a2 2 0 0 0 4 0v-1a8 8 0 1 0-3 6.25" />
                   </svg>
-                  <span>被提及的消息</span>
+                  <span>被提及</span>
                 </span>
                 <span class="chat-mobile-more-count">{mentionsToMe.length}</span>
+              </button>
+            {/if}
+            {#if sharesInMore}
+              <button type="button" role="menuitem" class="chat-mobile-more-item" onclick={() => toggleHeaderList("shares", true)}>
+                <span class="flex items-center gap-2.5">
+                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="14" height="14" rx="2.5" />
+                    <path d="M7 20h11a2.5 2.5 0 0 0 2.5-2.5V7" />
+                  </svg>
+                  <span>分享卡片</span>
+                </span>
+                <span class="chat-mobile-more-count">{recentNonMusicShareEntries.length}</span>
+              </button>
+            {/if}
+            {#if musicSharesInMore}
+              <button type="button" role="menuitem" class="chat-mobile-more-item" onclick={() => toggleHeaderList("sharedMusic", true)}>
+                <span class="flex items-center gap-2.5">
+                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M9 18V5l12-2v13" />
+                    <circle cx="6" cy="18" r="3" />
+                    <circle cx="18" cy="16" r="3" />
+                  </svg>
+                  <span>分享音乐</span>
+                </span>
+                <span class="chat-mobile-more-count">{recentMusicShareEntries.length}</span>
               </button>
             {/if}
             {#if ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore}
@@ -4888,8 +6053,35 @@ function removePendingImage(index: number) {
                 <span class="chat-mobile-more-count">{sortedMusicNotices.length}</span>
               </button>
             {/if}
-            {#if threadInMore || mentionsInMore || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore)}
+            {#if threadInMore || mentionsInMore || sharesInMore || musicSharesInMore || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore)}
               <div class="mx-2 my-0.5 border-t border-[var(--skin-line)]"></div>
+            {/if}
+
+            {#if isInterconnectRoom}
+              <button
+                type="button"
+                role="menuitem"
+                data-chat-interconnect-trigger
+                class="chat-mobile-more-item"
+                onclick={() => {
+                  closeAllHeaderMenus();
+                  onToggleInterconnect?.();
+                }}
+              >
+                <span class="flex items-center gap-2.5">
+                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+                    <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
+                    <line x1="6" y1="1" x2="6" y2="4" />
+                    <line x1="10" y1="1" x2="10" y2="4" />
+                    <line x1="14" y1="1" x2="14" y2="4" />
+                  </svg>
+                  <span>友站列表</span>
+                </span>
+                <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+              </button>
             {/if}
 
             <button
@@ -4932,33 +6124,6 @@ function removePendingImage(index: number) {
               <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
             </button>
 
-            {#if isInterconnectRoom}
-              <button
-                type="button"
-                role="menuitem"
-                data-chat-interconnect-trigger
-                class="chat-mobile-more-item"
-                onclick={() => {
-                  closeAllHeaderMenus();
-                  onToggleInterconnect?.();
-                }}
-              >
-                <span class="flex items-center gap-2.5">
-                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
-                    <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
-                    <line x1="6" y1="1" x2="6" y2="4" />
-                    <line x1="10" y1="1" x2="10" y2="4" />
-                    <line x1="14" y1="1" x2="14" y2="4" />
-                  </svg>
-                  <span>互联茶室友站列表</span>
-                </span>
-                <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </button>
-            {/if}
-
             {#if currentUser?.isAdmin && onSetTopic}
               <button
                 type="button"
@@ -4984,29 +6149,43 @@ function removePendingImage(index: number) {
           {@render headerThreadList(mobileMoreTrigger)}
         {:else if mentionsInMore && showMentionHistory}
           {@render headerMentionList(mobileMoreTrigger)}
+        {:else if sharesInMore && showShareHistory}
+          {@render headerShareList(mobileMoreTrigger)}
+        {:else if musicSharesInMore && showSharedMusicMenu}
+          {@render headerSharedMusicList(mobileMoreTrigger)}
         {:else if ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu}
           {@render headerMusicNoticeList(mobileMoreTrigger)}
         {/if}
       </div>
 
       {#if hasHeaderMentions}
-        <div class="relative shrink-0" bind:this={mentionHistoryWrapEl}>
-          <button
-            type="button"
-            class="chat-header-pill-btn chat-mobile-header-action {unreadMentionUids.length > 0 ? 'has-unread' : ''}"
-            aria-expanded={showMentionHistory}
-            aria-label={unreadMentionUids.length > 0 ? `查看被提及的消息，${unreadMentionUids.length} 条未读` : "查看被提及的消息"}
-            class:chat-mobile-header-collapsed={mentionsInMore}
-            onclick={() => toggleHeaderList("mentions")}
+        <div
+          class="relative shrink-0"
+          class:chat-mobile-header-collapsed={mentionsInMore}
+          bind:this={mentionHistoryWrapEl}
+        >
+          <ChatTooltip
+            text="最近 48 小时提及"
+            position="bottom"
+            disabled={!compactHeaderPills || (viewportWidth > 0 && viewportWidth < 768) || showMentionHistory}
           >
-            <svg class="chat-mobile-only" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M16 8v5a2 2 0 0 0 4 0v-1a8 8 0 1 0-3 6.25" /></svg>
-            <span class="chat-mention-label font-bold text-[var(--primary)]">被提及</span>
-            {#if unreadMentionUids.length > 0}
-              <span class="chat-mention-unread-badge">{unreadMentionUids.length}</span>
-            {:else}
-              <span class="chat-mention-count text-[11px] md:text-[10px] opacity-75 tabular-nums">{mentionsToMe.length}</span>
-            {/if}
-          </button>
+            <button
+              type="button"
+              class="chat-header-pill-btn chat-mobile-header-action {showMentionHistory ? 'active' : ''} {unreadMentionUids.length > 0 ? 'has-unread' : ''}"
+              aria-expanded={showMentionHistory}
+              aria-label={unreadMentionUids.length > 0 ? `查看最近 48 小时提及，${unreadMentionUids.length} 条未读` : "查看最近 48 小时提及"}
+              class:chat-mobile-header-collapsed={mentionsInMore}
+              onclick={() => toggleHeaderList("mentions")}
+            >
+              <svg class="w-3.5 h-3.5 shrink-0 md:text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M16 8v5a2 2 0 0 0 4 0v-1a8 8 0 1 0-3 6.25" /></svg>
+              <span class="chat-header-pill-label chat-mention-label font-bold text-[var(--primary)]">被提及</span>
+              {#if unreadMentionUids.length > 0}
+                <span class="chat-mention-unread-badge">{unreadMentionUids.length}</span>
+              {:else}
+                <span class="chat-mention-count text-[11px] md:text-[10px] opacity-75 tabular-nums">{mentionsToMe.length}</span>
+              {/if}
+            </button>
+          </ChatTooltip>
 
           {#if showMentionHistory && !mentionsInMore}
             {@render headerMentionList()}
@@ -5014,29 +6193,128 @@ function removePendingImage(index: number) {
         </div>
       {/if}
 
+      {#if hasHeaderShares}
+        <div
+          class="chat-desktop-only relative shrink-0"
+          bind:this={shareHistoryWrapEl}
+        >
+          <ChatTooltip
+            text="最近 48 小时分享卡片"
+            position="bottom"
+            disabled={!compactHeaderPills || showShareHistory}
+          >
+            <button
+              type="button"
+              class="chat-header-pill-btn {showShareHistory ? 'active' : ''}"
+              aria-expanded={showShareHistory}
+              aria-label={`查看最近 48 小时分享卡片，共 ${recentNonMusicShareEntries.length} 张`}
+              onclick={() => toggleHeaderList("shares")}
+            >
+              <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="14" height="14" rx="2.5" />
+                <path d="M7 20h11a2.5 2.5 0 0 0 2.5-2.5V7" />
+              </svg>
+              <span class="chat-header-pill-label font-bold text-[var(--primary)]">分享卡片</span>
+              <span class="text-[11px] md:text-[10px] opacity-75 tabular-nums">{recentNonMusicShareEntries.length}</span>
+            </button>
+          </ChatTooltip>
+
+          {#if showShareHistory && !sharesInMore}
+            {@render headerShareList()}
+          {/if}
+        </div>
+      {/if}
+
+      {#if hasHeaderSharedMusic}
+        <div
+          class="relative shrink-0"
+          class:chat-mobile-header-collapsed={musicSharesInMore}
+          bind:this={sharedMusicWrapEl}
+        >
+          <ChatTooltip
+            text="分享音乐"
+            position="bottom"
+            disabled={!compactHeaderPills || (viewportWidth > 0 && viewportWidth < 768) || showSharedMusicMenu}
+          >
+            <button
+              type="button"
+              class="chat-header-pill-btn chat-mobile-header-action {showSharedMusicMenu ? 'active' : ''} {privateMusic.isPlaying ? 'has-unread' : ''}"
+              class:chat-mobile-header-collapsed={musicSharesInMore}
+              aria-expanded={showSharedMusicMenu}
+              aria-label={privateMusic.isPlaying && activePrivateTrack ? `查看分享音乐与正在播放的 ${activePrivateTrack.title}` : `查看最近 5 天分享音乐，共 ${recentMusicShareEntries.length} 首`}
+              onclick={() => toggleHeaderList("sharedMusic")}
+            >
+              <span class="inline-flex items-center justify-center w-5.5 h-5.5 md:w-3.5 md:h-3.5 shrink-0">
+                {#if activePrivatePillCoverUrl}
+                  <img
+                    src={activePrivatePillCoverUrl}
+                    alt=""
+                    class="chat-private-pill-cover {privateMusic.isPlaying ? 'is-playing' : ''} hidden md:block w-3.5 h-3.5 rounded-full object-cover box-border border border-[var(--chat-divider-color)]"
+                    onerror={() => {
+                      if (!activePrivateTrack) return;
+                      const k = getPrivateTrackKey(activePrivateTrack);
+                      sharedMusicFailedCovers = { ...sharedMusicFailedCovers, [k]: true };
+                    }}
+                  />
+                  <svg class="md:hidden w-5 h-5 text-[var(--primary)] block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M9 18V5l12-2v13" />
+                    <circle cx="6" cy="18" r="3" />
+                    <circle cx="18" cy="16" r="3" />
+                  </svg>
+                {:else}
+                  <svg class="w-5 h-5 md:w-3.5 md:h-3.5 text-[var(--primary)] block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M9 18V5l12-2v13" />
+                    <circle cx="6" cy="18" r="3" />
+                    <circle cx="18" cy="16" r="3" />
+                  </svg>
+                {/if}
+              </span>
+              <span class="chat-header-pill-label chat-mention-label font-bold text-[var(--primary)]">分享音乐</span>
+              {#if recentMusicShareEntries.length > 0}
+                <span class="chat-mention-count text-[11px] md:text-[10px] opacity-75 tabular-nums">{recentMusicShareEntries.length}</span>
+              {/if}
+            </button>
+          </ChatTooltip>
+
+          {#if showSharedMusicMenu && !musicSharesInMore}
+            {@render headerSharedMusicList()}
+          {/if}
+        </div>
+      {/if}
+
       <!-- 点歌记录胶囊入口（当前设为不加载，节省内存与空间；改 ENABLE_HEADER_MUSIC_NOTICES = true 即可恢复） -->
       {#if ENABLE_HEADER_MUSIC_NOTICES}
-        <div class="relative shrink-0" bind:this={musicNoticeWrapEl}>
-          <button
-            type="button"
-            class="chat-header-pill-btn chat-mobile-header-action chat-music-notice-btn {unreadMusicNoticeCount > 0 ? 'has-unread' : ''} {showMusicNoticeMenu ? 'active' : ''}"
-            aria-expanded={showMusicNoticeMenu}
-            aria-label={unreadMusicNoticeCount > 0 ? `查看点歌记录，${unreadMusicNoticeCount} 条新动态` : "查看点歌记录"}
-            class:chat-mobile-header-collapsed={musicNoticesInMore}
-            onclick={() => toggleHeaderList("musicNotices")}
+        <div
+          class="relative shrink-0"
+          class:chat-mobile-header-collapsed={musicNoticesInMore}
+          bind:this={musicNoticeWrapEl}
+        >
+          <ChatTooltip
+            text="点歌记录"
+            position="bottom"
+            disabled={!compactHeaderPills || (viewportWidth > 0 && viewportWidth < 768) || showMusicNoticeMenu}
           >
-            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M9 18V5l12-2v13" />
-              <circle cx="6" cy="18" r="3" />
-              <circle cx="18" cy="16" r="3" />
-            </svg>
-            <span class="chat-mention-label font-medium text-[var(--deep-text)] dark:text-white/90">点歌记录</span>
-            {#if unreadMusicNoticeCount > 0}
-              <span class="chat-mention-unread-badge">{unreadMusicNoticeCount}</span>
-            {:else if sortedMusicNotices.length > 0}
-              <span class="chat-mention-count text-[11px] md:text-[10px] opacity-75 tabular-nums text-[var(--chat-meta-color)]">{sortedMusicNotices.length}</span>
-            {/if}
-          </button>
+            <button
+              type="button"
+              class="chat-header-pill-btn chat-mobile-header-action chat-music-notice-btn {unreadMusicNoticeCount > 0 ? 'has-unread' : ''} {showMusicNoticeMenu ? 'active' : ''}"
+              aria-expanded={showMusicNoticeMenu}
+              aria-label={unreadMusicNoticeCount > 0 ? `查看点歌记录，${unreadMusicNoticeCount} 条新动态` : "查看点歌记录"}
+              class:chat-mobile-header-collapsed={musicNoticesInMore}
+              onclick={() => toggleHeaderList("musicNotices")}
+            >
+              <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M9 18V5l12-2v13" />
+                <circle cx="6" cy="18" r="3" />
+                <circle cx="18" cy="16" r="3" />
+              </svg>
+              <span class="chat-header-pill-label chat-mention-label font-medium text-[var(--deep-text)] dark:text-white/90">点歌记录</span>
+              {#if unreadMusicNoticeCount > 0}
+                <span class="chat-mention-unread-badge">{unreadMusicNoticeCount}</span>
+              {:else if sortedMusicNotices.length > 0}
+                <span class="chat-mention-count text-[11px] md:text-[10px] opacity-75 tabular-nums text-[var(--chat-meta-color)]">{sortedMusicNotices.length}</span>
+              {/if}
+            </button>
+          </ChatTooltip>
 
           {#if showMusicNoticeMenu && !musicNoticesInMore}
             {@render headerMusicNoticeList()}
@@ -5053,7 +6331,7 @@ function removePendingImage(index: number) {
           text={isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount} 人在线 · 累计 ${totalChatterCount} 人聊过天` : `${onlineCount} 人在线`}
         >
           <div
-            class="text-xs text-[var(--deep-text)] dark:text-white/85 px-2.5 py-1 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] flex items-center gap-1.5"
+            class="text-xs text-[var(--deep-text)] dark:text-white/85 px-2.5 py-1 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] flex items-center gap-1.5 whitespace-nowrap"
           >
             <span class="chat-online-dot"></span>
             <span>{isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount}/${totalChatterCount}` : `${onlineCount} 人在线`}</span>
@@ -5370,6 +6648,15 @@ function removePendingImage(index: number) {
       data-chat-pinned-bottom={followsLayoutAtBottom ? "" : undefined}
       data-chat-virtualized={virtualEnabled ? "" : undefined}
       onscroll={handleMessageScroll}
+      oncontextmenu={(e) => {
+        if (
+          window.matchMedia("(width < 768px), (pointer: coarse)").matches &&
+          e.target instanceof Element &&
+          !e.target.closest("a, input, textarea, [contenteditable], [data-chat-image], .chat-bubble")
+        ) {
+          e.preventDefault();
+        }
+      }}
       class="flex-1 custom-scrollbar min-h-0"
     >
       <div
@@ -5626,6 +6913,8 @@ function removePendingImage(index: number) {
           enabled: activePopover === "emoji",
           placement: "top-start",
           gap: 8,
+          canFlip: false,
+          hideWhenReferenceHidden: false,
         }}
         class="chat-emoji-popover chat-sticker-popover chat-composer-picker"
       >
@@ -5651,6 +6940,8 @@ function removePendingImage(index: number) {
           reference: shareTriggerEl,
           placement: "top-end",
           gap: 8,
+          canFlip: false,
+          hideWhenReferenceHidden: false,
         }}
         class="chat-share-popover"
       >
@@ -6124,12 +7415,12 @@ function removePendingImage(index: number) {
               发送消息前需先登录或填写访客信息
             {/if}
           </span>
-          <ChatTooltip text="分享博客文章与说说">
+          <ChatTooltip text="分享文章、说说与友链">
             <button
               bind:this={shareTriggerEl}
               type="button"
               class="chat-tool-btn {activePopover === 'share' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : 'text-[var(--skin-text)] hover:text-[var(--primary)]'} shrink-0"
-              aria-label="分享博客文章与说说"
+              aria-label="分享文章、说说与友链"
               aria-expanded={activePopover === "share"}
               aria-haspopup="dialog"
               onpointerenter={() => {

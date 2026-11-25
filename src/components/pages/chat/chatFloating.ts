@@ -18,6 +18,8 @@ interface ChatFloatingOptions {
 	hover?: "tooltip" | "card";
 	forceOpen?: boolean;
 	fitViewport?: boolean;
+	canFlip?: boolean;
+	hideWhenReferenceHidden?: boolean;
 	sizeToAvailableSpace?: boolean;
 	strategy?: "absolute" | "fixed";
 	onReady?: () => void;
@@ -116,12 +118,13 @@ export function positionChatFloating(
 				node.style.removeProperty("--chat-floating-width");
 				node.style.removeProperty("--chat-floating-height");
 			}
+			const checkHidden = options.hideWhenReferenceHidden !== false;
 			void computePosition(reference, node, {
 				placement: options.placement ?? "top",
 				strategy,
 				middleware: [
 					offset(options.gap ?? 6),
-					flip(boundaries),
+					options.canFlip !== false && flip(boundaries),
 					shift({
 						...boundaries,
 						crossAxis: !sizeToAvailableSpace,
@@ -142,11 +145,11 @@ export function positionChatFloating(
 								);
 							},
 						}),
-					hide({ boundary }),
+					checkHidden && hide({ boundary }),
 				],
 			}).then(({ x, y, placement, middlewareData }) => {
 				if (current !== request) return;
-				if (middlewareData.hide?.referenceHidden) {
+				if (checkHidden && middlewareData.hide?.referenceHidden) {
 					delete node.dataset.chatFloatingState;
 					options.onReferenceHidden?.();
 					return;

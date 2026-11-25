@@ -49,6 +49,8 @@ export interface RoomInitPacket {
 	mergedGuestHistory?: boolean;
 	messages: ChatMessageRecord[];
 	activeThreads?: ChatActiveThreadItem[];
+	recentMentions?: ChatMessageRecord[];
+	recentShares?: ChatMessageRecord[];
 	oldestHistoryId?: number;
 	hasMoreHistory?: boolean;
 	lastReadAt?: number;
@@ -88,6 +90,7 @@ export type ServerPacket =
 			unreadCount?: number;
 			unreadUserCount?: number;
 			readReceipts?: Record<string, ChatReadReceipt[]>;
+			recentMentions?: ChatMessageRecord[];
 	  }
 	| {
 			type: "member:merged";
