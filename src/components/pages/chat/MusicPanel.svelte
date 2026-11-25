@@ -2869,6 +2869,9 @@ function muteLocally() {
 }
 function startOrResumeAudio() {
 	if (!audioEl || (!currentPlay?.track.streamUrl && !currentPlay?.track.proxyUrl)) return;
+	if (typeof window !== "undefined") {
+		window.dispatchEvent(new CustomEvent("lx-chat-music-preview-stop"));
+	}
 	if (volume === 0) volume = 0.5;
 	hasJoinedAudio = true;
 	audioEl.muted = false;
@@ -3368,6 +3371,10 @@ export function toggleListenControl(): void {
 
 export function startListeningControl(): void {
 	if (!isListening) startOrResumeAudio();
+}
+
+export function pauseListeningControl(): void {
+	if (isListening || listenIntent) muteLocally();
 }
 
 export function openPlayerTab(): void {

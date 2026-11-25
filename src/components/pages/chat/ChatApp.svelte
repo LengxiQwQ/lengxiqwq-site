@@ -356,6 +356,7 @@ let playlistRefreshSeq = $state(0);
 let musicPanelRef: {
 	toggleListenControl?: () => void;
 	startListeningControl?: () => void;
+	pauseListeningControl?: () => void;
 	openPlayerTab?: () => void;
 } | null = $state(null);
 let pendingSongListen = $state<{ room: string; playUid: string } | null>(null);
@@ -3174,7 +3175,6 @@ function handleEnqueueTrack(track: ChatMusicTrack, anchor?: HTMLElement): Promis
 }
 
 let sharingMusicTrackKey = "";
-let mutedRoomAudioByPreview = false;
 
 $effect(() => {
 	if (typeof window === "undefined") return;
@@ -3182,26 +3182,13 @@ $effect(() => {
 		const playing = Boolean(
 			(event as CustomEvent<{ playing?: boolean }>).detail?.playing,
 		);
-		if (!chatAudio) return;
 		if (playing) {
-			if (!chatAudio.muted && !chatAudio.paused) {
-				chatAudio.muted = true;
-				mutedRoomAudioByPreview = true;
-			}
-		} else if (mutedRoomAudioByPreview) {
-			mutedRoomAudioByPreview = false;
-			if (isListeningIntent) {
-				chatAudio.muted = false;
-			}
+			musicPanelRef?.pauseListeningControl?.();
 		}
 	};
 	window.addEventListener("lx-chat-music-preview-state", onPreviewState);
 	return () => {
 		window.removeEventListener("lx-chat-music-preview-state", onPreviewState);
-		if (mutedRoomAudioByPreview && chatAudio) {
-			mutedRoomAudioByPreview = false;
-			chatAudio.muted = false;
-		}
 	};
 });
 async function handleShareMusicTrack(track: ChatMusicTrack): Promise<boolean> {
@@ -4153,7 +4140,7 @@ onMount(() => {
         onPlaybackStatusChange={(status) => {
           mobilePlaybackStatus = status;
           const listening = Boolean(status.listenIntent && !status.isMuted && status.audioStatus !== "blocked");
-          if (listening && !mutedRoomAudioByPreview && typeof window !== "undefined") {
+          if (listening && typeof window !== "undefined") {
             window.dispatchEvent(new CustomEvent("lx-chat-music-preview-stop"));
           }
           const listenKey = currentRoom + ":" + listening;

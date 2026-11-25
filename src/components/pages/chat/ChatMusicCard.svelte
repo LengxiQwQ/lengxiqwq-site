@@ -143,7 +143,7 @@ const {
 }: Props = $props();
 
 let coverFailed = $state(false);
-let audioEl: HTMLAudioElement | null = null;
+let audioEl = $state<HTMLAudioElement | null>(null);
 let isPlaying = $state(false);
 let isLoadingAudio = $state(false);
 let isEnqueuing = $state(false);
@@ -649,6 +649,10 @@ function applyVolume(ratio: number) {
 	const clamped = Math.min(1, Math.max(0, ratio));
 	previewVolume = clamped;
 	isPreviewMuted = clamped === 0;
+	if (audioEl) {
+		audioEl.volume = clamped;
+		audioEl.muted = clamped === 0;
+	}
 	persistPreviewAudioPrefs(previewVolume, isPreviewMuted);
 }
 
@@ -659,6 +663,10 @@ function togglePreviewMute(event: MouseEvent) {
 		if (previewVolume === 0) previewVolume = 0.7;
 	} else {
 		isPreviewMuted = true;
+	}
+	if (audioEl) {
+		audioEl.volume = previewVolume;
+		audioEl.muted = isPreviewMuted || previewVolume === 0;
 	}
 	persistPreviewAudioPrefs(previewVolume, isPreviewMuted);
 }
