@@ -1,35 +1,5 @@
-<script lang="ts">
-import ChatModal from "./ChatModal.svelte";
-import { searchOnlineMusic } from "./chatClient";
-import {
-	formatLxArticleShare,
-	formatLxMomentShare,
-} from "./chatShareProtocol";
-import type { RoomMusicState } from "./chatTypes";
-import type { ChatMusicTrack } from "./musicTypes";
-import type { PlaylistAuth } from "./playlistClient";
-
-interface Props {
-	open: boolean;
-	chatServerUrl?: string;
-	musicState?: RoomMusicState | null;
-	playlistAuth?: PlaylistAuth;
-	onClose: () => void;
-	onShare: (content: string) => void;
-	onShareMusicTrack?: (track: ChatMusicTrack) => Promise<boolean>;
-}
-
-const {
-	open,
-	chatServerUrl = "",
-	musicState = null,
-	playlistAuth: _playlistAuth,
-	onClose,
-	onShare,
-	onShareMusicTrack,
-}: Props = $props();
-
-interface ArticleItem {
+<script module lang="ts">
+export interface ArticleItem {
 	id: string;
 	title: string;
 	description: string;
@@ -40,7 +10,7 @@ interface ArticleItem {
 	url: string;
 }
 
-interface MomentItem {
+export interface MomentItem {
 	id: string;
 	published: number;
 	html: string;
@@ -50,33 +20,36 @@ interface MomentItem {
 	relativeTime: string;
 }
 
-let activeTab = $state<"articles" | "moments" | "music">("articles");
-let searchQuery = $state("");
-let articles = $state<ArticleItem[]>([]);
-let moments = $state<MomentItem[]>([]);
-let favoriteMusicTracks = $state<ChatMusicTrack[]>([]);
-let searchedMusicTracks = $state<ChatMusicTrack[]>([]);
-let isMusicSearching = $state(false);
-let musicFavoritesLoaded = $state(false);
-let musicSearchAbort: AbortController | null = null;
-let musicSearchTimer: ReturnType<typeof setTimeout> | null = null;
-let isLoading = $state(false);
-let loadError = $state("");
-let searchInputEl = $state<HTMLInputElement | null>(null);
+let cachedArticles: ArticleItem[] | null = null;
+let cachedMoments: MomentItem[] | null = null;
 
-function ensureAbsoluteUrl(pathOrUrl: string): string {
-	if (!pathOrUrl) return "";
-	if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
-	const origin =
-		typeof window !== "undefined"
-			? window.location.origin
-			: "https://lengxiqwq.com";
-	return `${origin}${pathOrUrl.startsWith("/") ? "" : "/"}${pathOrUrl}`;
+let inflightArticles: Promise<ArticleItem[]> | null = null;
+let inflightMoments: Promise<MomentItem[]> | null = null;
+
+function stripHtmlTags(html: string): string {
+	return (html || "")
+		.replace(/<[^>]+>/g, " ")
+		.replace(/&nbsp;/gi, " ")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function parseTimestamp(val: unknown): number {
+	if (typeof val === "number" && Number.isFinite(val)) return val;
+	if (typeof val === "string" && val.trim()) {
+		const num = Number(val);
+		if (Number.isFinite(num) && num > 0) return num;
+		const parsed = Date.parse(val);
+		if (Number.isFinite(parsed)) return parsed;
+	}
+	return 0;
 }
 
 function formatMomentDate(timestamp: number): string {
+	if (!timestamp) return "动态分享";
 	try {
 		const d = new Date(timestamp);
+		if (Number.isNaN(d.getTime())) return "动态分享";
 		return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 	} catch {
 		return "动态分享";
@@ -99,58 +72,263 @@ function getRelativeTime(timestamp: number): string {
 	return `${Math.floor(diffMonth / 12)}年前`;
 }
 
-async function loadData() {
-	if (articles.length > 0 && moments.length > 0) return;
-	isLoading = true;
-	loadError = "";
+async function fetchArticlesCached(force = false): Promise<ArticleItem[]> {
+	if (cachedArticles && !force) return cachedArticles;
+	if (inflightArticles && !force) return inflightArticles;
+	const task = (async () => {
+		const resp = await fetch("/api/allPostMeta.json");
+		if (!resp.ok) {
+			throw new Error(`HTTP ${resp.status}`);
+		}
+		const postRes = await resp.json();
+		const list = Array.isArray(postRes) ? postRes : [];
+		const mapped: ArticleItem[] = list.map((p: Record<string, unknown>) => ({
+			id: String(p.id || ""),
+			title: String(p.title || "未命名文章"),
+			description: String(p.description || ""),
+			published: parseTimestamp(p.published),
+			publishedDate: String(p.publishedDate || ""),
+			category: p.category ? String(p.category) : "",
+			image: p.image ? String(p.image) : "",
+			url: String(p.url || `/posts/${String(p.id || "")}/`),
+		}));
+		cachedArticles = mapped;
+		if (typeof Image !== "undefined") {
+			for (const item of mapped.slice(0, 6)) {
+				if (item.image) {
+					const img = new Image();
+					img.decoding = "async";
+					img.src = item.image;
+				}
+			}
+		}
+		return mapped;
+	})().finally(() => {
+		if (inflightArticles === task) inflightArticles = null;
+	});
+	inflightArticles = task;
+	return task;
+}
 
+async function fetchMomentsCached(force = false): Promise<MomentItem[]> {
+	if (cachedMoments && !force) return cachedMoments;
+	if (inflightMoments && !force) return inflightMoments;
+	const task = (async () => {
+		const resp = await fetch("/api/dynamic.json");
+		if (!resp.ok) {
+			throw new Error(`HTTP ${resp.status}`);
+		}
+		const momentRes = await resp.json();
+		const list = Array.isArray(momentRes)
+			? momentRes
+			: Array.isArray(momentRes?.items)
+				? momentRes.items
+				: [];
+		const mapped: MomentItem[] = list.map((m: Record<string, unknown>) => {
+			const ts = parseTimestamp(m.published);
+			const htmlStr = typeof m.html === "string" ? m.html : "";
+			const rawSearchText =
+				typeof m.searchText === "string" && m.searchText.trim()
+					? m.searchText
+					: stripHtmlTags(htmlStr);
+			return {
+				id: String(m.id || ""),
+				published: ts,
+				html: htmlStr,
+				images: Array.isArray(m.images)
+					? (m.images as Array<{ src: string; alt?: string }>)
+					: [],
+				searchText: rawSearchText,
+				dateStr: formatMomentDate(ts),
+				relativeTime: getRelativeTime(ts),
+			};
+		});
+		cachedMoments = mapped;
+		if (typeof Image !== "undefined") {
+			for (const item of mapped.slice(0, 6)) {
+				const src = item.images?.[0]?.src;
+				if (src) {
+					const img = new Image();
+					img.decoding = "async";
+					img.src = src;
+				}
+			}
+		}
+		return mapped;
+	})().finally(() => {
+		if (inflightMoments === task) inflightMoments = null;
+	});
+	inflightMoments = task;
+	return task;
+}
+
+export function preloadChatShareData(): void {
+	if (typeof window === "undefined") return;
+	void fetchArticlesCached().catch(() => {});
+	void fetchMomentsCached().catch(() => {});
+}
+</script>
+
+<script lang="ts">
+import { onDestroy, untrack } from "svelte";
+import { siteConfig } from "@/config/siteConfig";
+import {
+	formatLxArticleShare,
+	formatLxMomentShare,
+} from "./chatShareProtocol";
+
+interface Props {
+	open: boolean;
+	onClose: () => void;
+	onShare: (content: string) => void;
+}
+
+const { open, onClose, onShare }: Props = $props();
+
+const PAGE_SIZE = 20;
+
+let activeTab = $state<"articles" | "moments">("articles");
+let searchQuery = $state("");
+let articles = $state<ArticleItem[]>(cachedArticles ?? []);
+let moments = $state<MomentItem[]>(cachedMoments ?? []);
+let articleLimit = $state(PAGE_SIZE);
+let momentLimit = $state(PAGE_SIZE);
+
+let isArticlesLoading = $state(false);
+let isMomentsLoading = $state(false);
+let articlesLoaded = $state(Boolean(cachedArticles));
+let momentsLoaded = $state(Boolean(cachedMoments));
+let articlesError = $state("");
+let momentsError = $state("");
+
+let searchInputEl = $state<HTMLInputElement | null>(null);
+let listScrollEl = $state<HTMLDivElement | null>(null);
+let scrollRaf: number | null = null;
+let lastLoadMoreCheck = 0;
+
+function isLocalHostname(hostname: string): boolean {
+	const h = hostname.toLowerCase();
+	return (
+		h === "localhost" ||
+		h === "127.0.0.1" ||
+		h === "0.0.0.0" ||
+		h === "::1" ||
+		h === "[::1]" ||
+		h.endsWith(".local") ||
+		/^192\.168\./.test(h) ||
+		/^10\./.test(h) ||
+		/^172\.(1[6-9]|2\d|3[01])\./.test(h)
+	);
+}
+
+function getShareOrigin(): string {
+	const configuredOrigin = (siteConfig.site_url || "https://lengxiqwq.com")
+		.trim()
+		.replace(/\/+$/, "");
+	if (typeof window === "undefined") return configuredOrigin;
+	return isLocalHostname(window.location.hostname)
+		? configuredOrigin
+		: window.location.origin;
+}
+
+function ensureAbsoluteUrl(pathOrUrl: string): string {
+	if (!pathOrUrl) return "";
+	const origin = getShareOrigin();
+	if (/^https?:\/\//i.test(pathOrUrl)) {
+		try {
+			const parsed = new URL(pathOrUrl);
+			if (isLocalHostname(parsed.hostname)) {
+				return `${origin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+			}
+		} catch {
+			// keep original url
+		}
+		return pathOrUrl;
+	}
+	return `${origin}${pathOrUrl.startsWith("/") ? "" : "/"}${pathOrUrl}`;
+}
+
+async function loadArticles(force = false) {
+	if (!force && cachedArticles) {
+		articles = cachedArticles;
+		articlesLoaded = true;
+		articlesError = "";
+		return;
+	}
+	if ((articlesLoaded && !force) || isArticlesLoading) return;
+	isArticlesLoading = true;
+	articlesError = "";
 	try {
-		const [postRes, momentRes] = await Promise.all([
-			fetch("/api/allPostMeta.json").then((r) => (r.ok ? r.json() : [])),
-			fetch("/api/dynamic.json").then((r) => (r.ok ? r.json() : [])),
-		]);
-
-		articles = Array.isArray(postRes)
-			? postRes.map((p) => ({
-					id: p.id || "",
-					title: p.title || "未命名文章",
-					description: p.description || "",
-					published: Number(p.published) || 0,
-					publishedDate: p.publishedDate || "",
-					category: p.category || "",
-					image: p.image || "",
-					url: p.url || `/posts/${p.id}/`,
-				}))
-			: [];
-
-		moments = Array.isArray(momentRes)
-			? momentRes.map((m) => {
-					const ts = Number(m.published) || 0;
-					return {
-						id: m.id || "",
-						published: ts,
-						html: m.html || "",
-						images: Array.isArray(m.images) ? m.images : [],
-						searchText: m.searchText || "",
-						dateStr: formatMomentDate(ts),
-						relativeTime: getRelativeTime(ts),
-					};
-				})
-			: [];
+		articles = await fetchArticlesCached(force);
+		articlesLoaded = true;
 	} catch (err) {
-		console.error("加载博客内容失败", err);
-		loadError = "未能加载博客内容，请检查网络或稍后重试";
+		console.error("加载博客文章失败", err);
+		articlesError = "文章列表加载失败，请稍后重试";
 	} finally {
-		isLoading = false;
+		isArticlesLoading = false;
 	}
 }
 
+async function loadMoments(force = false) {
+	if (!force && cachedMoments) {
+		moments = cachedMoments;
+		momentsLoaded = true;
+		momentsError = "";
+		return;
+	}
+	if ((momentsLoaded && !force) || isMomentsLoading) return;
+	isMomentsLoading = true;
+	momentsError = "";
+	try {
+		moments = await fetchMomentsCached(force);
+		momentsLoaded = true;
+	} catch (err) {
+		console.error("加载即刻说说失败", err);
+		momentsError = "说说列表加载失败，请稍后重试";
+	} finally {
+		isMomentsLoading = false;
+	}
+}
+
+function ensureDataReady() {
+	void loadArticles();
+	void loadMoments();
+}
+
+// 组件首次挂载即后台预加载（即使处于隐藏预挂载状态），确保点开即刻有数据、无加载抖动
+ensureDataReady();
+
 $effect(() => {
 	if (open) {
-		searchQuery = "";
-		loadError = "";
-		void loadData();
+		untrack(() => {
+			if (searchQuery) {
+				searchQuery = "";
+			}
+			articleLimit = PAGE_SIZE;
+			momentLimit = PAGE_SIZE;
+			if (listScrollEl && listScrollEl.scrollTop !== 0) {
+				listScrollEl.scrollTop = 0;
+			}
+			ensureDataReady();
+		});
 	}
+});
+
+$effect(() => {
+	const _tab = activeTab;
+	const _q = searchQuery;
+	untrack(() => {
+		articleLimit = PAGE_SIZE;
+		momentLimit = PAGE_SIZE;
+		if (listScrollEl && listScrollEl.scrollTop !== 0) {
+			listScrollEl.scrollTop = 0;
+		}
+		if (_tab === "moments" && !momentsLoaded && !isMomentsLoading) {
+			void loadMoments(true);
+		} else if (_tab === "articles" && !articlesLoaded && !isArticlesLoading) {
+			void loadArticles(true);
+		}
+	});
 });
 
 const filteredArticles = $derived.by(() => {
@@ -164,6 +342,9 @@ const filteredArticles = $derived.by(() => {
 	);
 });
 
+const displayedArticles = $derived(filteredArticles.slice(0, articleLimit));
+const hasMoreArticles = $derived(articleLimit < filteredArticles.length);
+
 const filteredMoments = $derived.by(() => {
 	const q = searchQuery.trim().toLowerCase();
 	if (!q) return moments;
@@ -172,6 +353,39 @@ const filteredMoments = $derived.by(() => {
 			m.searchText.toLowerCase().includes(q) ||
 			m.dateStr.toLowerCase().includes(q),
 	);
+});
+
+const displayedMoments = $derived(filteredMoments.slice(0, momentLimit));
+const hasMoreMoments = $derived(momentLimit < filteredMoments.length);
+
+function loadMoreCurrentTab() {
+	if (activeTab === "articles" && hasMoreArticles) {
+		articleLimit = Math.min(filteredArticles.length, articleLimit + PAGE_SIZE);
+	} else if (activeTab === "moments" && hasMoreMoments) {
+		momentLimit = Math.min(filteredMoments.length, momentLimit + PAGE_SIZE);
+	}
+}
+
+function handleListScroll() {
+	if (!listScrollEl || scrollRaf !== null) return;
+	scrollRaf = requestAnimationFrame(() => {
+		scrollRaf = null;
+		if (!listScrollEl) return;
+		const now = performance.now();
+		if (now - lastLoadMoreCheck < 150) return;
+		lastLoadMoreCheck = now;
+		const { scrollTop, scrollHeight, clientHeight } = listScrollEl;
+		if (scrollHeight - (scrollTop + clientHeight) < 180) {
+			loadMoreCurrentTab();
+		}
+	});
+}
+
+onDestroy(() => {
+	if (scrollRaf !== null) {
+		cancelAnimationFrame(scrollRaf);
+		scrollRaf = null;
+	}
 });
 
 function handlePickArticle(item: ArticleItem) {
@@ -206,559 +420,334 @@ function handlePickMoment(item: MomentItem) {
 	onShare(payload);
 	onClose();
 }
-
-const roomMusicTracks = $derived.by<Array<{ track: ChatMusicTrack; tag: string }>>(() => {
-	const result: Array<{ track: ChatMusicTrack; tag: string }> = [];
-	const seen = new Set<string>();
-	const pushTrack = (track: ChatMusicTrack | undefined | null, tag: string) => {
-		if (!track?.title) return;
-		const key = track.id || `${track.title}:${track.artist}`;
-		if (seen.has(key)) return;
-		seen.add(key);
-		result.push({ track, tag });
-	};
-	if (musicState?.current?.track) {
-		pushTrack(musicState.current.track, "正在播放");
-	}
-	for (const item of musicState?.queue ?? []) {
-		pushTrack(item.track, "待播队列");
-	}
-	return result;
-});
-
-const displayedMusicItems = $derived.by<Array<{ track: ChatMusicTrack; tag: string }>>(() => {
-	const q = searchQuery.trim();
-	if (q) {
-		const lower = q.toLowerCase();
-		const localMatched = [
-			...roomMusicTracks,
-			...favoriteMusicTracks.map((track) => ({ track, tag: "全站收藏" })),
-		].filter(
-			({ track }) =>
-				track.title.toLowerCase().includes(lower) ||
-				(track.artist || "").toLowerCase().includes(lower) ||
-				(track.album || "").toLowerCase().includes(lower),
-		);
-		const seen = new Set<string>();
-		const merged: Array<{ track: ChatMusicTrack; tag: string }> = [];
-		for (const item of [
-			...localMatched,
-			...searchedMusicTracks.map((track) => ({ track, tag: "在线搜索" })),
-		]) {
-			const key = item.track.id || `${item.track.title}:${item.track.artist}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			merged.push(item);
-		}
-		return merged;
-	}
-	const seen = new Set<string>();
-	const list: Array<{ track: ChatMusicTrack; tag: string }> = [];
-	for (const item of [
-		...roomMusicTracks,
-		...favoriteMusicTracks.map((track) => ({ track, tag: "全站收藏" })),
-	]) {
-		const key = item.track.id || `${item.track.title}:${item.track.artist}`;
-		if (seen.has(key)) continue;
-		seen.add(key);
-		list.push(item);
-	}
-	return list;
-});
-
-async function loadFavoriteMusic() {
-	if (musicFavoritesLoaded || !chatServerUrl) return;
-	musicFavoritesLoaded = true;
-	try {
-		const base = chatServerUrl.replace(/\/+$/, "");
-		const resp = await fetch(`${base}/api/music/favorites/public`);
-		if (!resp.ok) return;
-		const json = (await resp.json().catch(() => null)) as {
-			ok?: boolean;
-			tracks?: ChatMusicTrack[];
-		} | null;
-		if (json?.ok && Array.isArray(json.tracks)) {
-			favoriteMusicTracks = json.tracks;
-		}
-	} catch {
-		// ignore
-	}
-}
-
-$effect(() => {
-	if (open && activeTab === "music") {
-		void loadFavoriteMusic();
-	}
-});
-
-$effect(() => {
-	if (!open || activeTab !== "music" || !chatServerUrl) return;
-	const q = searchQuery.trim();
-	if (musicSearchTimer) {
-		clearTimeout(musicSearchTimer);
-		musicSearchTimer = null;
-	}
-	musicSearchAbort?.abort();
-	musicSearchAbort = null;
-	if (!q) {
-		searchedMusicTracks = [];
-		isMusicSearching = false;
-		return;
-	}
-	isMusicSearching = true;
-	musicSearchTimer = setTimeout(() => {
-		const controller = new AbortController();
-		musicSearchAbort = controller;
-		void searchOnlineMusic(chatServerUrl, q, {
-			signal: controller.signal,
-		})
-			.then((res) => {
-				if (musicSearchAbort !== controller) return;
-				searchedMusicTracks = res.tracks || [];
-			})
-			.catch(() => {
-				if (musicSearchAbort === controller) searchedMusicTracks = [];
-			})
-			.finally(() => {
-				if (musicSearchAbort === controller) isMusicSearching = false;
-			});
-	}, 360);
-	return () => {
-		if (musicSearchTimer) {
-			clearTimeout(musicSearchTimer);
-			musicSearchTimer = null;
-		}
-		musicSearchAbort?.abort();
-	};
-});
-
-function handleSelectMusic(track: ChatMusicTrack) {
-	if (!onShareMusicTrack) return;
-	onClose();
-	void onShareMusicTrack(track);
-}
 </script>
 
-<ChatModal
-  open={open}
-  title="分享内容至聊天室"
-  subtitle="选择博客文章、即刻说说或音乐歌曲，生成专属卡片分享至房间"
-  size="lg"
-  mobile="expandable"
-  onClose={onClose}
+<div
+  class="chat-share-popover-content flex flex-col flex-1 min-h-0 overflow-hidden select-none"
+  role="dialog"
+  tabindex="-1"
+  aria-label="分享博客文章与说说"
+  onclick={(e) => e.stopPropagation()}
+  onkeydown={(e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      onClose();
+    }
+  }}
 >
-  <div class="chat-share-dialog-body flex flex-col h-[78vh] max-h-[660px] min-h-[460px] overflow-hidden select-none">
-    <!-- 顶部流体一体化控制栏（胶囊分段器 + 快捷微光搜索框） -->
-    <div class="chat-share-toolbar px-4 py-3 sm:px-6 sm:py-3.5 border-b border-[var(--skin-line)]/50 bg-[var(--skin-surface)]/80 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-      <!-- iOS / macOS 灵动胶囊选项卡 -->
-      <div class="chat-share-segmented-control flex items-center p-1 rounded-full bg-[var(--btn-plain-bg-hover)] border border-[var(--skin-line)]/40 shrink-0 self-start sm:self-auto shadow-2xs">
+  <!-- 顶部固定控制栏：胶囊选项卡 + 关闭按钮 + 搜索框 -->
+  <div class="chat-share-toolbar px-3 pt-2.5 pb-2 border-b border-[var(--skin-line)]/50 bg-[var(--skin-surface)] flex flex-col gap-2 shrink-0">
+    <div class="flex items-center justify-between gap-2">
+      <div class="chat-share-segmented-control flex items-center p-0.5 rounded-full bg-[var(--btn-plain-bg-hover)] border border-[var(--skin-line)]/40 min-w-0">
         <button
           type="button"
-          class="chat-share-tab-btn flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer {activeTab === 'articles' ? 'active text-[var(--skin-text)] shadow-xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
+          class="chat-share-tab-btn flex items-center gap-1 px-2.5 py-1 rounded-full text-[11.5px] font-bold transition-colors duration-150 cursor-pointer shrink-0 {activeTab === 'articles' ? 'active text-[var(--skin-text)] shadow-2xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
           onclick={() => {
             activeTab = "articles";
             searchInputEl?.focus();
           }}
         >
-          <svg class="w-3.5 h-3.5 {activeTab === 'articles' ? 'text-[var(--primary)]' : 'text-[var(--chat-meta-color)]'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-          </svg>
-          <span>博客文章</span>
-          {#if articles.length > 0}
-            <span class="chat-share-count-badge text-[10.5px] px-1.5 py-0.2 rounded-full font-bold {activeTab === 'articles' ? 'bg-[var(--primary)]/15 text-[var(--primary)]' : 'bg-[var(--skin-line)]/60 text-[var(--chat-meta-color)]'}">
-              {articles.length}
-            </span>
-          {/if}
+          <span>文章</span>
+          <span class="min-w-4 text-center text-[10px] px-1 py-0 rounded-full font-bold tabular-nums {activeTab === 'articles' ? 'bg-[var(--primary)]/15 text-[var(--primary)]' : 'bg-[var(--skin-line)]/60 text-[var(--chat-meta-color)]'}">
+            {articles.length}
+          </span>
         </button>
 
         <button
           type="button"
-          class="chat-share-tab-btn flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer {activeTab === 'moments' ? 'active text-[var(--skin-text)] shadow-xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
+          class="chat-share-tab-btn flex items-center gap-1 px-2.5 py-1 rounded-full text-[11.5px] font-bold transition-colors duration-150 cursor-pointer shrink-0 {activeTab === 'moments' ? 'active text-[var(--skin-text)] shadow-2xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
           onclick={() => {
             activeTab = "moments";
             searchInputEl?.focus();
           }}
         >
-          <svg class="w-3.5 h-3.5 {activeTab === 'moments' ? 'text-emerald-500' : 'text-[var(--chat-meta-color)]'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="10" />
-            <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-          </svg>
-          <span>即刻说说</span>
-          {#if moments.length > 0}
-            <span class="chat-share-count-badge text-[10.5px] px-1.5 py-0.2 rounded-full font-bold {activeTab === 'moments' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-[var(--skin-line)]/60 text-[var(--chat-meta-color)]'}">
-              {moments.length}
-            </span>
-          {/if}
+          <span>说说</span>
+          <span class="min-w-4 text-center text-[10px] px-1 py-0 rounded-full font-bold tabular-nums {activeTab === 'moments' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-[var(--skin-line)]/60 text-[var(--chat-meta-color)]'}">
+            {moments.length}
+          </span>
         </button>
-
-        {#if onShareMusicTrack}
-          <button
-            type="button"
-            class="chat-share-tab-btn flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all duration-200 cursor-pointer {activeTab === 'music' ? 'active text-[var(--skin-text)] shadow-xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
-            onclick={() => {
-              activeTab = "music";
-              searchInputEl?.focus();
-            }}
-          >
-            <svg class="w-3.5 h-3.5 {activeTab === 'music' ? 'text-[var(--primary)]' : 'text-[var(--chat-meta-color)]'}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M9 18V5l12-2v13" />
-              <circle cx="6" cy="18" r="3" />
-              <circle cx="18" cy="16" r="3" />
-            </svg>
-            <span>音乐点歌</span>
-          </button>
-        {/if}
       </div>
 
-      <!-- 搜索过滤条 -->
-      <div class="relative flex items-center w-full sm:w-68">
-        <svg class="absolute left-3 w-3.5 h-3.5 text-[var(--chat-meta-color)]/70 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="8" />
-          <line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-
-        <input
-          bind:this={searchInputEl}
-          type="text"
-          bind:value={searchQuery}
-          placeholder={activeTab === 'articles' ? `搜索 ${articles.length ? `${articles.length} 篇` : ''}文章标题或分类...` : activeTab === 'moments' ? `搜索 ${moments.length ? `${moments.length} 条` : ''}说说内容或日期...` : '搜索歌名、歌手或专辑...'}
-          class="chat-share-search-input w-full h-8.5 pl-8.5 pr-8 text-xs bg-[var(--card-bg)] border border-[var(--skin-line)]/60 rounded-full text-[var(--skin-text)] placeholder:text-[var(--chat-meta-color)]/60 focus:outline-none transition-all duration-200"
-        />
-
-        {#if searchQuery}
-          <button
-            type="button"
-            class="chat-share-search-clear absolute right-2.5 w-4.5 h-4.5 flex items-center justify-center rounded-full text-[11px] text-[var(--chat-meta-color)] hover:text-[var(--skin-text)] hover:bg-[var(--btn-plain-bg-hover)] transition-colors cursor-pointer"
-            aria-label="清空搜索条件"
-            onclick={() => {
-              searchQuery = "";
-              searchInputEl?.focus();
-            }}
-          >
-            ✕
-          </button>
-        {/if}
-      </div>
+      <button
+        type="button"
+        class="w-6 h-6 rounded-md flex items-center justify-center border-none bg-transparent text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer text-xs shrink-0"
+        aria-label="关闭"
+        onclick={onClose}
+      >
+        ✕
+      </button>
     </div>
 
-    <!-- 核心网格展示区（大屏双列画卷网格，小屏自适应单列，彻底消灭横向冗余空白） -->
-    <div class="chat-share-list-container flex-1 overflow-y-auto custom-scrollbar px-4 py-3.5 sm:px-6 sm:py-4 min-h-0">
-      {#if isLoading}
-        <!-- 骨架屏占位（与真实双列网格 1:1 对齐） -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-          {#each [1, 2, 3, 4, 5, 6] as _i}
-            <div class="flex items-start gap-3 p-3 rounded-2xl border border-[var(--skin-line)]/40 bg-[var(--card-bg)] animate-pulse">
-              <div class="w-28 sm:w-32 aspect-16/10 rounded-xl bg-[var(--skin-line)]/30 shrink-0"></div>
-              <div class="flex-1 min-w-0 space-y-2 py-0.5">
-                <div class="h-4 w-4/5 bg-[var(--skin-line)]/40 rounded-md"></div>
-                <div class="h-3 w-full bg-[var(--skin-line)]/25 rounded"></div>
-                <div class="h-3 w-1/2 bg-[var(--skin-line)]/20 rounded"></div>
+    <!-- 搜索过滤条 -->
+    <div class="relative flex items-center w-full">
+      <svg class="absolute left-2.5 w-3.5 h-3.5 text-[var(--chat-meta-color)]/70 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="8" />
+        <line x1="21" y1="21" x2="16.65" y2="16.65" />
+      </svg>
+
+      <input
+        bind:this={searchInputEl}
+        type="text"
+        bind:value={searchQuery}
+        placeholder={activeTab === 'articles' ? '搜索文章标题或分类...' : '搜索说说内容或日期...'}
+        class="chat-share-search-input w-full h-8 pl-8 pr-7 text-xs bg-[var(--card-bg)] border border-[var(--skin-line)]/60 rounded-lg text-[var(--skin-text)] placeholder:text-[var(--chat-meta-color)]/60 focus:outline-none transition-colors duration-150"
+      />
+
+      {#if searchQuery}
+        <button
+          type="button"
+          class="chat-share-search-clear absolute right-2 w-4.5 h-4.5 flex items-center justify-center rounded-full text-[11px] text-[var(--chat-meta-color)] hover:text-[var(--skin-text)] hover:bg-[var(--btn-plain-bg-hover)] transition-colors cursor-pointer"
+          aria-label="清空搜索条件"
+          onclick={() => {
+            searchQuery = "";
+            searchInputEl?.focus();
+          }}
+        >
+          ✕
+        </button>
+      {/if}
+    </div>
+  </div>
+
+  <!-- 滚动列表区（固定尺寸容器 + 单列紧凑卡片，边滚动边加载） -->
+  <div
+    bind:this={listScrollEl}
+    onscroll={handleListScroll}
+    class="chat-share-list-container flex-1 overflow-y-auto custom-scrollbar px-2.5 py-2 min-h-0"
+  >
+    {#if activeTab === "articles"}
+      {#if isArticlesLoading && articles.length === 0}
+        <div class="space-y-2">
+          {#each [1, 2, 3, 4] as _i}
+            <div class="flex items-start gap-2.5 p-2 rounded-xl border border-[var(--skin-line)]/40 bg-[var(--card-bg)] min-h-[4.25rem] animate-pulse">
+              <div class="w-20 h-12.5 rounded-lg bg-[var(--skin-line)]/30 shrink-0"></div>
+              <div class="flex-1 min-w-0 space-y-1.5 py-0.5">
+                <div class="h-3.5 w-4/5 bg-[var(--skin-line)]/40 rounded"></div>
+                <div class="h-2.5 w-full bg-[var(--skin-line)]/25 rounded"></div>
               </div>
             </div>
           {/each}
         </div>
-      {:else if loadError}
-        <!-- 异常态 -->
-        <div class="flex flex-col items-center justify-center py-16 text-center gap-3">
-          <div class="w-12 h-12 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center text-xl shadow-xs">
-            ⚠️
-          </div>
-          <div class="space-y-1">
-            <p class="text-sm font-bold text-[var(--skin-text)] m-0">{loadError}</p>
-            <p class="text-xs text-[var(--chat-meta-color)] m-0">请检查网络连通性或稍后重新加载</p>
-          </div>
+      {:else if articlesError && articles.length === 0}
+        <div class="flex flex-col items-center justify-center py-10 text-center gap-2.5">
+          <p class="text-xs font-semibold text-[var(--skin-text)] m-0">{articlesError}</p>
           <button
             type="button"
-            class="chat-dialog-action chat-dialog-primary-action px-4 py-1.5 text-xs font-semibold rounded-full bg-[var(--primary)] text-white hover:opacity-90 active:scale-95 transition-all shadow-sm cursor-pointer"
-            onclick={() => void loadData()}
+            class="px-3.5 py-1 text-xs font-semibold rounded-full bg-[var(--primary)] text-white hover:opacity-90 transition-opacity cursor-pointer border-none"
+            onclick={() => void loadArticles(true)}
           >
-            重新尝试
+            重新加载
           </button>
         </div>
-      {:else if activeTab === "articles"}
-        <!-- 博客文章双列卡片网格 -->
-        {#if filteredArticles.length === 0}
-          <div class="flex flex-col items-center justify-center py-16 text-center gap-3">
-            <div class="w-12 h-12 rounded-2xl bg-[var(--btn-plain-bg-hover)] text-[var(--chat-meta-color)]/60 flex items-center justify-center border border-[var(--skin-line)]/40">
-              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-            </div>
-            <div class="space-y-1">
-              <p class="text-xs text-[var(--skin-text)] font-semibold m-0">
-                {searchQuery ? `未找到包含「${searchQuery}」的博文` : "暂无可分享的文章"}
-              </p>
-              <p class="text-[11px] text-[var(--chat-meta-color)] m-0">
-                可尝试搜索其他关键字或分类名称
-              </p>
-            </div>
-            {#if searchQuery}
-              <button
-                type="button"
-                class="chat-dialog-inline-action text-xs text-[var(--primary)] hover:underline font-medium cursor-pointer"
-                onclick={() => { searchQuery = ""; }}
-              >
-                清空搜索词
-              </button>
-            {/if}
-          </div>
-        {:else}
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-            {#each filteredArticles as article (article.id)}
-              <button
-                type="button"
-                class="chat-share-card group relative flex items-start gap-3 p-3 rounded-2xl bg-[var(--card-bg)] hover:bg-[var(--btn-plain-bg-hover)]/70 border border-[var(--skin-line)]/60 hover:border-[var(--primary)]/60 text-left transition-all duration-200 cursor-pointer w-full overflow-hidden"
-                onclick={() => handlePickArticle(article)}
-              >
-                <!-- 封面图（黄金比例微缩画卷，悬浮平滑变焦） -->
-                <div class="w-28 sm:w-32 aspect-16/10 rounded-xl overflow-hidden shrink-0 relative bg-[var(--btn-plain-bg-hover)] flex items-center justify-center border border-[var(--skin-line)]/40 shadow-2xs">
-                  {#if article.image}
-                    <img
-                      src={article.image}
-                      alt=""
-                      class="w-full h-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
-                      loading="lazy"
-                    />
-                    <div class="absolute inset-0 bg-gradient-to-t from-black/35 via-black/5 to-transparent pointer-events-none"></div>
-                  {:else}
-                    <div class="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-[var(--primary)]/15 via-[var(--primary)]/5 to-transparent text-[var(--primary)]/70">
-                      <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                      </svg>
-                    </div>
-                  {/if}
-
-                  {#if article.category}
-                    <span class="absolute top-1 left-1 px-1.5 py-0.2 rounded-md text-[9px] font-bold bg-black/60 text-white/95 backdrop-blur-xs leading-none">
-                      {article.category}
-                    </span>
-                  {/if}
-                </div>
-
-                <!-- 文字排版（紧凑有度，标题+简介+底部日期与发送胶囊） -->
-                <div class="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.2 gap-1.5">
-                  <div class="space-y-1">
-                    <strong class="chat-dialog-option-title text-[13.5px] font-bold text-[var(--skin-text)] group-hover:text-[var(--primary)] transition-colors line-clamp-1 tracking-tight leading-snug">
-                      {article.title}
-                    </strong>
-
-                    {#if article.description}
-                      <p class="text-[11.5px] text-[var(--chat-meta-color)] line-clamp-2 leading-relaxed m-0 break-words opacity-90">
-                        {article.description}
-                      </p>
-                    {/if}
-                  </div>
-
-                  <!-- 底部信息与发送微标 -->
-                  <div class="flex items-center justify-between gap-1.5 pt-0.5 text-[10.5px] text-[var(--chat-meta-color)]">
-                    <span class="truncate opacity-80 font-medium">
-                      {article.publishedDate || "博客文章"}
-                    </span>
-
-                    <span class="flex items-center gap-0.5 font-bold text-[var(--primary)] text-[10.5px] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                      <span>分享</span>
-                      <span aria-hidden="true">↵</span>
-                    </span>
-                  </div>
-                </div>
-              </button>
-            {/each}
-          </div>
-        {/if}
+      {:else if filteredArticles.length === 0}
+        <div class="flex flex-col items-center justify-center py-10 text-center gap-2">
+          <p class="text-xs text-[var(--skin-text)] font-semibold m-0">
+            {searchQuery ? `未找到包含「${searchQuery}」的博文` : "暂无可分享的文章"}
+          </p>
+          {#if searchQuery}
+            <button
+              type="button"
+              class="text-xs text-[var(--primary)] hover:underline font-medium cursor-pointer bg-transparent border-none"
+              onclick={() => { searchQuery = ""; }}
+            >
+              清空搜索词
+            </button>
+          {/if}
+        </div>
       {:else}
-        <!-- 即刻说说双列卡片网格 -->
-        {#if filteredMoments.length === 0}
-          <div class="flex flex-col items-center justify-center py-16 text-center gap-3">
-            <div class="w-12 h-12 rounded-2xl bg-[var(--btn-plain-bg-hover)] text-[var(--chat-meta-color)]/60 flex items-center justify-center border border-[var(--skin-line)]/40">
-              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="10" />
-                <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-              </svg>
-            </div>
-            <div class="space-y-1">
-              <p class="text-xs text-[var(--skin-text)] font-semibold m-0">
-                {searchQuery ? `未找到包含「${searchQuery}」的说说` : "暂无可分享的说说"}
-              </p>
-              <p class="text-[11px] text-[var(--chat-meta-color)] m-0">
-                可尝试搜索其他关键字或日期
-              </p>
-            </div>
-            {#if searchQuery}
-              <button
-                type="button"
-                class="chat-dialog-inline-action text-xs text-[var(--primary)] hover:underline font-medium cursor-pointer"
-                onclick={() => { searchQuery = ""; }}
-              >
-                清空搜索词
-              </button>
-            {/if}
-          </div>
-        {:else}
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3.5">
-            {#each filteredMoments as moment (moment.id)}
-              <button
-                type="button"
-                class="chat-share-card group relative flex items-start gap-3 p-3 rounded-2xl bg-[var(--card-bg)] hover:bg-[var(--btn-plain-bg-hover)]/70 border border-[var(--skin-line)]/60 hover:border-emerald-500/60 text-left transition-all duration-200 cursor-pointer w-full overflow-hidden"
-                onclick={() => handlePickMoment(moment)}
-              >
-                <!-- 配图或灵动徽章 -->
-                {#if moment.images && moment.images.length > 0 && moment.images[0].src}
-                  <div class="w-18 sm:w-20 aspect-square rounded-xl overflow-hidden shrink-0 relative bg-[var(--btn-plain-bg-hover)] border border-[var(--skin-line)]/40 shadow-2xs">
-                    <img
-                      src={moment.images[0].src}
-                      alt=""
-                      class="w-full h-full object-cover transition-transform duration-500 ease-out group-hover:scale-105"
-                      loading="lazy"
-                    />
-                    {#if moment.images.length > 1}
-                      <span class="absolute bottom-1 right-1 px-1 py-0.2 rounded-md text-[9px] font-bold bg-black/65 text-white backdrop-blur-xs leading-none">
-                        +{moment.images.length}
-                      </span>
-                    {/if}
-                  </div>
+        <div class="space-y-1.5">
+          {#each displayedArticles as article, idx (article.id)}
+            <button
+              type="button"
+              class="chat-share-card group relative flex items-start gap-2.5 p-2 rounded-xl bg-[var(--card-bg)] hover:bg-[var(--btn-plain-bg-hover)]/75 border border-[var(--skin-line)]/50 hover:border-[var(--primary)]/55 text-left transition-colors duration-150 cursor-pointer w-full min-h-[4.25rem] overflow-hidden"
+              onclick={() => handlePickArticle(article)}
+            >
+              <div class="w-20 h-12.5 rounded-lg overflow-hidden shrink-0 relative bg-[var(--btn-plain-bg-hover)] flex items-center justify-center border border-[var(--skin-line)]/40">
+                {#if article.image}
+                  <img
+                    src={article.image}
+                    alt=""
+                    width="80"
+                    height="50"
+                    decoding="async"
+                    class="w-full h-full object-cover transition-transform duration-300 ease-out group-hover:scale-105"
+                    loading={idx < 8 ? "eager" : "lazy"}
+                  />
                 {:else}
-                  <div class="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/20 shadow-2xs">
-                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <circle cx="12" cy="12" r="10" />
-                      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-                    </svg>
-                  </div>
+                  <svg class="w-4 h-4 text-[var(--primary)]/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
                 {/if}
+                {#if article.category}
+                  <span class="absolute top-0.5 left-0.5 px-1 py-0.5 rounded text-[8.5px] font-bold bg-black/60 text-white/95 leading-none">
+                    {article.category}
+                  </span>
+                {/if}
+              </div>
 
-                <!-- 说说文字主体 -->
-                <div class="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.2 gap-1.5">
-                  <div class="space-y-1">
-                    <div class="flex items-center gap-1.5 min-w-0">
-                      <span class="chat-dialog-option-title text-xs font-bold text-[var(--skin-text)] group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
-                        {moment.dateStr}
-                      </span>
-                      {#if moment.relativeTime}
-                        <span class="text-[10px] text-[var(--chat-meta-color)] font-medium">
-                          ({moment.relativeTime})
-                        </span>
-                      {/if}
-                    </div>
-
-                    <p class="text-[11.5px] text-[var(--skin-text)]/85 line-clamp-3 leading-relaxed m-0 break-words">
-                      {moment.searchText.replace(/!\[.*?\]\(.*?\)/g, "").trim() || "暂无文字描述"}
-                    </p>
-                  </div>
-
-                  <!-- 底部微标 -->
-                  <div class="flex items-center justify-between gap-1.5 pt-0.5 text-[10.5px]">
-                    <span class="text-[10px] text-[var(--chat-meta-color)] font-medium">
-                      {moment.images?.length ? `${moment.images.length} 张配图` : "纯文字动态"}
-                    </span>
-
-                    <span class="flex items-center gap-0.5 font-bold text-emerald-600 dark:text-emerald-400 text-[10.5px] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                      <span>分享</span>
-                      <span aria-hidden="true">↵</span>
-                    </span>
-                  </div>
+              <div class="flex-1 min-w-0 flex flex-col justify-between gap-1 self-stretch">
+                <strong class="text-xs font-bold text-[var(--skin-text)] group-hover:text-[var(--primary)] transition-colors line-clamp-1 leading-snug">
+                  {article.title}
+                </strong>
+                <p class="text-[11px] text-[var(--chat-meta-color)] line-clamp-1 leading-snug m-0 opacity-90 min-h-[0.95rem]">
+                  {article.description || "点击分享这篇文章"}
+                </p>
+                <div class="flex items-center justify-between gap-1.5 text-[10px] text-[var(--chat-meta-color)]">
+                  <span class="truncate opacity-80">{article.publishedDate || "博客文章"}</span>
+                  <span class="font-bold text-[var(--primary)] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">分享 ↵</span>
                 </div>
-              </button>
-            {/each}
-          </div>
-        {/if}
-      {:else if activeTab === "music"}
-        {#if isMusicSearching && displayedMusicItems.length === 0}
-          <div class="flex flex-col items-center justify-center py-16 text-center gap-2 text-xs text-[var(--chat-meta-color)]">
-            <svg class="w-5 h-5 animate-spin text-[var(--primary)]" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
-              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
-            </svg>
-            <span>正在全网搜索歌曲...</span>
-          </div>
-        {:else if displayedMusicItems.length === 0}
-          <div class="flex flex-col items-center justify-center py-16 text-center gap-2">
-            <div class="text-2xl opacity-70">🎵</div>
-            <p class="text-sm font-bold text-[var(--skin-text)] m-0">
-              {searchQuery.trim() ? "没有找到匹配的歌曲" : "输入歌名或歌手搜索音乐"}
-            </p>
-            <p class="text-xs text-[var(--chat-meta-color)] m-0">
-              支持分享当前正在播放、全站收藏或在线搜索的歌曲（含 7 天试听直链）
-            </p>
-          </div>
-        {:else}
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {#each displayedMusicItems as item (`${item.track.id || item.track.title}:${item.tag}`)}
-              <button
-                type="button"
-                class="chat-share-card group flex items-center gap-3 p-3 rounded-2xl border border-[var(--skin-line)]/50 bg-[var(--card-bg)] hover:border-[var(--primary)]/50 transition-all text-left cursor-pointer"
-                onclick={() => handleSelectMusic(item.track)}
-              >
-                <div class="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-[var(--primary)]/12 flex items-center justify-center border border-black/8 dark:border-white/10">
-                  {#if item.track.cover}
-                    <img
-                      src={item.track.cover}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      class="w-full h-full object-cover"
-                    />
-                  {:else}
-                    <span class="text-base text-[var(--primary)]">♪</span>
-                  {/if}
-                </div>
-                <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-1.5 min-w-0">
-                    <span class="text-[13px] font-bold text-[var(--skin-text)] truncate">
-                      {item.track.title}
-                    </span>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-[var(--primary)]/12 text-[var(--primary)] font-semibold shrink-0">
-                      {item.tag}
-                    </span>
-                  </div>
-                  <div class="text-[11.5px] text-[var(--chat-meta-color)] truncate mt-0.5">
-                    {item.track.artist || "未知歌手"}{item.track.album ? ` · ${item.track.album}` : ""}
-                  </div>
-                </div>
-                <span class="flex items-center gap-0.5 font-bold text-[var(--primary)] text-[11px] opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                  <span>分享</span>
-                  <span aria-hidden="true">↵</span>
-                </span>
-              </button>
-            {/each}
+              </div>
+            </button>
+          {/each}
+        </div>
+
+        {#if hasMoreArticles}
+          <button
+            type="button"
+            class="w-full py-2 mt-1 text-center text-[11px] text-[var(--chat-meta-color)] hover:text-[var(--primary)] transition-colors cursor-pointer bg-transparent border-none"
+            onclick={loadMoreCurrentTab}
+          >
+            下滑或点击加载更多（已显示 {displayedArticles.length} / {filteredArticles.length} 篇）
+          </button>
+        {:else if filteredArticles.length >= PAGE_SIZE}
+          <div class="py-2 text-center text-[11px] text-[var(--chat-meta-color)]/70">
+            已加载全部 {filteredArticles.length} 篇博文
           </div>
         {/if}
       {/if}
-    </div>
-
-    <!-- 弹窗底部微光状态条 -->
-    <div class="chat-share-footer px-4 py-2 sm:px-6 border-t border-[var(--skin-line)]/40 bg-[var(--skin-surface)]/60 text-[11px] text-[var(--chat-meta-color)] flex items-center justify-between shrink-0">
-      <div class="flex items-center gap-1.5">
-        <span class="w-1.5 h-1.5 rounded-full bg-[var(--primary)] opacity-80"></span>
-        <span>
-          {#if activeTab === "articles"}
-            {filteredArticles.length} / {articles.length} 篇博文
-          {:else if activeTab === "moments"}
-            {filteredMoments.length} / {moments.length} 条说说
-          {:else}
-            {displayedMusicItems.length} 首可分享歌曲{isMusicSearching ? " · 搜索中..." : ""}
+    {:else}
+      {#if isMomentsLoading && moments.length === 0}
+        <div class="space-y-2">
+          {#each [1, 2, 3, 4] as _i}
+            <div class="flex items-start gap-2.5 p-2 rounded-xl border border-[var(--skin-line)]/40 bg-[var(--card-bg)] min-h-[4.25rem] animate-pulse">
+              <div class="w-12 h-12 rounded-lg bg-[var(--skin-line)]/30 shrink-0"></div>
+              <div class="flex-1 min-w-0 space-y-1.5 py-0.5">
+                <div class="h-3 w-1/3 bg-[var(--skin-line)]/40 rounded"></div>
+                <div class="h-2.5 w-full bg-[var(--skin-line)]/25 rounded"></div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else if momentsError && moments.length === 0}
+        <div class="flex flex-col items-center justify-center py-10 text-center gap-2.5">
+          <p class="text-xs font-semibold text-[var(--skin-text)] m-0">{momentsError}</p>
+          <button
+            type="button"
+            class="px-3.5 py-1 text-xs font-semibold rounded-full bg-emerald-500 text-white hover:opacity-90 transition-opacity cursor-pointer border-none"
+            onclick={() => void loadMoments(true)}
+          >
+            重新加载
+          </button>
+        </div>
+      {:else if filteredMoments.length === 0}
+        <div class="flex flex-col items-center justify-center py-10 text-center gap-2">
+          <p class="text-xs text-[var(--skin-text)] font-semibold m-0">
+            {searchQuery ? `未找到包含「${searchQuery}」的说说` : "暂无可分享的说说"}
+          </p>
+          {#if searchQuery}
+            <button
+              type="button"
+              class="text-xs text-[var(--primary)] hover:underline font-medium cursor-pointer bg-transparent border-none"
+              onclick={() => { searchQuery = ""; }}
+            >
+              清空搜索词
+            </button>
           {/if}
-        </span>
-      </div>
-      <div class="hidden sm:inline-block opacity-75 font-medium">
-        点击卡片即可在聊天室生成富媒体分享
-      </div>
-    </div>
+        </div>
+      {:else}
+        <div class="space-y-1.5">
+          {#each displayedMoments as moment, idx (moment.id)}
+            <button
+              type="button"
+              class="chat-share-card group relative flex items-start gap-2.5 p-2 rounded-xl bg-[var(--card-bg)] hover:bg-[var(--btn-plain-bg-hover)]/75 border border-[var(--skin-line)]/50 hover:border-emerald-500/55 text-left transition-colors duration-150 cursor-pointer w-full min-h-[4.25rem] overflow-hidden"
+              onclick={() => handlePickMoment(moment)}
+            >
+              {#if moment.images && moment.images.length > 0 && moment.images[0].src}
+                <div class="w-12 h-12 rounded-lg overflow-hidden shrink-0 relative bg-[var(--btn-plain-bg-hover)] border border-[var(--skin-line)]/40">
+                  <img
+                    src={moment.images[0].src}
+                    alt=""
+                    width="48"
+                    height="48"
+                    decoding="async"
+                    class="w-full h-full object-cover transition-transform duration-300 ease-out group-hover:scale-105"
+                    loading={idx < 8 ? "eager" : "lazy"}
+                  />
+                  {#if moment.images.length > 1}
+                    <span class="absolute bottom-0.5 right-0.5 px-1 py-0.5 rounded text-[8.5px] font-bold bg-black/65 text-white leading-none">
+                      +{moment.images.length}
+                    </span>
+                  {/if}
+                </div>
+              {:else}
+                <div class="w-12 h-12 rounded-lg bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/20">
+                  <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+                  </svg>
+                </div>
+              {/if}
+
+              <div class="flex-1 min-w-0 flex flex-col justify-between gap-1 self-stretch">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="text-[11.5px] font-bold text-[var(--skin-text)] group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors truncate">
+                    {moment.dateStr}
+                  </span>
+                  {#if moment.relativeTime}
+                    <span class="text-[10px] text-[var(--chat-meta-color)] shrink-0">
+                      ({moment.relativeTime})
+                    </span>
+                  {/if}
+                </div>
+
+                <p class="text-[11px] text-[var(--skin-text)]/85 line-clamp-2 leading-snug m-0 break-words">
+                  {moment.searchText.replace(/!\[.*?\]\(.*?\)/g, "").trim() || "暂无文字描述"}
+                </p>
+
+                <div class="flex items-center justify-between gap-1.5 text-[10px] text-[var(--chat-meta-color)]">
+                  <span>{moment.images?.length ? `${moment.images.length} 张配图` : "纯文字动态"}</span>
+                  <span class="font-bold text-emerald-600 dark:text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">分享 ↵</span>
+                </div>
+              </div>
+            </button>
+          {/each}
+        </div>
+
+        {#if hasMoreMoments}
+          <button
+            type="button"
+            class="w-full py-2 mt-1 text-center text-[11px] text-[var(--chat-meta-color)] hover:text-emerald-500 transition-colors cursor-pointer bg-transparent border-none"
+            onclick={loadMoreCurrentTab}
+          >
+            下滑或点击加载更多（已显示 {displayedMoments.length} / {filteredMoments.length} 条）
+          </button>
+        {:else if filteredMoments.length >= PAGE_SIZE}
+          <div class="py-2 text-center text-[11px] text-[var(--chat-meta-color)]/70">
+            已加载全部 {filteredMoments.length} 条说说
+          </div>
+        {/if}
+      {/if}
+    {/if}
   </div>
-</ChatModal>
+
+  <!-- 底部固定状态栏 -->
+  <div class="chat-share-footer px-3 py-1.5 border-t border-[var(--skin-line)]/40 bg-[var(--skin-surface)]/80 text-[10.5px] text-[var(--chat-meta-color)] flex items-center justify-between shrink-0">
+    <div class="flex items-center gap-1.5 tabular-nums">
+      <span class="w-1.5 h-1.5 rounded-full {activeTab === 'moments' ? 'bg-emerald-500' : 'bg-[var(--primary)]'} opacity-80"></span>
+      <span>
+        {#if activeTab === "articles"}
+          {displayedArticles.length} / {filteredArticles.length} 篇博文
+        {:else}
+          {displayedMoments.length} / {filteredMoments.length} 条说说
+        {/if}
+      </span>
+    </div>
+    <span class="opacity-75">点击卡片直接分享</span>
+  </div>
+</div>
 
 <style>
-  .chat-share-dialog-body {
-    background-color: var(--skin-surface, #ffffff);
-  }
-
-  .chat-share-segmented-control {
-    background-color: var(--btn-plain-bg-hover);
-  }
-
   .chat-share-tab-btn.active {
     background-color: var(--skin-surface, #ffffff);
   }
@@ -769,35 +758,6 @@ function handleSelectMusic(track: ChatMusicTrack) {
 
   .chat-share-search-input:focus {
     border-color: var(--primary);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
-  }
-
-  .chat-share-card {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
-  }
-
-  .chat-share-card:hover {
-    box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.08);
-    transform: translateY(-1px);
-  }
-
-  :global(.dark) .chat-share-card {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  }
-
-  :global(.dark) .chat-share-card:hover {
-    box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.45);
-    transform: translateY(-1px);
-  }
-
-  /* 优化滚动区域右侧呼吸间距，防止滚动条紧贴卡片 */
-  .chat-share-list-container {
-    padding-right: calc(1.5rem - 4px);
-  }
-
-  @media (max-width: 640px) {
-    .chat-share-list-container {
-      padding-right: calc(1rem - 4px);
-    }
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 18%, transparent);
   }
 </style>

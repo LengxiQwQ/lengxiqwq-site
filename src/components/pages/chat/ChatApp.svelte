@@ -4002,7 +4002,6 @@ onMount(() => {
           onVoteSkip={handleVoteSkip}
           onPlayQueued={handlePlayQueued}
           onEnqueueTrack={handleEnqueueTrack}
-          onShareMusicTrack={handleShareMusicTrack}
           onFavoriteChanged={() => {
             playlistRefreshSeq += 1;
           }}

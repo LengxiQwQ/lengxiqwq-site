@@ -3788,6 +3788,34 @@ div.chat-sticker-large svg {
 	height: var(--chat-floating-max-height);
 }
 
+.chat-share-popover {
+	z-index: 24;
+	display: flex;
+	flex-direction: column;
+	width: min(26rem, calc(100vw - 1.5rem));
+	--chat-floating-max-height: min(26rem, 58vh);
+	height: var(--chat-floating-max-height);
+	border-radius: 14px;
+	background: var(--skin-surface);
+	border: 1px solid var(--skin-line);
+	box-shadow: 0 12px 32px -4px rgb(0 0 0 / 0.18), 0 2px 6px rgb(0 0 0 / 0.06);
+	overflow: hidden;
+	color: var(--skin-text);
+	animation: chat-popover-in 150ms var(--ease-decelerate);
+}
+
+.chat-share-list-container {
+	scrollbar-gutter: stable;
+	overscroll-behavior: contain;
+	contain: content;
+}
+
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) #chat-page .chat-share-popover {
+	background: var(--skin-surface);
+	border: 1px solid var(--skin-line);
+	box-shadow: 0 14px 36px -4px rgb(0 0 0 / 0.45), 0 2px 8px rgb(0 0 0 / 0.3);
+}
+
 .chat-picker-body {
 	flex: 1;
 	min-height: 0;
@@ -7278,6 +7306,11 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 	.chat-kaomoji-popover {
 		width: calc(100% - 1rem);
 		--chat-floating-max-height: min(22rem, 50dvh);
+	}
+
+	.chat-share-popover {
+		width: calc(100vw - 1rem);
+		--chat-floating-max-height: min(24rem, 52dvh);
 	}
 
 	.chat-kaomoji-item {

@@ -51,37 +51,7 @@ const hasCover = $derived(Boolean(data.cover && !coverFailed));
     </div>
   {/if}
 
-  <div class="chat-article-body p-3.5 flex flex-col gap-1.5 min-w-0">
-    <div class="flex items-center gap-1.5 min-w-0">
-      <span
-        class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10.5px] font-bold tracking-wide shrink-0 {data.kind === 'article'
-          ? 'bg-[var(--primary)]/15 text-[var(--primary)]'
-          : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'}"
-      >
-        {#if data.kind === "article"}
-          <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-            <polyline points="10 9 9 9 8 9" />
-          </svg>
-        {:else}
-          <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="10" />
-            <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-          </svg>
-        {/if}
-        <span>{badgeLabel}</span>
-      </span>
-
-      {#if data.host}
-        <span class="chat-article-host text-[11px] truncate font-medium ml-auto opacity-75">
-          {data.host}
-        </span>
-      {/if}
-    </div>
-
+  <div class="chat-article-body p-3.5 pb-3 flex flex-col gap-1.5 min-w-0">
     <strong class="chat-article-title text-sm md:text-[14.5px] font-bold leading-snug line-clamp-2 transition-colors">
       {title}
     </strong>
@@ -90,6 +60,36 @@ const hasCover = $derived(Boolean(data.cover && !coverFailed));
       <p class="chat-article-excerpt text-xs line-clamp-3 leading-relaxed m-0 break-words opacity-90">
         {excerpt}
       </p>
+    {/if}
+  </div>
+
+  <div class="px-3.5 py-2.5 border-t border-[var(--skin-line)]/40 flex items-center justify-between gap-2 min-w-0">
+    <span
+      class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10.5px] font-bold leading-none tracking-wide shrink-0 {data.kind === 'article'
+        ? 'bg-[var(--primary)]/15 text-[var(--primary)]'
+        : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'}"
+    >
+      {#if data.kind === "article"}
+        <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
+          <polyline points="10 9 9 9 8 9" />
+        </svg>
+      {:else}
+        <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="10" />
+          <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+        </svg>
+      {/if}
+      <span>{badgeLabel}</span>
+    </span>
+
+    {#if data.host}
+      <span class="chat-article-host text-[11px] leading-none truncate font-medium opacity-75">
+        {data.host}
+      </span>
     {/if}
   </div>
 </a>

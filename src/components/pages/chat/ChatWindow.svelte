@@ -1,6 +1,6 @@
 <script lang="ts">
 import ChatModal from "./ChatModal.svelte";
-import ChatShareModal from "./ChatShareModal.svelte";
+import ChatShareModal, { preloadChatShareData } from "./ChatShareModal.svelte";
 import { flushSync, onMount, tick } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 import type { InterconnectSite } from "@/types/chatConfig";
@@ -123,7 +123,6 @@ interface Props {
 		track: ChatMusicTrack,
 		anchor?: HTMLElement,
 	) => Promise<boolean>;
-	onShareMusicTrack?: (track: ChatMusicTrack) => Promise<boolean>;
 	onFavoriteChanged?: () => void;
 	playlistAuth?: PlaylistAuth;
 	onClearTargetMessage?: () => void;
@@ -234,7 +233,6 @@ const {
 	onVoteSkip,
 	onPlayQueued,
 	onEnqueueTrack,
-	onShareMusicTrack,
 	onFavoriteChanged,
 	playlistAuth,
 	onClearTargetMessage,
@@ -298,7 +296,7 @@ let isUploadingMedia = $state(false);
 // 发送「原图」时，压缩版其实已经传好，这里只在发送这一刻补传原图
 let isSendingAttachments = $state(false);
 let isPreviewingMarkdown = $state(false);
-let showShareModal = $state(false);
+let shareTriggerEl = $state<HTMLButtonElement | null>(null);
 
 const effectiveSubtitle = $derived(roomTopic ? roomTopic : roomSubtitle);
 const localSiteName = $derived(
@@ -441,8 +439,9 @@ function handleDrop(e: DragEvent) {
 		void processMediaFiles(otherFiles);
 	}
 }
-let activePopover = $state<"none" | "emoji">("none");
+let activePopover = $state<"none" | "emoji" | "share">("none");
 let composerPickerMounted = $state(false);
+let sharePopoverMounted = $state(false);
 
 function onSelectEmojiOrSticker(code: string, url?: string, lottieName?: string) {
 	insertAtCursor(code);
@@ -2726,7 +2725,9 @@ onMount(() => {
 	spriteImg.src = LOTTIE_SPRITE_URL;
 	const idleLottieTimer = window.setTimeout(() => {
 		void ensureLottieLibrary();
-	}, 1200);
+		preloadChatShareData();
+		sharePopoverMounted = true;
+	}, 900);
 
 	const updateImageConstraints = () => {
 		if (!messageContentEl?.clientWidth) return;
@@ -2916,6 +2917,7 @@ onMount(() => {
 			}
 			closeAllHeaderMenus();
 			closeMobileActions();
+			activePopover = "none";
 		}
 	};
 
@@ -5641,6 +5643,28 @@ function removePendingImage(index: number) {
       </div>
     {/if}
 
+    {#if sharePopoverMounted}
+      <div
+        data-chat-floating
+        use:positionChatFloating={{
+          enabled: activePopover === "share",
+          reference: shareTriggerEl,
+          placement: "top-end",
+          gap: 8,
+        }}
+        class="chat-share-popover"
+      >
+        <ChatShareModal
+          open={activePopover === "share"}
+          onClose={() => {
+            activePopover = "none";
+            focusInput(false);
+          }}
+          onShare={handleShareBlogContent}
+        />
+      </div>
+    {/if}
+
     <!-- @ 选人弹窗（输入 @ 时触发：在线优先，离线靠后） -->
     {#if mentionMenuOpen}
       <div data-chat-floating use:positionChatFloating={{ placement: "top-start", gap: 8 }} class="chat-mention-autocomplete custom-scrollbar" role="listbox" aria-label="选择要 @ 的成员">
@@ -6102,15 +6126,28 @@ function removePendingImage(index: number) {
           </span>
           <ChatTooltip text="分享博客文章与说说">
             <button
+              bind:this={shareTriggerEl}
               type="button"
-              class="chat-tool-btn text-[var(--skin-text)] hover:text-[var(--primary)] shrink-0"
+              class="chat-tool-btn {activePopover === 'share' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : 'text-[var(--skin-text)] hover:text-[var(--primary)]'} shrink-0"
               aria-label="分享博客文章与说说"
+              aria-expanded={activePopover === "share"}
+              aria-haspopup="dialog"
+              onpointerenter={() => {
+                preloadChatShareData();
+                sharePopoverMounted = true;
+              }}
+              onfocus={() => {
+                preloadChatShareData();
+                sharePopoverMounted = true;
+              }}
               onclick={() => {
                 if (!currentUser) {
                   onRequireAuth();
                   return;
                 }
-                showShareModal = true;
+                preloadChatShareData();
+                sharePopoverMounted = true;
+                activePopover = activePopover === "share" ? "none" : "share";
               }}
             >
               <svg class="w-5 h-5 md:w-[1.15rem] md:h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -6527,20 +6564,6 @@ function removePendingImage(index: number) {
         sourceModalMessage = null;
       }}
       onNotify={onNotify}
-    />
-  {/if}
-
-  {#if showShareModal}
-    <ChatShareModal
-      open={showShareModal}
-      chatServerUrl={chatServerUrl}
-      musicState={musicState}
-      playlistAuth={playlistAuth}
-      onClose={() => {
-        showShareModal = false;
-      }}
-      onShare={handleShareBlogContent}
-      onShareMusicTrack={onShareMusicTrack}
     />
   {/if}
 </div>
