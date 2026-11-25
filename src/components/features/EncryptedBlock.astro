@@ -31,8 +31,6 @@ const labels = {
 	unlocked: i18n(I18nKey.passwordUnlocked),
 	relock: i18n(I18nKey.passwordRelock),
 	decrypting: i18n(I18nKey.passwordDecrypting),
-	showPassword: i18n(I18nKey.passwordShow),
-	hidePassword: i18n(I18nKey.passwordHide),
 };
 ---
 
@@ -72,34 +70,32 @@ const labels = {
       </div>
     )}
 
-    <!-- Form -->
-    <form class="password-form flex flex-col sm:flex-row items-stretch sm:items-center gap-2" autocomplete="off">
+    <!-- Unlock Row (use div instead of form + type="text" to prevent browser save-password prompts) -->
+    <div class="password-form flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
       <div class="relative flex-1">
         <Icon name="material-symbols:key-outline" class="absolute left-3 top-1/2 -translate-y-1/2 text-black/35 dark:text-white/35 text-base pointer-events-none" />
         <input
-          type="password"
-          name="password"
+          type="text"
+          name="unlock_code"
           placeholder={labels.placeholder}
-          class="password-input w-full pl-9 pr-9 py-2 text-sm rounded-xl
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-form-type="other"
+          class="password-input w-full pl-9 pr-3.5 py-2 text-sm rounded-xl
                  bg-white/80 dark:bg-black/30
                  border border-black/12 dark:border-white/12
                  text-black/90 dark:text-white/90 placeholder-black/35 dark:placeholder-white/35
                  outline-hidden focus:border-(--primary) focus:ring-2 focus:ring-(--primary)/20
                  transition-all"
         />
-        <button
-          type="button"
-          class="eye-btn absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-black/40 hover:text-black/75 dark:text-white/40 dark:hover:text-white/75 transition-colors cursor-pointer"
-          title={labels.showPassword}
-          aria-label={labels.showPassword}
-        >
-          <Icon name="material-symbols:visibility-outline" class="eye-open text-base" />
-          <Icon name="material-symbols:visibility-off-outline" class="eye-closed text-base hidden" />
-        </button>
       </div>
 
       <button
-        type="submit"
+        type="button"
         class="submit-btn px-5 py-2 rounded-xl text-sm font-medium bg-(--primary) text-white dark:text-black/80
                hover:opacity-90 active:scale-95 transition-all shadow-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
       >
@@ -107,7 +103,7 @@ const labels = {
         <span class="btn-spinner hidden animate-spin w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full"></span>
         <span class="btn-text">{labels.submit}</span>
       </button>
-    </form>
+    </div>
 
     <!-- Error message -->
     <p class="error-msg text-xs text-red-500 dark:text-red-400 mt-2 m-0 flex items-center gap-1 hidden">
@@ -219,9 +215,6 @@ if (!customElements.get('encrypted-block')) {
       var unlockedCard = this.querySelector('.unlocked-card');
       var form = this.querySelector('.password-form');
       var input = this.querySelector('.password-input');
-      var eyeBtn = this.querySelector('.eye-btn');
-      var eyeOpen = this.querySelector('.eye-open');
-      var eyeClosed = this.querySelector('.eye-closed');
       var submitBtn = this.querySelector('.submit-btn');
       var btnIcon = this.querySelector('.btn-icon');
       var btnSpinner = this.querySelector('.btn-spinner');
@@ -322,53 +315,47 @@ if (!customElements.get('encrypted-block')) {
         if (lockCard) lockCard.classList.remove('hidden');
       }
 
-      // Input clear error on typing
+      function attemptUnlock() {
+        if (!input) return;
+        var pwd = input.value.trim();
+        if (!pwd) {
+          input.focus();
+          return;
+        }
+        hideError();
+        setLoading(true);
+
+        decryptAesGcm(encryptedData, pwd).then(function(html) {
+          setLoading(false);
+          input.value = '';
+          try {
+            sessionStorage.setItem(cacheKey, pwd);
+          } catch (_) {}
+          showContent(html);
+        }).catch(function() {
+          setLoading(false);
+          showError();
+        });
+      }
+
+      // Input clear error on typing & Enter to unlock
       if (input) {
         input.addEventListener('input', function() {
           hideError();
         });
-      }
-
-      // Eye toggle
-      if (eyeBtn && input) {
-        eyeBtn.addEventListener('click', function(e) {
-          e.preventDefault();
-          var isPassword = input.type === 'password';
-          input.type = isPassword ? 'text' : 'password';
-          if (eyeOpen && eyeClosed) {
-            if (isPassword) {
-              eyeOpen.classList.add('hidden');
-              eyeClosed.classList.remove('hidden');
-            } else {
-              eyeOpen.classList.remove('hidden');
-              eyeClosed.classList.add('hidden');
-            }
+        input.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' && !e.isComposing) {
+            e.preventDefault();
+            attemptUnlock();
           }
         });
       }
 
-      // Form submit
-      if (form && input) {
-        form.addEventListener('submit', function(e) {
+      // Submit button click
+      if (submitBtn) {
+        submitBtn.addEventListener('click', function(e) {
           e.preventDefault();
-          var pwd = input.value.trim();
-          if (!pwd) {
-            input.focus();
-            return;
-          }
-          hideError();
-          setLoading(true);
-
-          decryptAesGcm(encryptedData, pwd).then(function(html) {
-            setLoading(false);
-            try {
-              sessionStorage.setItem(cacheKey, pwd);
-            } catch (_) {}
-            showContent(html);
-          }).catch(function() {
-            setLoading(false);
-            showError();
-          });
+          attemptUnlock();
         });
       }
 

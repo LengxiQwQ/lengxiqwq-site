@@ -43,26 +43,33 @@ const labels = {
         <p class="text-xs text-30 text-center m-0">{labels.hint}: {hint}</p>
       )}
 
-      <form id="password-form" class="w-full mt-2 space-y-2">
+      <div id="password-form" class="w-full mt-2 space-y-2">
         <input
           id="password-input"
-          name="password"
-          type="password"
+          name="unlock_code"
+          type="text"
           placeholder={labels.placeholder}
           autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          spellcheck="false"
+          data-1p-ignore="true"
+          data-lpignore="true"
+          data-form-type="other"
           class="w-full px-3 py-2 rounded-lg text-sm bg-black/5 dark:bg-white/10
                  border border-black/8 dark:border-white/8
                  text-black/80 dark:text-white/80 placeholder-black/25 dark:placeholder-white/25
                  outline-hidden focus:border-(--primary) transition"
         />
         <button
-          type="submit"
+          id="password-submit"
+          type="button"
           class="w-full py-2 rounded-lg text-sm font-medium bg-(--primary) text-white dark:text-black/70
-                 hover:opacity-85 active:scale-[0.98] transition-all"
+                 hover:opacity-85 active:scale-[0.98] transition-all cursor-pointer"
         >
           {labels.submit}
         </button>
-      </form>
+      </div>
 
       <p id="password-error" class="text-xs text-red-500 dark:text-red-400 m-0 hidden">{labels.error}</p>
     </div>
@@ -87,8 +94,8 @@ const labels = {
   var cacheKey = 'pw:' + slug;
 
   var ui = document.getElementById('password-ui');
-  var form = document.getElementById('password-form');
   var input = document.getElementById('password-input');
+  var submitBtn = document.getElementById('password-submit');
   var errorEl = document.getElementById('password-error');
   var contentEl = document.getElementById('decrypted-content');
 
@@ -179,19 +186,35 @@ const labels = {
     return new TextDecoder().decode(decrypted);
   }
 
-  // Handle form submit
-  form.addEventListener('submit', function(e) {
-    e.preventDefault();
+  function attemptUnlock() {
     var pwd = input.value.trim();
-    if (!pwd) return;
+    if (!pwd) {
+      input.focus();
+      return;
+    }
     hideError();
     decrypt(pwd).then(function(html) {
+      input.value = '';
       sessionStorage.setItem(cacheKey, pwd);
       showContent(html);
     }).catch(function() {
       showError();
     });
+  }
+
+  input.addEventListener('input', hideError);
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      attemptUnlock();
+    }
   });
+  if (submitBtn) {
+    submitBtn.addEventListener('click', function(e) {
+      e.preventDefault();
+      attemptUnlock();
+    });
+  }
 
   // Try cached password
   var cached = sessionStorage.getItem(cacheKey);
