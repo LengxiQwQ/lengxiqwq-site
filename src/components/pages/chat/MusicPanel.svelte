@@ -620,6 +620,7 @@ let isFavToggling = $state(false);
 let isFavAnimating = $state(false);
 let collectiveFilterUserKey = $state("");
 let showCollectiveUserDropdown = $state(false);
+let showPlaylistMoreMenu = $state(false);
 let openFavoritersKey = $state("");
 const activeFilterFavoriterName = $derived.by(() => {
 	if (!collectiveFilterUserKey) return "";
@@ -838,11 +839,24 @@ let trackContextMenu = $state<{
 	rawX: number;
 	rawY: number;
 } | null>(null);
+let trackContextMenuScrollTargets: Set<EventTarget> | null = null;
 let trackLongPressTimer: ReturnType<typeof setTimeout> | null = null;
 let trackLongPressStart = { x: 0, y: 0 };
 
-function openTrackContextMenu(track: ChatMusicTrack, clientX: number, clientY: number) {
+function openTrackContextMenu(
+	track: ChatMusicTrack,
+	clientX: number,
+	clientY: number,
+	anchorEl?: HTMLElement | null,
+) {
 	if (typeof window === "undefined") return;
+	const scrollTargets = new Set<EventTarget>([window, document]);
+	if (document.documentElement) scrollTargets.add(document.documentElement);
+	if (document.body) scrollTargets.add(document.body);
+	for (let el: HTMLElement | null = anchorEl ?? null; el; el = el.parentElement) {
+		scrollTargets.add(el);
+	}
+	trackContextMenuScrollTargets = scrollTargets;
 	const menuW = 196;
 	const menuH = 186;
 	const pad = 10;
@@ -893,6 +907,7 @@ function placeTrackContextMenu(node: HTMLDivElement) {
 }
 
 function closeTrackContextMenu() {
+	trackContextMenuScrollTargets = null;
 	trackContextMenu = null;
 }
 
@@ -906,7 +921,12 @@ function cancelTrackLongPress() {
 function handleTrackRowContextMenu(event: MouseEvent, track: ChatMusicTrack) {
 	event.preventDefault();
 	event.stopPropagation();
-	openTrackContextMenu(track, event.clientX, event.clientY);
+	openTrackContextMenu(
+		track,
+		event.clientX,
+		event.clientY,
+		event.currentTarget as HTMLElement | null,
+	);
 }
 
 function handleTrackRowPointerDown(event: PointerEvent, track: ChatMusicTrack) {
@@ -915,9 +935,10 @@ function handleTrackRowPointerDown(event: PointerEvent, track: ChatMusicTrack) {
 	trackLongPressStart = { x: event.clientX, y: event.clientY };
 	const cx = event.clientX;
 	const cy = event.clientY;
+	const anchorEl = event.currentTarget as HTMLElement | null;
 	trackLongPressTimer = setTimeout(() => {
 		trackLongPressTimer = null;
-		openTrackContextMenu(track, cx, cy);
+		openTrackContextMenu(track, cx, cy, anchorEl);
 	}, 480);
 }
 
@@ -942,17 +963,32 @@ async function copyTrackInfo(track: ChatMusicTrack) {
 }
 
 $effect(() => {
-	if (!trackContextMenu) return;
+	if (!trackContextMenu) {
+		trackContextMenuScrollTargets = null;
+		return;
+	}
 	const onPointerDown = (e: PointerEvent) => {
 		const target = e.target as HTMLElement | null;
 		if (target?.closest("[data-track-context-menu]")) return;
-		trackContextMenu = null;
+		closeTrackContextMenu();
 	};
 	const onKeyDown = (e: KeyboardEvent) => {
-		if (e.key === "Escape") trackContextMenu = null;
+		if (e.key === "Escape") closeTrackContextMenu();
 	};
-	const onScroll = () => {
-		trackContextMenu = null;
+	const onScroll = (e: Event) => {
+		const target = e.target;
+		// Only close when the clicked row's own scroll container or the page scrolls,
+		// so automatic lyric scrolling or background chat scrolling does not dismiss the menu.
+		if (trackContextMenuScrollTargets && target) {
+			if (!trackContextMenuScrollTargets.has(target)) return;
+		} else if (
+			lyricsContainer &&
+			target instanceof Node &&
+			(target === lyricsContainer || lyricsContainer.contains(target))
+		) {
+			return;
+		}
+		closeTrackContextMenu();
 	};
 	window.addEventListener("pointerdown", onPointerDown, true);
 	window.addEventListener("keydown", onKeyDown);
@@ -2012,6 +2048,7 @@ async function openPlaylistDetail(
 ): Promise<void> {
 	if (!chatServerUrl) return;
 	const isNewPlaylist = selectedPlaylist?.id !== playlistId;
+	if (isNewPlaylist) showPlaylistMoreMenu = false;
 	const requestSeq = ++playlistDetailRequestSeq;
 	cancelPlaylistDetailPrefetch();
 	const auth = personalPlaylistAuth;
@@ -3338,6 +3375,9 @@ onMount(() => {
 		if (showCollectiveUserDropdown && !target?.closest("[data-collective-filter-wrap]")) {
 			showCollectiveUserDropdown = false;
 		}
+		if (showPlaylistMoreMenu && !target?.closest("[data-playlist-more-wrap]")) {
+			showPlaylistMoreMenu = false;
+		}
 		if (openFavoritersKey && !target?.closest("[data-favoriters-wrap]")) {
 			openFavoritersKey = "";
 		}
@@ -3346,6 +3386,7 @@ onMount(() => {
 		if (e.key === "Escape") {
 			if (showRequesterFilter) showRequesterFilter = false;
 			if (showCollectiveUserDropdown) showCollectiveUserDropdown = false;
+			if (showPlaylistMoreMenu) showPlaylistMoreMenu = false;
 			openFavoritersKey = "";
 		}
 	};
@@ -5261,7 +5302,7 @@ $effect(() => {
 
     {#if selectedPlaylist}
       {@const safeSourceUrl = resolveSafeExternalUrl(selectedPlaylist.sourceUrl)}
-      {@const hasExtraManageActions = !selectedPlaylist.isSystemProtected && canManagePlaylist(selectedPlaylist)}
+      {@const hasPlaylistMoreMenuActions = selectedPlaylist.isSystemProtected || canManagePlaylist(selectedPlaylist)}
       {#snippet playlistActionButtons()}
         {#if selectedPlaylist}
           <div class="flex items-center gap-1.5 shrink-0">
@@ -5293,125 +5334,134 @@ $effect(() => {
               </span>
             </div>
 
-            {#if safeSourceUrl && !selectedPlaylist.isSystemProtected}
-              <div class="chat-playlist-action-wrap">
-                <a
-                  href={safeSourceUrl}
-                  target="_blank"
-                  rel="noopener"
-                  class="chat-playlist-icon-btn no-underline"
-                  aria-label={`前往${formatPlatformLabel(selectedPlaylist.platform)}原歌单`}
-                >
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                    <polyline points="15 3 21 3 21 9" />
-                    <line x1="10" y1="14" x2="21" y2="3" />
-                  </svg>
-                </a>
-                <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                  前往{formatPlatformLabel(selectedPlaylist.platform)}原歌单
-                </span>
-              </div>
-            {/if}
-
-            {#if selectedPlaylist.isSystemProtected}
-              <div class="chat-playlist-action-wrap">
+            {#if hasPlaylistMoreMenuActions}
+              <div class="chat-playlist-action-wrap relative" data-playlist-more-wrap>
                 <button
                   type="button"
-                  disabled={isLoadingPlaylistDetail}
-                  class="chat-playlist-icon-btn"
-                  aria-label="刷新歌单曲目"
-                  onclick={() => selectedPlaylist && openPlaylistDetail(selectedPlaylist.id, true, undefined, collectiveFilterUserKey)}
+                  class="chat-playlist-icon-btn {showPlaylistMoreMenu ? 'is-active' : ''}"
+                  aria-label="更多歌单操作"
+                  aria-haspopup="menu"
+                  aria-expanded={showPlaylistMoreMenu}
+                  onclick={() => (showPlaylistMoreMenu = !showPlaylistMoreMenu)}
                 >
-                  <svg class="w-3.5 h-3.5 {isLoadingPlaylistDetail ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polyline points="23 4 23 10 17 10" />
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <circle cx="5" cy="12" r="1.75" />
+                    <circle cx="12" cy="12" r="1.75" />
+                    <circle cx="19" cy="12" r="1.75" />
                   </svg>
                 </button>
-                <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                  {isLoadingPlaylistDetail ? "正在刷新..." : "刷新歌单曲目"}
-                </span>
-              </div>
-            {:else if canManagePlaylist(selectedPlaylist)}
-              <div class="chat-playlist-action-wrap">
-                <button
-                  type="button"
-                  disabled={isRefreshingPlaylistId === selectedPlaylist.id}
-                  class="chat-playlist-icon-btn"
-                  aria-label={selectedPlaylist.updatedAt ? `刷新同步歌单（上次同步于 ${formatPlaylistDate(selectedPlaylist.updatedAt)}）` : "刷新同步歌单"}
-                  onclick={() => selectedPlaylist && handleRefreshPlaylist(selectedPlaylist)}
-                >
-                  <svg class="w-3.5 h-3.5 {isRefreshingPlaylistId === selectedPlaylist.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polyline points="23 4 23 10 17 10" />
-                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                  </svg>
-                </button>
-                <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                  {#if isRefreshingPlaylistId === selectedPlaylist.id}
-                    正在同步...
-                  {:else if selectedPlaylist.updatedAt}
-                    上次同步于 {formatPlaylistDate(selectedPlaylist.updatedAt)}
-                  {:else}
-                    刷新同步歌单
-                  {/if}
-                </span>
-              </div>
-
-              {#if currentUser?.isAdmin}
-                <div class="chat-playlist-action-wrap">
-                  <button
-                    type="button"
-                    disabled={isUpdatingFlagsId === selectedPlaylist.id}
-                    class="chat-playlist-icon-btn {selectedPlaylist.isFeatured ? 'is-active' : ''}"
-                    aria-label={selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}
-                    onclick={() => selectedPlaylist && handleTogglePlaylistFlag(selectedPlaylist, "isFeatured")}
-                  >
-                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill={selectedPlaylist.isFeatured ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
-                    </svg>
-                  </button>
+                {#if !showPlaylistMoreMenu}
                   <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                    {selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}
+                    更多操作
                   </span>
-                </div>
-              {/if}
+                {/if}
 
-              {#if isOwnPlaylist(selectedPlaylist) && !selectedPlaylist.isSystemProtected}
-                <div class="chat-playlist-action-wrap">
-                  <button
-                    type="button"
-                    disabled={isDeletingPlaylistId === selectedPlaylist.id}
-                    class="chat-playlist-icon-btn {confirmDeletePlaylistId === selectedPlaylist.id ? 'is-danger-confirm' : 'is-danger'}"
-                    aria-label={confirmDeletePlaylistId === selectedPlaylist.id ? "再次点击确认删除" : "删除歌单"}
-                    onclick={() => selectedPlaylist && handleDeletePlaylist(selectedPlaylist)}
-                  >
-                    {#if confirmDeletePlaylistId === selectedPlaylist.id}
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    {:else}
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                      </svg>
-                    {/if}
-                  </button>
-                  <span
+                {#if showPlaylistMoreMenu}
+                  <div
                     data-chat-floating
-                    use:positionChatFloating={{ hover: "tooltip", forceOpen: confirmDeletePlaylistId === selectedPlaylist.id, gap: 7 }}
-                    class="chat-playlist-tooltip"
-                    role="tooltip"
+                    use:positionChatFloating={{
+                      placement: "bottom-end",
+                      gap: 6,
+                      onReferenceHidden: () => (showPlaylistMoreMenu = false),
+                    }}
+                    class="chat-more-actions-popover z-40!"
+                    role="menu"
+                    aria-label="歌单操作"
                   >
-                    {#if isDeletingPlaylistId === selectedPlaylist.id}
-                      正在删除...
-                    {:else if confirmDeletePlaylistId === selectedPlaylist.id}
-                      再次点击确认删除
-                    {:else}
-                      删除歌单
+                    {#if !selectedPlaylist.isSystemProtected && canManagePlaylist(selectedPlaylist) && currentUser?.isAdmin}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={isUpdatingFlagsId === selectedPlaylist.id}
+                        class="chat-more-action-item {selectedPlaylist.isFeatured ? 'text-(--primary)' : ''}"
+                        onclick={() => {
+                          if (!selectedPlaylist) return;
+                          showPlaylistMoreMenu = false;
+                          void handleTogglePlaylistFlag(selectedPlaylist, "isFeatured");
+                        }}
+                      >
+                        <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill={selectedPlaylist.isFeatured ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
+                        </svg>
+                        <span>{selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}</span>
+                      </button>
                     {/if}
-                  </span>
-                </div>
-              {/if}
+
+                    {#if selectedPlaylist.isSystemProtected}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={isLoadingPlaylistDetail}
+                        class="chat-more-action-item"
+                        onclick={() => {
+                          if (!selectedPlaylist) return;
+                          showPlaylistMoreMenu = false;
+                          void openPlaylistDetail(selectedPlaylist.id, true, undefined, collectiveFilterUserKey);
+                        }}
+                      >
+                        <svg class="w-3.5 h-3.5 shrink-0 {isLoadingPlaylistDetail ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <polyline points="23 4 23 10 17 10" />
+                          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        </svg>
+                        <span>{isLoadingPlaylistDetail ? "正在刷新..." : "刷新曲目"}</span>
+                      </button>
+                    {:else if canManagePlaylist(selectedPlaylist)}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={isRefreshingPlaylistId === selectedPlaylist.id}
+                        class="chat-more-action-item"
+                        onclick={() => {
+                          if (!selectedPlaylist) return;
+                          showPlaylistMoreMenu = false;
+                          void handleRefreshPlaylist(selectedPlaylist);
+                        }}
+                      >
+                        <svg class="w-3.5 h-3.5 shrink-0 {isRefreshingPlaylistId === selectedPlaylist.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <polyline points="23 4 23 10 17 10" />
+                          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        </svg>
+                        <span>{isRefreshingPlaylistId === selectedPlaylist.id ? "正在同步..." : "刷新同步"}</span>
+                      </button>
+                    {/if}
+
+                    {#if !selectedPlaylist.isSystemProtected && canManagePlaylist(selectedPlaylist) && isOwnPlaylist(selectedPlaylist)}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={isDeletingPlaylistId === selectedPlaylist.id}
+                        class="chat-more-action-item text-red-500"
+                        onclick={() => {
+                          if (!selectedPlaylist) return;
+                          const confirmed = confirmDeletePlaylistId === selectedPlaylist.id;
+                          if (confirmed) showPlaylistMoreMenu = false;
+                          void handleDeletePlaylist(selectedPlaylist);
+                        }}
+                      >
+                        {#if confirmDeletePlaylistId === selectedPlaylist.id}
+                          <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        {:else}
+                          <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        {/if}
+                        <span>
+                          {#if isDeletingPlaylistId === selectedPlaylist.id}
+                            正在删除...
+                          {:else if confirmDeletePlaylistId === selectedPlaylist.id}
+                            再次点击确认删除
+                          {:else}
+                            删除歌单
+                          {/if}
+                        </span>
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
             {/if}
           </div>
         {/if}
@@ -5449,17 +5499,36 @@ $effect(() => {
                     </span>
                   {/if}
                 </div>
-                <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5 flex items-center gap-1">
+                <div class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] mt-0.5 flex items-center gap-1 min-w-0">
                   {#if selectedPlaylist.id === "pl_collective_favorites"}
-                    <span>由大家共同收藏 · {selectedPlaylist.tracks.length || selectedPlaylist.trackCount || 0} 首</span>
+                    <span class="truncate">由大家共同收藏 · {selectedPlaylist.tracks.length || selectedPlaylist.trackCount || 0} 首</span>
                   {:else}
-                    <span>{formatPlatformLabel(selectedPlaylist.platform)} · {selectedPlaylist.tracks.length || selectedPlaylist.trackCount || 0} 首</span>
+                    {#if safeSourceUrl && !selectedPlaylist.isSystemProtected}
+                      <ChatTooltip
+                        text={`前往${formatPlatformLabel(selectedPlaylist.platform)}原歌单`}
+                        align="left"
+                        class="inline-flex shrink-0"
+                      >
+                        <a
+                          href={safeSourceUrl}
+                          target="_blank"
+                          rel="noopener"
+                          class="inline-flex items-center px-1 py-0.5 -ml-1 rounded-md bg-transparent hover:bg-[var(--btn-plain-bg-hover)] hover:text-[var(--primary)] text-inherit cursor-pointer transition-colors no-underline"
+                          aria-label={`前往${formatPlatformLabel(selectedPlaylist.platform)}原歌单`}
+                        >
+                          <span>{formatPlatformLabel(selectedPlaylist.platform)}</span>
+                        </a>
+                      </ChatTooltip>
+                    {:else}
+                      <span class="shrink-0">{formatPlatformLabel(selectedPlaylist.platform)}</span>
+                    {/if}
+                    <span class="shrink-0">· {selectedPlaylist.tracks.length || selectedPlaylist.trackCount || 0} 首</span>
                     {#if selectedPlaylist.ownerName}
-                      <span>·</span>
+                      <span class="shrink-0">·</span>
                       {#if onOpenUserProfile && selectedPlaylist.ownerKey}
                         <button
                           type="button"
-                          class="inline-flex items-center gap-1 min-w-0 bg-transparent border-none p-0 text-[12px] xl:text-[11px] text-[var(--chat-accent-text)] hover:underline cursor-pointer"
+                          class="inline-flex items-center gap-1 min-w-0 px-1 py-0.5 rounded-md border-none bg-transparent hover:bg-[var(--btn-plain-bg-hover)] hover:text-[var(--primary)] text-[12px] xl:text-[11px] text-[var(--chat-accent-text)] cursor-pointer transition-colors no-underline"
                           onclick={() =>
                             selectedPlaylist &&
                             openRequesterProfile(
@@ -5488,24 +5557,15 @@ $effect(() => {
                       {/if}
                     {/if}
                     {#if selectedPlaylist.retrievalMode === "preview"}
-                      <span>· 仅预览</span>
+                      <span class="shrink-0">· 仅预览</span>
                     {/if}
                   {/if}
                 </div>
               </div>
             </div>
 
-            {#if !hasExtraManageActions}
-              {@render playlistActionButtons()}
-            {/if}
+            {@render playlistActionButtons()}
           </div>
-
-          <!-- 第 3 行：纯图标工具栏（有 3 个及以上操作按钮时独立成行） -->
-          {#if hasExtraManageActions}
-            <div class="flex items-center justify-start">
-              {@render playlistActionButtons()}
-            </div>
-          {/if}
 
           <!-- 第 4 行：茶室星愿成员筛选条 -->
           {#if selectedPlaylist.id === "pl_collective_favorites"}

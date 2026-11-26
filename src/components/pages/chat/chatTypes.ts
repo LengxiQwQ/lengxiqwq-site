@@ -189,6 +189,7 @@ export interface ChatUserDetailProfile {
 	stats: {
 		messageCount: number;
 		songRequestCount: number;
+		distinctTrackCount?: number;
 	};
 	recentTracks: ChatUserRequestedTrackItem[];
 	tracksHasMore?: boolean;

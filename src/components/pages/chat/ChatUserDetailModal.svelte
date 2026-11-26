@@ -589,7 +589,14 @@ const displayedTracks = $derived.by<ChatUserRequestedTrackItem[]>(() => {
 	return (fallbackData?.allTracks ?? []).slice(0, localVisibleLimit);
 });
 const topTracks = $derived.by<ChatUserTopTrackItem[]>(() => {
-	if (remoteProfile)
+	if (remoteProfile) {
+		if (
+			remoteHasMore &&
+			remoteProfile.topTracks &&
+			remoteProfile.topTracks.length > 0
+		) {
+			return remoteProfile.topTracks;
+		}
 		return aggregateRequestedTracks(remoteTracks)
 			.map((item) => ({
 				track: item.track,
@@ -602,6 +609,7 @@ const topTracks = $derived.by<ChatUserTopTrackItem[]>(() => {
 					b.lastRequestedAt - a.lastRequestedAt,
 			)
 			.slice(0, 50);
+	}
 	return fallbackData?.topTracks ?? [];
 });
 const topArtists = $derived.by<ChatUserTopArtistItem[]>(() => {
@@ -609,10 +617,7 @@ const topArtists = $derived.by<ChatUserTopArtistItem[]>(() => {
 	return fallbackData?.topArtists ?? [];
 });
 const recentMessages = $derived.by<ChatUserRecentMessage[]>(() => {
-	if (
-		remoteProfile?.recentMessages &&
-		remoteProfile.recentMessages.length > 0
-	) {
+	if (remoteProfile?.recentMessages) {
 		return remoteProfile.recentMessages;
 	}
 	return fallbackData?.recentMessages ?? [];
@@ -628,6 +633,9 @@ const hasMoreTracks = $derived.by<boolean>(() => {
 });
 const totalSongCount = $derived.by<number>(() => {
 	if (!profile) return 0;
+	if (typeof remoteProfile?.stats?.distinctTrackCount === "number") {
+		return remoteProfile.stats.distinctTrackCount;
+	}
 	return remoteProfile
 		? aggregateRequestedTracks(remoteTracks).length
 		: (fallbackData?.allTracks.length ?? 0);
@@ -640,11 +648,7 @@ $effect(() => {
 	const targetServerUrl = chatServerUrl;
 	const externalSkip = untrack(
 		() =>
-			matrixUserId ||
-			isExternalUser ||
 			isSpectator ||
-			targetUserKey.startsWith("matrix:") ||
-			targetUserKey.startsWith("@") ||
 			targetUserKey.startsWith("name:") ||
 			targetUserKey === "system:fallback",
 	);
@@ -926,10 +930,18 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
     {@const userMessages = messages.filter((m) => m.kind === "user" && m.userKey === seed.userKey)}
     {@const onlineMatch = onlineMembers.find((m) => m.userKey === seed.userKey)}
     {@const isOnline = Boolean(onlineMatch ?? seed.online)}
-    {@const firstSeenAt = userMessages[0]?.createdAt || 0}
+    {@const totalMessageCount = remoteProfile?.stats?.messageCount ?? userMessages.length}
+    {@const firstSeenAt = remoteProfile?.firstSeenAt || userMessages[0]?.createdAt || 0}
     {@const latestMsg = userMessages[userMessages.length - 1]}
-    {@const lastSeenAt = onlineMatch ? Date.now() : (latestMsg?.createdAt || 0)}
-    {@const recentMsgs = userMessages.slice(-5).reverse()}
+    {@const lastSeenAt = onlineMatch ? Date.now() : (remoteProfile?.lastSeenAt || latestMsg?.createdAt || 0)}
+    {@const recentMsgs = remoteProfile?.recentMessages
+      ? remoteProfile.recentMessages.slice(0, 5)
+      : userMessages.slice(-5).reverse().map((m) => ({
+          msgUid: m.msgUid,
+          content: m.content,
+          hasImage: Array.isArray(m.attachments) && m.attachments.length > 0,
+          createdAt: m.createdAt,
+        }))}
     {@const canMentionExternal = Boolean(currentUser) && roomId === "interconnect"}
     {@const extFullId = matrixUserId || seed.userKey}
 
@@ -1078,8 +1090,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         <div class="grid grid-cols-2 gap-2 text-center">
           <div class="bg-black/3 dark:bg-white/5 p-2 rounded-lg">
             <div class="text-[0.6875rem] text-[var(--chat-meta-color)]">茶室发言</div>
-            <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5">
-              {userMessages.length} 条
+            <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5 tabular-nums">
+              {totalMessageCount} 条
             </div>
           </div>
           <div class="bg-black/3 dark:bg-white/5 p-2 rounded-lg">
@@ -1121,14 +1133,14 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
       <div class="rounded-xl bg-(--btn-regular-bg) p-3.5 border border-black/5 dark:border-white/10 space-y-2">
         <div class="text-xs font-semibold text-[var(--chat-meta-color)] flex items-center justify-between">
           <span>最近在茶室说了什么</span>
-          <span class="text-[0.6875rem] font-normal opacity-75">
-            共 {userMessages.length} 条
+          <span class="text-[0.6875rem] font-normal opacity-75 tabular-nums">
+            共 {totalMessageCount} 条
           </span>
         </div>
 
         {#if recentMsgs.length === 0}
           <div class="py-4 text-center text-xs text-[var(--chat-meta-color)]">
-            该茶友在当前加载记录中暂无发言~
+            {isLoading && !remoteProfile ? "正在统计历史发言..." : "该茶友暂无发言记录~"}
           </div>
         {:else}
           <div class="space-y-1.5">
@@ -1136,7 +1148,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-black/3 dark:bg-white/5 hover:bg-black/5 dark:hover:bg-white/8 transition-colors">
                 <div class="min-w-0 flex-1">
                   <div class="text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
-                    {m.content || (Array.isArray(m.attachments) && m.attachments.length > 0 ? "[发送了图片]" : "...")}
+                    {formatMessageSummary(m)}
                   </div>
                   <div class="text-[0.625rem] text-[var(--chat-meta-color)] mt-0.5">
                     {formatTrackTime(m.createdAt)}
@@ -1702,7 +1714,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
             <span class="text-[11px] text-[var(--chat-meta-color)]">累计点歌</span>
             <span class="text-xs font-bold text-[var(--deep-text)] tabular-nums">
-              {remoteProfile ? (remoteHasMore ? "统计中" : remoteTracks.length) : profile.stats.songRequestCount}
+              {profile.stats.songRequestCount}
             </span>
           </div>
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
@@ -1811,7 +1823,13 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               点过的歌
             </span>
             <span class="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-(--primary)/12 text-[var(--chat-accent-text)] tabular-nums">
-              {tracksLoadFailed ? "统计未完成" : remoteHasMore ? "正在统计" : `共 ${totalSongCount} 首`}
+              {typeof remoteProfile?.stats?.distinctTrackCount === "number"
+                ? `共 ${totalSongCount} 首`
+                : tracksLoadFailed
+                  ? "统计未完成"
+                  : remoteHasMore
+                    ? "正在统计"
+                    : `共 ${totalSongCount} 首`}
             </span>
           </div>
 
