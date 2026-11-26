@@ -86,6 +86,19 @@ export class NeteaseMusicProvider {
 
   async resolveStream(sourceId) {
     if (!isMusicSourceId(this.id, sourceId)) return null;
+    let standardError;
+    try {
+      const result = await getJson('https://music.163.com/api/song/enhance/player/url',
+        { ids: '[' + sourceId + ']', br: 128000 }, 'https://music.163.com/');
+      const file = result.data?.find(item => String(item.id) === String(sourceId));
+      if (file?.url && !file.freeTrialInfo && file.br > 0 && file.br <= 128000 &&
+          new URL(file.url).hostname.endsWith('.126.net')) {
+        const stream = await checkStream(file.url, this.id);
+        if (stream) return stream;
+      }
+    } catch (error) {
+      standardError = error;
+    }
     const endpoint = 'https://api.injahow.cn/meting/?type=url&id=' + encodeURIComponent(sourceId);
     const response = await fetch(endpoint, {
       redirect: 'manual',
@@ -94,7 +107,10 @@ export class NeteaseMusicProvider {
     });
     const location = response.headers.get('location');
     await response.body?.cancel().catch(() => {});
-    if (response.status === 404 || response.status === 451) return null;
+    if (response.status === 404 || response.status === 451) {
+      if (standardError) throw standardError;
+      return null;
+    }
     if (response.status >= 400) throw Object.assign(new Error('网易云取源暂时失败 HTTP ' + response.status), { isRiskControl: response.status === 429 });
     if (!location || !location.startsWith('http')) throw new Error('网易云接口没有返回音频地址');
     if (location.includes('/404') || location.includes('/jd-musicrep-ts/')) return null;
@@ -202,10 +218,42 @@ export class KugouMusicProvider {
     return { tracks, hasMore: Number(data.data?.total) > page * limit };
   }
 
+  async standardHash(hash) {
+    try {
+      const response = await fetch('https://media.store.kugou.com/v1/get_res_privilege', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relate: 1, userid: '0', vip: 0, appid: 1000, token: '',
+          behavior: 'download', area_code: '1', clientver: '8990', resource: [{ id: 0, type: 'audio', hash }] }),
+        signal: AbortSignal.timeout(1200)
+      });
+      if (!response.ok) { await response.body?.cancel(); return hash; }
+      const goods = (await response.json()).data?.[0]?.relate_goods;
+      // Only choose a bitrate variant supplied for this recording.
+      const standard = Array.isArray(goods) && goods.filter(item => isMusicSourceId('kugou', item.hash) &&
+        Number(item.info?.bitrate) >= 128 && Number(item.info?.bitrate) <= 160)
+        .sort((a, b) => Number(a.info.bitrate) - Number(b.info.bitrate))[0];
+      return standard ? standard.hash.toUpperCase() : hash;
+    } catch {
+      return hash;
+    }
+  }
+
   async resolveStream(sourceId) {
     if (!isMusicSourceId(this.id, sourceId)) return null;
-    const cleanId = String(sourceId).trim().toUpperCase();
+    const original = String(sourceId).trim().toUpperCase();
+    const standard = Date.now() < this.retryAfter ? original : await this.standardHash(original);
+    if (standard !== original) {
+      try {
+        const stream = await this.resolveHash(standard, original);
+        if (stream) return stream;
+      } catch (error) {
+        if (error.isRiskControl) throw error;
+      }
+    }
+    return this.resolveHash(original, original);
+  }
 
+  async resolveHash(cleanId, original) {
     let supplierFailure;
     // 1. Try CYAPI VIP resolution if apikey is available
     if (this.cyapiKey) {
@@ -219,7 +267,7 @@ export class KugouMusicProvider {
             const stream = await checkStream(data.data.url, this.id);
             if (stream) {
               if (data.data.lyrics) {
-                this.lyricsCache.set(cleanId, data.data.lyrics);
+                this.lyricsCache.set(original, data.data.lyrics);
               }
               return {
                 ...stream,
@@ -512,7 +560,8 @@ export class YoutubeMusicProvider {
       const args = [
         '--js-runtimes', `node:${nodePath}`,
         '--user-agent', ua,
-        '-f', 'ba[ext=m4a]/ba',
+        '-f', 'ba[abr>=124][abr<=160]/ba',
+        '--format-sort-force', '-S', 'abr~128,aext:m4a',
         '--no-playlist',
         '--no-warnings',
         '--socket-timeout', '10',

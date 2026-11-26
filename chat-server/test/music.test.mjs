@@ -83,6 +83,10 @@ test('NetEase checks that the original CDN file supports seeking and rejects una
   t.mock.method(globalThis, 'fetch', async (input, options) => {
     const url = new URL(input);
     calls.push(url.hostname);
+    if (url.hostname === 'music.163.com') {
+      assert.equal(url.searchParams.get('br'), '128000');
+      return Response.json({ data: [] });
+    }
     if (url.hostname === 'api.injahow.cn') {
       return new Response(null, { status: 302, headers: { location: url.searchParams.get('id') === '123'
         ? 'https://m701.music.126.net/sound.mp3' : 'https://music.163.com/404' } });
@@ -93,7 +97,7 @@ test('NetEase checks that the original CDN file supports seeking and rejects una
   });
   assert.equal((await provider.resolveStream('123')).mimeType, 'audio/mpeg');
   assert.equal(await provider.resolveStream('124'), null);
-  assert.deepEqual(calls, ['api.injahow.cn', 'm701.music.126.net', 'api.injahow.cn']);
+  assert.deepEqual(calls, ['music.163.com', 'api.injahow.cn', 'm701.music.126.net', 'music.163.com', 'api.injahow.cn']);
 });
 
 test('YoutubeMusicProvider rejects invalid sourceIds and handles stream resolution', async () => {
@@ -1256,6 +1260,7 @@ test('Kugou returns playable audio only for the requested file hash', async t =>
   let probes = 0;
   t.mock.method(globalThis, 'fetch', async (value, options) => {
     const url = new URL(value);
+    if (url.hostname === 'media.store.kugou.com') return Response.json({ data: [] });
     if (url.hostname === 'm.kugou.com') {
       assert.equal(url.searchParams.get('hash'), hash);
       return Response.json({ status: 1, hash: returnedHash, timeLength: 202, url: 'https://sharefs.kugou.com/file.mp3' });
@@ -1308,13 +1313,17 @@ test('MusicBrainz localized credits require one exact artist and are reused acro
 test('backup search promotes secure artwork and cools down on provider throttling', async t => {
   const provider = new KugouMusicProvider();
   const hash = 'A'.repeat(32);
-  let lookups = 0;
+  let lookups = 0, qualityChecks = 0;
   t.mock.method(globalThis, 'fetch', async input => {
     const url = new URL(input);
     if (url.hostname === 'mobilecdn.kugou.com') return Response.json({ status: 0 });
     if (url.hostname === 'songsearch.kugou.com') return Response.json({ status: 1, data: { total: 8, lists: [
       { FileHash: hash, SongName: 'Song', AlbumImage: 'http://imge.kugou.com/stdmusic/{size}/cover.jpg' }
     ] } });
+    if (url.hostname === 'media.store.kugou.com') {
+      qualityChecks++;
+      return Response.json({ data: [] });
+    }
     lookups++;
     return Response.json({ status: 0, error: '您操作太频繁了，请稍后再试' });
   });
@@ -1324,6 +1333,7 @@ test('backup search promotes secure artwork and cools down on provider throttlin
   await assert.rejects(provider.resolveStream(hash), /暂时受限/);
   await assert.rejects(provider.resolveStream(hash), /暂时受限/);
   assert.equal(lookups, 1);
+  assert.equal(qualityChecks, 1);
 });
 
 test('backup search returns an enqueueable recording, omits missing audio and keeps catalog pagination', async t => {
@@ -1420,4 +1430,21 @@ test('consecutive requests resolve in parallel and commit in click order', async
   assert.equal((await second).ok, true);
   assert.equal(mgr.current.track.sourceId, 'one');
   assert.deepEqual(mgr.queue.map(item => item.track.sourceId), ['two']);
+});
+
+
+test('Kugou uses the economical variant of the requested recording before its original hash', async t => {
+  const original = 'A'.repeat(32), economical = 'B'.repeat(32);
+  const used = [];
+  const provider = new KugouMusicProvider();
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    assert.equal(JSON.parse(options.body).resource[0].hash, original);
+    return Response.json({ data: [{ relate_goods: [
+      { hash: original, info: { bitrate: 320 } }, { hash: economical, info: { bitrate: 128 } },
+      { hash: 'C'.repeat(32), info: { bitrate: 96 } }, { hash: 'D'.repeat(32), info: { bitrate: 160 } }
+    ] }] });
+  });
+  t.mock.method(provider, 'resolveHash', async hash => { used.push(hash); return { url: 'fixture' }; });
+  assert.ok(await provider.resolveStream(original));
+  assert.deepEqual(used, [economical]);
 });
