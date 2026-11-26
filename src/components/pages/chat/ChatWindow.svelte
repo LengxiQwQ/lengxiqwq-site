@@ -5071,6 +5071,7 @@ function removePendingImage(index: number) {
           {@const meta = getShareCardPresentation(entry.share)}
           {@const thumbDisplayUrl = meta.thumbUrl ? resolveShareThumbUrl(meta.thumbUrl, "square-sm", getCachedShareThumbs()) : ""}
           {@const hasThumb = Boolean(thumbDisplayUrl && !shareFailedThumbs[meta.thumbUrl])}
+          {@const sharerDisplayName = stripSiteSuffix(entry.message.name, entry.message.userKey) || entry.message.name}
           <div class="chat-share-card-row group">
             <div class="chat-share-card-main">
               <div class="chat-share-card-thumb shrink-0">
@@ -5136,7 +5137,6 @@ function removePendingImage(index: number) {
                     {meta.subtitle}
                   </div>
                 {/if}
-                {@const sharerDisplayName = stripSiteSuffix(entry.message.name, entry.message.userKey) || entry.message.name}
                 <div class="flex items-center justify-between gap-2 mt-1 text-[10px] leading-tight text-[var(--chat-meta-color)]">
                   <div class="inline-flex items-center gap-0.5 min-w-0">
                     <ChatAvatar src={entry.message.avatar} name={sharerDisplayName} size="2xs" class="w-3! h-3! opacity-80" />
@@ -5478,6 +5478,7 @@ function removePendingImage(index: number) {
             {@const isRowMatched = privateMusic.isTrackMatching(entry.share, entry.message.msgUid)}
             {@const isRowPlaying = isRowMatched && privateMusic.isPlaying}
             {@const isRowLoading = isRowMatched && privateMusic.isBufferingSlow}
+            {@const musicSharerDisplayName = stripSiteSuffix(entry.message.name, entry.message.userKey) || entry.message.name}
             <div
               class="chat-share-card-row group cursor-pointer {isRowMatched ? 'is-active' : ''}"
               role="button"
@@ -5564,7 +5565,6 @@ function removePendingImage(index: number) {
                       </span>
                     {/if}
                   </div>
-                  {@const musicSharerDisplayName = stripSiteSuffix(entry.message.name, entry.message.userKey) || entry.message.name}
                   <div class="flex items-center justify-between gap-2 mt-1 text-[10.5px] text-[var(--chat-meta-color)] opacity-85">
                     <div class="inline-flex items-center gap-0.5 min-w-0">
                       <ChatAvatar src={entry.message.avatar} name={musicSharerDisplayName} size="2xs" class="w-3.5! h-3.5!" />
