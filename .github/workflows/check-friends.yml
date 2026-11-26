@@ -56,6 +56,9 @@ jobs:
       - name: 运行友链可访问性健康检查
         run: npx tsx scripts/check-friends-health.ts
 
+      - name: 同步互联茶室官方成员名单快照
+        run: npx tsx scripts/generate-interconnect-data.ts
+
       - name: 生成 GitHub Actions 巡检摘要报告
         if: always()
         run: |
@@ -100,9 +103,9 @@ jobs:
           git config --local user.name "github-actions[bot]"
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           
-          if [ -n "$(git status --porcelain src/constants/friends-audit.json src/constants/friends-health.json)" ]; then
-            git add src/constants/friends-audit.json src/constants/friends-health.json
-            git commit -m "chore: 自动同步友链巡检状态与朋友圈文章更新 [skip ci]"
+          if [ -n "$(git status --porcelain src/constants/friends-audit.json src/constants/friends-health.json src/constants/interconnect-members.json)" ]; then
+            git add src/constants/friends-audit.json src/constants/friends-health.json src/constants/interconnect-members.json
+            git commit -m "chore: 自动同步友链巡检状态与互联茶室成员名单 [skip ci]"
             git pull --rebase origin main || true
             git push origin main
           else

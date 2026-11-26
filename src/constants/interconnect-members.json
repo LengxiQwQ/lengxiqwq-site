@@ -1,0 +1,138 @@
+[
+	{
+		"name": "朝朝听雨",
+		"owner": "朝朝听雨",
+		"siteUrl": "https://rainzt.cn",
+		"chatUrl": "https://rainzt.cn/chat/",
+		"homeserver": "matrix.rainzt.cn",
+		"avatar": "https://rainzt.cn/zzty.gif",
+		"desc": "记录技术实践、项目进展与日常写作。",
+		"badge": "听雨茶室",
+		"color": "oklch(0.70 0.14 250)",
+		"aliases": [
+			"听雨茶室",
+			"@1953549196:matrix.rainzt.cn",
+			"Jarvis0227",
+			"听雨"
+		],
+		"isSelf": false
+	},
+	{
+		"name": "Detached",
+		"owner": "Detached",
+		"siteUrl": "https://detached.online/",
+		"chatUrl": "https://detached.online/chat/",
+		"homeserver": "detached.online",
+		"avatar": "https://detached.online/icon-512.png",
+		"desc": "独立开发者的技术、工具与生活博客",
+		"badge": "Detached 聊天室",
+		"color": "#f2cb71",
+		"aliases": [
+			"Detached 聊天室",
+			"@maluyao:detached.online",
+			"maluyaotop"
+		],
+		"isSelf": false
+	},
+	{
+		"name": "AIOVTUE-雪",
+		"owner": "AIOVTUE-雪",
+		"siteUrl": "https://daily.yybb.us/",
+		"chatUrl": "https://daily.yybb.us/chat/",
+		"homeserver": "matrix.yybb.us",
+		"avatar": "https://daily.yybb.us/img/author/tx.webp",
+		"desc": "雨滴会记录生命中的每一个瞬间",
+		"badge": "AIOVTUE-雪's Chat",
+		"color": "#DF9193",
+		"aliases": [
+			"AIOVTUE-雪's Chat",
+			"@aiovtue:matrix.rainzt.cn",
+			"@aiprate:matrix.rainzt.cn",
+			"AIOVTUE",
+			"aiovtue",
+			"雪的茶室",
+			"chat.yybb.us"
+		],
+		"isSelf": false
+	},
+	{
+		"name": "Somoe",
+		"owner": "Somoe",
+		"siteUrl": "https://somoe.xyz/",
+		"chatUrl": "https://somoe.xyz/chat",
+		"homeserver": "chat.gbk.ink",
+		"avatar": "https://somoe.xyz/qiumonster.webp",
+		"desc": "在文字的深海里，拾贝而行",
+		"badge": "Somoe Chat",
+		"color": "#ff9d76",
+		"aliases": [
+			"Somoe Chat",
+			"@qiumonster:chat.gbk.ink",
+			"QiuMonster",
+			"gbk.ink",
+			"gbk",
+			"chat.gbk.ink"
+		],
+		"isSelf": false
+	},
+	{
+		"name": "折腾进行时",
+		"owner": "折腾进行时",
+		"siteUrl": "https://www.9ll.uk/",
+		"chatUrl": "https://www.0dm.cn/chat/",
+		"homeserver": "matrix.0dm.cn",
+		"avatar": "https://www.9ll.uk/gallery/blog/avatar.avif",
+		"desc": "记录一些生活，爱好技术和相关的东西。",
+		"badge": "折腾进行时茶室",
+		"color": "#f2cb71",
+		"aliases": [
+			"折腾进行时茶室",
+			"@heyuan:matrix.0dm.cn",
+			"hy4962",
+			"鹤渊",
+			"9ll.uk",
+			"0dm.cn",
+			"matrix.0dm.cn"
+		],
+		"isSelf": false
+	},
+	{
+		"name": "昭鸢笺",
+		"owner": "昭鸢笺",
+		"siteUrl": "https://blog.mibase.top/",
+		"chatUrl": "https://blog.mibase.top/chat/",
+		"homeserver": "matrix.mibase.top",
+		"avatar": "https://blog.mibase.top/img/miro.jpg",
+		"desc": "昭有明朗向远之意，鸢乘风而上，笺以载笔墨见闻",
+		"badge": "昭鸢笺聊天室",
+		"color": "#f2cb71",
+		"aliases": [
+			"昭鸢笺聊天室",
+			"@zhaoyuan:matrix.mibase.top",
+			"miro-box",
+			"mibase.top"
+		],
+		"isSelf": false
+	},
+	{
+		"name": "清吾",
+		"owner": "清吾",
+		"siteUrl": "https://qingwu.ink",
+		"chatUrl": "https://qingwu.ink/chat",
+		"homeserver": "matrix.rainzt.cn",
+		"avatar": "https://www.qingwu.ink/images/avatar.jpg",
+		"desc": "写技术、记生活，一个温馨二次元的小屋。",
+		"badge": "清吾长亭",
+		"color": "#c23a55",
+		"aliases": [
+			"清吾长亭",
+			"@qingwu:matrix.rainzt.cn",
+			"@qingwuzf:matrix.rainzt.cn",
+			"hjphh11",
+			"听雨",
+			"听雨茶室",
+			"qingwu"
+		],
+		"isSelf": false
+	}
+]
