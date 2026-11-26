@@ -40,5 +40,7 @@ unshare --mount --net --propagation private bash -eu -c '
   export YTDLP_PATH="$PWD/fixture-downloader"
   export CHAT_INTERACTION_FIXTURE=1 FIXTURE_CHUNK_MS=16
   export CHAT_MUSIC_CACHE_DIR="$PWD/data/music_cache" CHAT_SHARED_MUSIC_DIR="$PWD/data/shared_music"
-  exec timeout 80s nice -n 10 node interaction.mjs
+  limit=80
+  if [[ ${CHAT_INTERACTION_SOAK:-0} == 1 ]]; then limit=175; fi
+  exec timeout "${limit}s" nice -n 10 node interaction.mjs
 ' bash "$candidate"

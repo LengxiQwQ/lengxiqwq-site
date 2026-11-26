@@ -47,6 +47,7 @@ async function connect(name, room = 'chat') {
     token,
     results: new Map(),
     cards: [],
+    errors: [],
     init: null,
     send(packet) {
       ws.send(JSON.stringify(packet));
@@ -62,6 +63,7 @@ async function connect(name, room = 'chat') {
       c.state = p;
     }
     if (p.type === 'music:request_result') c.results.set(p.requestId, p);
+    if (p.type === 'error') c.errors.push(p);
     if (p.type === 'chat:message' && p.message.content?.startsWith('[LX:音乐分享]')) c.cards.push(p.message);
   });
   await until(() => c.init, 'join ' + name);
@@ -269,17 +271,33 @@ try {
   const link = new URL(cards[0].sharedAudioUrl);
   const audio = await fetch(origin + link.pathname);
   assert.equal(digest(Buffer.from(await audio.arrayBuffer())), digest(bytes));
-  const sharedText =
-    '[LX:音乐分享]\n> 🎵 ' +
-    shareId +
-    '\n<!--lx-music:' +
-    Buffer.from(JSON.stringify({ ...track(shareId), sharedAudioUrl: cards[0].sharedAudioUrl })).toString(
-      'base64url',
-    ) +
-    '-->';
-  b.send({ type: 'chat:send', content: sharedText, attachments: [], mentionEntities: [] });
+  function sendCard(id, sharedAudioUrl) {
+    const payload = Buffer.from(JSON.stringify({ ...track(id), sharedAudioUrl })).toString('base64url');
+    b.send({
+      type: 'chat:send',
+      content: `[LX:音乐分享]\n> 🎵 ${id}\n<!--lx-music:${payload}-->`,
+      attachments: [],
+      mentionEntities: [],
+    });
+  }
+  const failedShare = await fetch(origin + '/api/music/share', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + b.token, 'X-Auth-Kind': 'guest', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ track: track('offline') }),
+  });
+  const failure = await failedShare.json();
+  assert.equal(failedShare.status, 503);
+  assert.equal(failure.ok, false);
+  assert.ok(!failure.sharedAudioUrl);
+  assert.match(failure.error, /稍后重试/);
+  // A stale client might still send the card. Verify the sender gets feedback before anyone sees it.
+  sendCard('offline', '');
+  await until(() => b.errors.some((e) => e.code === 'SHARE_AUDIO_REQUIRED' && /还没发出/.test(e.message)), 'failed share feedback');
+  sendCard(shareId, cards[0].sharedAudioUrl);
   await Promise.all(clients.map((c) => until(() => c.cards.length === 1, 'receive playable card')));
+  assert.ok(clients.every((c) => c.cards[0].content.includes('🎵 ' + shareId)));
   assert.equal(new Set(clients.map((c) => c.cards[0].msgUid)).size, 1);
+  metric('upstream failure then a valid share', { failure: failure.code, playableCardsPerListener: 1 });
   metric('crowded room', {
     listeners: clients.length,
     rangeP95Ms: p95(mediaTimes),
@@ -517,6 +535,52 @@ try {
     startedFrom: lastCurrent,
     idleThenPlayed: current(b),
   });
+  if (process.env.CHAT_INTERACTION_SOAK === '1') {
+    const started = performance.now();
+    const latencies = [];
+    let rangeReads = 0;
+    let reconnects = 0;
+    let round = 0;
+    while (performance.now() - started < 90_000) {
+      const id = 'repeat' + (round % 4);
+      const oldUid = a.state.current.uid;
+      assert.ok((await enqueue(a, id)).ok);
+      const playing = new URL(a.state.current.track.proxyUrl);
+      const media = Array.from({ length: 8 }, async (_, i) => {
+        const offset = Math.floor(length * ((i + round) % 8) / 8);
+        const response = await fetch(origin + playing.pathname + playing.search, {
+          headers: { Range: `bytes=${offset}-${offset + 65535}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        assert.equal(response.status, 206);
+        assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes.subarray(offset, offset + 65536));
+        rangeReads++;
+      });
+      const changing = performance.now();
+      skim(a);
+      await Promise.all([stateIs(a, id), stateIs(b, id), stateIs(returned, id)]);
+      latencies.push(Math.round(performance.now() - changing));
+      b.send({ type: 'music:skip', playUid: oldUid });
+      if (round % 5 === 0) {
+        const rejoined = await connect('mobile-returning');
+        assert.equal(rejoined.state.current.uid, a.state.current.uid);
+        assert.equal(rejoined.state.current.startedAt, a.state.current.startedAt);
+        rejoined.ws.close();
+        await until(() => rejoined.ws.readyState === WebSocket.CLOSED, 'mobile disconnect');
+        reconnects++;
+      }
+      await Promise.all(media);
+      assert.equal(current(b), id);
+      assert.deepEqual(queue(b), []);
+      round++;
+      await sleep(1000);
+    }
+    assert.equal(healthErrors.length, 0);
+    metric('continuous listening, skipping and reconnecting', {
+      elapsedSeconds: Math.round((performance.now() - started) / 1000),
+      rounds: round, rangeReads, reconnects, skipP95Ms: p95(latencies),
+    });
+  }
   for (const c of [...clients, returned]) if (c !== a && c !== b) c.ws.close();
   await sleep(500);
   const cleaned = await stats();

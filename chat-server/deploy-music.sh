@@ -46,6 +46,13 @@ if [[ "$qq_room" == true || "$actual_gateway" == "$reliability_base" || "$actual
 fi
 card_base=5d38d9bbdc00a6f458a8cd8bec993a92138fdacbeb4aa871dd3a7bf339667312
 card_gateway=cfc2fe11c5daa349f7531962752a293f49e862507158c362acf66a864d906441
+# The newer chat gateway accepts the same music patch while preserving its other changes.
+updated_card_base=fb82c1f50447a86eff98d624e3061d36c621943a450416b965dbb3981189136d
+updated_card_gateway=c2ed94b46e830264146cc783a1c8318784ae0e6dbc85d764ba52707021186797
+if [[ "$actual_gateway" == "$updated_card_base" || "$actual_gateway" == "$updated_card_gateway" ]]; then
+  card_base=$updated_card_base
+  card_gateway=$updated_card_gateway
+fi
 card_release=false
 if [[ "$actual_gateway" == "$card_base" || "$actual_gateway" == "$card_gateway" ]]; then
   card_release=true
