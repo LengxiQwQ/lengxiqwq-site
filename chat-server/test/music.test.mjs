@@ -20,7 +20,7 @@ const track = id => ({ id: 'qq:' + id, provider: 'qq', sourceId: id, title: id, 
 const actor = { userKey: 'member', name: 'Member' };
 const playable = item => ({ ...item, streamUrl: origin + '/audio/' + item.sourceId });
 
-test('a missed primary starts both alternatives before either alternative returns', async () => {
+test('a missed primary advances immediately and a slow secondary does not block the third provider', async () => {
   const starts = [];
   const pending = new Map();
   const lookup = lookupPreferredProviders(['qq', 'kugou', 'netease'], id => {
@@ -29,6 +29,8 @@ test('a missed primary starts both alternatives before either alternative return
     return new Promise(resolve => pending.set(id, resolve));
   }, 1000);
   await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(starts, ['qq', 'kugou']);
+  await new Promise(resolve => setTimeout(resolve, 350));
   assert.deepEqual(starts, ['qq', 'kugou', 'netease']);
   pending.get('netease')({ playable: track('lower') });
   pending.get('kugou')({ playable: track('higher') });
@@ -525,7 +527,7 @@ test('a request arriving during a rotation lookup takes priority without removin
   assert.deepEqual(mgr.getRotationQueue().map(item => item.id), ['qq:rotation-next']);
 });
 
-test('unattended rotation plays the closest version before moving to the next song', async t => {
+test('unattended rotation skips a different recording and plays the next song', async t => {
   const original = { ...recording('original'), sourcePlatform: 'applemusic', sourceTrackId: 'original' };
   const live = recording('live', { title: 'Morning (Live)' });
   const closest = recording('long-studio', { durationSec: 190 });
@@ -536,11 +538,8 @@ test('unattended rotation plays the closest version before moving to the next so
   mgr.setFallbackPlaylist('selected', [original, next], 'Selected', { start: false });
   mgr.rotationDeck = [original, next];
   await mgr.advanceNext();
-  assert.equal(mgr.current.track.id, closest.id);
-  assert.deepEqual(mgr.current.track.rotationReplacement, { title: original.title, artist: original.artist });
-  assert.equal(mgr.current.track.playbackSelection.mode, 'automatic-alternative');
-  assert.equal(mgr.current.track.playbackSelection.original.platform, 'applemusic');
-  assert.deepEqual(mgr.rotationDeck, [next]);
+  assert.equal(mgr.current.track.id, next.id);
+  assert.equal(mgr.current.track.rotationReplacement, undefined);
   const noEligible = await rotationRegistry([differentArtist, unrelated])
     .resolveRotationTrack(original, playable, { autoSelectAlternative: true });
   assert.equal(noEligible.playable, undefined);
@@ -1322,8 +1321,8 @@ test('backup search promotes secure artwork and cools down on provider throttlin
   const result = await provider.search('Song', 4, 1);
   assert.equal(result.tracks[0].cover, 'https://imge.kugou.com/stdmusic/200/cover.jpg');
   assert.equal(result.hasMore, true);
-  assert.equal(await provider.resolveStream(hash), null);
-  assert.equal(await provider.resolveStream(hash), null);
+  await assert.rejects(provider.resolveStream(hash), /暂时受限/);
+  await assert.rejects(provider.resolveStream(hash), /暂时受限/);
   assert.equal(lookups, 1);
 });
 
@@ -1400,4 +1399,25 @@ test('a temporary supplier response is not cached as a missing recording', async
     await assert.rejects(registry.resolvePlayable(track('id'), origin, 'fixture'), /temporarily unavailable/);
   }
   assert.equal(calls, 2);
+});
+
+test('consecutive requests resolve in parallel and commit in click order', async t => {
+  const mgr = await manager(t, { resolvePlayable: async item => playable(item) });
+  const releaseFirst = Promise.withResolvers();
+  const secondFound = Promise.withResolvers();
+  mgr.resolveRotationSource = async item => {
+    if (item.sourceId === 'one') await releaseFirst.promise;
+    else secondFound.resolve();
+    return { playable: playable(item) };
+  };
+  const context = { owner: {}, active: () => true, searchFallback: true };
+  const first = mgr.enqueueWithAlternatives(track('one'), actor, context);
+  const second = mgr.enqueueWithAlternatives(track('two'), actor, { ...context, beforeCommit: first });
+  await secondFound.promise;
+  assert.equal(mgr.current, null);
+  releaseFirst.resolve();
+  assert.equal((await first).ok, true);
+  assert.equal((await second).ok, true);
+  assert.equal(mgr.current.track.sourceId, 'one');
+  assert.deepEqual(mgr.queue.map(item => item.track.sourceId), ['two']);
 });

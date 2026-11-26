@@ -170,7 +170,7 @@ interface Props {
 		currentLyric?: string;
 	}) => void;
 	onAudioDiagnosticChange?: (diagnostic: LocalAudioDiagnostic | null) => void;
-	onNotify?: (message: string, tone?: "default" | "error" | "success") => void;
+	onNotify?: (message: string, tone?: "default" | "error" | "success" | "share") => void;
 	onClose?: () => void;
 }
 
@@ -744,7 +744,6 @@ async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTra
 			if (track.id) nextIds.add(track.id);
 			if (res.track?.id) nextIds.add(res.track.id);
 			if (taKey) nextTAs.add(taKey);
-			onNotify?.(`已将《${track.title}》收藏到全站共享收藏`, "success");
 
 			// 触发星星爆发动效
 			const nextSparkles = new Set(favSparkleTrackIds);
@@ -769,7 +768,6 @@ async function handleToggleFavoriteTrack(rawTrack?: ChatMusicTrack | PlaylistTra
 			if (track.id) nextIds.delete(track.id);
 			if (res.track?.id) nextIds.delete(res.track.id);
 			if (taKey) nextTAs.delete(taKey);
-			onNotify?.(`已取消收藏《${track.title}》`, "success");
 
 			// 取消收藏时立即清除星星动效
 			const nextSparkles = new Set(favSparkleTrackIds);
@@ -817,6 +815,19 @@ async function toggleFavoriteCurrentTrack(): Promise<void> {
 		await handleToggleFavoriteTrack(currentPlay.track);
 	} finally {
 		isFavToggling = false;
+	}
+}
+
+let sharingIds = $state<string[]>([]);
+
+async function shareFromPanel(track: ChatMusicTrack, menu = false) {
+	if (!onShareTrack || sharingIds.includes(track.id)) return;
+	sharingIds = [...sharingIds, track.id];
+	const activeMenu = trackContextMenu;
+	try {
+		if (await onShareTrack(track) && menu && trackContextMenu === activeMenu) closeTrackContextMenu();
+	} finally {
+		sharingIds = sharingIds.filter(id => id !== track.id);
 	}
 }
 
@@ -924,7 +935,7 @@ async function copyTrackInfo(track: ChatMusicTrack) {
 	const text = `${track.title} - ${track.artist || "未知歌手"}`;
 	try {
 		await navigator.clipboard.writeText(text);
-		onNotify?.(`已复制：${text}`, "success");
+		onNotify?.(`已复制：${text}`, "default");
 	} catch {
 		onNotify?.("复制失败，请手动复制", "error");
 	}
@@ -2205,12 +2216,13 @@ async function handleRefreshPlaylist(playlist: PlaylistSummary): Promise<void> {
 			fresh.payload,
 		);
 		if (personalPlaylistAuth !== auth) return;
-		onNotify?.(`已刷新《${updated.title}》（共 ${updated.trackCount} 首）`, "success");
 		invalidatePlaylistCaches(playlist.id);
-		void loadPlaylists(true);
+		await loadPlaylists(true);
 		if (selectedPlaylist?.id === playlist.id) {
 			await openPlaylistDetail(playlist.id, true, updated);
 		}
+		if (personalPlaylistAuth !== auth) return;
+		onNotify?.(`已刷新《${updated.title}》（共 ${updated.trackCount} 首）`, "success");
 	} catch (err) {
 		onNotify?.(err instanceof Error ? err.message : "刷新歌单失败", "error");
 	} finally {
@@ -2289,8 +2301,8 @@ async function handleSaveRotation() {
 	try {
 		rotation = await saveRoomRotation(chatServerUrl, roomId, { kind: "waline", token: walineToken }, setting);
 		rotationExpanded = false;
-		onNotify?.("已保存本房间的轮播设置", "success");
 		await loadPlaylists(true);
+		onNotify?.("已保存本房间的轮播设置", "success");
 	} catch (error) {
 		rotationError = error instanceof Error ? error.message : "保存失败，请重试";
 	} finally {
@@ -2328,6 +2340,8 @@ async function handleTogglePlaylistFlag(
 				updatedAt: updated.updatedAt,
 			};
 		}
+		invalidatePlaylistCaches(playlist.id);
+		await loadPlaylists(true);
 		if (flag === "isPublic") {
 			onNotify?.(
 				updated.isPublic
@@ -2343,8 +2357,6 @@ async function handleTogglePlaylistFlag(
 				"success",
 			);
 		}
-		invalidatePlaylistCaches(playlist.id);
-		await loadPlaylists(true);
 	} catch (err) {
 		onNotify?.(err instanceof Error ? err.message : "更新歌单权限失败", "error");
 	} finally {
@@ -2378,9 +2390,9 @@ async function handleDeletePlaylist(playlist: PlaylistSummary): Promise<void> {
 			selectedPlaylist = null;
 			playlistTrackFilter = "";
 		}
-		onNotify?.(`已删除歌单《${playlist.title}》`, "success");
 		invalidatePlaylistCaches(playlist.id);
 		await loadPlaylists(true);
+		onNotify?.(`已删除歌单《${playlist.title}》`, "success");
 	} catch (err) {
 		onNotify?.(err instanceof Error ? err.message : "删除歌单失败", "error");
 	} finally {
@@ -3258,24 +3270,10 @@ async function requestTrack(song: ChatMusicTrack, anchor?: HTMLElement) {
 		const accepted = await onEnqueueTrack(song, anchor);
 		if (!accepted) {
 			if (pendingAutoUnmuteTrackId === song.id) pendingAutoUnmuteTrackId = "";
-			const next = new Set(enqueuingTrackIds);
-			for (const k of keysToAdd) next.delete(k);
-			enqueuingTrackIds = next;
 		} else {
 			selectQueueTab("request");
-			window.setTimeout(() => {
-				let changed = false;
-				const next = new Set(enqueuingTrackIds);
-				for (const k of keysToAdd) {
-					if (next.has(k)) {
-						next.delete(k);
-						changed = true;
-					}
-				}
-				if (changed) enqueuingTrackIds = next;
-			}, 3500);
 		}
-	} catch {
+	} finally {
 		const next = new Set(enqueuingTrackIds);
 		for (const k of keysToAdd) next.delete(k);
 		enqueuingTrackIds = next;
@@ -3639,21 +3637,14 @@ $effect(() => {
   {/snippet}
 
   {#snippet rotationTrackRow(item: RotationQueueItem, index?: number)}
-    {@const normalizedProvider =
-      item.sourcePlatform === "netease" || item.id.startsWith("netease:")
-        ? "netease"
-        : item.sourcePlatform === "kugou" || item.id.startsWith("kugou:")
-          ? "kugou"
-          : item.sourcePlatform === "youtube" || item.id.startsWith("youtube:")
-            ? "youtube"
-            : item.sourcePlatform === "local" || item.id.startsWith("local:")
-              ? "local"
-              : "qq"}
+    {@const platform = item.sourcePlatform || item.id.split(":")[0]}
     {@const toTrack: ChatMusicTrack = {
       id: item.id,
-      provider: normalizedProvider,
+      provider: platform === "qqmusic" ? "qq" : platform,
       sourceId: item.sourceTrackId || item.id.replace(/^[a-z_]+:/i, ""),
-      sourcePlatform: (item.sourcePlatform as any) || "qqmusic",
+      sourcePlatform: platform,
+      sourceTrackId: item.sourceTrackId,
+      isrc: item.isrc,
       playlistId: item.sourcePlaylistId,
       title: item.title,
       artist: item.artist,
@@ -4287,16 +4278,20 @@ $effect(() => {
           <!-- 左：分享（最左） + 收藏（其次），与右侧两键镜像对称 -->
           <div class="grid grid-cols-2 justify-items-center min-w-0">
             {#if onShareTrack}
-              <ChatTooltip text="分享到茶室">
+              <ChatTooltip text={currentPlay && sharingIds.includes(currentPlay.track.id) ? "正在准备分享…" : "分享到茶室"}>
                 <button
                   type="button"
-                  disabled={!currentPlay}
+                  disabled={!currentPlay || sharingIds.includes(currentPlay.track.id)}
                   class="inline-flex h-8 w-8 items-center justify-center rounded-lg active:scale-95 transition-colors border-none bg-transparent cursor-pointer text-[var(--chat-meta-color)] hover:text-(--primary) disabled:opacity-40 disabled:cursor-not-allowed"
-                  aria-label="分享当前歌曲到茶室"
+                  aria-label={currentPlay && sharingIds.includes(currentPlay.track.id) ? "正在准备分享" : "分享当前歌曲到茶室"}
+                  aria-busy={Boolean(currentPlay && sharingIds.includes(currentPlay.track.id))}
                   onclick={() => {
-                    if (currentPlay?.track) void onShareTrack(currentPlay.track);
+                    if (currentPlay?.track) void shareFromPanel(currentPlay.track);
                   }}
                 >
+                  {#if currentPlay && sharingIds.includes(currentPlay.track.id)}
+                    <span aria-hidden="true" class="h-4 w-4 rounded-full border-2 border-current border-r-transparent motion-safe:animate-spin"></span>
+                  {:else}
                   <svg class="w-4.5 h-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <circle cx="18" cy="5" r="3" />
                     <circle cx="6" cy="12" r="3" />
@@ -4304,6 +4299,7 @@ $effect(() => {
                     <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
                     <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
                   </svg>
+                  {/if}
                 </button>
               </ChatTooltip>
             {:else}
@@ -6429,11 +6425,8 @@ $effect(() => {
           type="button"
           role="menuitem"
           class="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-left border-none bg-transparent text-inherit hover:bg-(--primary)/12 hover:text-(--primary) cursor-pointer transition-colors"
-          onclick={() => {
-            const target = ctxTrack;
-            closeTrackContextMenu();
-            void onShareTrack(target);
-          }}
+          disabled={sharingIds.includes(ctxTrack.id)}
+          onclick={() => void shareFromPanel(ctxTrack, true)}
         >
           <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="18" cy="5" r="3" />
@@ -6442,7 +6435,7 @@ $effect(() => {
             <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
             <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
           </svg>
-          <span>分享到聊天室</span>
+          <span>{sharingIds.includes(ctxTrack.id) ? "正在准备分享…" : "分享到聊天室"}</span>
         </button>
       {/if}
 

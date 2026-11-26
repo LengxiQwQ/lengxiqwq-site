@@ -634,38 +634,7 @@ export function toEnqueueableTrack(
 	playlistId: string,
 ): ChatMusicTrack {
 	const platform = item.sourcePlatform === "qqmusic" ? "qq" : item.sourcePlatform;
-	if (item.sourceTrackId && (platform === "qq" || platform === "netease" || platform === "kugou")) {
-		const sourceId = platform === "kugou" ? item.sourceTrackId.toUpperCase() : item.sourceTrackId;
-		return {
-			id: `${platform}:${sourceId}`,
-			provider: platform,
-			sourceId,
-			sourcePlatform: item.sourcePlatform,
-			playlistId,
-			position: item.position,
-			title: item.title,
-			artist: item.artist,
-			album: item.album || undefined,
-			cover: item.cover,
-			durationSec: item.durationSec,
-		};
-	}
-	if (item.matchedTrack?.id) {
-		return {
-			...item.matchedTrack,
-			playlistId,
-			position: item.position,
-			title: item.title,
-			artist: item.artist,
-			cover: item.matchedTrack.cover || item.cover,
-			durationSec: item.durationSec || item.matchedTrack.durationSec,
-		};
-	}
-	return {
-		id: `ext:${playlistId}:${item.position}`,
-		provider: "external",
-		sourceId: item.sourceTrackId || String(item.position),
-		sourcePlatform: item.sourcePlatform,
+	const original = {
 		playlistId,
 		position: item.position,
 		title: item.title,
@@ -673,7 +642,23 @@ export function toEnqueueableTrack(
 		album: item.album || undefined,
 		cover: item.cover,
 		durationSec: item.durationSec,
+		sourcePlatform: item.sourcePlatform,
+		sourceTrackId: item.sourceTrackId,
+		isrc: item.isrc,
+		url: item.sourceUrl,
 	};
+	if (item.sourceTrackId && ["qq", "netease", "kugou", "youtube"].includes(platform)) {
+		const sourceId = platform === "kugou" ? item.sourceTrackId.toUpperCase() : item.sourceTrackId;
+		return { ...original, id: platform + ":" + sourceId, provider: platform, sourceId };
+	}
+	if (item.matchedTrack?.id) {
+		return {
+			...item.matchedTrack, ...original,
+			cover: item.matchedTrack.cover || item.cover,
+			durationSec: item.durationSec || item.matchedTrack.durationSec,
+		};
+	}
+	return { ...original, id: `ext:${playlistId}:${item.position}`, provider: "external", sourceId: item.sourceTrackId || String(item.position) };
 }
 
 /**

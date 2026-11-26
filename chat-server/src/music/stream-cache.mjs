@@ -18,6 +18,10 @@ const queue = [];
 let downloading = 0;
 const inFlight = new Map();
 const active = new Map();
+// Bound retained seeking data independently of the background whole-track cache.
+const seekRanges = new Map();
+const MAX_SEEK_RANGES = 4;
+const MAX_SEEK_BYTES = 8 * 1024 * 1024;
 let cleanup;
 
 function paths(url, trackKey = '') {
@@ -64,7 +68,7 @@ async function openCachedWithFallback(url, trackKey = '') {
   const primary = paths(url, trackKey);
   const cached = await openCached(primary);
   if (cached) return { cached, files: primary };
-  if (trackKey) {
+  if (url && trackKey) {
     const legacy = paths(url, '');
     if (legacy.key !== primary.key) {
       const legacyCached = await openCached(legacy);
@@ -72,6 +76,11 @@ async function openCachedWithFallback(url, trackKey = '') {
     }
   }
   return { cached: null, files: primary };
+}
+
+// The caller owns the returned open file. A cache eviction cannot swap its contents.
+export function openCompletedTrack(trackKey) {
+  return openCached(paths('', trackKey));
 }
 
 export async function hasCachedAudio(url, trackKey = '') {
@@ -200,7 +209,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(FETCH_TIMEOUT)]);
 
-      diskStream = createWriteStream(part);
+      diskStream = createWriteStream(part, { signal });
       let diskError = null;
       diskStream.on('error', err => { diskError = err; });
 
@@ -357,7 +366,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
       })
   };
 
-  if (priority) {
+  if (priority && downloading < 6) {
     // Immediate execution for live listener streams even if background prefetch slots are busy
     downloading++;
     job.run().finally(() => {
@@ -366,7 +375,8 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
     });
   } else {
     if (queue.length < 16) {
-      queue.push(job);
+      if (priority) queue.unshift(job);
+      else queue.push(job);
       drainQueue();
     } else {
       inFlight.delete(files.key);
@@ -380,6 +390,7 @@ function startInFlightDownload(url, trackKey = '', priority = false) {
 }
 
 export function prefetchAudio(url, priorityOrReferer = false, _mimeType, trackKey = '') {
+  if (!url) return Promise.resolve(true);
   const isWarm = priorityOrReferer === 'warm';
   const priority = isWarm || (typeof priorityOrReferer === 'boolean' ? priorityOrReferer : false);
   const entry = startInFlightDownload(url, trackKey, priority);
@@ -429,23 +440,87 @@ async function* generateInFlightSlice(entry, start, end, signal) {
       break;
     }
 
-    await new Promise((resolve, reject) => {
-      const onWake = () => {
-        cleanupWait();
-        resolve();
-      };
-      const onAbort = () => {
-        cleanupWait();
-        reject(signal.reason || new Error('aborted'));
-      };
-      const cleanupWait = () => {
-        entry.waiters.delete(onWake);
-        signal.removeEventListener('abort', onAbort);
-      };
-      entry.waiters.add(onWake);
-      signal.addEventListener('abort', onAbort, { once: true });
-    });
+    await waitForAudioChunk(entry, signal);
   }
+}
+
+function waitForAudioChunk(entry, signal) {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const onWake = () => {
+      cleanupWait();
+      resolve();
+    };
+    const onAbort = () => {
+      cleanupWait();
+      reject(signal.reason || new Error('aborted'));
+    };
+    const cleanupWait = () => {
+      entry.waiters.delete(onWake);
+      signal.removeEventListener('abort', onAbort);
+    };
+    entry.waiters.add(onWake);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function acquireSeekRange(url, start, end, size) {
+  const key = JSON.stringify([url, start, end, size]);
+  const length = end - start + 1;
+  let entry = seekRanges.get(key);
+  if (!entry) {
+    if (seekRanges.size >= MAX_SEEK_RANGES || length > MAX_SEEK_BYTES) return null;
+    const controller = new AbortController();
+    entry = { chunks: [], waiters: new Set(), readers: 0, controller, complete: false, failed: false };
+    seekRanges.set(key, entry);
+    const discard = () => { if (seekRanges.get(key) === entry) seekRanges.delete(key); };
+    void (async () => {
+      const idle = idleWatchdog(controller, 8000);
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(FETCH_TIMEOUT)]);
+      try {
+        const response = await fetchAudio(url, { range: 'bytes=' + start + '-' + end, signal });
+        const type = response.headers.get('content-type') || '';
+        if (response.status !== 206 || !response.body || /html|json/i.test(type) ||
+            response.headers.get('content-range') !== 'bytes ' + start + '-' + end + '/' + size) {
+          await response.body?.cancel();
+          throw new Error('upstream did not provide the requested audio range');
+        }
+        let received = 0;
+        for await (const chunk of Readable.fromWeb(response.body)) {
+          received += chunk.length;
+          if (received > length) throw new Error('oversized audio range');
+          idle.touch();
+          entry.chunks.push(chunk);
+          notifyWaiters(entry);
+        }
+        if (received !== length) throw new Error('incomplete audio range');
+        entry.complete = true;
+        // Let clients from the same burst reuse even very short ranges.
+        setTimeout(() => {
+          entry.expired = true;
+          if (!entry.readers) discard();
+        }, 250).unref();
+      } catch (error) {
+        entry.failed = true;
+        entry.error = error;
+        discard();
+      } finally {
+        idle.stop();
+        notifyWaiters(entry);
+      }
+    })();
+  }
+  entry.readers++;
+  return {
+    entry,
+    release() {
+      entry.readers--;
+      if (!entry.readers && ((!entry.complete && !entry.failed) || entry.expired)) {
+        if (!entry.complete) entry.controller.abort();
+        if (seekRanges.get(key) === entry) seekRanges.delete(key);
+      }
+    }
+  };
 }
 
 const responseHeaders = {
@@ -509,13 +584,24 @@ export async function handleStreamProxyRequest(req, res, url, _referer, mimeType
       return;
     }
 
+    if (!url) {
+      res.writeHead(410, errorHeaders).end();
+      return;
+    }
+
     // Progressive In-Flight Stream-Tee: start or join a single shared upstream download.
     // Wait ONLY for the upstream response headers + first 12 magic bytes (~100ms), never the whole file!
-    const shared = inFlight.get(primaryFiles.key) ||
-      (req.method !== 'HEAD' ? startInFlightDownload(url, trackKey, true) : null);
+    const shared = req.method === 'HEAD' ? inFlight.get(primaryFiles.key) : startInFlightDownload(url, trackKey, true);
 
     if (shared) {
-      const headerOk = await shared.headerPromise;
+      let wake;
+      const closed = new Promise(resolve => {
+        wake = () => resolve(false);
+        if (signal.aborted) wake();
+        else signal.addEventListener('abort', wake, { once: true });
+      });
+      const headerOk = await Promise.race([shared.headerPromise, closed])
+        .finally(() => signal.removeEventListener('abort', wake));
       if (signal.aborted) return;
 
       if (shared.persisted && shared.chunks.length === 0) {
@@ -555,26 +641,30 @@ export async function handleStreamProxyRequest(req, res, url, _referer, mimeType
         const start = slice ? slice.start : 0;
         const end = slice ? slice.end : size - 1;
 
-        // If the requested range starts within already downloaded bytes (or within 256KB lookahead),
-        // stream progressively from the shared in-memory chunk buffer with zero duplicate upstream requests!
-        if (shared.complete || start <= shared.bytesReceived + IN_FLIGHT_LOOKAHEAD_BYTES) {
-          res.writeHead(slice ? 206 : 200, {
-            ...responseHeaders,
-            'X-Audio-Cache': 'HIT',
-            'Content-Type': shared.type || mimeType || 'audio/mpeg',
-            'Accept-Ranges': 'bytes',
-            'Content-Length': end - start + 1,
-            ...(slice && { 'Content-Range': 'bytes ' + start + '-' + end + '/' + size })
-          });
-          if (req.method === 'HEAD') {
-            res.end();
-          } else {
-            await pipeline(
-              Readable.from(generateInFlightSlice(shared, start, end, signal)),
-              progress,
-              res,
-              { signal }
-            );
+        const farAhead = !shared.complete && start > shared.bytesReceived + IN_FLIGHT_LOOKAHEAD_BYTES;
+        const seek = farAhead && req.method !== 'HEAD' ? acquireSeekRange(url, start, end, size) : null;
+        if (!farAhead || seek || req.method === 'HEAD') {
+          try {
+            let source = seek?.entry || shared;
+            if (seek) {
+              // Don't send a successful status before the first upstream bytes are available.
+              if (!source.chunks.length && !source.failed && !source.complete) await waitForAudioChunk(source, signal);
+              if (source.failed) source = shared;
+              signal.throwIfAborted();
+            }
+            res.writeHead(slice ? 206 : 200, {
+              ...responseHeaders,
+              'X-Audio-Cache': seek ? 'MISS' : 'HIT',
+              'Content-Type': shared.type || mimeType || 'audio/mpeg',
+              'Accept-Ranges': 'bytes',
+              'Content-Length': end - start + 1,
+              ...(slice && { 'Content-Range': 'bytes ' + start + '-' + end + '/' + size })
+            });
+            if (req.method === 'HEAD') res.end();
+            else await pipeline(Readable.from(generateInFlightSlice(source, source === shared ? start : 0, source === shared ? end : end - start, signal)),
+              progress, res, { signal });
+          } finally {
+            seek?.release();
           }
           return;
         }

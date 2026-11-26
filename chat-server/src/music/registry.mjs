@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { signStreamProxyUrl, verifyStreamProxyToken } from './stream-signer.mjs';
 import { probeAudio } from './audio-source.mjs';
-import { hasCachedAudio } from './stream-cache.mjs';
+import { hasCachedAudio, openCompletedTrack } from './stream-cache.mjs';
 import { isMusicSourceId, normalizeIsrc, normalizeMusicTrack } from './music-input.mjs';
 import { lookupPreferredProviders } from './provider-routing.mjs';
 
@@ -489,8 +489,8 @@ export class MusicRegistry {
 
     let priorityOrder;
     if (isOverseasCatalog) {
-      // Apple Music and Spotify default to YouTube Music, then fallback to domestic (qq, netease, kugou)
-      priorityOrder = ['youtube', 'qq', 'netease', 'kugou'];
+      // Imported catalogs have no native audio provider.
+      priorityOrder = ['qq', 'netease', 'youtube', 'kugou'];
     } else if (platformProvider) {
       // Prioritize the native platform of the playlist/track, then others
       const rest = ['qq', 'netease', 'kugou', 'youtube'].filter(id => id !== platformProvider);
@@ -537,14 +537,13 @@ export class MusicRegistry {
   async resolveRotationTrack(item, resolve, options = {}) {
     const ordered = this.providerOrder(item, options.preferredTrack);
     const budgetMs = options.budgetMs ?? (options.alternatives ? (ordered.length > 1 && !options.exactOnly ? 6500 : 10_500) : 2800);
-    if (!ordered.length) return { temporaryFailure: false };
+    if (!ordered.length) return { temporaryFailure: true };
     const deadline = Date.now() + budgetMs;
-    const lookup = (id, signal) => this.resolveProviderRecording(item, resolve, id, {
-      ...options, alternatives: options.alternatives || options.autoSelectAlternative, deadline, signal
+    const domesticDeadline = Date.now() + 10_500;
+    const lookup = (id, signal, downloadGate) => this.resolveProviderRecording(item, resolve, id, {
+      ...options, alternatives: options.alternatives || options.autoSelectAlternative, deadline: id === 'youtube' ? deadline : Math.min(deadline, domesticDeadline), signal, downloadGate
     });
-    const result = ordered.length === 1
-      ? await lookup(ordered[0])
-      : await lookupPreferredProviders(ordered, lookup, budgetMs, options.autoSelectAlternative ? Infinity : 3);
+    const result = await lookupPreferredProviders(ordered, lookup, budgetMs, options.autoSelectAlternative ? Infinity : 3);
     if (result.verifiedMatch) {
       const track = normalizeMusicTrack(result.playable);
       if (track) this.saveMatch(this.matchStorageKey(item, track.provider), track, STORED_MATCH_TTL_MS);
@@ -571,7 +570,7 @@ export class MusicRegistry {
   }
 
   async resolveProviderRecording(item, resolve, providerId, {
-    alternatives = false, autoSelectAlternative = false, exactOnly = false, exclude = () => false, budgetMs, preferredTrack, random = false, deadline, signal
+    alternatives = false, autoSelectAlternative = false, exactOnly = false, exclude = () => false, budgetMs, preferredTrack, random = false, deadline, signal, downloadGate
   }) {
     const platform = item.sourcePlatform || item.provider;
     const sourceId = item.sourceTrackId || item.sourceId ||
@@ -583,6 +582,7 @@ export class MusicRegistry {
     const seen = new Set();
     let temporaryFailure = false;
     let lastFailureDetail = '';
+    let limited = false;
     const uncertainSources = new Set();
     const bounded = async (operation, maxMs, stage) => {
       const started = performance.now();
@@ -606,10 +606,14 @@ export class MusicRegistry {
       if (!track || exclude(track) || seen.has(track.id)) return null;
       seen.add(track.id);
       try {
-        return await bounded(() => resolve(track), maxMs, 'audio');
+        if (downloadGate && !this.resolved.get(track.id)?.source) {
+          await downloadGate;
+        }
+        return await bounded(() => resolve(track), providerId === 'youtube' && exactOnly ? 36_000 : maxMs, 'audio');
       } catch (err) {
         temporaryFailure = true;
         uncertainSources.add(track.id);
+        limited ||= Boolean(err?.isRiskControl);
         lastFailureDetail = err?.message || '音源检查超时';
         return null;
       }
@@ -631,6 +635,7 @@ export class MusicRegistry {
         return result.tracks || [];
       } catch (err) {
         temporaryFailure = true;
+        limited ||= Boolean(err?.isRiskControl);
         lastFailureDetail = err?.message || '搜索上游响应超时';
         return [];
       }
@@ -735,7 +740,9 @@ export class MusicRegistry {
       !recordings.some(option => uncertainSources.has(option.track.id));
     const choice = clearMatch(checkedRecordings, completeCheck);
     if (choice) return remember(choice.track);
-    if (exactOnly || !alternatives || random) return { temporaryFailure, error: lastFailureDetail };
+    if (exactOnly || !alternatives || random) return {
+      temporaryFailure: temporaryFailure || recordings.length > MAX_SOURCE_CHECKS, limited, error: lastFailureDetail
+    };
 
     const remaining = ranked
       .filter(option => option.relation && !seen.has(option.track.id) &&
@@ -753,7 +760,7 @@ export class MusicRegistry {
       alternatives: [...distinctRecordings.map(({ track, relation }) => ({ track, relation })), ...checked.filter(Boolean)]
         .slice(0, autoSelectAlternative ? Infinity : 3),
       temporaryFailure,
-      error: lastFailureDetail
+      limited, error: lastFailureDetail
     };
   }
 
@@ -762,12 +769,27 @@ export class MusicRegistry {
     const id = track.sourceId;
     if (!provider || !isMusicSourceId(track.provider, id)) return null;
     const key = provider.id + ':' + id;
+    const cached = await openCompletedTrack(key + ':128');
+    if (cached) {
+      await cached.file.close();
+      const proxyUrl = signStreamProxyUrl(origin, '', signSecret, '', cached.type, key + ':128');
+      return { ...track, id: key, streamUrl: proxyUrl, proxyUrl, directUrl: '',
+        audioSource: { checked: true, channel: 'cache', mimeType: cached.type },
+        lrcUrl: origin.replace(/\/+$/, '') + '/api/music/lyric?provider=' + provider.id + '&id=' + encodeURIComponent(id) };
+    }
     let resolved = fresh ? null : this.resolved.get(key);
+    if (provider.id === 'youtube' && resolved?.source?.url?.startsWith('https://www.youtube.com/watch?')) {
+      resolved = null; // The downloaded file was evicted. A watch page is not a media URL.
+    }
     if (!resolved || resolved.expiresAt <= Date.now()) {
       let pending = this.resolving.get(key);
       if (!pending) {
         if (this.resolving.size >= 16) throw new Error('Music source resolution is busy');
-        pending = provider.resolveStream(id).then(source => {
+        let timeout;
+        const deadline = new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('音源请求超时')), provider.id === 'youtube' ? 38_000 : 14_000);
+        });
+        pending = Promise.race([Promise.resolve().then(() => provider.resolveStream(id)), deadline]).then(source => {
           if (this.resolved.size >= 256) this.resolved.delete(this.resolved.keys().next().value);
           const result = {
             source,
@@ -777,7 +799,10 @@ export class MusicRegistry {
           };
           this.resolved.set(key, result);
           return result;
-        }).finally(() => this.resolving.delete(key));
+        }).finally(() => {
+          clearTimeout(timeout);
+          this.resolving.delete(key);
+        });
         this.resolving.set(key, pending);
       }
       resolved = await pending;
@@ -789,7 +814,8 @@ export class MusicRegistry {
       : provider.id === 'kugou' ? 'https://www.kugou.com/'
       : provider.id === 'youtube' ? 'https://www.youtube.com/'
       : 'https://y.qq.com/';
-    const proxyUrl = signStreamProxyUrl(base, source.url, signSecret, referer, source.mimeType, key + ':128');
+    const diskOnly = provider.id === 'youtube' && source.url.startsWith('https://www.youtube.com/watch?');
+    const proxyUrl = signStreamProxyUrl(base, diskOnly ? '' : source.url, signSecret, referer, source.mimeType, key + ':128');
     const directUrl = provider.id === 'qq' && typeof source.url === 'string' && source.url.startsWith('http')
       ? source.url.replace(/^http:\/\//i, 'https://')
       : '';

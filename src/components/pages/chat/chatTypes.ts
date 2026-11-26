@@ -434,6 +434,7 @@ export interface CurrentPlayback {
 }
 
 export interface RotationQueueItem {
+	isrc?: string;
 	id: string;
 	entryId?: string;
 	sourcePlatform?: string;

@@ -353,6 +353,7 @@ export class MusicManager {
       return {
         id,
         entryId: this.rotationEntryIds.get(track),
+        isrc: track.isrc,
         sourcePlatform: platform,
         sourceTrackId: sourceId,
         title: track.title || '未知曲目',
@@ -540,7 +541,7 @@ export class MusicManager {
       : { ok: false, code: 'NO_SOURCE', error: '这次没抽到可播曲目，可以再抽一次' };
   }
 
-  async enqueueWithAlternatives(original, requester, { owner, active, offerId, choiceId, searchFallback = false }) {
+  async enqueueWithAlternatives(original, requester, { owner, active, offerId, choiceId, searchFallback = false, beforeCommit }) {
     const confirming = offerId !== undefined;
     const offer = this.requestOffers.get(owner);
     const choice = confirming && offer?.choices.find(option => option.track.id === choiceId);
@@ -551,15 +552,19 @@ export class MusicManager {
     const requested = confirming ? offer.original : original;
     if (!requested) return { ok: false, code: 'TRACK_CHANGED', error: '找不到这条歌单曲目，请刷新歌单后重试' };
 
+    const commitDeadline = Date.now() + 40_000;
     try {
       const result = await withTimeout(
         choice
           ? this.resolve(choice.track, { fresh: true, rejectTransient: true }).then(playable => ({ playable }))
           : this.resolveRotationSource(requested, {
-              alternatives: true, exactOnly: searchFallback, preferredTrack: !searchFallback && this.getPreferredTrack(requested, requester.userKey)
+              alternatives: true, exactOnly: searchFallback, budgetMs: searchFallback ? 38_000 : undefined, preferredTrack: !searchFallback && this.getPreferredTrack(requested, requester.userKey)
             }),
-        11_000
+        searchFallback ? 39_000 : 11_000
       );
+      if (result.playable && beforeCommit) {
+        await withTimeout(beforeCommit, Math.max(1, commitDeadline - Date.now()), '等待前一首点歌超时');
+      }
       if (!active()) return { ok: false, code: 'ROOM_CHANGED', error: '聊天室已切换，请重新点歌' };
       if (confirming && offer.expiresAt <= Date.now()) {
         return { ok: false, code: 'OFFER_EXPIRED', error: '可播版本已过期，请重新查找' };
@@ -665,7 +670,7 @@ export class MusicManager {
         try {
           const cross = await this.resolveRotationSource(rawTrack, {
             budgetMs: 4500,
-            autoSelectAlternative: true
+            exactOnly: true, alternatives: true
           });
           if (cross?.playable) {
             playable = cross.playable;
@@ -1099,7 +1104,7 @@ export class MusicManager {
         const ms = Math.min(3500, deadline - Date.now());
         try {
           return await withTimeout(this.resolveRotationSource(candidate, {
-            exclude, budgetMs: ms, autoSelectAlternative: true
+            exclude, budgetMs: ms, exactOnly: true, alternatives: true
           }), ms + 50);
         } catch {
           return { temporaryFailure: true };
@@ -1180,7 +1185,7 @@ export class MusicManager {
     if (candidate && candidate !== this.rotationDeck[0] && this.rotationLookahead?.candidate !== candidate) {
       const exclude = track => track.id === playable.id || track.id === this.current?.track.id;
       this.rotationLookahead = { candidate, at: Date.now(), pending:
-        withTimeout(this.resolveRotationSource(candidate, { exclude, budgetMs: 3500, autoSelectAlternative: true }), 3550)
+        withTimeout(this.resolveRotationSource(candidate, { exclude, budgetMs: 3500, exactOnly: true, alternatives: true }), 3550)
           .catch(() => null) };
     }
     if (this.advancing?.generation !== this.generation) this.onStateChanged();
@@ -1254,7 +1259,7 @@ export class MusicManager {
           rejectTransient: true, fresh: Boolean(prepared?.checkedAt || next.sourceRetryAt)
         });
         if (!playable) {
-          const cross = await this.resolveRotationSource(next.track, { budgetMs: 4500, autoSelectAlternative: true }).catch(() => null);
+          const cross = await this.resolveRotationSource(next.track, { budgetMs: 4500, exactOnly: true, alternatives: true }).catch(() => null);
           playable = cross?.playable || null;
         }
       } catch {
@@ -1582,9 +1587,10 @@ export class MusicManager {
           : this.resolveRotationSource(requested, {
               alternatives: Boolean(context.allowAlternatives),
               exactOnly: context.searchFallback,
+              budgetMs: context.searchFallback ? 38_000 : undefined,
               preferredTrack: !context.searchFallback && this.getPreferredTrack(requested, actor.userKey)
             }),
-        11_000
+        context.searchFallback ? 39_000 : 11_000
       );
       if (!stillCurrent()) return changed();
       if (result.playable) {

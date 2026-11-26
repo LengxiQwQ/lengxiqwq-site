@@ -384,6 +384,7 @@ function decodeBase64UrlUtf8(encoded: string): string {
 }
 
 export function inferMusicSourcePageUrl(data: {
+	sourceTrackId?: string;
 	url?: string;
 	sourceUrl?: string;
 	provider?: string;
@@ -396,14 +397,16 @@ export function inferMusicSourcePageUrl(data: {
 		return direct;
 	}
 	const platform = (data.sourcePlatform || data.provider || "").toLowerCase();
-	const rawId = (data.sourceId || data.id || "").replace(/^[a-z_]+:/i, "").trim();
+	const rawId = (data.sourceTrackId || data.sourceId || data.id || "").replace(/^[a-z_]+:/i, "").trim();
 	if (!rawId) return "";
-	if (platform === "qq" || platform === "tencent") {
+	if (platform === "qq" || platform === "qqmusic" || platform === "tencent") {
 		return `https://y.qq.com/n/ryqq/songDetail/${encodeURIComponent(rawId)}`;
 	}
 	if (platform === "netease" || platform === "ncm") {
 		return `https://music.163.com/#/song?id=${encodeURIComponent(rawId)}`;
 	}
+	if (platform === "applemusic" && /^\d+$/.test(rawId)) return "https://music.apple.com/song/" + rawId;
+	if (platform === "spotify" && /^[a-zA-Z0-9]+$/.test(rawId)) return "https://open.spotify.com/track/" + rawId;
 	if (platform === "youtube" || platform === "yt") {
 		return `https://www.youtube.com/watch?v=${encodeURIComponent(rawId)}`;
 	}
@@ -643,67 +646,35 @@ export async function buildMusicSharePayload(params: {
 		url?: string;
 		durationSec?: number;
 	};
-}): Promise<{ content: string; hasSharedAudio: boolean }> {
+}): Promise<string> {
 	const { chatServerUrl, auth, track } = params;
-	const base = (chatServerUrl || "").replace(/\/+$/, "");
-
-	let sharedAudioUrl = "";
-	let sharedExpiresAt = 0;
-	let enrichedTrack = { ...track };
-
-	if (base && auth?.token?.trim()) {
-		try {
-			const headers: Record<string, string> = {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${auth.token.trim()}`,
-				"X-Auth-Kind": auth.kind,
-			};
-			const resp = await fetch(`${base}/api/music/share`, {
-				method: "POST",
-				headers,
-				body: JSON.stringify({ track }),
-			});
-			if (resp.ok) {
-				const json = (await resp.json().catch(() => null)) as {
-					ok?: boolean;
-					sharedAudioUrl?: string;
-					expiresAt?: number;
-					track?: {
-						id?: string;
-						provider?: string;
-						sourceId?: string;
-						title?: string;
-						artist?: string;
-						album?: string;
-						cover?: string;
-						durationSec?: number;
-					} | null;
-				} | null;
-				if (json?.ok) {
-					sharedAudioUrl = json.sharedAudioUrl || "";
-					sharedExpiresAt = json.expiresAt || 0;
-					if (json.track) {
-						enrichedTrack = {
-							...enrichedTrack,
-							id: json.track.id || enrichedTrack.id,
-							provider: json.track.provider || enrichedTrack.provider,
-							sourceId: json.track.sourceId || enrichedTrack.sourceId,
-							cover: enrichedTrack.cover || json.track.cover,
-							durationSec:
-								enrichedTrack.durationSec || json.track.durationSec,
-						};
-					}
-				}
-			}
-		} catch {
-			// Graceful fallback without 7-day audio URL
-		}
+	const base = chatServerUrl.replace(/\/+$/, "");
+	if (!base || !auth?.token?.trim()) throw new Error("请重新连接聊天室后再分享");
+	let response: Response;
+	try {
+		response = await fetch(base + "/api/music/share", {
+			method: "POST",
+			headers: { "Content-Type": "application/json", Authorization: "Bearer " + auth.token.trim(), "X-Auth-Kind": auth.kind },
+			body: JSON.stringify({ track }),
+			signal: AbortSignal.timeout(46_000),
+		});
+	} catch {
+		throw new Error("暂时没能准备好音频");
 	}
-
-	const content = formatLxMusicShare({
-		...enrichedTrack,
-		sharedAudioUrl,
-		sharedExpiresAt,
+	const result = await response.json().catch(() => null);
+	if (!response.ok || !result?.ok) throw new Error(result?.error || "暂时没能准备好音频");
+	const url = new URL(result.sharedAudioUrl || "/", base);
+	if (url.origin !== new URL(base).origin || !/^\/api\/music\/shared\/[a-f0-9]{16}\.(?:mp3|m4a|flac|ogg|webm)$/i.test(url.pathname) ||
+		!(result.size > 0) || !(result.expiresAt > Date.now())) throw new Error("暂时没能生成可试听的分享链接");
+	return formatLxMusicShare({
+		...track,
+		sourceUrl: inferMusicSourcePageUrl(track),
+		id: result.track?.id || track.id,
+		provider: result.track?.provider || track.provider,
+		sourceId: result.track?.sourceId || track.sourceId,
+		cover: track.cover || result.track?.cover,
+		durationSec: result.track?.durationSec || track.durationSec,
+		sharedAudioUrl: url.href,
+		sharedExpiresAt: result.expiresAt,
 	});
-	return { content, hasSharedAudio: Boolean(sharedAudioUrl) };
 }

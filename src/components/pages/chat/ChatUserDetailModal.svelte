@@ -53,7 +53,7 @@ interface Props {
 		targetUserKey: string,
 		badges: ChatCustomBadge[],
 	) => Promise<boolean> | boolean;
-	onToast?: (message: string, tone?: "default" | "error" | "success") => void;
+	onToast?: (message: string, tone?: "default" | "error" | "success" | "share") => void;
 }
 
 const TRACK_PAGE_SIZE = 50;

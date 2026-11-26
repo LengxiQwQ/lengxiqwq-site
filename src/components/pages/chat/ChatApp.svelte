@@ -182,6 +182,7 @@ let roomOnlineMembers = $state<ChatOnlineMember[]>([]);
 let hasGlobalPresence = false;
 let roomMentionMembers = $state<ChatMentionCandidate[]>([]);
 let globalMemberDirectory = $state<ChatMentionCandidate[]>([]);
+let pendingProfileUpdate: Record<string, unknown> | null = null;
 const mentionMembers = $derived.by<ChatMentionCandidate[]>(() => {
 	const onlineKeys = new Set(onlineMembers.map((member) => member.userKey));
 	const merged = new Map<string, ChatMentionCandidate>();
@@ -341,6 +342,7 @@ function clearPendingSongRequests() {
 
 let isSkippingTrack = $state(false);
 let skipPendingTimer: number | null = null;
+let pendingPlayQueuedUid: string | null = null;
 let clockOffsetMs = $state(0);
 let hasClockSample = false;
 const musicClock = new MusicClock();
@@ -354,7 +356,7 @@ const pendingClockPings = new WeakMap<
 let chatAudio: HTMLAudioElement | null = $state(null);
 let noticeText = $state("");
 let noticeVisible = $state(false);
-let noticeTone = $state<"default" | "error" | "success">("default");
+let noticeTone = $state<"default" | "error" | "success" | "share">("default");
 let targetMessageUid = $state("");
 let showInterconnect = $state(false);
 let activeThreads = $state<ChatActiveThreadItem[]>([]);
@@ -1192,6 +1194,7 @@ const normalizedChatServer = $derived(normalizeServerUrl(chatServerUrl));
 
 function clearSkipPending() {
 	isSkippingTrack = false;
+	pendingPlayQueuedUid = null;
 	if (skipPendingTimer !== null) {
 		window.clearTimeout(skipPendingTimer);
 		skipPendingTimer = null;
@@ -1205,6 +1208,7 @@ function startSkipPending() {
 	}
 	skipPendingTimer = window.setTimeout(() => {
 		isSkippingTrack = false;
+		pendingPlayQueuedUid = null;
 		skipPendingTimer = null;
 	}, 4500);
 }
@@ -1218,7 +1222,6 @@ function handleSkipTrack() {
 	recordMusicEvent("command-skip", musicState?.current?.uid);
 	if (sendPacket({ type: "music:skip", playUid: musicState?.current?.uid })) {
 		startSkipPending();
-		showNotice("已跳过当前播放", "success");
 	}
 }
 
@@ -1229,27 +1232,8 @@ function handleVoteSkip() {
 	}
 	if (isSkippingTrack) return;
 	recordMusicEvent("command-vote_skip", musicState?.current?.uid);
-	const hasVoted = Boolean(
-		musicState?.current?.skipVotes.includes(currentUser.userKey),
-	);
-	const willPass =
-		!hasVoted &&
-		(musicState?.voteCount ?? 0) + 1 >= (musicState?.voteThreshold ?? 2);
-	if (
-		sendPacket({
-			type: "music:vote_skip",
-			playUid: musicState?.current?.uid,
-		})
-	) {
-		if (willPass) {
-			startSkipPending();
-			showNotice("投票切歌已通过，正在切歌", "success");
-		} else if (!hasVoted) {
-			showNotice(
-				`已投票切歌（当前 ${(musicState?.voteCount ?? 0) + 1}/${musicState?.voteThreshold ?? 2} 票）`,
-				"default",
-			);
-		}
+	if (sendPacket({ type: "music:vote_skip", playUid: musicState?.current?.uid })) {
+		startSkipPending();
 	}
 }
 
@@ -1267,7 +1251,7 @@ function handlePlayQueued(uid: string) {
 		})
 	) {
 		startSkipPending();
-		showNotice("已切换为播放该曲目", "success");
+		pendingPlayQueuedUid = uid;
 	}
 }
 
@@ -1422,7 +1406,7 @@ function sendRotationRequest(track: RotationQueueItem, choiceId?: string) {
 	rotationRequestTimer = window.setTimeout(() => {
 		clearRotationRequest();
 		rotationAction = { entryId, offer, code: "SOURCE_TEMPORARY", message: "未收到切播结果，请检查当前播放后重试" };
-	}, track.entryId ? 13_000 : 6000);
+	}, track.entryId ? 43_000 : 6000);
 }
 
 function handlePlayRotationTrack(track: RotationQueueItem, anchor?: HTMLElement) {
@@ -1506,20 +1490,23 @@ function placeGlobalToast(node: HTMLDivElement) {
 	};
 }
 
-function showNotice(msg: string, tone?: "default" | "error" | "success") {
+function showNotice(msg: string, tone?: "default" | "error" | "success" | "share", retry: (() => void) | null = null) {
+	retryShare = retry;
 	noticeText = msg;
 	noticeTone =
 		tone ??
 		(/(失败|不可用|异常|错误|无法|未找到|超时|拒绝|拦截|未授予|无效|不能|失效)/.test(msg)
 			? "error"
-			: /(成功|已加入|已点播|已收藏|已导入|已刷新|已保存|已删除|已更新|已跳过|已重新洗牌|已开启|已复制|已同步|已移出|已切换)/.test(msg)
-				? "success"
-				: "default");
+			: /(?:已分享|准备分享)/.test(msg)
+				? "share"
+				: /(成功|已加入|已点播|已导入|已刷新|已保存|已删除|已开启|已同步|已移出)/.test(msg)
+					? "success"
+					: "default");
 	noticeVisible = true;
 	if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 	noticeTimer = window.setTimeout(() => {
 		noticeVisible = false;
-	}, 3600);
+	}, retry ? 12_000 : 3600);
 }
 
 function pushTestStorageKey(userKey: string) {
@@ -1877,6 +1864,8 @@ function connectRoom(roomId: string) {
 					if (packet.self.authType === "waline") {
 						syncChatUserToWalineStorage(packet.self);
 					}
+					syncMemberProfileLists(packet.self);
+					flushPendingProfileUpdate();
 				} else if (currentAuth) {
 					clearStoredChatUser();
 					if (currentAuth.kind === "waline") {
@@ -2018,7 +2007,10 @@ function connectRoom(roomId: string) {
 					if (packet.user.authType === "waline") {
 						syncChatUserToWalineStorage(packet.user);
 					}
+					syncMemberProfileLists(packet.user);
+					flushPendingProfileUpdate();
 				} else {
+					pendingProfileUpdate = null;
 					clearStoredChatUser();
 				}
 				if (packet.user?.authType !== "waline") {
@@ -2258,6 +2250,10 @@ function connectRoom(roomId: string) {
 				// 撤回提示随 chat:recalled 原位替换；兼容旧客户端的广播不应追加到末尾。
 				if (packet.message.recalledMsgUid) break;
 				const isCurrent = packet.roomId === currentRoom;
+				if (shareReceipts.size && packet.message.userKey === currentUser?.userKey && packet.message.content) {
+					const card = parseLxShareCard(packet.message.content);
+					if (card?.kind === "music") shareReceipts.get(JSON.stringify([packet.roomId, card.sharedAudioUrl]))?.(true);
+				}
 				if (isCurrent) {
 					if (!messages.some((m) => m.msgUid === packet.message.msgUid)) {
 						messages = appendTimelineMessage(messages, packet.message);
@@ -2613,7 +2609,7 @@ function connectRoom(roomId: string) {
 				if (packet.ok) {
 					const title = rotationOrigin?.title;
 					clearRotationAction();
-					showNotice(title ? `已切换播放《${title}》` : "已切换播放选定曲目", "success");
+					showNotice(title ? `已切换播放《${title}》` : "已切换播放选定曲目", "default");
 					break;
 				}
 				if (packet.code === "AUTH_REQUIRED") openAuthModal();
@@ -2636,13 +2632,20 @@ function connectRoom(roomId: string) {
 				if (packet.roomId === currentRoom) {
 					const prevUid = musicState?.current?.uid ?? "";
 					const nextUid = packet.current?.uid ?? "";
-					const prevVotes = musicState?.voteCount ?? 0;
-					if (
-						!nextUid ||
-						nextUid !== prevUid ||
-						packet.voteCount !== prevVotes
-					) {
-						clearSkipPending();
+					const myKey = currentUser?.userKey;
+					const hadVote = !!myKey && !!musicState?.current?.skipVotes.includes(myKey);
+					const hasVote = !!myKey && !!packet.current?.skipVotes.includes(myKey);
+					if (isSkippingTrack && (nextUid !== prevUid || !nextUid || hasVote !== hadVote)) {
+						if (nextUid === prevUid && hasVote !== hadVote) {
+							clearSkipPending();
+							showNotice(hasVote ? `已投票切歌（${packet.voteCount}/${packet.voteThreshold} 票）` : "已撤回切歌投票", "default");
+						} else if (nextUid && nextUid !== prevUid && pendingPlayQueuedUid) {
+							clearSkipPending();
+							const currentTitle = packet.current?.track?.title;
+							showNotice(currentTitle ? `已切换播放《${currentTitle}》` : "已切换为播放该曲目", "success");
+						} else {
+							clearSkipPending();
+						}
 					}
 					if (!songOfferOrigin && rotationAction?.offer && !rotationAction.pending && nextUid !== rotationOfferPlayUid) {
 						rotationAction = { entryId: rotationAction.entryId, code: "PLAYBACK_CHANGED", message: "房间播放已变化，请重新查找" };
@@ -2690,6 +2693,13 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "error": {
+				if (packet.code === "SHARE_AUDIO_REQUIRED" && packet.shareUrl) {
+					const receipt = shareReceipts.get(JSON.stringify([currentRoom, packet.shareUrl]));
+					if (receipt) {
+						receipt(false);
+						break;
+					}
+				}
 				if (rotationAction?.pending) {
 					clearRotationRequest();
 					rotationAction = { entryId: rotationAction.entryId, message: packet.message };
@@ -2785,6 +2795,7 @@ function handleRoomSelect(roomId: string) {
 	clearPendingSongRequests();
 	fallbackSearch = undefined;
 	isRoomReady = false;
+	shareRoomRevision++;
 	currentRoom = roomId;
 	persistStoredRoom(roomId);
 	syncRoomUrl(roomId);
@@ -2971,6 +2982,45 @@ function handleOpenPlaylistFromProfile(
 	closeSplitRoom();
 }
 
+function syncMemberProfileLists(user: ChatSessionUser) {
+	const patchMember = <T extends { userKey: string; name: string; avatar?: string; url?: string; bio?: string; status?: string }>(
+		item: T,
+	): T => {
+		if (item.userKey !== user.userKey) return item;
+		return {
+			...item,
+			name: user.name,
+			avatar: user.avatar,
+			url: user.url,
+			bio: user.bio,
+			status: user.status,
+		};
+	};
+	roomOnlineMembers = roomOnlineMembers.map(patchMember);
+	onlineMembers = onlineMembers.map(patchMember);
+	roomMentionMembers = roomMentionMembers.map(patchMember);
+	globalMemberDirectory = globalMemberDirectory.map(patchMember);
+	if (userDetailSeed && userDetailSeed.userKey === user.userKey) {
+		userDetailSeed = {
+			...userDetailSeed,
+			name: user.name,
+			avatar: user.avatar,
+			url: user.url,
+			bio: user.bio,
+			status: user.status,
+		};
+	}
+}
+
+function flushPendingProfileUpdate() {
+	if (!pendingProfileUpdate) return;
+	const packet = pendingProfileUpdate;
+	if (sendPacket(packet)) {
+		pendingProfileUpdate = null;
+		showNotice("个人资料已更新");
+	}
+}
+
 function handleUpdateProfile(draft: ChatProfileDraft) {
 	if (!currentUser) return;
 	const cleanNick = draft.nickname.trim().slice(0, 16) || currentUser.name;
@@ -3009,6 +3059,7 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 	};
 	currentUser = updatedUser;
 	persistStoredChatUser(updatedUser);
+	syncMemberProfileLists(updatedUser);
 	if (currentUser.authType === "waline") {
 		syncChatUserToWalineStorage(updatedUser);
 		if (walineToken && walineServerUrl) {
@@ -3035,7 +3086,10 @@ function handleUpdateProfile(draft: ChatProfileDraft) {
 		});
 	}
 	if (sendPacket(packet)) {
+		pendingProfileUpdate = null;
 		showNotice("个人资料已更新");
+	} else {
+		pendingProfileUpdate = packet;
 	}
 }
 
@@ -3301,7 +3355,10 @@ function handleEnqueueTrack(track: ChatMusicTrack, anchor?: HTMLElement): Promis
 	return sendSongRequest(track, { anchor });
 }
 
-let sharingMusicTrackKey = "";
+let shareRoomRevision = 0;
+const sharingTracks = new Set<string>();
+const shareReceipts = new Map<string, (received: boolean) => void>();
+let retryShare = $state<(() => void) | null>(null);
 
 $effect(() => {
 	if (typeof window === "undefined") return;
@@ -3324,34 +3381,56 @@ async function handleShareMusicTrack(track: ChatMusicTrack): Promise<boolean> {
 		openAuthModal();
 		return false;
 	}
-	const key = track.id || `${track.title}:${track.artist}`;
-	if (sharingMusicTrackKey === key) return false;
-	sharingMusicTrackKey = key;
-	showNotice(`正在准备分享《${track.title}》...`, "default");
+	const room = currentRoom;
+	const auth = currentAuth;
+	const socket = ws;
+	const key = JSON.stringify([room, currentUser.userKey, track.id || [track.title, track.artist]]);
+	const revision = shareRoomRevision;
+	const stillHere = () => !isUnmounted && revision === shareRoomRevision && room === currentRoom && auth === currentAuth && socket === ws;
+	if (sharingTracks.has(key)) return false;
+	sharingTracks.add(key);
+	showNotice(`正在准备分享《${track.title}》`, "share");
+	const slow = window.setTimeout(() => {
+		if (stillHere()) showNotice(`正在为《${track.title}》查找并准备可试听的音频`, "share");
+	}, 3200);
+	let receiptKey = "";
+	let receiptTimer: number | undefined;
 	try {
-		const { content, hasSharedAudio } = await buildMusicSharePayload({
-			chatServerUrl: normalizedChatServer,
-			auth: currentAuth ?? undefined,
-			track,
+		const content = await buildMusicSharePayload({ chatServerUrl: normalizedChatServer, auth: auth ?? undefined, track });
+		if (!stillHere()) return false;
+		window.clearTimeout(slow);
+		const card = parseLxShareCard(content);
+		if (card?.kind !== "music" || !card.sharedAudioUrl) throw new Error("暂时没能生成可试听的分享链接");
+		const nextKey = JSON.stringify([room, card.sharedAudioUrl]);
+		if (shareReceipts.has(nextKey)) return false;
+		receiptKey = nextKey;
+		const receipt = new Promise<boolean | null>(resolve => {
+			shareReceipts.set(receiptKey, resolve);
+			receiptTimer = window.setTimeout(() => resolve(null), 6000);
 		});
-		const sent = handleSendMessage(content, [], []);
-		if (!sent) {
-			showNotice("发送失败，聊天连接暂时不可用，请重试", "error");
+		if (!handleSendMessage(content, [], [])) throw new Error("聊天连接暂时不可用");
+		const received = await receipt;
+		if (!stillHere()) return false;
+		if (received === false) throw new Error("分享音频已失效，请重试");
+		if (received === null) {
+			showNotice("没有收到聊天室的发送回执，请先查看消息记录", "default");
 			return false;
 		}
-		showNotice(
-			hasSharedAudio
-				? `已分享《${track.title}》到聊天室（7 天直链有效）`
-				: `已分享《${track.title}》到聊天室`,
-			"success",
-		);
+		showNotice(`已分享《${track.title}》到聊天室`, "share");
 		return true;
 	} catch (error) {
-		console.warn("Unable to share music track", error);
-		showNotice("分享歌曲失败，请稍后重试", "error");
+		if (stillHere()) {
+			const reason = error instanceof Error ? error.message : "暂时没能准备好音频";
+			showNotice(`《${track.title}》还没发出。${reason}`, "default", () => {
+				if (stillHere()) void handleShareMusicTrack(track);
+			});
+		}
 		return false;
 	} finally {
-		if (sharingMusicTrackKey === key) sharingMusicTrackKey = "";
+		window.clearTimeout(slow);
+		window.clearTimeout(receiptTimer);
+		shareReceipts.delete(receiptKey);
+		sharingTracks.delete(key);
 	}
 }
 
@@ -3388,7 +3467,7 @@ async function sendSongRequest(
 			if (!waiting) timer = window.setTimeout(() => {
 				finish(false);
 				reportUnsent("点歌未收到回应，请先查看待播队列");
-			}, 15_000);
+			}, 43_000);
 		};
 		const finish = (ok: boolean) => {
 			window.clearTimeout(timer);
@@ -4293,7 +4372,6 @@ onMount(() => {
             return;
           }
           sendPacket({ type: "music:remove", uid });
-          showNotice("已从待播队列中移除", "success");
         }}
         onRemoveRotationTrack={(track) => {
           if (!currentUser) {
@@ -4305,16 +4383,13 @@ onMount(() => {
             entryId: track.entryId,
             trackId: track.id,
           });
-          showNotice(`已跳过这轮播放《${track.title}》`, "success");
         }}
         onShuffleRotation={() => {
           if (!currentUser) {
             openAuthModal();
             return;
           }
-          if (sendPacket({ type: "music:shuffle_rotation" })) {
-            showNotice("已重新洗牌轮播队列", "success");
-          }
+          sendPacket({ type: "music:shuffle_rotation" });
         }}
         onPlayQueued={handlePlayQueued}
         onPlayRotationTrack={handlePlayRotationTrack}
@@ -4547,7 +4622,7 @@ onMount(() => {
   <!-- 全局底部悬浮提示气泡（挂载至 body 顶层，避免被弹窗/抽屉/壁纸遮挡） -->
   <div
     use:placeGlobalToast
-    class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[2147483647] px-4 py-2.5 rounded-xl text-white text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md transition-all duration-300 max-w-[90vw] text-center border pointer-events-none select-none inline-flex items-center gap-2 {noticeTone === 'error' ? 'bg-red-600/95 dark:bg-red-600/90 border-red-400/50 shadow-red-950/35' : noticeTone === 'success' ? 'bg-emerald-600/95 dark:bg-emerald-600/90 border-emerald-400/50 shadow-emerald-950/35' : 'bg-black/85 dark:bg-neutral-800/90 border-white/10'} {noticeVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-95'}"
+    class="fixed bottom-8 left-1/2 -translate-x-1/2 z-[2147483647] px-4 py-2.5 rounded-xl text-white text-xs sm:text-sm font-medium shadow-2xl backdrop-blur-md transition-all duration-300 max-w-[90vw] text-center border pointer-events-none select-none inline-flex items-center gap-2 {noticeTone === 'error' ? 'bg-red-600/95 dark:bg-red-600/90 border-red-400/50 shadow-red-950/35' : noticeTone === 'success' ? 'bg-emerald-600/95 dark:bg-emerald-600/90 border-emerald-400/50 shadow-emerald-950/35' : noticeTone === 'share' ? 'bg-amber-500/95 dark:bg-amber-500/90 border-amber-300/60 shadow-amber-950/35' : 'bg-black/85 dark:bg-neutral-800/90 border-white/10'} {noticeVisible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-2 scale-95'}"
     role="status"
     aria-live="polite"
     aria-hidden={!noticeVisible}
@@ -4563,7 +4638,18 @@ onMount(() => {
         <circle cx="12" cy="12" r="10" />
         <path d="m9 12 2 2 4-4" />
       </svg>
+    {:else if noticeTone === "share"}
+      <svg class="w-4 h-4 shrink-0 text-amber-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="18" cy="5" r="3" />
+        <circle cx="6" cy="12" r="3" />
+        <circle cx="18" cy="19" r="3" />
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+      </svg>
     {/if}
     <span>{noticeText}</span>
+    {#if noticeVisible && retryShare}
+      <button type="button" class="pointer-events-auto cursor-pointer underline" onclick={retryShare}>重试</button>
+    {/if}
   </div>
 </div>

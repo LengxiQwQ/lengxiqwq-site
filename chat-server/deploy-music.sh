@@ -44,7 +44,14 @@ current_release=false
 if [[ "$qq_room" == true || "$actual_gateway" == "$reliability_base" || "$actual_gateway" == "$reliability_gateway" ]]; then
   current_release=true
 fi
+card_base=5d38d9bbdc00a6f458a8cd8bec993a92138fdacbeb4aa871dd3a7bf339667312
+card_gateway=cfc2fe11c5daa349f7531962752a293f49e862507158c362acf66a864d906441
+card_release=false
+if [[ "$actual_gateway" == "$card_base" || "$actual_gateway" == "$card_gateway" ]]; then
+  card_release=true
+fi
 modern_gateway=$current_release
+if [[ "$card_release" == true ]]; then modern_gateway=true; fi
 case "$actual_gateway" in
   "$multi_source_legacy_gateway"|"$live_recording_base"|"$live_recording_gateway"|"$recording_gateway"|"$live_guest_playlists_gateway"|"$guest_playlists_gateway")
     modern_gateway=true ;;
@@ -75,6 +82,13 @@ if [[ "$modern_gateway" == true || "$actual_gateway" == "$rotation_base_gateway"
   if [[ "$current_release" == true ]]; then
     music_files+=(stream-cache.mjs stream-signer.mjs stream-timeouts.mjs)
   fi
+  if [[ "$card_release" == true ]]; then
+    music_files=(music-manager.mjs qq-music.mjs registry.mjs catalog-providers.mjs provider-routing.mjs
+      stream-cache.mjs stream-signer.mjs shared-audio.mjs music-card.mjs)
+  elif [[ "$current_release" == false ]]; then
+    # The current registry can play completed disk files on the older gateways as well.
+    music_files+=(stream-cache.mjs stream-signer.mjs stream-timeouts.mjs)
+  fi
   cp -a "$install_dir/src/music/." "$candidate/src/music/"
   for name in "${music_files[@]}"; do
     cp -p "$release_dir/src/music/$name" "$candidate/src/music/$name"
@@ -85,7 +99,10 @@ else
 fi
 (
   cd "$candidate"
-  if [[ "$qq_room" == true ]]; then
+  if [[ "$card_release" == true ]]; then
+    if [[ "$actual_gateway" == "$card_base" ]]; then git apply "$release_dir/gateway-music-card.patch"; fi
+    [[ $(sha256sum server.mjs | cut -d' ' -f1) == "$card_gateway" ]]
+  elif [[ "$qq_room" == true ]]; then
     if [[ "$actual_gateway" == "$qq_room_base" ]]; then
       git apply "$release_dir/qq-room-fallback.patch"
     fi
@@ -151,14 +168,14 @@ fi
       [[ $(sha256sum server.mjs | awk '{print $1}') == "$multi_source_legacy_gateway" ]]
     fi
   fi
-  if [[ "$current_release" == false && "$actual_gateway" != "$live_recording_gateway" && "$actual_gateway" != "$recording_gateway" && "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
+  if [[ "$card_release" == false && "$current_release" == false && "$actual_gateway" != "$live_recording_gateway" && "$actual_gateway" != "$recording_gateway" && "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
     git apply --check "$release_dir/recording-match.patch"
     git apply "$release_dir/recording-match.patch"
     expected_recording_gateway=$recording_gateway
     if [[ "$actual_gateway" == "$live_recording_base" ]]; then expected_recording_gateway=$live_recording_gateway; fi
     [[ $(sha256sum server.mjs | awk '{print $1}') == "$expected_recording_gateway" ]]
   fi
-  if [[ "$current_release" == false && "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
+  if [[ "$card_release" == false && "$current_release" == false && "$actual_gateway" != "$live_guest_playlists_gateway" && "$actual_gateway" != "$guest_playlists_gateway" ]]; then
     git apply --check "$release_dir/guest-playlists.patch"
     git apply "$release_dir/guest-playlists.patch"
     expected_guest_gateway=$guest_playlists_gateway
@@ -220,8 +237,29 @@ eb01ab315729726f9dac9a65e55ebb4136deb96281da0ead0a020e8ead6ac5f1  src/music/stre
 d422bbd8fac99044060373b536e0526b374bfab31b01b1e87f80134416b6c92a  src/db/database.mjs
 EOF
 fi
+if [[ "$card_release" == true ]]; then
+  while read -r baseline name; do
+    installed=$(sha256sum "$install_dir/src/music/$name" | cut -d' ' -f1)
+    desired=$(sha256sum "$release_dir/src/music/$name" | cut -d' ' -f1)
+    [[ "$installed" == "$baseline" || "$installed" == "$desired" ]] || { echo "Live module changed: $name" >&2; exit 1; }
+  done <<'EOF'
+bba0e339f077bcb5c0f278026a86ec31b85e802788b6b36448d081a9b265317d  qq-music.mjs
+5c68d751874a5469463db60884911df5dfb9ad9fe45a24fe4652bf84cbd6d08c  music-manager.mjs
+3b50b4b1a1ae7ff6f50f6b050dbe03cd5d55617da6fa6344ea9031ba76ea06de  catalog-providers.mjs
+0869085bb338fb1ab5d15934e6e55c1cd9e5f2f30c0ffabfbcb1ae1c2e5f6ed6  registry.mjs
+9ab2eaef203a310f53a22c09b681f4f1822964f23cbcdbe90ac0b7451632b357  provider-routing.mjs
+12c26cdc2d6a9f3ae890d7e6822f8fc8c250b8cc6f390991f6384bb90ea20c6f  shared-audio.mjs
+fb92373213b3ec2f21bb5ce807cd252c3030212e88e9e680500fd669b0b7735b  stream-cache.mjs
+96f68ab3deb36193c1363d8a35aeeb09fbed35a43307873d906f3c667b4a8510  stream-signer.mjs
+EOF
+  if [[ -e "$install_dir/src/music/music-card.mjs" ]]; then
+    cmp -s "$install_dir/src/music/music-card.mjs" "$release_dir/src/music/music-card.mjs" || exit 1
+  fi
+fi
 cp -a "$release_dir/test" "$candidate/test"
-(cd "$candidate" && CHAT_MUSIC_CACHE_DIR="$candidate/audio-cache" node --test test/music.test.mjs)
+tests=(test/music.test.mjs)
+if [[ "$card_release" == true ]]; then tests+=(test/music-card.test.mjs); fi
+(cd "$candidate" && CHAT_MUSIC_CACHE_DIR="$candidate/audio-cache" node --test "${tests[@]}")
 if [[ "$1" == "--check" ]]; then
   echo "Candidate checked. No running files changed."
   exit 0

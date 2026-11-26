@@ -370,10 +370,7 @@ async function handleEnqueue(event: MouseEvent) {
 	const anchor = event.currentTarget as HTMLElement;
 	isEnqueuing = true;
 	try {
-		const res = await onEnqueueTrack(toMusicTrack(), anchor);
-		if (res === true) {
-			onNotify?.(`已将《${data.title}》加入点歌台队列`, "success");
-		}
+		await onEnqueueTrack(toMusicTrack(), anchor);
 	} catch (err) {
 		onNotify?.(
 			err instanceof Error ? err.message : "点歌请求发送失败，请重试",

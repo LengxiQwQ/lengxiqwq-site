@@ -20,7 +20,7 @@ export const DEFAULT_CHAT_MUSIC_VOLUME: number = 0.8;
 const CHAT_MUSIC_VOLUME_STORAGE_KEY = "lx_chat_music_volume";
 const PREVIEW_MUTED_STORAGE_KEY = "lx_chat_music_preview_muted";
 const cardLyricsCache = new Map<string, PrivateCardLyricLine[]>();
-const fallbackUrlCache = new Map<string, string>();
+
 
 export function readStoredChatMusicVolume(
 	fallback: number = DEFAULT_CHAT_MUSIC_VOLUME,
@@ -553,29 +553,28 @@ class PrivateMusicController {
 		chatServerUrl: string,
 	): Promise<string> {
 		const key = getPrivateTrackKey(data);
-		const cached = fallbackUrlCache.get(key);
-		if (cached) return cached;
 		const base = (chatServerUrl || "").replace(/\/+$/, "");
 		if (!base) return "";
 		const resp = await fetch(`${base}/api/music/preview`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ track: toChatMusicTrack(data) }),
+			signal: AbortSignal.timeout(42_000),
 		});
-		if (!resp.ok) return "";
+
 		const json = (await resp.json().catch(() => null)) as {
 			ok?: boolean;
+			error?: string;
 			streamUrl?: string;
 			proxyUrl?: string;
 			directUrl?: string;
 			durationSec?: number;
 		} | null;
-		if (!json?.ok) return "";
+		if (!resp.ok || !json?.ok) throw new Error(json?.error || "试听暂时不可用");
 		if (json.durationSec && !this.durationSec && this.activeTrackKey === key) {
 			this.durationSec = json.durationSec;
 		}
 		const nextUrl = json.streamUrl || json.proxyUrl || json.directUrl || "";
-		if (nextUrl) fallbackUrlCache.set(key, nextUrl);
 		return nextUrl;
 	}
 
@@ -792,6 +791,7 @@ class PrivateMusicController {
 		this.isLoading = true;
 		this.scheduleSlowBuffering(140);
 		let primaryUrl = this.activeData.sharedAudioUrl || "";
+		let previewError = "暂无试听音源";
 		let allowFallback = true;
 
 		if (!primaryUrl) {
@@ -801,7 +801,8 @@ class PrivateMusicController {
 					this.activeData,
 					this.activeChatServerUrl,
 				);
-			} catch {
+			} catch (error) {
+				previewError = error instanceof Error && error.name === "Error" ? error.message : "试听连接暂时不可用";
 				primaryUrl = "";
 			}
 		}
@@ -810,7 +811,7 @@ class PrivateMusicController {
 
 		if (!primaryUrl) {
 			this.isLoading = false;
-			this.audioError = "暂无试听音源";
+			this.audioError = previewError;
 			notifyRoomPreviewState(false);
 			return;
 		}

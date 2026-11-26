@@ -3,6 +3,8 @@ export interface ChatMusicTrack {
 	provider?: string;
 	sourceId?: string;
 	sourcePlatform?: string;
+	sourceTrackId?: string;
+	isrc?: string;
 	playlistId?: string;
 	position?: number;
 	title: string;

@@ -256,7 +256,7 @@ export class QQMusicProvider {
       if (!response.ok) {
         await response.body?.cancel();
         if (response.status === 404) return null;
-        throw new Error('resolver HTTP ' + response.status);
+        throw Object.assign(new Error('resolver HTTP ' + response.status), { isRiskControl: response.status === 429 });
       }
       const json = await response.json();
       if (json?.code === 110001 || json?.code === 110002) {
@@ -266,8 +266,13 @@ export class QQMusicProvider {
         throw err;
       }
       const data = source.read(json);
-      if (data == null || typeof data !== 'object') return null;
-      if (typeof data.url !== 'string' || !data.url.trim()) return null;
+      if (typeof data?.url !== 'string' || !data.url.trim()) {
+        if (Number(json?.code) === 404) return null;
+        if (!data || (json?.code !== undefined && ![0, 200].includes(Number(json.code)))) {
+          throw Object.assign(new Error('取源服务暂时异常'), { isRiskControl: Number(json?.code) === 429 });
+        }
+        return null;
+      }
       if (!isAllowedStreamTarget(data.url)) throw new Error('untrusted audio host');
       const mimeType = await probeAudio(data.url);
       const durationVal = Number(data.interval || data.duration);
@@ -310,19 +315,21 @@ export class QQMusicProvider {
 
     let temporaryFailure = false;
     let lastFailureReason = '';
+    let limited = false;
     const attempt = source => this.trySource(cleanMid, source).catch(err => {
       if (source === vkeys128Source && err.isRiskControl && Date.now() >= this.accountRetryAt) {
         this.accountRetryAt = Date.now() + 60_000;
         console.warn('[MusicSource] vkeys-128 上游账号暂时受限，一分钟后重试');
       }
       temporaryFailure = true;
+      limited ||= Boolean(err?.isRiskControl);
       lastFailureReason = err?.message || '上游音源服务响应异常';
       return null;
     });
     if (Date.now() < this.accountRetryAt) {
-      if (!cyapiSource) throw new Error('Music source temporarily unavailable');
+      if (!cyapiSource) throw Object.assign(new Error('Music source temporarily unavailable'), { isRiskControl: true });
       const source = await this.trySource(cleanMid, cyapiSource);
-      if (!source) throw new Error('Music source temporarily unavailable');
+      if (!source) throw Object.assign(new Error('Music source temporarily unavailable'), { isRiskControl: true });
       return source;
     }
     const primaryPromise = attempt(vkeys128Source);
@@ -359,7 +366,7 @@ export class QQMusicProvider {
       );
       if (winner) return winner;
     } catch {
-      if (temporaryFailure) throw new Error('Music source temporarily unavailable: ' + (lastFailureReason || '上游接口响应异常'));
+      if (temporaryFailure) throw Object.assign(new Error('Music source temporarily unavailable: ' + lastFailureReason), { isRiskControl: limited });
     }
 
     return null;

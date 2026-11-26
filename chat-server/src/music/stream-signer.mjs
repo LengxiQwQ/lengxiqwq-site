@@ -71,7 +71,9 @@ export function verifyStreamProxyToken(token, secret) {
     ) {
       return null;
     }
-    if (!isAllowedStreamTarget(parsed.u)) {
+    const diskOnly = parsed.u === '' && typeof parsed.k === 'string' &&
+      /^(?:qq|kugou|netease|youtube):[a-zA-Z0-9_-]{1,32}:128$/.test(parsed.k);
+    if (!diskOnly && !isAllowedStreamTarget(parsed.u)) {
       return null;
     }
     return {

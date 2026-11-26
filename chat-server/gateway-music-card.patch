@@ -1,0 +1,220 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -23,3 +23,4 @@
+ import { handleStreamProxyRequest, maintainAudioCache, prefetchAudio } from './src/music/stream-cache.mjs';
+-import { cacheSharedAudio, handleSharedAudioRequest, startSharedAudioCleanup } from './src/music/shared-audio.mjs';
++import { createMusicCardResolver } from './src/music/music-card.mjs';
++import { handleSharedAudioRequest, isReadyShare, startSharedAudioCleanup } from './src/music/shared-audio.mjs';
+ import { MusicManager } from './src/music/music-manager.mjs';
+@@ -1020,2 +1021,3 @@
+ const musicRegistry = new MusicRegistry(musicProviders, { matchStore: chatDb, lookupArtistAliases: true });
++const resolveMusicCard = createMusicCardResolver(musicRegistry, SERVER_ORIGIN, STREAM_SIGN_SECRET);
+ const youtubeCandidates = new YoutubeCandidates(process.env.YOUTUBE_DATA_API_KEY);
+@@ -4311,7 +4313,6 @@
+ 
+-  // Music Share Cache (7-day TTL): POST /api/music/share
+-  if (url.pathname === '/api/music/share' && req.method === 'POST') {
++  if (req.method === 'POST' && ['/api/music/share', '/api/music/preview'].includes(url.pathname)) {
++    const share = url.pathname === '/api/music/share';
+     try {
+-      const caller = await resolveHttpCaller(req);
+-      if (!caller?.userKey) {
++      if (share && !(await resolveHttpCaller(req))?.userKey) {
+         res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
+@@ -4321,145 +4322,10 @@
+       const body = await readPlaylistJson(req);
+-      const rawTrack = body?.track;
+-      if (!rawTrack || (!rawTrack.title && !rawTrack.id)) {
+-        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+-        res.end(JSON.stringify({ ok: false, error: '歌曲信息不完整' }));
+-        return;
+-      }
+-
+-      let targetTrack = normalizeMusicTrack(rawTrack);
+-      let resolved = null;
+-      if (targetTrack?.provider && targetTrack?.sourceId) {
+-        resolved = await musicRegistry.resolvePlayable(targetTrack, SERVER_ORIGIN, STREAM_SIGN_SECRET).catch(() => null);
+-      }
+-      if (!resolved && typeof musicRegistry.resolvePlaylistTrack === 'function') {
+-        const matched = await musicRegistry.resolvePlaylistTrack(
+-          {
+-            title: rawTrack.title || targetTrack?.title || '',
+-            artist: rawTrack.artist || targetTrack?.artist || '',
+-            album: rawTrack.album || targetTrack?.album || '',
+-            cover: rawTrack.cover || targetTrack?.cover || '',
+-            durationSec: Number(rawTrack.durationSec || targetTrack?.durationSec || 0),
+-            sourcePlatform: rawTrack.sourcePlatform || targetTrack?.provider || '',
+-            sourceTrackId: rawTrack.sourceId || targetTrack?.sourceId || '',
+-            sourceUrl: rawTrack.url || rawTrack.sourceUrl || '',
+-          },
+-          SERVER_ORIGIN,
+-          STREAM_SIGN_SECRET
+-        ).catch(() => null);
+-        if (matched?.track) {
+-          resolved = matched.track;
+-        }
+-      }
+-
+-      let shared = null;
+-      if (resolved) {
+-        let upstreamUrl = resolved.directUrl || '';
+-        let mimeType = resolved.audioSource?.mimeType || 'audio/mpeg';
+-        if (!upstreamUrl && resolved.proxyUrl) {
+-          try {
+-            const pToken = new URL(resolved.proxyUrl).searchParams.get('token') || '';
+-            const verified = verifyStreamProxyToken(pToken, STREAM_SIGN_SECRET);
+-            if (verified?.url) {
+-              upstreamUrl = verified.url;
+-              mimeType = verified.mimeType || mimeType;
+-            }
+-          } catch {}
+-        }
+-        if (upstreamUrl) {
+-          shared = await cacheSharedAudio({
+-            origin: SERVER_ORIGIN,
+-            trackKey: resolved.id || (resolved.provider + ':' + resolved.sourceId),
+-            sourceUrl: upstreamUrl,
+-            mimeType,
+-            title: resolved.title || rawTrack.title || '',
+-            artist: resolved.artist || rawTrack.artist || '',
+-          }).catch((err) => {
+-            console.warn('[MusicShare] cacheSharedAudio fallback:', err?.message || err);
+-            return null;
+-          });
+-        }
+-      }
+-
++      const result = await resolveMusicCard(body?.track, share);
+       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+-      res.end(JSON.stringify({
+-        ok: true,
+-        shareId: shared?.shareId || '',
+-        sharedAudioUrl: shared?.sharedAudioUrl || '',
+-        expiresAt: shared?.expiresAt || 0,
+-        mimeType: shared?.mimeType || '',
+-        size: shared?.size || 0,
+-        cached: Boolean(shared?.cached),
+-        track: resolved ? {
+-          id: resolved.id,
+-          provider: resolved.provider,
+-          sourceId: resolved.sourceId,
+-          title: resolved.title,
+-          artist: resolved.artist,
+-          album: resolved.album || rawTrack.album || '',
+-          cover: resolved.cover || rawTrack.cover || '',
+-          durationSec: resolved.durationSec || rawTrack.durationSec || 0,
+-        } : null,
+-      }));
++      res.end(JSON.stringify({ ok: true, ...result }));
+     } catch (err) {
+-      console.error('[MusicShare] POST /api/music/share error:', err);
+-      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+-      res.end(JSON.stringify({ ok: false, error: '音乐分享缓存失败' }));
+-    }
+-    return;
+-  }
+-
+-  // Music Live Preview Fallback (when 7-day shared audio expired): POST /api/music/preview
+-  if (url.pathname === '/api/music/preview' && req.method === 'POST') {
+-    try {
+-      const body = await readPlaylistJson(req);
+-      const rawTrack = body?.track;
+-      if (!rawTrack || (!rawTrack.title && !rawTrack.id)) {
+-        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+-        res.end(JSON.stringify({ ok: false, error: '歌曲信息不完整' }));
+-        return;
+-      }
+-
+-      let targetTrack = normalizeMusicTrack(rawTrack);
+-      let resolved = null;
+-      if (targetTrack?.provider && targetTrack?.sourceId) {
+-        resolved = await musicRegistry.resolvePlayable(targetTrack, SERVER_ORIGIN, STREAM_SIGN_SECRET).catch(() => null);
+-      }
+-      if (!resolved && typeof musicRegistry.resolvePlaylistTrack === 'function') {
+-        const matched = await musicRegistry.resolvePlaylistTrack(
+-          {
+-            title: rawTrack.title || targetTrack?.title || '',
+-            artist: rawTrack.artist || targetTrack?.artist || '',
+-            album: rawTrack.album || targetTrack?.album || '',
+-            cover: rawTrack.cover || targetTrack?.cover || '',
+-            durationSec: Number(rawTrack.durationSec || targetTrack?.durationSec || 0),
+-            sourcePlatform: rawTrack.sourcePlatform || targetTrack?.provider || '',
+-            sourceTrackId: rawTrack.sourceId || targetTrack?.sourceId || '',
+-            sourceUrl: rawTrack.url || rawTrack.sourceUrl || '',
+-          },
+-          SERVER_ORIGIN,
+-          STREAM_SIGN_SECRET
+-        ).catch(() => null);
+-        if (matched?.track) {
+-          resolved = matched.track;
+-        }
+-      }
+-
+-      if (!resolved || (!resolved.streamUrl && !resolved.proxyUrl && !resolved.directUrl)) {
+-        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+-        res.end(JSON.stringify({ ok: false, error: '暂未找到可试听的音源' }));
+-        return;
+-      }
+-
+-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+-      res.end(JSON.stringify({
+-        ok: true,
+-        streamUrl: resolved.streamUrl || resolved.proxyUrl || resolved.directUrl,
+-        proxyUrl: resolved.proxyUrl || '',
+-        directUrl: resolved.directUrl || '',
+-        durationSec: resolved.durationSec || 0,
+-      }));
+-    } catch (err) {
+-      console.error('[MusicPreview] POST /api/music/preview error:', err);
+-      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+-      res.end(JSON.stringify({ ok: false, error: '试听解析失败' }));
++      const status = err.status || err.statusCode || 503;
++      res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
++      res.end(JSON.stringify({ ok: false, code: err.code || 'SOURCE_TEMPORARY',
++        error: err.status ? err.message : '暂时没能准备好音频，请稍后重试' }));
+     }
+@@ -5312,8 +5312,15 @@
+         }
++        const parallel = packet.allowAlternatives === true && requestId && !packet.randomPlaylistId && !packet.offerId;
++        if ((ws.pendingMusicCount || 0) >= 12) {
++          reply({ ok: false, code: 'SOURCE_TEMPORARY', error: '这次点歌未加入，正在处理多首歌曲' });
++          return;
++        }
++        ws.pendingMusicCount = (ws.pendingMusicCount || 0) + 1;
+         const previous = ws.songRequestTail;
+         let release;
+-        const turn = new Promise(resolve => { release = resolve; });
++        const done = new Promise(resolve => { release = resolve; });
++        const turn = Promise.all([previous, done]);
+         ws.songRequestTail = turn;
+         try {
+-          if (previous) {
++          if (previous && !parallel) {
+             if (requestId) ws.send(JSON.stringify({ type: 'music:request_wait', roomId: requestedRoom, requestId, waiting: true }));
+@@ -5354,3 +5361,3 @@
+             result = await manager.enqueueWithAlternatives(original, actor, {
+-              owner: ws, active, searchFallback: true, offerId: packet.offerId, choiceId: packet.choiceId
++              owner: ws, active, beforeCommit: previous, searchFallback: true, offerId: packet.offerId, choiceId: packet.choiceId
+             });
+@@ -5410,4 +5417,5 @@
+         } finally {
+-          if (ws.songRequestTail === turn) delete ws.songRequestTail;
++          ws.pendingMusicCount--;
+           release();
++          void turn.then(() => { if (ws.songRequestTail === turn) delete ws.songRequestTail; });
+         }
+@@ -6150,2 +6158,14 @@
+ 
++        if (MUSIC_SHARE_CARD_PREFIX_RE.test(packet.content || '')) {
++          const room = ws.currentRoom;
++          const revision = ws.musicRoomRevision;
++          const userKey = ws.user.userKey;
++          const card = parseLxMusicShareForMatrix(packet.content);
++          const ready = await isReadyShare(card?.sharedAudioUrl, SERVER_ORIGIN);
++          if (ws.readyState !== 1 || ws.currentRoom !== room || ws.musicRoomRevision !== revision || ws.user?.userKey !== userKey) return;
++          if (!ready) {
++            ws.send(JSON.stringify({ type: 'error', code: 'SHARE_AUDIO_REQUIRED', shareUrl: card?.sharedAudioUrl, message: '音频尚未准备好，歌曲还没发出，请重新分享' }));
++            return;
++          }
++        }
+         if (rejectLegacyMentions(ws, packet)) return;

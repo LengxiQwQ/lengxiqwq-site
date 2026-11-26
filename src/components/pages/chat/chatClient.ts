@@ -206,6 +206,7 @@ export type ServerPacket =
 	| { type: "playlist:updated" | "playlists:updated"; roomId: string }
 	| {
 			type: "error";
+			shareUrl?: string;
 			code?: string;
 			authKind?: "waline" | "guest";
 			message: string;

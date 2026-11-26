@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, promises as fsPromises } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { openCompletedTrack } from './stream-cache.mjs';
 import { HEADERS, isAllowedStreamTarget, probeAudio } from './audio-source.mjs';
 import { isMusicSourceId, normalizeMusicTrack } from './music-input.mjs';
 
@@ -18,7 +19,10 @@ async function getJson(base, params, referer) {
     redirect: 'error',
     signal: AbortSignal.timeout(3000)
   });
-  if (!response.ok) throw new Error('catalog HTTP ' + response.status);
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw Object.assign(new Error('catalog HTTP ' + response.status), { isRiskControl: response.status === 429 });
+  }
   return response.json();
 }
 
@@ -39,7 +43,8 @@ async function checkStream(rawUrl, channel) {
     const mimeType = await probeAudio(url.href, { requireRange: true, minTotalBytes: minBytes });
     return { url: url.href, mimeType, providerChannel: channel };
   } catch (err) {
-    return null;
+    if (/too short|invalid audio header|HTTP (404|410)/.test(err.message)) return null;
+    throw err;
   }
 }
 
@@ -79,22 +84,20 @@ export class NeteaseMusicProvider {
   async resolveStream(sourceId) {
     if (!isMusicSourceId(this.id, sourceId)) return null;
     const endpoint = 'https://api.injahow.cn/meting/?type=url&id=' + encodeURIComponent(sourceId);
-    try {
-      const response = await fetch(endpoint, {
-        redirect: 'manual',
-        headers: { Referer: 'https://music.163.com/' },
-        signal: AbortSignal.timeout(4500)
-      });
-      const location = response.headers.get('location');
-      await response.body?.cancel().catch(() => {});
-      if (response.status === 404 || response.status === 403 || response.status === 451) return null;
-      if (!location || !location.startsWith('http') || location.includes('/404') || location.includes('/jd-musicrep-ts/')) return null;
-      const url = new URL(location);
-      if (!url.hostname.endsWith('.126.net') && !url.hostname.endsWith('.music.126.net')) return null;
-      return await checkStream(url.href, this.id);
-    } catch {
-      return null;
-    }
+    const response = await fetch(endpoint, {
+      redirect: 'manual',
+      headers: { Referer: 'https://music.163.com/' },
+      signal: AbortSignal.timeout(4500)
+    });
+    const location = response.headers.get('location');
+    await response.body?.cancel().catch(() => {});
+    if (response.status === 404 || response.status === 451) return null;
+    if (response.status >= 400) throw Object.assign(new Error('网易云取源暂时失败 HTTP ' + response.status), { isRiskControl: response.status === 429 });
+    if (!location || !location.startsWith('http')) throw new Error('网易云接口没有返回音频地址');
+    if (location.includes('/404') || location.includes('/jd-musicrep-ts/')) return null;
+    const url = new URL(location);
+    if (!url.hostname.endsWith('.126.net')) throw new Error('网易云返回的音频地址暂时无法验证');
+    return await checkStream(url.href, this.id);
   }
 
   async getLyric(sourceId) {
@@ -200,6 +203,7 @@ export class KugouMusicProvider {
     if (!isMusicSourceId(this.id, sourceId)) return null;
     const cleanId = String(sourceId).trim().toUpperCase();
 
+    let supplierFailure;
     // 1. Try CYAPI VIP resolution if apikey is available
     if (this.cyapiKey) {
       try {
@@ -207,6 +211,7 @@ export class KugouMusicProvider {
         const res = await fetch(u, { signal: AbortSignal.timeout(6000) });
         if (res.ok) {
           const data = await res.json();
+          if (data.code === 429 || data.code >= 500) supplierFailure = new Error('酷狗取源暂时受限');
           if (data.code === 200 && data.data?.url) {
             const stream = await checkStream(data.data.url, this.id);
             if (stream) {
@@ -220,29 +225,28 @@ export class KugouMusicProvider {
               };
             }
           }
-        }
-      } catch {
-        // Fallback to mobile endpoint on timeout or error
+        } else if (res.status !== 404) supplierFailure = new Error('酷狗取源暂时失败');
+      } catch (error) {
+        supplierFailure = error;
       }
     }
 
     // 2. Fallback to public mobile endpoint
-    if (Date.now() < this.retryAfter) return null;
-    try {
-      const data = await getJson('https://m.kugou.com/app/i/getSongInfo.php',
-        { cmd: 'playInfo', hash: cleanId }, 'https://www.kugou.com/');
-      if (Number(data.status) !== 1 && (Number(data.errcode) === 1002 || /频繁|稍后再试|too many requests/i.test(data.error || ''))) {
-        this.retryAfter = Date.now() + 15_000;
-        return null;
-      }
-      if (Number(data.status) !== 1 || !data.url || data.hash?.toUpperCase() !== cleanId) return null;
-      // Filter out VIP 30s preview
-      if (data.is_free_part === 1 || Number(data.timeLength) <= 35) return null;
-      const source = await checkStream(data.url, this.id);
-      return source && { ...source, durationSec: Number(data.timeLength) || 0 };
-    } catch {
+    if (Date.now() < this.retryAfter) throw Object.assign(new Error('酷狗请求暂时受限'), { isRiskControl: true });
+    const data = await getJson('https://m.kugou.com/app/i/getSongInfo.php',
+      { cmd: 'playInfo', hash: cleanId }, 'https://www.kugou.com/');
+    if (Number(data.status) !== 1 && (Number(data.errcode) === 1002 || /频繁|稍后再试|too many requests/i.test(data.error || ''))) {
+      this.retryAfter = Date.now() + 15_000;
+      throw Object.assign(new Error('酷狗请求暂时受限'), { isRiskControl: true });
+    }
+    if (Number(data.status) !== 1 || !data.url || data.hash?.toUpperCase() !== cleanId) {
+      if (supplierFailure) throw supplierFailure;
       return null;
     }
+    // Filter out VIP 30s preview
+    if (data.is_free_part === 1 || Number(data.timeLength) <= 35) return null;
+    const source = await checkStream(data.url, this.id);
+    return source && { ...source, durationSec: Number(data.timeLength) || 0 };
   }
 
   async getLyric(sourceId) {
@@ -360,6 +364,38 @@ function parseYtShelfItem(item) {
 export class YoutubeMusicProvider {
   id = 'youtube';
   name = 'YouTube Music';
+  activeDownloads = 0;
+  downloadWaiters = new Set();
+
+  async acquireDownload() {
+    if (this.activeDownloads < 3) {
+      this.activeDownloads++;
+      return;
+    }
+    if (this.downloadWaiters.size >= 6) throw new Error('YouTube Music 下载繁忙');
+    await new Promise((resolve, reject) => {
+      const grant = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        this.downloadWaiters.delete(grant);
+        reject(new Error('YouTube Music 下载繁忙'));
+      }, 1500);
+      this.downloadWaiters.add(grant);
+    });
+  }
+
+  releaseDownload() {
+    const next = this.downloadWaiters.values().next().value;
+    if (next) {
+      this.downloadWaiters.delete(next);
+      next();
+    } else {
+      this.activeDownloads--;
+    }
+  }
+
   sessions = new Map();
   pending = new Map();
 
@@ -384,9 +420,14 @@ export class YoutubeMusicProvider {
       return cached;
     }
 
-    // Serialize work per query so concurrent "load more" requests share one cursor.
-    const previous = this.pending.get(key) || Promise.resolve();
-    const build = previous.catch(() => {}).then(() => this.buildSession(key, query, target));
+    const running = this.pending.get(key);
+    if (running) {
+      const session = await running;
+      if (session.tracks.length >= target || !session.continuation) return session;
+      return this.ensureSession(key, query, target);
+    }
+    if (this.pending.size >= 16) throw new Error('YouTube Music 曲库繁忙');
+    const build = this.buildSession(key, query, target);
     this.pending.set(key, build);
     try {
       return await build;
@@ -448,7 +489,7 @@ export class YoutubeMusicProvider {
     if (!isMusicSourceId(this.id, sourceId)) return null;
     try {
       const ytDlpPath = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
-      if (!existsSync(ytDlpPath)) return null;
+      if (!existsSync(ytDlpPath)) throw new Error('YouTube Music 下载服务暂时不可用');
       const url = 'https://www.youtube.com/watch?v=' + sourceId;
       const trackKey = `youtube:${sourceId}:128`;
       const cacheDir = process.env.CHAT_MUSIC_CACHE_DIR || '/opt/chat-server/data/music_cache';
@@ -456,18 +497,11 @@ export class YoutubeMusicProvider {
       const audioFile = join(cacheDir, `${cacheKey}.audio`);
       const metaFile = join(cacheDir, `${cacheKey}.meta.json`);
 
-      // If already cached on disk, return immediately (0ms, no network delay)
-      try {
-        if (existsSync(metaFile) && existsSync(audioFile)) {
-          const meta = JSON.parse(await fsPromises.readFile(metaFile, 'utf8'));
-          if (meta?.complete) {
-            const stat = await fsPromises.stat(audioFile);
-            if (stat.size > 0 && stat.size === meta.size) {
-              return { url, mimeType: 'audio/mp4', providerChannel: this.id };
-            }
-          }
-        }
-      } catch {}
+      const existing = await openCompletedTrack(trackKey);
+      if (existing) {
+        await existing.file.close();
+        return { url, mimeType: existing.type, providerChannel: this.id };
+      }
 
       // Download directly into disk cache with yt-dlp to bypass googlevideo stream throttling & 403s
       const partFile = join(cacheDir, `${cacheKey}.audio.part`);
@@ -491,7 +525,13 @@ export class YoutubeMusicProvider {
       if (existsSync(cookiesPath)) {
         args.unshift('--cookies', cookiesPath);
       }
-      await execFileAsync(ytDlpPath, args, { timeout: 35000 });
+      await this.acquireDownload();
+      try {
+        await fsPromises.mkdir(cacheDir, { recursive: true });
+        await execFileAsync(ytDlpPath, args, { timeout: 35_000, killSignal: 'SIGKILL' });
+      } finally {
+        this.releaseDownload();
+      }
 
       if (existsSync(partFile)) {
         const stat = await fsPromises.stat(partFile);
@@ -499,13 +539,17 @@ export class YoutubeMusicProvider {
           await fsPromises.rename(partFile, audioFile);
           await fsPromises.writeFile(metaPartFile, JSON.stringify({ complete: true, size: stat.size }));
           await fsPromises.rename(metaPartFile, metaFile);
-          return { url, mimeType: 'audio/mp4', providerChannel: this.id };
+          const downloaded = await openCompletedTrack(trackKey);
+          if (!downloaded) throw new Error('下载的文件不是有效音频');
+          await downloaded.file.close();
+          return { url, mimeType: downloaded.type, providerChannel: this.id };
         }
       }
     } catch (err) {
-      console.warn('[YoutubeProvider] resolveStream failed for ' + sourceId + ':', err.message);
+      if (/video unavailable|video has been removed|private video/i.test(err.stderr || '')) return null;
+      throw new Error('YouTube Music 暂时无法取得音频');
     }
-    return null;
+    throw new Error('YouTube Music 下载未生成音频');
   }
 
   async getLyric() {
