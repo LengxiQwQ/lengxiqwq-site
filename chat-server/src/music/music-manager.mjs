@@ -579,7 +579,7 @@ export class MusicManager {
         if (accepted.ok && choice) this.savePreferredTrack(requested, requester.userKey, playable);
         return accepted;
       }
-      if (searchFallback) return this.searchFallbackResult(result.temporaryFailure);
+      if (searchFallback) return this.searchFallbackResult(result.temporaryFailure || result.limited, result);
       if (result.alternatives?.length) {
         const token = randomUUID();
         const expiresAt = Date.now() + 90_000;
@@ -627,9 +627,14 @@ export class MusicManager {
     }
   }
 
-  searchFallbackResult(temporary) {
-    if (temporary) return { ok: false, code: 'SOURCE_TEMPORARY', error: '这次未能取得原曲的播放地址，这次点播未生效。' };
-    return { ok: false, code: 'NO_SOURCE', error: '暂未找到可播放的原曲，要搜索这首歌吗？' };
+  searchFallbackResult(temporary, result = {}) {
+    if (temporary) {
+      const names = { qq: 'QQ 音乐', netease: '网易云', youtube: 'YouTube Music', kugou: '酷狗' };
+      const detail = result.failures?.map(({ id, reason }) => (names[id] || id) + reason).join('、')
+        || '音源检查暂时未完成';
+      return { ok: false, code: 'SOURCE_TEMPORARY', error: detail + '，这首歌还没加入，请稍后重试' };
+    }
+    return { ok: false, code: 'NO_SOURCE', error: '各可用曲库已查完，未取得这版录音的可播音源，可以搜索其他版本' };
   }
 
   async enqueueTrack(rawTrack, requester, verifiedSource) {
@@ -1616,7 +1621,7 @@ export class MusicManager {
         this.onStateChanged();
         return { ok: true, playUid: this.current.uid };
       }
-      if (context.searchFallback) return this.searchFallbackResult(result.temporaryFailure);
+      if (context.searchFallback) return this.searchFallbackResult(result.temporaryFailure || result.limited, result);
       if (result.alternatives?.length) {
         const token = randomUUID();
         const expiresAt = Date.now() + 90_000;

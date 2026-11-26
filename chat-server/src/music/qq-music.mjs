@@ -121,19 +121,25 @@ export class QQMusicProvider {
     const promise = (async () => {
       const primary = await this.searchViaClientSearch(trimmed, safeLimit, safePage);
       if (primary.ok) {
-        this.setSearchCache(cacheKey, primary);
+        if (primary.tracks.length) this.setSearchCache(cacheKey, primary);
         return primary;
       }
 
+      let fallback;
       if (safePage === 1) {
-        const fallback = await this.searchViaSmartbox(trimmed, safeLimit);
-        if (fallback.ok) {
+        fallback = await this.searchViaSmartbox(trimmed, safeLimit);
+        if (fallback.ok && fallback.tracks.length) {
           this.setSearchCache(cacheKey, fallback);
           return fallback;
         }
       }
 
-      throw new Error('在线曲库搜索暂时不可用，请稍后重试');
+      const failed = [primary, fallback].filter(Boolean);
+      const limited = failed.some(result => result.status === 429);
+      const http = failed.find(result => result.status);
+      const reason = limited ? '请求受限（HTTP 429）' : http ? '返回 HTTP ' + http.status
+        : failed.some(result => result.timedOut) ? '响应超时' : '未返回有效的搜索结果';
+      throw Object.assign(new Error('QQ 音乐搜索接口' + reason + '，请稍后重试'), { isRiskControl: limited });
     })();
 
     this.inFlightSearches.set(cacheKey, promise);
@@ -161,9 +167,9 @@ export class QQMusicProvider {
         headers: QQ_HEADERS,
         signal: AbortSignal.timeout(3500)
       });
-      if (!resp.ok) return { ok: false, tracks: [] };
+      if (!resp.ok) return { ok: false, status: resp.status };
       const data = await resp.json();
-      if (typeof data?.code === 'number' && data.code !== 0) {
+      if (data?.code != null && Number(data.code) !== 0) {
         return { ok: false, tracks: [] };
       }
       const song = data.data?.song;
@@ -204,8 +210,8 @@ export class QQMusicProvider {
       const total = Number(song.totalnum);
       const hasMore = total > 0 ? page * limit < total : list.length >= limit;
       return { ok: true, tracks: tracks.slice(0, limit), hasMore };
-    } catch {
-      return { ok: false, tracks: [] };
+    } catch (error) {
+      return { ok: false, timedOut: error.name === 'TimeoutError' };
     }
   }
 
@@ -216,9 +222,9 @@ export class QQMusicProvider {
         headers: QQ_HEADERS,
         signal: AbortSignal.timeout(3500)
       });
-      if (!resp.ok) return { ok: false, tracks: [] };
+      if (!resp.ok) return { ok: false, status: resp.status };
       const data = await resp.json();
-      if (typeof data?.code === 'number' && data.code !== 0) {
+      if (data?.code != null && Number(data.code) !== 0) {
         return { ok: false, tracks: [] };
       }
       const items = data.data?.song?.itemlist;
@@ -242,8 +248,8 @@ export class QQMusicProvider {
         });
       }
       return { ok: true, tracks, hasMore: false };
-    } catch {
-      return { ok: false, tracks: [] };
+    } catch (error) {
+      return { ok: false, timedOut: error.name === 'TimeoutError' };
     }
   }
 

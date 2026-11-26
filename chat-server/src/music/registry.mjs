@@ -120,6 +120,14 @@ function splitArtists(value) {
   return String(value ?? '').normalize('NFKC').split(ARTIST_SEPARATOR).map(name => name.trim()).filter(Boolean);
 }
 
+function catalogProvider(platform) {
+  const aliases = { qqmusic: 'qq', tencent: 'qq', '163': 'netease', cloudmusic: 'netease',
+    kg: 'kugou', ytmusic: 'youtube', youtubemusic: 'youtube', yt: 'youtube' };
+  const id = String(platform || '').trim().toLowerCase();
+  return ['qq', 'netease', 'youtube', 'kugou'].includes(id) ? id
+    : Object.hasOwn(aliases, id) ? aliases[id] : null;
+}
+
 function recordingMetadata(track) {
   let title = String(track.title ?? '').normalize('NFKC').trim();
   const versions = [];
@@ -351,12 +359,10 @@ export class MusicRegistry {
       return this.providers.get(route.id).search(keyword, limit, page);
     }
     let failure;
-    let answered = false;
     for (const [id, provider] of this.providers) {
       let first;
       try {
         first = await provider.search(keyword, limit, 1);
-        answered = true;
       } catch (error) {
         failure = error;
         continue;
@@ -366,7 +372,7 @@ export class MusicRegistry {
       this.searchRoutes.set(key, { id, expiresAt: Date.now() + 15 * 60_000 });
       return page === 1 ? first : provider.search(keyword, limit, page);
     }
-    if (failure && !answered) throw failure;
+    if (failure) throw failure;
     return { tracks: [], hasMore: false };
   }
 
@@ -389,7 +395,7 @@ export class MusicRegistry {
   async resolvePlaylistTrack(item) {
     if (!item || typeof item !== 'object') return null;
     const native = normalizeMusicTrack({
-      ...item, provider: item.sourcePlatform || item.provider, sourceId: item.sourceTrackId || item.sourceId
+      ...item, provider: catalogProvider(item.sourcePlatform || item.provider) || item.provider, sourceId: item.sourceTrackId || item.sourceId
     });
     if (native && this.providers.has(native.provider)) return native;
     const existing = normalizeMusicTrack(item.matchedTrack);
@@ -474,16 +480,7 @@ export class MusicRegistry {
 
   providerOrder(item, preferredTrack) {
     const rawPlatform = String(item?.sourcePlatform || item?.provider || '').trim().toLowerCase();
-    let platformProvider = null;
-    if (['qq', 'qqmusic', 'tencent'].includes(rawPlatform)) {
-      platformProvider = 'qq';
-    } else if (['netease', '163', 'cloudmusic'].includes(rawPlatform)) {
-      platformProvider = 'netease';
-    } else if (['kugou', 'kg'].includes(rawPlatform)) {
-      platformProvider = 'kugou';
-    } else if (['youtube', 'ytmusic', 'youtubemusic', 'yt'].includes(rawPlatform)) {
-      platformProvider = 'youtube';
-    }
+    const platformProvider = catalogProvider(rawPlatform);
 
     const isOverseasCatalog = ['applemusic', 'apple_music', 'apple', 'itunes', 'spotify'].includes(rawPlatform);
 
@@ -575,7 +572,7 @@ export class MusicRegistry {
     const platform = item.sourcePlatform || item.provider;
     const sourceId = item.sourceTrackId || item.sourceId ||
       (item.id?.startsWith('qq:') ? item.id.slice(3) : '');
-    const provider = platform === 'qqmusic' ? 'qq' : platform || (item.id?.startsWith('qq:') ? 'qq' : '');
+    const provider = catalogProvider(platform) || platform || (item.id?.startsWith('qq:') ? 'qq' : '');
     const direct = provider === providerId && sourceId
       ? normalizeMusicTrack({ ...item, id: provider + ':' + sourceId, provider, sourceId })
       : null;
@@ -728,7 +725,10 @@ export class MusicRegistry {
       if (playable) return remember(playable);
     }
 
-    const titleResults = alternatives && titleAndArtists !== searchTitle ? await search(searchTitle) : [];
+    const shortTitle = searchTitle.split(/\s+[-–—]\s+/u)[0];
+    const fallbackTitle = shortTitle !== searchTitle && matchingTitle(original, recordingMetadata({ title: shortTitle }))
+      ? shortTitle : searchTitle;
+    const titleResults = alternatives && titleAndArtists !== fallbackTitle ? await search(fallbackTitle) : [];
     const ranked = titleResults.length ? await rank([...primary, ...titleResults]) : primaryRanked;
     const recordings = ranked.filter(option => option.confidence > 0).sort(preferRecording);
     const checkedRecordings = (await Promise.all(recordings.slice(0, MAX_SOURCE_CHECKS).map(async option => {

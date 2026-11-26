@@ -67,7 +67,10 @@ export class NeteaseMusicProvider {
     const data = await getJson('https://music.163.com/api/cloudsearch/pc', {
       s: keyword, type: '1', limit, offset: (page - 1) * limit
     }, 'https://music.163.com/');
-    if (data.code !== 200) throw new Error('netease search returned an error');
+    if (data.code !== 200 || (!Array.isArray(data.result?.songs) && data.result?.songCount !== 0)) {
+      throw Object.assign(new Error('网易云搜索接口返回异常（' + (data.code ?? '未知状态') + '）'),
+        { isRiskControl: data.code === 429 });
+    }
     const songs = Array.isArray(data.result?.songs) ? data.result.songs : [];
     const tracks = songs.map(song => {
       const artistNames = (song.ar || []).map(artist => artist.name).filter(Boolean);
@@ -290,7 +293,7 @@ async function fetchYtSearch(body) {
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(5000)
   });
-  if (!response.ok) throw new Error('youtube music search HTTP ' + response.status);
+  if (!response.ok) throw Object.assign(new Error('YouTube Music 搜索接口返回 HTTP ' + response.status), { isRiskControl: response.status === 429 });
   return response.json();
 }
 
@@ -441,6 +444,7 @@ export class YoutubeMusicProvider {
     if (!session || Date.now() - session.updatedAt >= YT_SESSION_TTL_MS) {
       session = { tracks: [], ids: new Set(), continuation: null, updatedAt: Date.now() };
       const first = await fetchYtSearch({ context: { client: YT_CLIENT }, query, params: YT_SONGS_PARAMS });
+      if (!first.contents?.tabbedSearchResultsRenderer) throw new Error('YouTube Music 未返回有效的搜索页面');
       const shelf = first.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content?.sectionListRenderer?.contents?.[0]?.musicShelfRenderer;
       this.appendTracks(session, shelf?.contents);
       session.continuation = readYtContinuation(shelf);
@@ -453,13 +457,7 @@ export class YoutubeMusicProvider {
     while (session.tracks.length < target && session.continuation && attempts < YT_MAX_CONTINUATION_ATTEMPTS) {
       attempts += 1;
       const before = session.tracks.length;
-      let next;
-      try {
-        next = await fetchYtSearch({ context: { client: YT_CLIENT }, continuation: session.continuation });
-      } catch {
-        session.continuation = null;
-        break;
-      }
+      const next = await fetchYtSearch({ context: { client: YT_CLIENT }, continuation: session.continuation });
       const shelf = next.continuationContents?.musicShelfContinuation;
       this.appendTracks(session, shelf?.contents);
       session.continuation = readYtContinuation(shelf);

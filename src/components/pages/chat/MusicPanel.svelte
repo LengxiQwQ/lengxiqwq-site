@@ -3184,8 +3184,9 @@ async function runSearch(q: string, bypassCache = false, provider: SearchProvide
 					fallbackHasMore = ytRes.hasMore;
 					searchResultProvider = "youtube";
 				}
-			} catch {
-				// Fallback error quietly ignored
+			} catch (err) {
+				if (controller.signal.aborted) return;
+				throw new Error(`当前曲库未返回歌曲，YouTube Music 补查失败：${err instanceof Error ? err.message : "服务暂时不可用"}`);
 			}
 		}
 
@@ -3195,7 +3196,7 @@ async function runSearch(q: string, bypassCache = false, provider: SearchProvide
 			const oldest = searchResultCache.keys().next().value;
 			if (oldest !== undefined) searchResultCache.delete(oldest);
 		}
-		searchResultCache.set(cacheKey, {
+		if (tracks.length) searchResultCache.set(cacheKey, {
 			tracks,
 			hasMore: resultHasMore,
 			provider: searchResultProvider,
@@ -3793,7 +3794,7 @@ $effect(() => {
 
     {#if action && !action.pending}
       <div class="flex flex-wrap items-center gap-x-2 px-2 pb-1 text-xs text-[var(--chat-meta-color)]">
-        <span role="status">{action.offer ? "暂未找到原版本音源" : action.message}</span>
+        <span role="status">{action.message || (action.offer ? "已找到可选版本" : "")}</span>
         {#if action.offer}
           <button type="button" class="btn-regular rounded-md px-2 py-1.5 font-medium text-[var(--chat-accent-text)]" onclick={() => onOpenRotationOffer?.()}>
             查看可播版本
@@ -4949,7 +4950,7 @@ $effect(() => {
             <div class="text-center py-6 px-3 rounded-xl border border-dashed border-[var(--chat-divider-color)] space-y-2">
               <p class="text-[14px] xl:text-[12px] font-medium text-[var(--deep-text)] m-0">
                 {submittedSearchQuery
-                  ? `【${currentProviderOption.label}】暂未找到与「${submittedSearchQuery}」相关的歌曲`
+                  ? `【${currentProviderOption.label}】已完成搜索，未返回与「${submittedSearchQuery}」相关的歌曲`
                   : "暂无可用曲目"}
               </p>
               <p class="text-[13px] xl:text-[12px] text-[var(--chat-meta-color)] m-0">

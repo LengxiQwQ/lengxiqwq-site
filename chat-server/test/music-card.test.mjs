@@ -152,3 +152,30 @@ test('an unrelated stalled stream cannot occupy its resolution slot forever', as
   assert.equal(next.audioSource.channel, 'second');
   assert.equal((await registry.resolvePlayable(song, origin, 'fixture')).audioSource.channel, 'second');
 });
+
+test('日韩流行 uses the YouTube video ID and recovers the native title on NetEase', async () => {
+  const original = { title: '紡ぎ言 - Tsumugigoto', artist: 'Anna', durationSec: 273,
+    sourcePlatform: 'ytmusic', sourceTrackId: 'M8OmHwCRSSE' };
+  const song = { ...track('netease:2119675835', '紡ぎ言'), artist: 'Anna', durationSec: 272 };
+  const searches = [];
+  const netease = { id: 'netease', search: async query => {
+    searches.push(query);
+    return { tracks: query === song.title ? [song] : [] };
+  } };
+  const registry = new MusicRegistry([provider('youtube'), provider('qq'), netease, provider('kugou')]);
+  assert.deepEqual(registry.providerOrder(original), ['youtube', 'qq', 'netease', 'kugou']);
+  const seen = [];
+  const found = await registry.resolveRotationTrack(original, async item => {
+    seen.push(item.id);
+    return item.provider === 'netease' ? item : null;
+  }, { exactOnly: true, alternatives: true });
+  assert.ok(seen.includes('youtube:M8OmHwCRSSE'));
+  assert.ok(searches.includes('紡ぎ言'));
+  assert.equal(found.playable.id, song.id);
+});
+
+test('a responding empty catalog cannot hide another catalog failure', async () => {
+  const offline = { id: 'qq', search: async () => { throw Error('QQ HTTP 429'); } };
+  const registry = new MusicRegistry([offline, provider('netease')]);
+  await assert.rejects(registry.search('紡ぎ言'), /429/);
+});

@@ -37,7 +37,16 @@ export function lookupPreferredProviders(providers, lookup, budgetMs, alternativ
       const alternatives = [...choices.values()]
         .sort((a, b) => order.indexOf(a.relation) - order.indexOf(b.relation)).slice(0, alternativeLimit);
       resolve({ alternatives, temporaryFailure: timedOut || results.some(result => result?.temporaryFailure),
-        limited: results.some(result => result?.limited) });
+        limited: results.some(result => result?.limited),
+        failures: providers.flatMap((id, i) => {
+          const result = results[i];
+          if (result && !result.temporaryFailure && !result.limited) return [];
+          const detail = String(result?.error || '');
+          const status = detail.match(/HTTP\s+([45]\d\d)/i)?.[1];
+          const reason = result?.limited ? '请求受限' : status ? '返回 HTTP ' + status
+            : !result || /超时|timeout|timed out|budget exhausted/i.test(detail) ? '响应超时' : '未能完成音源检查';
+          return [{ id, reason }];
+        }) });
     }
 
     function startNext() {
