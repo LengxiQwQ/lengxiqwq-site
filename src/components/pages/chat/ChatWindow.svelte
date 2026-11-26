@@ -3088,6 +3088,15 @@ function formatShortTime(ts: number): string {
 	return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+function stripSiteSuffix(name?: string, userKey?: string): string {
+	const raw = (name || "").trim();
+	if (!raw) return "";
+	return (
+		resolveExternalOrigin({ name: raw, userKey }, interconnectSites).cleanName ||
+		raw
+	);
+}
+
 function handleOpenNoticeUserProfile(
 	name: string,
 	userKey?: string,
@@ -4923,6 +4932,8 @@ function removePendingImage(index: number) {
         {#each mergedActiveThreads as item (item.rootUid)}
           {@const rootMsg = item.rootMessage}
           {@const latest = item.summary.latestReply}
+          {@const rootDisplayName = stripSiteSuffix(rootMsg?.name, rootMsg?.userKey) || "主题消息"}
+          {@const latestDisplayName = latest ? (stripSiteSuffix(latest.name, latest.userKey) || latest.name) : ""}
           <button
             type="button"
             role="menuitem"
@@ -4932,14 +4943,14 @@ function removePendingImage(index: number) {
             <div class="flex items-start gap-2.5 min-w-0 flex-1">
               <ChatAvatar
                 src={rootMsg?.avatar || latest?.avatar || ""}
-                name={rootMsg?.name || latest?.name || "线程"}
+                name={rootMsg ? rootDisplayName : latestDisplayName || "线程"}
                 size="sm"
                 class="mt-0.5 shrink-0"
               />
               <div class="min-w-0 flex-1">
                 <div class="flex items-center justify-between gap-2">
                   <span class="font-semibold truncate text-xs text-[var(--deep-text)] dark:text-white/95">
-                    {rootMsg?.name || "主题消息"}
+                    {rootDisplayName}
                   </span>
                   <span class="chat-share-card-badge is-article shrink-0 tabular-nums">
                     {item.summary.count} 条回复
@@ -4954,7 +4965,7 @@ function removePendingImage(index: number) {
                 </div>
                 {#if latest}
                   <div class="text-[10.5px] text-[var(--chat-meta-color)] opacity-80 mt-1 flex items-center justify-between gap-2">
-                    <span class="truncate">最新 {latest.name}：{formatChatReplyPreview(latest.content, stickerMap, getChatReplyAttachmentKind(latest))}</span>
+                    <span class="truncate">最新 {latestDisplayName}：{formatChatReplyPreview(latest.content, stickerMap, getChatReplyAttachmentKind(latest))}</span>
                     <span class="shrink-0 tabular-nums">{formatUnreadTime(latest.createdAt)}</span>
                   </div>
                 {/if}
@@ -4982,6 +4993,7 @@ function removePendingImage(index: number) {
       <div class="chat-history-menu-list custom-scrollbar">
         {#each mentionsToMe.slice().reverse() as item (item.msgUid)}
           {@const isUnread = unreadMentionSet.has(item.msgUid)}
+          {@const mentionDisplayName = stripSiteSuffix(item.name, item.userKey) || item.name}
           <button
             type="button"
             role="menuitem"
@@ -4991,7 +5003,7 @@ function removePendingImage(index: number) {
             <div class="flex items-start gap-2.5 min-w-0 flex-1">
               <ChatAvatar
                 src={item.avatar}
-                name={item.name}
+                name={mentionDisplayName}
                 size="sm"
                 class="mt-0.5 shrink-0"
               />
@@ -5001,7 +5013,7 @@ function removePendingImage(index: number) {
                     {#if isUnread}
                       <span class="chat-share-card-badge is-article shrink-0">未读</span>
                     {/if}
-                    <span class="font-semibold truncate text-xs text-[var(--deep-text)] dark:text-white/95">{item.name}</span>
+                    <span class="font-semibold truncate text-xs text-[var(--deep-text)] dark:text-white/95">{mentionDisplayName}</span>
                   </div>
                   <span class="text-[10.5px] text-[var(--chat-meta-color)] tabular-nums shrink-0 opacity-80">{formatUnreadTime(item.createdAt)}</span>
                 </div>
@@ -5130,13 +5142,14 @@ function removePendingImage(index: number) {
                     {meta.subtitle}
                   </div>
                 {/if}
+                {@const sharerDisplayName = stripSiteSuffix(entry.message.name, entry.message.userKey) || entry.message.name}
                 <div class="flex items-center justify-between gap-2 mt-1 text-[10px] leading-tight text-[var(--chat-meta-color)]">
                   <div class="inline-flex items-center gap-0.5 min-w-0">
-                    <ChatAvatar src={entry.message.avatar} name={entry.message.name} size="2xs" class="w-3! h-3! opacity-80" />
+                    <ChatAvatar src={entry.message.avatar} name={sharerDisplayName} size="2xs" class="w-3! h-3! opacity-80" />
                     <button
                       type="button"
                       class="chat-share-card-sharer-btn inline-flex items-center min-w-0 px-1 py-0.5 rounded-md border-none bg-transparent hover:bg-[var(--btn-plain-bg-hover)] hover:text-[var(--primary)] opacity-80 hover:opacity-100 text-inherit cursor-pointer transition-colors"
-                      aria-label={`查看 ${entry.message.name} 的个人资料`}
+                      aria-label={`查看 ${sharerDisplayName} 的个人资料`}
                       onclick={(e) => {
                         e.stopPropagation();
                         closeAllHeaderMenus();
@@ -5147,7 +5160,7 @@ function removePendingImage(index: number) {
                         );
                       }}
                     >
-                      <span class="truncate">{entry.message.name}</span>
+                      <span class="truncate">{sharerDisplayName}</span>
                     </button>
                   </div>
                   <span class="shrink-0 tabular-nums opacity-75">{formatUnreadTime(entry.message.createdAt)}</span>
@@ -5180,9 +5193,9 @@ function removePendingImage(index: number) {
     {@const activeCoverKey = activePrivateTrack ? getPrivateTrackKey(activePrivateTrack) : ""}
     {@const hasActiveCover = Boolean(activePrivateTrack?.cover && !sharedMusicFailedCovers[activeCoverKey])}
     {@const activeSenderSource = privateMusic.activeMsgUid ? (messages.find((m) => m.msgUid === privateMusic.activeMsgUid) ?? recentShares.find((m) => m.msgUid === privateMusic.activeMsgUid) ?? null) : null}
-    {@const activeSenderDisplayName = privateMusic.activeSenderName || activeSenderSource?.name || ""}
-    {@const activeSenderDisplayAvatar = privateMusic.activeSenderAvatar || activeSenderSource?.avatar || ""}
     {@const activeSenderDisplayUserKey = privateMusic.activeSenderUserKey || activeSenderSource?.userKey || ""}
+    {@const activeSenderDisplayName = stripSiteSuffix(privateMusic.activeSenderName || activeSenderSource?.name || "", activeSenderDisplayUserKey)}
+    {@const activeSenderDisplayAvatar = privateMusic.activeSenderAvatar || activeSenderSource?.avatar || ""}
     <div
       data-chat-floating
       use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }}
@@ -5557,13 +5570,14 @@ function removePendingImage(index: number) {
                       </span>
                     {/if}
                   </div>
+                  {@const musicSharerDisplayName = stripSiteSuffix(entry.message.name, entry.message.userKey) || entry.message.name}
                   <div class="flex items-center justify-between gap-2 mt-1 text-[10.5px] text-[var(--chat-meta-color)] opacity-85">
                     <div class="inline-flex items-center gap-0.5 min-w-0">
-                      <ChatAvatar src={entry.message.avatar} name={entry.message.name} size="2xs" class="w-3.5! h-3.5!" />
+                      <ChatAvatar src={entry.message.avatar} name={musicSharerDisplayName} size="2xs" class="w-3.5! h-3.5!" />
                       <button
                         type="button"
                         class="inline-flex items-center min-w-0 px-1 py-0.5 rounded-md border-none bg-transparent hover:bg-[var(--btn-plain-bg-hover)] hover:text-[var(--primary)] text-inherit cursor-pointer transition-colors"
-                        aria-label={`查看 ${entry.message.name} 的个人资料`}
+                        aria-label={`查看 ${musicSharerDisplayName} 的个人资料`}
                         onclick={(e) => {
                           e.stopPropagation();
                           closeAllHeaderMenus();
@@ -5574,7 +5588,7 @@ function removePendingImage(index: number) {
                           );
                         }}
                       >
-                        <span class="truncate">{entry.message.name}</span>
+                        <span class="truncate">{musicSharerDisplayName}</span>
                       </button>
                     </div>
                     <span class="shrink-0 tabular-nums">{formatUnreadTime(entry.message.createdAt)}</span>
