@@ -8,7 +8,8 @@
   ],
   "vars": {
     "CORS_ORIGIN": "https://lengxiqwq.com,http://localhost:4321,https://feat-workers-and-console.lengxiqwq-site.pages.dev",
-    "R2_PUBLIC_DOMAIN": "https://img.lengxiqwq.com"
+    "R2_PUBLIC_DOMAIN": "https://img.lengxiqwq.com",
+    "UMAMI_API_ENDPOINT": "https://pulse.lengxiqwq.com"
   },
   "workers_dev": true,
   "routes": [
