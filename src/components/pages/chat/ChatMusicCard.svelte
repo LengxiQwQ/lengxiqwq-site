@@ -634,7 +634,7 @@ async function handleEnqueue(event: MouseEvent) {
         <a
           href={externalHref}
           target="_blank"
-          rel="noopener noreferrer"
+          rel="noopener"
           class="flex-1 inline-flex items-center justify-center gap-1 h-7.5 px-2.5 rounded-lg bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) active:bg-(--btn-regular-bg-active) text-neutral-600 dark:text-neutral-300 hover:text-(--primary) text-[11.5px] font-semibold transition-all active:scale-95 no-underline min-w-0"
           aria-label="在新窗口打开原曲链接"
           onclick={(e) => e.stopPropagation()}

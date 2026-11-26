@@ -155,7 +155,7 @@ export function registerDynamicInlineComments(): void {
 						? '<span class="dynamic-comment-admin-badge">博主</span>'
 						: "";
 					const authorLinkStart = item.link
-						? `<a href="${item.link}" target="_blank" rel="noopener noreferrer" class="dynamic-comment-author-link">`
+						? `<a href="${item.link}" target="_blank" rel="noopener" class="dynamic-comment-author-link">`
 						: '<span class="dynamic-comment-author-name">';
 					const authorLinkEnd = item.link ? "</a>" : "</span>";
 

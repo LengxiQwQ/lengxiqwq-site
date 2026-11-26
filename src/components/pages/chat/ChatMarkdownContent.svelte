@@ -84,7 +84,7 @@ function stripHtmlComments(raw: string): string {
         <a
           href={safeHref}
           target="_blank"
-          rel="noopener noreferrer"
+          rel="noopener"
           class="chat-md-link"
         >
           {#if linkTok.tokens && linkTok.tokens.length > 0}

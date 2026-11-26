@@ -432,7 +432,7 @@ async function handleSplitGuestEnter() {
             <a
               href={walineLoginUrl}
               target="_blank"
-              rel="noopener noreferrer"
+              rel="noopener"
               onclick={() => {
                 walineLoginError = "";
               }}
@@ -489,7 +489,7 @@ async function handleSplitGuestEnter() {
             <a
               href={walineLoginUrl}
               target="_blank"
-              rel="noopener noreferrer"
+              rel="noopener"
               onclick={() => {
                 walineLoginError = "";
               }}

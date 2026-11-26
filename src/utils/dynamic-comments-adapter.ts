@@ -160,7 +160,7 @@ export function sanitizeCommentHtml(rawHtml: string): string {
 	);
 
 	// 4. 外链统一安全属性
-	html = html.replace(/<a\b/gi, '<a target="_blank" rel="noopener noreferrer"');
+	html = html.replace(/<a\b/gi, '<a target="_blank" rel="noopener"');
 
 	return html.trim();
 }

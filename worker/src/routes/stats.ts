@@ -31,7 +31,15 @@ async function resolveUmamiContext(
 	const shareInput = env.UMAMI_SHARE_ID || env.UMAMI_SHARE_TOKEN;
 	if (shareInput) {
 		const shareSlug = shareInput.replace(/^https?:\/\/.*\/share\//i, "").trim();
-		const cacheKey = `umami:share_ctx:${shareSlug}`;
+		const customEndpoint = (env.UMAMI_API_ENDPOINT || "")
+			.trim()
+			.replace(/\/+$/, "");
+		const isSelfHosted =
+			Boolean(customEndpoint) && !customEndpoint.includes("umami.is");
+		const shareApiOrigin = isSelfHosted
+			? `${customEndpoint}/api`
+			: "https://cloud.umami.is/analytics/us/api";
+		const cacheKey = `umami:share_ctx:${isSelfHosted ? customEndpoint : "cloud"}:${shareSlug}`;
 
 		try {
 			const cached = await env.KV.get<{ token: string; websiteId: string }>(
@@ -40,7 +48,7 @@ async function resolveUmamiContext(
 			);
 			if (cached?.token) {
 				return {
-					apiBase: `https://cloud.umami.is/analytics/us/api/websites/${cached.websiteId || defaultWebsiteId}`,
+					apiBase: `${shareApiOrigin}/websites/${cached.websiteId || defaultWebsiteId}`,
 					websiteId: cached.websiteId || defaultWebsiteId,
 					headers: {
 						Accept: "application/json",
@@ -53,16 +61,13 @@ async function resolveUmamiContext(
 		} catch {}
 
 		try {
-			const shareRes = await fetch(
-				`https://cloud.umami.is/analytics/us/api/share/${shareSlug}`,
-				{
-					headers: {
-						Accept: "application/json",
-						"User-Agent": "lengxiqwq-api/1.0",
-					},
-					signal: AbortSignal.timeout(4000),
+			const shareRes = await fetch(`${shareApiOrigin}/share/${shareSlug}`, {
+				headers: {
+					Accept: "application/json",
+					"User-Agent": "lengxiqwq-api/1.0",
 				},
-			);
+				signal: AbortSignal.timeout(4000),
+			});
 
 			if (shareRes.ok) {
 				const shareData = (await shareRes.json()) as {
@@ -83,7 +88,7 @@ async function resolveUmamiContext(
 					} catch {}
 
 					return {
-						apiBase: `https://cloud.umami.is/analytics/us/api/websites/${resolvedWebsiteId}`,
+						apiBase: `${shareApiOrigin}/websites/${resolvedWebsiteId}`,
 						websiteId: resolvedWebsiteId,
 						headers: {
 							Accept: "application/json",

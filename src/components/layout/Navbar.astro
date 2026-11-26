@@ -224,7 +224,7 @@ const hasSiteSwitcher =
                             <DropdownItem
                                 href={item.disabled ? undefined : (item.url.startsWith("http") ? item.url : url(item.url))}
                                 target={!item.disabled && item.external ? "_blank" : undefined}
-                                rel={!item.disabled && item.external ? "noopener noreferrer" : undefined}
+                                rel={!item.disabled && item.external ? "noopener" : undefined}
                                 isLast={idx === (siteSwitcher.items?.length || 0) - 1}
                                 disabled={item.disabled}
                                 class="dropdown-item focus-ring-inset h-10 site-option-item"

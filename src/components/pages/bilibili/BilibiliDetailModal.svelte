@@ -160,7 +160,7 @@ function getTypeColor(seasonType: number): string {
 					<a
 						href={anime.link}
 						target="_blank"
-						rel="noopener noreferrer"
+						rel="noopener"
 						class="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-(--primary) px-6 py-3 text-sm font-semibold text-white transition-all hover:bg-(--primary)/90 hover:shadow-lg"
 					>
 						<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

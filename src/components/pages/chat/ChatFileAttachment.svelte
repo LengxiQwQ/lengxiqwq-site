@@ -94,7 +94,7 @@ async function handleDownload(e?: MouseEvent) {
 			// 若网络或 CORS 异常，降级回退为新窗口直接打开链接
 			failed = true;
 			retry.fail();
-			window.open(attachment.url, "_blank", "noopener,noreferrer");
+			window.open(attachment.url, "_blank", "noopener");
 		}
 	} finally {
 		if (!attempt.signal.aborted) {
@@ -114,7 +114,7 @@ onDestroy(() => {
   href={attachment.url}
   download={attachment.name || "下载文件"}
   target="_blank"
-  rel="noopener noreferrer"
+  rel="noopener"
   class="chat-file-card"
   aria-busy={downloading}
   onclick={handleDownload}

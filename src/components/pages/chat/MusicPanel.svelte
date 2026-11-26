@@ -5160,7 +5160,7 @@ $effect(() => {
           <a
             href="https://playlistout.lengxiqwq.com"
             target="_blank"
-            rel="noopener noreferrer"
+            rel="noopener"
             class="text-[12px] xl:text-[11px] text-[var(--chat-meta-color)] hover:text-(--primary) no-underline transition-colors"
           >
             Powered by Playlist Out
@@ -5265,9 +5265,164 @@ $effect(() => {
 
     {#if selectedPlaylist}
       {@const safeSourceUrl = resolveSafeExternalUrl(selectedPlaylist.sourceUrl)}
+      {@const hasExtraManageActions = !selectedPlaylist.isSystemProtected && canManagePlaylist(selectedPlaylist)}
+      {#snippet playlistActionButtons()}
+        {#if selectedPlaylist}
+          <div class="flex items-center gap-1.5 shrink-0">
+            <div class="chat-playlist-action-wrap">
+              <button
+                type="button"
+                disabled={selectedPlaylist.tracks.length === 0 || isRandomizing}
+                class="chat-playlist-icon-btn {isRandomizing ? 'opacity-75 cursor-wait!' : ''}"
+                aria-label={isRandomizing ? "正在随机点歌..." : "随机点一首"}
+                onclick={() => selectedPlaylist && handleRandomPlayFromPlaylist(selectedPlaylist)}
+              >
+                {#if isRandomizing}
+                  <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
+                    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+                  </svg>
+                {:else}
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="16 3 21 3 21 8" />
+                    <line x1="4" y1="20" x2="21" y2="3" />
+                    <polyline points="21 16 21 21 16 21" />
+                    <line x1="15" y1="15" x2="21" y2="21" />
+                    <line x1="4" y1="4" x2="9" y2="9" />
+                  </svg>
+                {/if}
+              </button>
+              <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
+                {isRandomizing ? "正在随机点歌..." : "随机点一首"}
+              </span>
+            </div>
+
+            {#if safeSourceUrl && !selectedPlaylist.isSystemProtected}
+              <div class="chat-playlist-action-wrap">
+                <a
+                  href={safeSourceUrl}
+                  target="_blank"
+                  rel="noopener"
+                  class="chat-playlist-icon-btn no-underline"
+                  aria-label={`前往${formatPlatformLabel(selectedPlaylist.platform)}原歌单`}
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                    <polyline points="15 3 21 3 21 9" />
+                    <line x1="10" y1="14" x2="21" y2="3" />
+                  </svg>
+                </a>
+                <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
+                  前往{formatPlatformLabel(selectedPlaylist.platform)}原歌单
+                </span>
+              </div>
+            {/if}
+
+            {#if selectedPlaylist.isSystemProtected}
+              <div class="chat-playlist-action-wrap">
+                <button
+                  type="button"
+                  disabled={isLoadingPlaylistDetail}
+                  class="chat-playlist-icon-btn"
+                  aria-label="刷新歌单曲目"
+                  onclick={() => selectedPlaylist && openPlaylistDetail(selectedPlaylist.id, true, undefined, collectiveFilterUserKey)}
+                >
+                  <svg class="w-3.5 h-3.5 {isLoadingPlaylistDetail ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                </button>
+                <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
+                  {isLoadingPlaylistDetail ? "正在刷新..." : "刷新歌单曲目"}
+                </span>
+              </div>
+            {:else if canManagePlaylist(selectedPlaylist)}
+              <div class="chat-playlist-action-wrap">
+                <button
+                  type="button"
+                  disabled={isRefreshingPlaylistId === selectedPlaylist.id}
+                  class="chat-playlist-icon-btn"
+                  aria-label={selectedPlaylist.updatedAt ? `刷新同步歌单（上次同步于 ${formatPlaylistDate(selectedPlaylist.updatedAt)}）` : "刷新同步歌单"}
+                  onclick={() => selectedPlaylist && handleRefreshPlaylist(selectedPlaylist)}
+                >
+                  <svg class="w-3.5 h-3.5 {isRefreshingPlaylistId === selectedPlaylist.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="23 4 23 10 17 10" />
+                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                  </svg>
+                </button>
+                <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
+                  {#if isRefreshingPlaylistId === selectedPlaylist.id}
+                    正在同步...
+                  {:else if selectedPlaylist.updatedAt}
+                    上次同步于 {formatPlaylistDate(selectedPlaylist.updatedAt)}
+                  {:else}
+                    刷新同步歌单
+                  {/if}
+                </span>
+              </div>
+
+              {#if currentUser?.isAdmin}
+                <div class="chat-playlist-action-wrap">
+                  <button
+                    type="button"
+                    disabled={isUpdatingFlagsId === selectedPlaylist.id}
+                    class="chat-playlist-icon-btn {selectedPlaylist.isFeatured ? 'is-active' : ''}"
+                    aria-label={selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}
+                    onclick={() => selectedPlaylist && handleTogglePlaylistFlag(selectedPlaylist, "isFeatured")}
+                  >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill={selectedPlaylist.isFeatured ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
+                    </svg>
+                  </button>
+                  <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
+                    {selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}
+                  </span>
+                </div>
+              {/if}
+
+              {#if isOwnPlaylist(selectedPlaylist) && !selectedPlaylist.isSystemProtected}
+                <div class="chat-playlist-action-wrap">
+                  <button
+                    type="button"
+                    disabled={isDeletingPlaylistId === selectedPlaylist.id}
+                    class="chat-playlist-icon-btn {confirmDeletePlaylistId === selectedPlaylist.id ? 'is-danger-confirm' : 'is-danger'}"
+                    aria-label={confirmDeletePlaylistId === selectedPlaylist.id ? "再次点击确认删除" : "删除歌单"}
+                    onclick={() => selectedPlaylist && handleDeletePlaylist(selectedPlaylist)}
+                  >
+                    {#if confirmDeletePlaylistId === selectedPlaylist.id}
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    {:else}
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    {/if}
+                  </button>
+                  <span
+                    data-chat-floating
+                    use:positionChatFloating={{ hover: "tooltip", forceOpen: confirmDeletePlaylistId === selectedPlaylist.id, gap: 7 }}
+                    class="chat-playlist-tooltip"
+                    role="tooltip"
+                  >
+                    {#if isDeletingPlaylistId === selectedPlaylist.id}
+                      正在删除...
+                    {:else if confirmDeletePlaylistId === selectedPlaylist.id}
+                      再次点击确认删除
+                    {:else}
+                      删除歌单
+                    {/if}
+                  </span>
+                </div>
+              {/if}
+            {/if}
+          </div>
+        {/if}
+      {/snippet}
       {#snippet playlistMetaHeader()}
         {#if selectedPlaylist}
-          <!-- 第 2 行：封面图 + 歌单信息 (如果是共享歌单，操作按钮放在同一行右侧) -->
+          <!-- 第 2 行：封面图 + 歌单信息（仅 1~2 个操作按钮时放在同一行右侧） -->
           <div class="flex items-center justify-between gap-2.5">
             <div class="flex items-center gap-2.5 min-w-0 flex-1">
               <div class="chat-music-thumb w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-(--primary)/12 flex items-center justify-center">
@@ -5344,211 +5499,15 @@ $effect(() => {
               </div>
             </div>
 
-            {#if selectedPlaylist.id === "pl_collective_favorites"}
-              <!-- 共享歌单：仅有的两个操作按钮靠右排在同一行 -->
-              <div class="flex items-center gap-1.5 shrink-0">
-                <div class="chat-playlist-action-wrap">
-                  <button
-                    type="button"
-                    disabled={selectedPlaylist.tracks.length === 0 || isRandomizing}
-                    class="chat-playlist-icon-btn {isRandomizing ? 'opacity-75 cursor-wait!' : ''}"
-                    aria-label={isRandomizing ? "正在随机点歌..." : "随机点一首"}
-                    onclick={() => selectedPlaylist && handleRandomPlayFromPlaylist(selectedPlaylist)}
-                  >
-                    {#if isRandomizing}
-                      <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
-                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
-                      </svg>
-                    {:else}
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="16 3 21 3 21 8" />
-                        <line x1="4" y1="20" x2="21" y2="3" />
-                        <polyline points="21 16 21 21 16 21" />
-                        <line x1="15" y1="15" x2="21" y2="21" />
-                        <line x1="4" y1="4" x2="9" y2="9" />
-                      </svg>
-                    {/if}
-                  </button>
-                  <span data-chat-floating use:positionChatFloating={{ placement: "top-end", hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                    {isRandomizing ? "正在随机点歌..." : "随机点一首"}
-                  </span>
-                </div>
-
-                <div class="chat-playlist-action-wrap">
-                  <button
-                    type="button"
-                    disabled={isLoadingPlaylistDetail}
-                    class="chat-playlist-icon-btn"
-                    aria-label="刷新歌单曲目"
-                    onclick={() => selectedPlaylist && openPlaylistDetail(selectedPlaylist.id, true, undefined, collectiveFilterUserKey)}
-                  >
-                    <svg class="w-3.5 h-3.5 {isLoadingPlaylistDetail ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                      <polyline points="23 4 23 10 17 10" />
-                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                    </svg>
-                  </button>
-                  <span data-chat-floating use:positionChatFloating={{ placement: "top-end", hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                    {isLoadingPlaylistDetail ? "正在刷新..." : "刷新歌单曲目"}
-                  </span>
-                </div>
-              </div>
+            {#if !hasExtraManageActions}
+              {@render playlistActionButtons()}
             {/if}
           </div>
 
-          <!-- 第 3 行：纯图标工具栏（普通歌单） -->
-          {#if selectedPlaylist.id !== "pl_collective_favorites"}
+          <!-- 第 3 行：纯图标工具栏（有 3 个及以上操作按钮时独立成行） -->
+          {#if hasExtraManageActions}
             <div class="flex items-center justify-start">
-              <div class="flex items-center gap-1.5 shrink-0">
-                <div class="chat-playlist-action-wrap">
-                  <button
-                    type="button"
-                    disabled={selectedPlaylist.tracks.length === 0 || isRandomizing}
-                    class="chat-playlist-icon-btn {isRandomizing ? 'opacity-75 cursor-wait!' : ''}"
-                    aria-label={isRandomizing ? "正在随机点歌..." : "随机点一首"}
-                    onclick={() => selectedPlaylist && handleRandomPlayFromPlaylist(selectedPlaylist)}
-                  >
-                    {#if isRandomizing}
-                      <svg class="w-3.5 h-3.5 shrink-0 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5" opacity="0.25" />
-                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
-                      </svg>
-                    {:else}
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="16 3 21 3 21 8" />
-                        <line x1="4" y1="20" x2="21" y2="3" />
-                        <polyline points="21 16 21 21 16 21" />
-                        <line x1="15" y1="15" x2="21" y2="21" />
-                        <line x1="4" y1="4" x2="9" y2="9" />
-                      </svg>
-                    {/if}
-                  </button>
-                  <span data-chat-floating use:positionChatFloating={{ placement: "top-start", hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                    {isRandomizing ? "正在随机点歌..." : "随机点一首"}
-                  </span>
-                </div>
-
-                {#if safeSourceUrl && !selectedPlaylist.isSystemProtected}
-                  <div class="chat-playlist-action-wrap">
-                    <a
-                      href={safeSourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="chat-playlist-icon-btn no-underline"
-                      aria-label={`前往${formatPlatformLabel(selectedPlaylist.platform)}原歌单`}
-                    >
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                        <polyline points="15 3 21 3 21 9" />
-                        <line x1="10" y1="14" x2="21" y2="3" />
-                      </svg>
-                    </a>
-                    <span data-chat-floating use:positionChatFloating={{ placement: canManagePlaylist(selectedPlaylist) ? "top" : "top-end", hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                      前往{formatPlatformLabel(selectedPlaylist.platform)}原歌单
-                    </span>
-                  </div>
-                {/if}
-
-                {#if selectedPlaylist.isSystemProtected}
-                  <div class="chat-playlist-action-wrap">
-                    <button
-                      type="button"
-                      disabled={isLoadingPlaylistDetail}
-                      class="chat-playlist-icon-btn"
-                      aria-label="刷新歌单曲目"
-                      onclick={() => selectedPlaylist && openPlaylistDetail(selectedPlaylist.id, true, undefined, collectiveFilterUserKey)}
-                    >
-                      <svg class="w-3.5 h-3.5 {isLoadingPlaylistDetail ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="23 4 23 10 17 10" />
-                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                      </svg>
-                    </button>
-                    <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                      {isLoadingPlaylistDetail ? "正在刷新..." : "刷新歌单曲目"}
-                    </span>
-                  </div>
-                {:else if canManagePlaylist(selectedPlaylist)}
-                  <div class="chat-playlist-action-wrap">
-                    <button
-                      type="button"
-                      disabled={isRefreshingPlaylistId === selectedPlaylist.id}
-                      class="chat-playlist-icon-btn"
-                      aria-label={selectedPlaylist.updatedAt ? `刷新同步歌单（上次同步于 ${formatPlaylistDate(selectedPlaylist.updatedAt)}）` : "刷新同步歌单"}
-                      onclick={() => selectedPlaylist && handleRefreshPlaylist(selectedPlaylist)}
-                    >
-                      <svg class="w-3.5 h-3.5 {isRefreshingPlaylistId === selectedPlaylist.id ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <polyline points="23 4 23 10 17 10" />
-                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                      </svg>
-                    </button>
-                    <span data-chat-floating use:positionChatFloating={{ placement: currentUser?.isAdmin ? "top" : "top-end", hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                      {#if isRefreshingPlaylistId === selectedPlaylist.id}
-                        正在同步...
-                      {:else if selectedPlaylist.updatedAt}
-                        上次同步于 {formatPlaylistDate(selectedPlaylist.updatedAt)}
-                      {:else}
-                        刷新同步歌单
-                      {/if}
-                    </span>
-                  </div>
-
-                  {#if currentUser?.isAdmin}
-                    <div class="chat-playlist-action-wrap">
-                      <button
-                        type="button"
-                        disabled={isUpdatingFlagsId === selectedPlaylist.id}
-                        class="chat-playlist-icon-btn {selectedPlaylist.isFeatured ? 'is-active' : ''}"
-                        aria-label={selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}
-                        onclick={() => selectedPlaylist && handleTogglePlaylistFlag(selectedPlaylist, "isFeatured")}
-                      >
-                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill={selectedPlaylist.isFeatured ? "currentColor" : "none"} stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                          <polygon points="12 1.9 14.35 9.15 21.95 9.15 15.8 13.62 18.15 20.87 12 16.39 5.85 20.87 8.2 13.62 2.05 9.15 9.65 9.15" />
-                        </svg>
-                      </button>
-                      <span data-chat-floating use:positionChatFloating={{ hover: "tooltip", gap: 7 }} class="chat-playlist-tooltip" role="tooltip">
-                        {selectedPlaylist.isFeatured ? "取消房间精选" : "设为房间精选"}
-                      </span>
-                    </div>
-                  {/if}
-
-                  {#if isOwnPlaylist(selectedPlaylist) && !selectedPlaylist.isSystemProtected}
-                    <div class="chat-playlist-action-wrap">
-                      <button
-                        type="button"
-                        disabled={isDeletingPlaylistId === selectedPlaylist.id}
-                        class="chat-playlist-icon-btn {confirmDeletePlaylistId === selectedPlaylist.id ? 'is-danger-confirm' : 'is-danger'}"
-                        aria-label={confirmDeletePlaylistId === selectedPlaylist.id ? "再次点击确认删除" : "删除歌单"}
-                        onclick={() => selectedPlaylist && handleDeletePlaylist(selectedPlaylist)}
-                      >
-                        {#if confirmDeletePlaylistId === selectedPlaylist.id}
-                          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                        {:else}
-                          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <polyline points="3 6 5 6 21 6" />
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                          </svg>
-                        {/if}
-                      </button>
-                      <span
-                        data-chat-floating
-                        use:positionChatFloating={{ placement: "top-end", hover: "tooltip", forceOpen: confirmDeletePlaylistId === selectedPlaylist.id, gap: 7 }}
-                        class="chat-playlist-tooltip"
-                        role="tooltip"
-                      >
-                        {#if isDeletingPlaylistId === selectedPlaylist.id}
-                          正在删除...
-                        {:else if confirmDeletePlaylistId === selectedPlaylist.id}
-                          再次点击确认删除
-                        {:else}
-                          删除歌单
-                        {/if}
-                      </span>
-                    </div>
-                  {/if}
-                {/if}
-              </div>
+              {@render playlistActionButtons()}
             </div>
           {/if}
 

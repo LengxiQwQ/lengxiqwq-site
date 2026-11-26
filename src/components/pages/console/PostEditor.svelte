@@ -285,7 +285,7 @@ function renderMarkdown(md: string): string {
 	);
 	html = html.replace(
 		/\[([^\]]+)\]\(([^)]+)\)/g,
-		'<a href="$2" target="_blank" rel="noopener noreferrer" class="text-(--primary) underline underline-offset-2 hover:opacity-80">$1</a>',
+		'<a href="$2" target="_blank" rel="noopener" class="text-(--primary) underline underline-offset-2 hover:opacity-80">$1</a>',
 	);
 
 	// 5. 行内格式

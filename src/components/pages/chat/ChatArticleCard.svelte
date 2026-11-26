@@ -84,7 +84,7 @@ function handleMediaError() {
 <a
   href={data.url}
   target="_blank"
-  rel="noopener noreferrer"
+  rel="noopener"
   class="chat-article-card block select-none overflow-hidden rounded-2xl border transition-all duration-200 min-w-[240px] max-w-[380px] w-full text-left {isSelf ? 'chat-article-card--self' : 'chat-article-card--peer'}"
   aria-label={`${badgeLabel}：${title}`}
 >

@@ -47,46 +47,44 @@ const replaysBlockSelector = replays?.blockSelector?.trim();
 >
 	;(() => {
 		if (!websiteId || !scriptUrl || window.__umamiScriptsScheduled) return;
+		// 过滤本地开发环境与内网调试流量，避免污染线上统计
+		const host = window.location.hostname;
+		if (
+			!host ||
+			host === "localhost" ||
+			host === "127.0.0.1" ||
+			host === "::1" ||
+			host.startsWith("192.168.") ||
+			host.startsWith("10.")
+		) {
+			return;
+		}
 		window.__umamiScriptsScheduled = true;
 
-		let injected = false;
-		const injectUmamiScripts = () => {
-			if (injected) return;
-			injected = true;
+		// 立即异步注入（async 不阻塞渲染），自建节点无需延迟 2.5s 等待，避免漏掉快速跳出访客
+		const mainScript = document.createElement("script");
+		mainScript.async = true;
+		mainScript.src = scriptUrl;
+		mainScript.setAttribute("data-website-id", websiteId);
+		mainScript.setAttribute("data-swup-ignore-script", "");
+		if (collectWebVitals) {
+			mainScript.setAttribute("data-performance", "true");
+		}
+		document.head.appendChild(mainScript);
 
-			// 异步非阻塞加载 Umami 主脚本，避免弱网/跨境超时时卡死 DOMContentLoaded、ES Module 队列与页面加载条
-			const mainScript = document.createElement("script");
-			mainScript.async = true;
-			mainScript.src = scriptUrl;
-			mainScript.setAttribute("data-website-id", websiteId);
-			mainScript.setAttribute("data-swup-ignore-script", "");
-			if (collectWebVitals) {
-				mainScript.setAttribute("data-performance", "true");
+		if (replaysEnabled && replaysScriptUrl) {
+			const replayScript = document.createElement("script");
+			replayScript.async = true;
+			replayScript.src = replaysScriptUrl;
+			replayScript.setAttribute("data-website-id", websiteId);
+			replayScript.setAttribute("data-sample-rate", String(replaysSampleRate));
+			replayScript.setAttribute("data-mask-level", replaysMaskLevel);
+			replayScript.setAttribute("data-max-duration", String(replaysMaxDuration));
+			replayScript.setAttribute("data-swup-ignore-script", "");
+			if (replaysBlockSelector) {
+				replayScript.setAttribute("data-block-selector", replaysBlockSelector);
 			}
-			document.head.appendChild(mainScript);
-
-			if (replaysEnabled && replaysScriptUrl) {
-				const replayScript = document.createElement("script");
-				replayScript.async = true;
-				replayScript.src = replaysScriptUrl;
-				replayScript.setAttribute("data-website-id", websiteId);
-				replayScript.setAttribute("data-sample-rate", String(replaysSampleRate));
-				replayScript.setAttribute("data-mask-level", replaysMaskLevel);
-				replayScript.setAttribute("data-max-duration", String(replaysMaxDuration));
-				replayScript.setAttribute("data-swup-ignore-script", "");
-				if (replaysBlockSelector) {
-					replayScript.setAttribute("data-block-selector", replaysBlockSelector);
-				}
-				document.head.appendChild(replayScript);
-			}
-		};
-
-		// 在页面 load 完成后立即异步注入（不拉长浏览器加载条）；同时设 2.5s 兜底防止慢图耽误统计上报
-		if (document.readyState === "complete") {
-			injectUmamiScripts();
-		} else {
-			window.addEventListener("load", injectUmamiScripts, { once: true });
-			window.setTimeout(injectUmamiScripts, 2500);
+			document.head.appendChild(replayScript);
 		}
 	})();
 </script>

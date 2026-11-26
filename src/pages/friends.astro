@@ -241,7 +241,7 @@ const sections = Array.from(sectionsMap.entries())
                     <a
                       href={item.siteurl}
                       target="_blank"
-                      rel="noopener noreferrer"
+                      rel="noopener"
                       data-tags={item.tags?.join(",")}
                       data-pinned={item.pinned || item.weight >= 99 ? "true" : "false"}
                       data-order={configOrderMap.get(item.siteurl) ?? index}
@@ -360,7 +360,7 @@ const sections = Array.from(sectionsMap.entries())
                   <a
                     href={item.siteurl}
                     target="_blank"
-                    rel="noopener noreferrer"
+                    rel="noopener"
                     class="group inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border border-(--line-divider) hover:border-(--primary)/50 bg-black/[0.02] dark:bg-white/[0.03] hover:bg-(--primary)/5 text-neutral-700 dark:text-neutral-300 hover:text-(--primary) transition-all duration-200"
                     title={item.desc ? `${item.title}: ${item.desc}` : item.title}
                   >
@@ -388,7 +388,7 @@ const sections = Array.from(sectionsMap.entries())
                   <a
                     href={item.siteurl}
                     target="_blank"
-                    rel="noopener noreferrer"
+                    rel="noopener"
                     class="group inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border border-rose-500/20 hover:border-rose-500/40 bg-rose-500/[0.04] hover:bg-rose-500/10 text-neutral-500 dark:text-neutral-400 hover:text-rose-600 dark:hover:text-rose-400 line-through decoration-rose-500/40 transition-all duration-200"
                     title={`连续 ${item.failCount} 次无法访问${item.lastError ? ` (${item.lastError})` : ""}`}
                   >

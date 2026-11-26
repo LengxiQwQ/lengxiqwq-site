@@ -5108,7 +5108,7 @@ function removePendingImage(index: number) {
                     <a
                       href={meta.externalHref}
                       target="_blank"
-                      rel="noopener noreferrer"
+                      rel="noopener"
                       class="chat-share-card-stretched font-semibold text-xs text-[var(--deep-text)] dark:text-white/95 truncate"
                       aria-label={`打开${meta.kindLabel}：${meta.title}`}
                     >
@@ -5241,7 +5241,7 @@ function removePendingImage(index: number) {
                 <a
                   href={activePrivateExternalHref}
                   target="_blank"
-                  rel="noopener noreferrer"
+                  rel="noopener"
                   class="chat-queue-icon-btn w-6.5! h-6.5! rounded-lg! no-underline!"
                   aria-label={`打开原曲链接：${activePrivateTrack.title}`}
                   onclick={(e) => e.stopPropagation()}

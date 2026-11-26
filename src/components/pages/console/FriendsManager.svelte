@@ -807,7 +807,7 @@ onMount(() => {
 									<a
 										href={item.siteurl}
 										target="_blank"
-										rel="noopener noreferrer"
+										rel="noopener"
 										class="hover:underline text-(--primary) flex items-center gap-1 truncate max-w-xs"
 									>
 										<svg class="w-3 h-3 text-(--content-meta) shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -821,7 +821,7 @@ onMount(() => {
 											<a
 												href={item.targetUrl}
 												target="_blank"
-												rel="noopener noreferrer"
+												rel="noopener"
 												class="hover:underline text-emerald-600 dark:text-emerald-400 flex items-center gap-1 truncate max-w-xs"
 												title="已指定友链页面地址"
 											>
@@ -883,7 +883,7 @@ onMount(() => {
 							<a
 								href={item.targetUrl || item.siteurl}
 								target="_blank"
-								rel="noopener noreferrer"
+								rel="noopener"
 								class="px-2.5 py-1 text-xs rounded-lg bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-neutral-700 dark:text-neutral-300 transition-colors inline-flex items-center justify-center gap-1 whitespace-nowrap"
 								title="新标签页打开友链页面"
 							>

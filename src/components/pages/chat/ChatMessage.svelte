@@ -1824,7 +1824,7 @@ function handleBubbleClick(e: MouseEvent) {
             <a
               href={effectiveSenderUrl}
               target="_blank"
-              rel="noopener noreferrer"
+              rel="noopener"
               class="text-[13px] md:text-xs text-[var(--chat-meta-color)] hover:text-[var(--primary)] font-medium truncate no-underline"
             >
               {senderDisplayName}

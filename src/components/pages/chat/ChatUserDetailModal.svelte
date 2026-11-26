@@ -1049,7 +1049,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               <a
                 href={matchedSite?.siteUrl || seed.url}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel="noopener"
                 class="chat-btn-ghost px-2.5 py-1 text-xs shrink-0 text-[var(--chat-accent-text)] bg-(--primary)/10 hover:bg-(--primary)/20 rounded-lg no-underline font-medium transition-colors inline-flex items-center gap-0.5"
                 title="访问对方网站主页"
               >
@@ -1061,7 +1061,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               <a
                 href={matchedSite.chatUrl}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel="noopener"
                 class="chat-btn-ghost px-2.5 py-1 text-xs shrink-0 text-[var(--chat-meta-color)] hover:text-[var(--chat-accent-text)] bg-black/5 dark:bg-white/10 hover:bg-(--primary)/15 rounded-lg no-underline font-medium transition-colors inline-flex items-center gap-0.5"
                 title="前往对方公开茶室"
               >
@@ -1096,7 +1096,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             <a
               href={`https://matrix.to/#/${encodeURIComponent(extFullId)}`}
               target="_blank"
-              rel="noopener noreferrer"
+              rel="noopener"
               class="text-[var(--chat-accent-text)] hover:underline truncate font-mono"
             >
               {extFullId}
@@ -1488,7 +1488,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             <a
               href={safeProfileUrl}
               target="_blank"
-              rel="noopener noreferrer"
+              rel="noopener"
               class="chat-user-detail-subcard flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-xs text-[var(--chat-accent-text)] hover:border-(--primary)/50 transition-colors no-underline"
             >
               <span class="truncate">{safeProfileUrl}</span>
@@ -1504,7 +1504,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                   <a
                     href={`https://matrix.to/#/${encodeURIComponent(localMatrixInfo.matrixId)}`}
                     target="_blank"
-                    rel="noopener noreferrer"
+                    rel="noopener"
                     class="text-[var(--chat-accent-text)] hover:underline truncate font-mono"
                   >
                     {localMatrixInfo.matrixId}

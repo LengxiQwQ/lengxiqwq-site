@@ -1,7 +1,7 @@
 import { visit } from "unist-util-visit";
 
 /**
- * 为文章中的外部链接添加 target="_blank" 和 rel="noopener noreferrer"
+ * 为文章中的外部链接添加 target="_blank" 和 rel="noopener"
  * 仅处理以 http:// 或 https:// 开头且不属于本站的链接
  *
  * @param {Object} options
@@ -37,7 +37,7 @@ export default function rehypeExternalLinks(options = {}) {
 			}
 
 			node.properties.target = "_blank";
-			node.properties.rel = "noopener noreferrer";
+			node.properties.rel = "noopener";
 		});
 	};
 }

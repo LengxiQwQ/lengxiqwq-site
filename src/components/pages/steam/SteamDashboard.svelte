@@ -23,7 +23,7 @@ const { profile, stats, levelInfo }: Props = $props();
 		<a
 			href={profile.profileurl}
 			target="_blank"
-			rel="noopener noreferrer"
+			rel="noopener"
 			class="relative group shrink-0"
 			title={i18n(I18nKey.steamViewProfile)}
 		>
@@ -43,7 +43,7 @@ const { profile, stats, levelInfo }: Props = $props();
 				<a
 					href={profile.profileurl}
 					target="_blank"
-					rel="noopener noreferrer"
+					rel="noopener"
 					class="text-xl md:text-2xl font-bold text-neutral-900 dark:text-neutral-100 hover:text-(--primary) transition-colors duration-200 truncate group inline-flex items-center gap-1.5"
 					title={i18n(I18nKey.steamViewProfile)}
 				>

@@ -88,7 +88,7 @@ const useContentPadding = !adConfig.padding;
           <a
             href={adConfig.image.link}
             target={adConfig.image.external ? "_blank" : "_self"}
-            rel={adConfig.image.external ? "noopener noreferrer" : ""}
+            rel={adConfig.image.external ? "noopener" : ""}
             class="block overflow-hidden rounded-lg"
           >
             <img
@@ -122,7 +122,7 @@ const useContentPadding = !adConfig.padding;
         <a
           href={adConfig.link.url}
           target={adConfig.link.external ? "_blank" : "_self"}
-          rel={adConfig.link.external ? "noopener noreferrer" : ""}
+          rel={adConfig.link.external ? "noopener" : ""}
           class="btn-regular inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:scale-105"
         >
           <span>{adConfig.link.text}</span>

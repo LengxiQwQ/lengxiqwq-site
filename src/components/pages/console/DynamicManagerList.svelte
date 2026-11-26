@@ -595,7 +595,7 @@ onMount(() => {
 									<a
 										href={imgUrl}
 										target="_blank"
-										rel="noopener noreferrer"
+										rel="noopener"
 										class="relative group aspect-square rounded-lg overflow-hidden border border-(--line-divider) bg-black/5 dark:bg-white/5 block"
 									>
 										<img

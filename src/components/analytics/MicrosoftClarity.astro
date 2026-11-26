@@ -14,6 +14,18 @@ const { clarityId, enableCustomEvents = true } = Astro.props;
 >
 	(function () {
 		if (!clarityId || window.__clarityInitialized) return;
+		// 过滤本地开发环境与内网调试流量，避免污染线上统计
+		var host = window.location.hostname;
+		if (
+			!host ||
+			host === "localhost" ||
+			host === "127.0.0.1" ||
+			host === "::1" ||
+			host.indexOf("192.168.") === 0 ||
+			host.indexOf("10.") === 0
+		) {
+			return;
+		}
 		window.__clarityInitialized = true;
 
 		// 1. 初始化 Microsoft Clarity 官方加载器

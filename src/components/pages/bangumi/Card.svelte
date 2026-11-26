@@ -116,7 +116,7 @@ function handleError(e: Event) {
 <a
   href="{subjectBaseUrl}{item.subject?.id}"
   target="_blank"
-  rel="noopener noreferrer nofollow"
+  rel="noopener nofollow"
   class="group relative overflow-hidden rounded-xl transition-all duration-300 hover:shadow-lg hover:scale-[1.02] block"
 >
   <div class="aspect-2/3 relative overflow-hidden">

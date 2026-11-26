@@ -138,7 +138,7 @@ function openLoginPopup() {
 }
 
 function openInNewTab() {
-	window.open(walineAdminUrl, "_blank", "noopener,noreferrer");
+	window.open(walineAdminUrl, "_blank", "noopener");
 }
 </script>
 

@@ -90,7 +90,7 @@ onMount(() => {
         <a
           href="/posts/茶室点歌台在博客里一起听歌是怎样实现的/"
           target="_blank"
-          rel="noopener noreferrer"
+          rel="noopener"
           class="btn-regular chat-interconnect-header-link py-px px-1.5 rounded-md text-[11px] font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-0.5 no-underline whitespace-nowrap"
           title="查看点歌台与跨站音乐分享接入文档"
         >
@@ -104,7 +104,7 @@ onMount(() => {
         <a
           href="https://rainzt.cn/posts/tingyu-tea-room-guide/"
           target="_blank"
-          rel="noopener noreferrer"
+          rel="noopener"
           class="btn-regular chat-interconnect-header-link py-px px-1.5 rounded-md text-[11px] font-medium text-[var(--primary)] hover:bg-[var(--btn-plain-bg-hover)] transition-all inline-flex items-center gap-0.5 no-underline whitespace-nowrap"
           title="查看互联加入指南"
         >
@@ -147,7 +147,7 @@ onMount(() => {
             <a
               {href}
               target={site.isSelf ? undefined : "_blank"}
-              rel={site.isSelf ? undefined : "noopener noreferrer"}
+              rel={site.isSelf ? undefined : "noopener"}
               class="group interconnect-site-card"
               style="--site-theme: {siteTheme};"
               aria-label={site.isSelf ? "前往本站主页" : `前往 ${site.owner || site.name} 的茶室`}
