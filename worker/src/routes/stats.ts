@@ -286,14 +286,22 @@ stats.get("/summary", async (c) => {
 		try {
 			const endAt = Date.now();
 			const startAt = endAt - 30 * 24 * 60 * 60 * 1000;
+			const startAt24h = endAt - 24 * 60 * 60 * 1000;
+			const prevStartAt24h = endAt - 48 * 60 * 60 * 1000;
 
-			const [statsRes, pageviewsRes, allTimeStatsRes] = await Promise.all([
+			const [
+				statsRes,
+				pageviewsRes,
+				allTimeStatsRes,
+				last24hStatsRes,
+				prev24hStatsRes,
+			] = await Promise.all([
 				fetch(`${umamiCtx.apiBase}/stats?startAt=${startAt}&endAt=${endAt}`, {
 					headers: umamiCtx.headers,
 					signal: AbortSignal.timeout(5000),
 				}),
 				fetch(
-					`${umamiCtx.apiBase}/pageviews?startAt=${startAt}&endAt=${endAt}&unit=day`,
+					`${umamiCtx.apiBase}/pageviews?startAt=${startAt}&endAt=${endAt}&unit=day&timezone=Asia%2FShanghai`,
 					{
 						headers: umamiCtx.headers,
 						signal: AbortSignal.timeout(5000),
@@ -303,6 +311,20 @@ stats.get("/summary", async (c) => {
 					headers: umamiCtx.headers,
 					signal: AbortSignal.timeout(5000),
 				}).catch(() => null),
+				fetch(
+					`${umamiCtx.apiBase}/stats?startAt=${startAt24h}&endAt=${endAt}`,
+					{
+						headers: umamiCtx.headers,
+						signal: AbortSignal.timeout(5000),
+					},
+				).catch(() => null),
+				fetch(
+					`${umamiCtx.apiBase}/stats?startAt=${prevStartAt24h}&endAt=${startAt24h}`,
+					{
+						headers: umamiCtx.headers,
+						signal: AbortSignal.timeout(5000),
+					},
+				).catch(() => null),
 			]);
 
 			if (statsRes.ok && pageviewsRes.ok) {
@@ -316,8 +338,9 @@ stats.get("/summary", async (c) => {
 				const uvList = pvData.sessions || [];
 
 				const chart: StatsSummaryItem[] = pvList.map((item, idx) => {
+					const rawDate = item.t || item.x || "";
 					const dateStr =
-						(item.t || item.x || "").split("T")[0] || `Day ${idx + 1}`;
+						rawDate.split("T")[0]?.split(" ")[0] || `Day ${idx + 1}`;
 					const uvItem = uvList[idx];
 					return {
 						date: dateStr,
@@ -358,6 +381,32 @@ stats.get("/summary", async (c) => {
 					} catch {}
 				}
 
+				let last24hPv: number | undefined;
+				let last24hUv: number | undefined;
+				if (last24hStatsRes?.ok) {
+					try {
+						const d24 = (await last24hStatsRes.json()) as Record<
+							string,
+							unknown
+						>;
+						last24hPv = extractVal(d24.pageviews);
+						last24hUv = extractVal(d24.visitors);
+					} catch {}
+				}
+
+				let prev24hPv: number | undefined;
+				let prev24hUv: number | undefined;
+				if (prev24hStatsRes?.ok) {
+					try {
+						const p24 = (await prev24hStatsRes.json()) as Record<
+							string,
+							unknown
+						>;
+						prev24hPv = extractVal(p24.pageviews);
+						prev24hUv = extractVal(p24.visitors);
+					} catch {}
+				}
+
 				const summaryResult: StatsSummaryData = {
 					totalPv,
 					totalUv,
@@ -365,6 +414,10 @@ stats.get("/summary", async (c) => {
 					uniqueVisitors: totalUv,
 					historicalPv,
 					historicalUv,
+					last24hPv,
+					last24hUv,
+					prev24hPv,
+					prev24hUv,
 					bounceRate,
 					avgVisitDuration,
 					chart,
@@ -579,29 +632,65 @@ stats.get("/insights", async (c) => {
 					});
 				};
 
+				const PAGE_TITLE_MAP: Record<string, string> = {
+					"": "首页",
+					"/": "首页",
+					"/chat": "茶室",
+					"/devices": "我的设备",
+					"/friends": "友情链接",
+					"/dynamic": "动态",
+					"/archive": "文章归档",
+					"/guestbook": "留言板",
+					"/about": "关于我",
+					"/fcircle": "友链朋友圈",
+					"/console": "管理中台",
+					"/stats": "站点统计",
+					"/gallery": "相册",
+					"/timeline": "时间线",
+					"/changelog": "更新日志",
+					"/sponsor": "赞助支持",
+					"/steam": "Steam 游戏库",
+					"/bangumi": "追番记录",
+					"/bilibili": "B站动态",
+					"/myanimelist": "MAL 动画清单",
+					"/vndb": "视觉小说库",
+					"/booknav": "书签导航",
+					"/search": "站内搜索",
+					"/categories": "文章分类",
+					"/tags": "文章标签",
+					"/series": "文章专栏",
+					"/analytics": "访问分析",
+					"/rss": "RSS 订阅",
+					"/atom": "Atom 订阅",
+				};
+
 				const formatPageTitle = (path: string): string => {
-					if (!path || path === "/" || path === "") return "首页";
-					if (path === "/friends" || path === "/friends/") return "友情链接";
-					if (path === "/dynamic" || path === "/dynamic/") return "动态";
-					if (path === "/archive" || path === "/archive/") return "文章归档";
-					if (path === "/guestbook" || path === "/guestbook/") return "留言板";
-					if (path === "/about" || path === "/about/") return "关于我";
-					if (path === "/fcircle" || path === "/fcircle/") return "友链朋友圈";
-					if (path === "/console" || path === "/console/") return "管理中台";
-					if (path.startsWith("/projects/")) {
-						const projSlug = path
-							.replace(/^\/projects\//, "")
-							.replace(/\/$/, "");
-						if (!projSlug) return "项目";
-						return `项目 · ${projSlug}`;
+					const normalized =
+						!path || path === "/" ? "/" : path.replace(/\/+$/, "");
+					if (PAGE_TITLE_MAP[normalized]) return PAGE_TITLE_MAP[normalized];
+					if (normalized.startsWith("/projects/")) {
+						const projSlug = normalized.slice("/projects/".length);
+						return projSlug ? `项目 · ${projSlug}` : "项目";
 					}
-					if (path.startsWith("/posts/")) {
-						const slug = path.replace(/^\/posts\//, "").replace(/\/$/, "");
+					if (normalized.startsWith("/posts/")) {
+						const slug = normalized.slice("/posts/".length);
 						try {
 							return `文章 · ${decodeURIComponent(slug)}`;
 						} catch {
 							return `文章 · ${slug}`;
 						}
+					}
+					if (normalized.startsWith("/gallery/")) {
+						const album = normalized.slice("/gallery/".length);
+						try {
+							return `相册 · ${decodeURIComponent(album)}`;
+						} catch {
+							return `相册 · ${album}`;
+						}
+					}
+					if (normalized.startsWith("/dynamic/")) {
+						const dynSlug = normalized.slice("/dynamic/".length);
+						return dynSlug ? `动态 · ${dynSlug}` : "动态";
 					}
 					try {
 						return decodeURIComponent(path);

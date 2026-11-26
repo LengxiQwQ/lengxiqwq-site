@@ -148,6 +148,10 @@ export interface StatsSummaryData {
 	uniqueVisitors: number;
 	historicalPv?: number;
 	historicalUv?: number;
+	last24hPv?: number;
+	last24hUv?: number;
+	prev24hPv?: number;
+	prev24hUv?: number;
 	bounceRate: number; // 百分比, 如 38.5
 	avgVisitDuration: number; // 秒数
 	chart: StatsSummaryItem[];

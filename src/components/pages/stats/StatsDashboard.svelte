@@ -46,6 +46,10 @@ interface SummaryData {
 	uniqueVisitors: number;
 	historicalPv?: number;
 	historicalUv?: number;
+	last24hPv?: number;
+	last24hUv?: number;
+	prev24hPv?: number;
+	prev24hUv?: number;
 	bounceRate: number;
 	avgVisitDuration: number;
 	chart: ChartPoint[];
@@ -117,9 +121,23 @@ const rangeStats = $derived.by(() => {
 	return { peakPv: maxPv, peakDate, avgPv, totalPv: sumPv, totalUv: sumUv };
 });
 
-// 今日访问指标 (取趋势数组当天数据与昨日对比)
+// 最近 24 小时访问指标 (优先使用接口返回的滚动 24h 窗口数据，兜底取趋势数组最后一天)
 const todayStats = $derived.by(() => {
-	if (!summary?.chart || summary.chart.length === 0) {
+	if (!summary) {
+		return { pv: 0, uv: 0, prevPv: 0, prevUv: 0 };
+	}
+	if (
+		typeof summary.last24hPv === "number" &&
+		typeof summary.last24hUv === "number"
+	) {
+		return {
+			pv: summary.last24hPv,
+			uv: summary.last24hUv,
+			prevPv: summary.prev24hPv ?? 0,
+			prevUv: summary.prev24hUv ?? 0,
+		};
+	}
+	if (!summary.chart || summary.chart.length === 0) {
 		return { pv: 0, uv: 0, prevPv: 0, prevUv: 0 };
 	}
 	const len = summary.chart.length;
@@ -1003,10 +1021,10 @@ onMount(() => {
 			</div>
 		</div>
 
-		<!-- 今日总访问量 PV (放第三位) -->
+		<!-- 近 24 小时总访问量 PV (放第三位) -->
 		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-(--primary)/50 transition-all">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
-				<span class="font-medium">今日浏览量 (PV)</span>
+				<span class="font-medium">近 24 小时浏览 (PV)</span>
 				<Icon icon="material-symbols:visibility-rounded" class="text-base text-(--primary) group-hover:scale-110 transition-transform" />
 			</div>
 			<div class="text-2xl sm:text-3xl font-extrabold text-neutral-800 dark:text-neutral-100 tracking-tight font-mono">
@@ -1019,18 +1037,18 @@ onMount(() => {
 			<div class="text-[11px] mt-1.5 flex items-center gap-1 font-medium">
 				{#if todayStats.pv >= todayStats.prevPv}
 					<span class="text-emerald-600 dark:text-emerald-400">↑ {(todayStats.pv - todayStats.prevPv).toLocaleString()}</span>
-					<span class="text-(--content-meta) font-normal">较昨日</span>
+					<span class="text-(--content-meta) font-normal">较前 24h</span>
 				{:else}
 					<span class="text-neutral-500 dark:text-neutral-400">↓ {(todayStats.prevPv - todayStats.pv).toLocaleString()}</span>
-					<span class="text-(--content-meta) font-normal">较昨日</span>
+					<span class="text-(--content-meta) font-normal">较前 24h</span>
 				{/if}
 			</div>
 		</div>
 
-		<!-- 今日独立访客 UV (放第四位) -->
+		<!-- 近 24 小时独立访客 UV (放第四位) -->
 		<div class="p-4 sm:p-5 rounded-2xl bg-black/2 dark:bg-white/2 border border-(--line-divider) relative overflow-hidden group hover:border-emerald-500/50 transition-all">
 			<div class="flex items-center justify-between text-xs text-(--content-meta) mb-1.5">
-				<span class="font-medium">今日访客数 (UV)</span>
+				<span class="font-medium">近 24 小时访客 (UV)</span>
 				<Icon icon="material-symbols:person-rounded" class="text-base text-emerald-500 group-hover:scale-110 transition-transform" />
 			</div>
 			<div class="text-2xl sm:text-3xl font-extrabold text-neutral-800 dark:text-neutral-100 tracking-tight font-mono">
@@ -1043,10 +1061,10 @@ onMount(() => {
 			<div class="text-[11px] mt-1.5 flex items-center gap-1 font-medium">
 				{#if todayStats.uv >= todayStats.prevUv}
 					<span class="text-emerald-600 dark:text-emerald-400">↑ {(todayStats.uv - todayStats.prevUv).toLocaleString()}</span>
-					<span class="text-(--content-meta) font-normal">较昨日</span>
+					<span class="text-(--content-meta) font-normal">较前 24h</span>
 				{:else}
 					<span class="text-neutral-500 dark:text-neutral-400">↓ {(todayStats.prevUv - todayStats.uv).toLocaleString()}</span>
-					<span class="text-(--content-meta) font-normal">较昨日</span>
+					<span class="text-(--content-meta) font-normal">较前 24h</span>
 				{/if}
 			</div>
 		</div>
