@@ -5263,20 +5263,12 @@ function removePendingImage(index: number) {
 
         <div class="flex items-center gap-3 pt-2.5 min-w-0">
           {#if activePrivateTrack}
-            <button
-              type="button"
-              class="chat-private-cover-btn relative shrink-0 w-[52px] h-[52px] rounded-xl overflow-hidden border border-black/8 dark:border-white/10 bg-(--primary)/10 shadow-xs flex items-center justify-center select-none cursor-pointer p-0"
-              aria-label={privateMusic.isPlaying ? `暂停私有播放：${activePrivateTrack.title}` : `继续私有播放：${activePrivateTrack.title}`}
-              onclick={(e) => {
-                e.stopPropagation();
-                void privateMusic.toggleActivePlay();
-              }}
-            >
+            <div class="relative shrink-0 w-[52px] h-[52px] rounded-xl overflow-hidden border border-black/8 dark:border-white/10 bg-(--primary)/10 shadow-xs flex items-center justify-center select-none">
               {#if hasActiveCover}
                 <img
                   src={activePrivateTrack.cover}
                   alt={activePrivateTrack.title}
-                  class="chat-private-cover-img w-full h-full object-cover block"
+                  class="w-full h-full object-cover block"
                   onerror={() => {
                     sharedMusicFailedCovers = { ...sharedMusicFailedCovers, [activeCoverKey]: true };
                   }}
@@ -5286,27 +5278,7 @@ function removePendingImage(index: number) {
                   <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
                 </svg>
               {/if}
-              <span
-                class="chat-private-cover-overlay {privateMusic.isBufferingSlow && !privateMusic.isPlaying ? 'is-visible' : ''}"
-                aria-hidden="true"
-              >
-                {#if privateMusic.isBufferingSlow && !privateMusic.isPlaying}
-                  <svg class="w-5 h-5 block animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.6" opacity="0.32" />
-                    <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" />
-                  </svg>
-                {:else if privateMusic.isPlaying}
-                  <svg class="chat-cover-cue-icon w-5 h-5 block" viewBox="0 0 24 24" fill="currentColor">
-                    <rect x="5.5" y="4.5" width="4.5" height="15" rx="1.6" />
-                    <rect x="14" y="4.5" width="4.5" height="15" rx="1.6" />
-                  </svg>
-                {:else}
-                  <svg class="chat-cover-cue-icon w-5 h-5 block" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M8.2 5.45c0-1.08 1.19-1.74 2.11-1.17l9.28 5.79c.86.54.86 1.8 0 2.34l-9.28 5.79c-.92.57-2.11-.09-2.11-1.17V5.45z" />
-                  </svg>
-                {/if}
-              </span>
-            </button>
+            </div>
           {:else}
             <div class="w-[52px] h-[52px] rounded-xl border border-dashed border-[var(--chat-divider-color)] bg-black/[0.03] dark:bg-white/[0.04] flex items-center justify-center shrink-0 select-none">
               <svg class="w-5.5 h-5.5 text-[var(--primary)] opacity-60" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -5319,7 +5291,7 @@ function removePendingImage(index: number) {
             {#if activePrivateTrack}
               {@const activeArtistText = (activePrivateTrack.artist || "").trim() || "未知歌手"}
               <div
-                class="text-[13.5px] font-bold leading-snug truncate transition-colors duration-200 {activePrivateTopLine.tone === 'error'
+                class="text-[12.5px] font-bold leading-snug truncate transition-colors duration-200 {activePrivateTopLine.tone === 'error'
                   ? 'text-amber-600 dark:text-amber-400'
                   : activePrivateTopLine.tone === 'muted'
                     ? 'text-[var(--chat-meta-color)] font-medium'
@@ -5349,10 +5321,40 @@ function removePendingImage(index: number) {
                 暂无正在私有播放的音乐
               </div>
               <div class="text-[12px] leading-tight truncate text-[var(--chat-meta-color)]">
-                点击下方曲目封面或聊天音乐卡片即可试听
+                点击下方曲目或聊天音乐卡片即可试听
               </div>
             {/if}
           </div>
+
+          {#if activePrivateTrack}
+            <button
+              type="button"
+              class="chat-music-play-btn w-10 h-10 rounded-xl inline-flex items-center justify-center border-none cursor-pointer transition-[background-color,color,transform] duration-150 active:scale-95 shrink-0 select-none {privateMusic.isPlaying
+                ? 'bg-(--primary) text-white hover:brightness-110'
+                : 'bg-(--btn-regular-bg) hover:bg-(--btn-regular-bg-hover) active:bg-(--btn-regular-bg-active) text-(--primary)'}"
+              aria-label={privateMusic.isPlaying ? `暂停私有播放：${activePrivateTrack.title}` : `继续私有播放：${activePrivateTrack.title}`}
+              onclick={(e) => {
+                e.stopPropagation();
+                void privateMusic.toggleActivePlay();
+              }}
+            >
+              {#if privateMusic.isBufferingSlow && !privateMusic.isPlaying}
+                <svg class="w-[17px] h-[17px] block animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.6" opacity="0.28" />
+                  <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" />
+                </svg>
+              {:else if privateMusic.isPlaying}
+                <svg class="w-[17px] h-[17px] block" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <rect x="5.5" y="4.5" width="4.5" height="15" rx="1.6" />
+                  <rect x="14" y="4.5" width="4.5" height="15" rx="1.6" />
+                </svg>
+              {:else}
+                <svg class="w-[17px] h-[17px] block" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M8.5 5.45c0-1.08 1.19-1.74 2.11-1.17l9.28 5.79c.86.54.86 1.8 0 2.34l-9.28 5.79c-.92.57-2.11-.09-2.11-1.17V5.45z" />
+                </svg>
+              {/if}
+            </button>
+          {/if}
         </div>
 
         <div class="pt-3 pb-1">
@@ -5469,31 +5471,44 @@ function removePendingImage(index: number) {
             {@const isRowMatched = privateMusic.isTrackMatching(entry.share, entry.message.msgUid)}
             {@const isRowPlaying = isRowMatched && privateMusic.isPlaying}
             {@const isRowLoading = isRowMatched && privateMusic.isBufferingSlow}
-            <div class="chat-share-card-row group {isRowMatched ? 'is-active' : ''}">
+            <div
+              class="chat-share-card-row group cursor-pointer {isRowMatched ? 'is-active' : ''}"
+              role="button"
+              tabindex="0"
+              aria-label={isRowPlaying ? `暂停 ${entry.share.title}` : `私有播放 ${entry.share.title}`}
+              onclick={() => {
+                void privateMusic.playOrToggle({
+                  data: entry.share,
+                  msgUid: entry.message.msgUid,
+                  senderName: entry.message.name,
+                  senderAvatar: entry.message.avatar,
+                  senderUserKey: entry.message.userKey,
+                  chatServerUrl,
+                });
+              }}
+              onkeydown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  void privateMusic.playOrToggle({
+                    data: entry.share,
+                    msgUid: entry.message.msgUid,
+                    senderName: entry.message.name,
+                    senderAvatar: entry.message.avatar,
+                    senderUserKey: entry.message.userKey,
+                    chatServerUrl,
+                  });
+                }
+              }}
+            >
               <div class="chat-share-card-main">
-                <button
-                  type="button"
-                  class="chat-share-card-thumb chat-shared-music-thumb-btn shrink-0 relative cursor-pointer p-0"
-                  aria-label={isRowPlaying ? `暂停 ${entry.share.title}` : `私有播放 ${entry.share.title}`}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    void privateMusic.playOrToggle({
-                      data: entry.share,
-                      msgUid: entry.message.msgUid,
-                      senderName: entry.message.name,
-                      senderAvatar: entry.message.avatar,
-                      senderUserKey: entry.message.userKey,
-                      chatServerUrl,
-                    });
-                  }}
-                >
+                <div class="chat-share-card-thumb chat-shared-music-thumb-btn shrink-0 relative">
                   {#if hasThumb}
                     <img
                       src={entry.share.cover}
                       alt=""
                       loading="lazy"
                       decoding="async"
-                      class="chat-shared-music-thumb-img w-full h-full object-cover"
+                      class="w-full h-full object-cover"
                       onerror={() => {
                         sharedMusicFailedCovers = { ...sharedMusicFailedCovers, [coverKey]: true };
                       }}
@@ -5525,7 +5540,7 @@ function removePendingImage(index: number) {
                       </svg>
                     {/if}
                   </span>
-                </button>
+                </div>
                 <div class="min-w-0 flex-1 text-left">
                   <div class="flex items-center gap-1.5 min-w-0">
                     <div class="min-w-0 truncate text-xs leading-tight">
