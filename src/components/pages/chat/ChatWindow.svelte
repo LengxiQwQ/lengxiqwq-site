@@ -4235,22 +4235,16 @@ function formatCandidateMentionName(candidate: {
 	const rawName = (candidate.name || "").trim();
 	const hasDot =
 		rawName.includes("·") || rawName.includes("•") || rawName.includes("・");
-	if (hasDot) {
-		return normalizeDotSpacing(rawName);
-	}
-	if (isInterconnectRoom) {
-		const isExt = isExternalMatrixIdentity(candidate);
-		if (isExt) {
-			const extOrigin = resolveExternalOrigin(candidate, interconnectSites);
-			if (extOrigin?.cleanName && extOrigin.siteName) {
-				return `${extOrigin.cleanName} · ${extOrigin.siteName}`;
-			}
-		} else {
-			const suffix = ` · ${localSiteName}`;
-			return rawName.endsWith(suffix) ? rawName : rawName + suffix;
+	if (isInterconnectRoom && isExternalMatrixIdentity(candidate)) {
+		if (hasDot) {
+			return normalizeDotSpacing(rawName);
+		}
+		const extOrigin = resolveExternalOrigin(candidate, interconnectSites);
+		if (extOrigin?.cleanName && extOrigin.siteName) {
+			return `${extOrigin.cleanName} · ${extOrigin.siteName}`;
 		}
 	}
-	return normalizeDotSpacing(rawName);
+	return stripSiteSuffix(rawName, candidate.userKey) || normalizeDotSpacing(rawName);
 }
 
 $effect(() => {

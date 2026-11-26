@@ -438,17 +438,18 @@ const senderDisplayName = $derived.by(() => {
 	const hasDot =
 		rawName.includes("·") || rawName.includes("•") || rawName.includes("・");
 
-	// 1. 如果昵称本身已经规范化（自带点号和站点名称），100% 完整保留原本昵称
+	if (!isExternal) {
+		return cleanSenderName || normalizeDotSpacing(rawName);
+	}
+
+	// 1. 外部互联成员：若昵称本身已经规范化（自带点号和站点名称），完整保留
 	if (hasDot) {
 		return normalizeDotSpacing(rawName);
 	}
 
-	// 2. 只有未带站点后缀的裸昵称，才补充站点后缀
-	if (isExternal && externalOrigin?.siteName) {
+	// 2. 未带站点后缀的外部成员，补充站点后缀
+	if (externalOrigin?.siteName) {
 		return `${rawName || externalOrigin.cleanName} · ${externalOrigin.siteName}`;
-	}
-	if (isInterconnectRoom) {
-		return `${rawName} · 冷汐的杂货铺`;
 	}
 	return normalizeDotSpacing(rawName);
 });
