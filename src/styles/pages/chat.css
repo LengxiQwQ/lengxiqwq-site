@@ -2235,6 +2235,29 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	}
 }
 
+/* 点歌台基础尺寸与虚拟滚动行高：默认桌面端行距 56px，移动端在媒体查询中提升至 62px */
+.chat-music-panel {
+	--chat-track-row-pitch: 56px;
+}
+
+.chat-music-panel .chat-music-track-row {
+	box-sizing: border-box;
+	min-height: calc(var(--chat-track-row-pitch) - 2px);
+	content-visibility: visible;
+	contain-intrinsic-size: none;
+}
+
+.chat-music-panel .chat-music-track-list {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.chat-music-panel .chat-music-track-list > .chat-music-track-row {
+	block-size: calc(var(--chat-track-row-pitch) - 2px);
+	margin-block: 0 2px;
+	box-sizing: border-box;
+}
+
 /* 标题和迷你播放条共用同一高度，切换标签时保持下方位置稳定。 */
 .chat-music-panel-topbar {
 	height: 54px;
@@ -4630,7 +4653,12 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 	}
 
 	.chat-dialog-card--fill-md {
-		height: auto;
+		height: min(37.5rem, 100%);
+		max-height: min(37.5rem, 100%);
+	}
+
+	.chat-dialog-card.chat-user-detail-dialog {
+		height: min(37.5rem, 100%);
 		max-height: min(37.5rem, 100%);
 	}
 }

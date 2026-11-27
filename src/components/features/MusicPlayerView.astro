@@ -716,7 +716,7 @@ const viewConfigStr = JSON.stringify({
         }
 
         function onVolumePointerDown(e) {
-            if (e.button !== 0) return;
+            if (e.button !== undefined && e.button !== 0) return;
             local.isDraggingVolume = true;
             try {
                 ui.volContainer.setPointerCapture(e.pointerId);
@@ -728,6 +728,34 @@ const viewConfigStr = JSON.stringify({
             ui.volBar.style.transition = "none";
             var val = getVolumePercent(e);
             mgr.setVolume(val);
+
+            function onGlobalVolumeMove(ev) {
+                if (!local.isDraggingVolume) return;
+                var v = getVolumePercent(ev);
+                mgr.setVolume(v);
+            }
+
+            function onGlobalVolumeUp(ev) {
+                if (!local.isDraggingVolume) return;
+                local.isDraggingVolume = false;
+                window.removeEventListener("pointermove", onGlobalVolumeMove);
+                window.removeEventListener("pointerup", onGlobalVolumeUp);
+                window.removeEventListener("pointercancel", onGlobalVolumeUp);
+                try {
+                    ui.volContainer.releasePointerCapture(ev.pointerId || e.pointerId);
+                } catch (err) {}
+                if (ui.volThumb) {
+                    ui.volThumb.classList.remove("scale-100");
+                    ui.volThumb.style.transition = "";
+                }
+                ui.volBar.style.transition = "";
+                var v = getVolumePercent(ev);
+                mgr.setVolume(v);
+            }
+
+            window.addEventListener("pointermove", onGlobalVolumeMove);
+            window.addEventListener("pointerup", onGlobalVolumeUp);
+            window.addEventListener("pointercancel", onGlobalVolumeUp);
         }
 
         function onVolumePointerMove(e) {

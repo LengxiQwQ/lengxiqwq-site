@@ -112,21 +112,62 @@ const platformLabel = $derived.by(() => {
 });
 
 const artistText = $derived((data.artist || "").trim() || "未知歌手");
+const albumText = $derived((data.album || "").trim());
 const externalHref = $derived(resolveMusicExternalHref(data));
 const alreadyInRoom = $derived(isCurrentPlaying || isQueued);
 
-// 第一行展示内容：保持歌曲名稳定展示，仅在报错或出现实时同步歌词时切换（避免加载状态来回闪烁）
+const isCardPlayingOrActive = $derived(
+	isThisCardActive && (isPlaying || currentTimeSec > 0 || isLoadingAudio),
+);
+
+const lyricsStatus = $derived(
+	isThisCardActive ? privateMusic.lyricsStatus : "idle",
+);
+
+// 第一行展示内容：默认未播放时为歌曲名；播放时为歌词（包括缓冲、伴奏中与纯音乐状态），报错时为错误提示
 const topLineContent = $derived.by(() => {
 	if (audioError) {
 		return { text: audioError, tone: "error" as const };
 	}
-	if ((isPlaying || currentTimeSec > 0) && activeLyricText) {
-		return { text: activeLyricText, tone: "lyric" as const };
+	if (isCardPlayingOrActive) {
+		if (activeLyricText) {
+			return { text: activeLyricText, tone: "lyric" as const };
+		}
+		if (lyricsStatus === "loading" || isLoadingAudio) {
+			return { text: "歌词加载中...", tone: "lyric" as const };
+		}
+		if (lyricsStatus === "empty") {
+			return { text: "纯音乐或暂无歌词", tone: "lyric" as const };
+		}
+		return { text: "♪ ~ 伴奏中 ~ ♪", tone: "lyric" as const };
 	}
-	return { text: data.title || "未命名歌曲", tone: "title" as const };
+	return { text: (data.title || "").trim() || "未命名歌曲", tone: "title" as const };
 });
 
-const showSongArtistSubline = $derived(topLineContent.tone !== "title");
+const showSongArtistSubline = $derived(
+	isCardPlayingOrActive || topLineContent.tone !== "title",
+);
+
+const sublineContent = $derived.by(() => {
+	if (showSongArtistSubline) {
+		// 播放状态下：第一行展示歌词，第二行展示 歌名 - 歌手
+		return {
+			primary: (data.title || "").trim() || "未命名歌曲",
+			secondary: artistText,
+		};
+	}
+	// 默认状态下：第一行展示歌名，第二行展示 歌手 - 专辑（若无专辑则单显示歌手）
+	if (albumText) {
+		return {
+			primary: artistText,
+			secondary: albumText,
+		};
+	}
+	return {
+		primary: "",
+		secondary: artistText,
+	};
+});
 
 const formatSec = formatPrivateMusicSec;
 
@@ -416,11 +457,9 @@ async function handleEnqueue(event: MouseEvent) {
         onclick={(e) => e.stopPropagation()}
       >
         <div
-          class="text-[13.5px] font-bold h-5 leading-5 truncate transition-colors duration-200 {topLineContent.tone === 'lyric'
-            ? 'text-(--primary)'
-            : topLineContent.tone === 'error'
-              ? 'text-amber-600 dark:text-amber-400'
-              : 'text-[var(--deep-text)]'}"
+          class="text-[13.5px] font-bold h-5 leading-5 truncate transition-colors duration-200 {topLineContent.tone === 'error'
+            ? 'text-amber-600 dark:text-amber-400'
+            : 'text-[var(--deep-text)]'}"
           title={topLineContent.text}
           aria-live="polite"
         >
@@ -428,25 +467,31 @@ async function handleEnqueue(event: MouseEvent) {
         </div>
 
         <div class="flex items-center min-w-0 h-4 text-[12px] leading-4 overflow-hidden">
-          {#if showSongArtistSubline}
+          {#if sublineContent.primary}
             <span
-              class="font-medium text-[var(--deep-text)] truncate shrink-0 max-w-[68%]"
-              title={data.title}
+              class="text-[12px] leading-4 font-bold text-[var(--deep-text)] truncate shrink-0 max-w-[65%]"
+              title={sublineContent.primary}
             >
-              {data.title}
+              {sublineContent.primary}
             </span>
             <span
-              class="text-[var(--chat-meta-color)] truncate min-w-0 flex-1"
-              title={artistText}
+              class="text-[12px] leading-4 text-[var(--chat-meta-color)] shrink-0 px-1 select-none"
+              aria-hidden="true"
             >
-              &nbsp;-&nbsp;{artistText}
+              -
+            </span>
+            <span
+              class="text-[12px] leading-4 font-normal text-[var(--chat-meta-color)] truncate min-w-0 flex-1"
+              title={sublineContent.secondary}
+            >
+              {sublineContent.secondary}
             </span>
           {:else}
             <span
-              class="text-[var(--chat-meta-color)] truncate min-w-0 flex-1"
-              title={artistText}
+              class="text-[12px] leading-4 font-normal text-[var(--chat-meta-color)] truncate min-w-0 flex-1"
+              title={sublineContent.secondary}
             >
-              {artistText}
+              {sublineContent.secondary}
             </span>
           {/if}
         </div>

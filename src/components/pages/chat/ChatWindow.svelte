@@ -5311,14 +5311,29 @@ function removePendingImage(index: number) {
 
               <div class="flex items-center min-w-0 text-[12px] leading-tight overflow-hidden">
                 {#if showActivePrivateSongSubline}
-                  <span class="font-medium text-[var(--deep-text)] dark:text-white/85 truncate shrink-0 max-w-[66%]" title={activePrivateTrack.title}>
+                  <span
+                    class="text-[12px] leading-tight font-bold text-[var(--deep-text)] dark:text-white/85 truncate shrink-0 max-w-[65%]"
+                    title={activePrivateTrack.title}
+                  >
                     {activePrivateTrack.title || "未命名歌曲"}
                   </span>
-                  <span class="text-[var(--chat-meta-color)] truncate min-w-0 flex-1" title={activeArtistText}>
-                    &nbsp;-&nbsp;{activeArtistText}
+                  <span
+                    class="text-[12px] leading-tight text-[var(--chat-meta-color)] shrink-0 px-1 select-none"
+                    aria-hidden="true"
+                  >
+                    -
+                  </span>
+                  <span
+                    class="text-[12px] leading-tight font-normal text-[var(--chat-meta-color)] truncate min-w-0 flex-1"
+                    title={activeArtistText}
+                  >
+                    {activeArtistText}
                   </span>
                 {:else}
-                  <span class="text-[var(--chat-meta-color)] truncate min-w-0 flex-1" title={activeArtistText}>
+                  <span
+                    class="text-[12px] leading-tight font-normal text-[var(--chat-meta-color)] truncate min-w-0 flex-1"
+                    title={activeArtistText}
+                  >
                     {activeArtistText}
                   </span>
                 {/if}

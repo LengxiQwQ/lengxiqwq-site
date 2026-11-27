@@ -537,8 +537,12 @@ export function parseLxMusicShare(raw: string): ChatMusicShareData | null {
 			url = urlMatch[0].trim();
 			continue;
 		}
-		if (!album) {
-			album = line.replace(/^💽\s*/, "").trim() || undefined;
+		if (!album && (line.startsWith("> 💽") || line.startsWith("💽"))) {
+			const rawAlbum = line.replace(/^>?\s*💽\s*/, "").trim();
+			if (rawAlbum) {
+				const parts = rawAlbum.split(/\s*·\s*/);
+				album = parts[0]?.trim() || undefined;
+			}
 		}
 	}
 
@@ -672,6 +676,7 @@ export async function buildMusicSharePayload(params: {
 		id: result.track?.id || track.id,
 		provider: result.track?.provider || track.provider,
 		sourceId: result.track?.sourceId || track.sourceId,
+		album: result.track?.album || track.album,
 		cover: track.cover || result.track?.cover,
 		durationSec: result.track?.durationSec || track.durationSec,
 		sharedAudioUrl: url.href,

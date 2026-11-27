@@ -4423,8 +4423,11 @@ onMount(() => {
   {#if (showProfileModal && !ChatProfileModalComp) || (showUserDetailModal && !ChatUserDetailModalComp) || (showAuthModal && !ChatAuthModalComp) || (showPollCreateModal && !ChatPollCreateModalComp)}
     <ChatModal
       open={true}
-      title={showAuthModal ? "登录" : showPollCreateModal ? "发起投票" : showProfileModal ? "编辑资料" : "用户资料"}
-      topPriority={showAuthModal}
+      title={showAuthModal ? "登录" : showPollCreateModal ? "发起投票" : showProfileModal ? "编辑资料" : "成员名片"}
+      size={showUserDetailModal ? "lg" : showProfileModal ? "md" : "sm"}
+      fillHeightOnDesktop={showUserDetailModal}
+      dialogClass={showUserDetailModal ? "chat-user-detail-dialog" : ""}
+      topPriority={showAuthModal || showUserDetailModal}
       onClose={() => {
         showAuthModal = false;
         showPollCreateModal = false;
@@ -4432,7 +4435,7 @@ onMount(() => {
         showUserDetailModal = false;
       }}
     >
-      <div class="flex items-center justify-center gap-2 py-10 text-sm text-[var(--chat-meta-color)]" role="status">
+      <div class="flex-1 min-h-0 flex items-center justify-center gap-2 py-10 text-sm text-[var(--chat-meta-color)]" role="status">
         <svg class="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         <span>正在加载...</span>
       </div>

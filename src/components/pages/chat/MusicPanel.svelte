@@ -582,14 +582,12 @@ let isCompactPlaylistHeader = $state(false);
 let playlistScrollTop = $state(0);
 let playlistViewportH = $state(480);
 let musicPanelEl: HTMLElement | null = $state(null);
-let playlistRowHeight = $state(52);
-let desktopPlaylistRowHeight = 52;
-let playlistScrollRaf: number | null = null;
+let playlistRowHeight = $state(56);
+let desktopPlaylistRowHeight = 56;
 
 let historyScrollEl: HTMLDivElement | null = $state(null);
 let historyScrollTop = $state(0);
 let historyViewportH = $state(480);
-let historyScrollRaf: number | null = null;
 let lastHistoryLoadCheck = Number.NEGATIVE_INFINITY;
 
 // 歌词状态
@@ -1418,23 +1416,19 @@ $effect(() => {
 });
 
 function handleHistoryScroll(): void {
-	if (!historyScrollEl || historyScrollRaf !== null) return;
-	historyScrollRaf = requestAnimationFrame(() => {
-		historyScrollRaf = null;
-		if (!historyScrollEl) return;
-		historyScrollTop = historyScrollEl.scrollTop;
+	if (!historyScrollEl) return;
+	historyScrollTop = historyScrollEl.scrollTop;
 
-		// 边滚动边加载：当距离底部小于 260px 时，自动加载下一页 100 首。
-		// 读取 scrollHeight 会触发布局，限制为每 150ms 最多检查一次。
-		const now = performance.now();
-		if (now - lastHistoryLoadCheck >= 150) {
-			lastHistoryLoadCheck = now;
-			const { scrollTop, scrollHeight, clientHeight } = historyScrollEl;
-			if (scrollHeight - (scrollTop + clientHeight) < 260) {
-				void loadHistoryPage(historyFilterType, true);
-			}
+	// 边滚动边加载：当距离底部小于 260px 时，自动加载下一页 100 首。
+	// 读取 scrollHeight 会触发布局，限制为每 150ms 最多检查一次。
+	const now = performance.now();
+	if (now - lastHistoryLoadCheck >= 150) {
+		lastHistoryLoadCheck = now;
+		const { scrollTop, scrollHeight, clientHeight } = historyScrollEl;
+		if (scrollHeight - (scrollTop + clientHeight) < 260) {
+			void loadHistoryPage(historyFilterType, true);
 		}
-	});
+	}
 }
 $effect(() => {
 	const el = playlistScrollEl;
@@ -2611,24 +2605,21 @@ $effect(() => {
 function handlePlaylistScroll(e: Event): void {
 	const el = e.currentTarget as HTMLDivElement | null;
 	if (!el) return;
-	if (playlistScrollRaf !== null) return;
-	playlistScrollRaf = requestAnimationFrame(() => {
-		playlistScrollRaf = null;
-		if (!playlistScrollEl) return;
-		playlistScrollTop = playlistScrollEl.scrollTop;
-	});
+	playlistScrollTop = el.scrollTop;
 }
 
 // 歌单与历史共用列表行距，跨手机断点时同步虚拟滚动的估算。
 $effect(() => {
 	const el = musicPanelEl;
 	if (!el) return;
-	if (playlistScrollEl) desktopPlaylistRowHeight = 50;
 	const phoneQuery = window.matchMedia("(width < 768px)");
 	const syncRowH = () => {
-		playlistRowHeight =
+		const nextH =
 			Number.parseFloat(getComputedStyle(el).getPropertyValue("--chat-track-row-pitch")) ||
 			desktopPlaylistRowHeight;
+		if (nextH > 0 && nextH !== playlistRowHeight) {
+			playlistRowHeight = nextH;
+		}
 	};
 	syncRowH();
 	phoneQuery.addEventListener("change", syncRowH);
@@ -3418,12 +3409,6 @@ onMount(() => {
 			window.clearTimeout(switchingQueueTimer);
 			switchingQueueTimer = null;
 		}
-		if (playlistScrollRaf !== null) {
-			window.cancelAnimationFrame(playlistScrollRaf);
-		}
-		if (historyScrollRaf !== null) {
-			window.cancelAnimationFrame(historyScrollRaf);
-		}
 		if (rotationScrollRaf !== null) {
 			window.cancelAnimationFrame(rotationScrollRaf);
 		}
@@ -3832,7 +3817,7 @@ $effect(() => {
     {@const isToggling = songLookupKey ? favoriteTogglingTrackIds.has(songLookupKey) : false}
     {@const hasSparkle = songLookupKey ? favSparkleTrackIds.has(songLookupKey) : false}
     <div
-      class="chat-music-track-row chat-virtual-row flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
+      class="chat-music-track-row flex items-center gap-3 md:gap-2.5 p-2.5 md:p-2 rounded-xl md:rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
       oncontextmenu={(event) => handleTrackRowContextMenu(event, song)}
       onpointerdown={(event) => handleTrackRowPointerDown(event, song)}
       onpointermove={handleTrackRowPointerMove}

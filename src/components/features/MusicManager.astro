@@ -104,6 +104,41 @@ const managerConfigStr = JSON.stringify({
     document.body.appendChild(audio);
     audio.pause(); // 确保不自动播放
 
+    // ── Web Audio API GainNode for platforms with read-only audio.volume (iOS / iPadOS) ──
+    var audioCtx = null;
+    var gainNode = null;
+    var isGainNodeConnected = false;
+
+    function ensureGainNode() {
+        if (isGainNodeConnected) {
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume().catch(function () {});
+            }
+            return;
+        }
+        try {
+            var AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextClass) return;
+            if (!audioCtx) {
+                audioCtx = new AudioContextClass();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume().catch(function () {});
+            }
+            if (!gainNode) {
+                gainNode = audioCtx.createGain();
+                gainNode.gain.value = state.isMuted ? 0 : state.volume;
+            }
+            var source = audioCtx.createMediaElementSource(audio);
+            source.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            isGainNodeConnected = true;
+        } catch (e) {
+            // 如遇到跨域或其他 Web Audio 限制，安全回退到原生的 audio.volume
+            console.warn('Web Audio gain node setup skipped or failed:', e);
+        }
+    }
+
     // ── State ────────────────────────────────────────────────
     var loadVersion = 0; // incremented on each loadTrack to discard stale play() results
     var state = {
@@ -404,6 +439,7 @@ const managerConfigStr = JSON.stringify({
     // ── Playback controls ────────────────────────────────────
     function togglePlay() {
         if (!state.playlist || state.playlist.length === 0) return;
+        ensureGainNode();
         if (audio.paused) {
             audio.play().then(function () {
                 emitPlayState(true);
@@ -489,8 +525,20 @@ const managerConfigStr = JSON.stringify({
         val = Math.max(0, Math.min(1, val));
         state.volume = val;
         state.isMuted = false;
-        audio.volume = val;
+        ensureGainNode();
+        try {
+            audio.volume = val;
+        } catch (e) {}
         audio.muted = false;
+        if (gainNode) {
+            try {
+                if (audioCtx) {
+                    gainNode.gain.setValueAtTime(val, audioCtx.currentTime);
+                } else {
+                    gainNode.gain.value = val;
+                }
+            } catch (e) {}
+        }
         localStorage.setItem('music-player-volume', val.toString());
         emit('fm:volume', { volume: val, isMuted: false });
     }
@@ -498,6 +546,16 @@ const managerConfigStr = JSON.stringify({
     function toggleMute() {
         state.isMuted = !state.isMuted;
         audio.muted = state.isMuted;
+        if (gainNode) {
+            try {
+                var targetGain = state.isMuted ? 0 : state.volume;
+                if (audioCtx) {
+                    gainNode.gain.setValueAtTime(targetGain, audioCtx.currentTime);
+                } else {
+                    gainNode.gain.value = targetGain;
+                }
+            } catch (e) {}
+        }
         emit('fm:volume', { volume: state.volume, isMuted: state.isMuted });
     }
 
@@ -514,6 +572,7 @@ const managerConfigStr = JSON.stringify({
     }
 
     function playTrackByIndex(index) {
+        ensureGainNode();
         if (index === state.currentIndex && !audio.paused) {
             togglePlay();
         } else {
@@ -531,6 +590,14 @@ const managerConfigStr = JSON.stringify({
     });
 
     audio.addEventListener('volumechange', function () {
+        // 在 iOS / iPadOS 等苹果 WebKit 设备上，audio.volume 始终锁死在 1.0 且不可写。
+        // 如果 state.volume 被设为非 1 的值，但 audio.volume 依然为 1，说明该环境不支持 audio.volume 写，
+        // 此时绝不可用 audio.volume 覆盖 state.volume，否则会强制刷回 100% 并破坏用户交互。
+        if (audio.volume === 1 && state.volume !== 1) {
+            state.isMuted = audio.muted;
+            emit('fm:volume', { volume: state.volume, isMuted: state.isMuted });
+            return;
+        }
         state.volume = audio.volume;
         state.isMuted = audio.muted;
         emit('fm:volume', { volume: state.volume, isMuted: state.isMuted });

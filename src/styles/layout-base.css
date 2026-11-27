@@ -52,6 +52,38 @@
     }
   }
 
+  @media (min-width: 768px) and (max-width: 1279px) {
+    /* 平板端双侧栏收缩合并：position="both" 时，将两侧侧栏合并到 tabletSidebar 指定的一列中 */
+    #main-grid[data-sidebar-position="both"] {
+      grid-template-rows: max-content 1fr;
+    }
+    #main-grid[data-sidebar-position="both"]:not([data-tablet-sidebar="right"]) #left-sidebar {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    #main-grid[data-sidebar-position="both"]:not([data-tablet-sidebar="right"]) #right-sidebar {
+      grid-column: 1;
+      grid-row: 2;
+    }
+    #main-grid[data-sidebar-position="both"]:not([data-tablet-sidebar="right"]) > #content-column {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+    }
+
+    #main-grid[data-sidebar-position="both"][data-tablet-sidebar="right"] > #content-column {
+      grid-column: 1;
+      grid-row: 1 / span 2;
+    }
+    #main-grid[data-sidebar-position="both"][data-tablet-sidebar="right"] #right-sidebar {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    #main-grid[data-sidebar-position="both"][data-tablet-sidebar="right"] #left-sidebar {
+      grid-column: 2;
+      grid-row: 2;
+    }
+  }
+
   @media (min-width: 1280px) {
     #main-grid {
       grid-template-columns: var(--cols-xl, 1fr);
@@ -64,8 +96,21 @@
     #main-grid > #right-sidebar-dynamic {
       display: var(--right-display-xl, contents);
     }
-    body:not(.immersive-reading) #main-grid > #content-column {
+    #main-grid[data-sidebar-position="both"] {
+      grid-template-rows: auto;
+    }
+    #main-grid #left-sidebar {
+      grid-column: 1;
+      grid-row: auto;
+    }
+    #main-grid > #content-column {
+      grid-column: 2;
+      grid-row: auto;
       max-width: calc(100% * var(--content-ratio-xl, 1));
+    }
+    #main-grid #right-sidebar {
+      grid-column: 3;
+      grid-row: auto;
     }
   }
 

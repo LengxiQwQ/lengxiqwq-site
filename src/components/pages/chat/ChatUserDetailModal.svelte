@@ -912,7 +912,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
   mobile="expandable"
   ariaLabel={seed ? `${seed.name} 的个人资料` : "成员名片"}
   size={matrixUserId || isExternalUser || isSpectator ? "md" : "lg"}
-  fillHeightOnDesktop={!(matrixUserId || isExternalUser || isSpectator)}
+  fillHeightOnDesktop={true}
+  dialogClass="chat-user-detail-dialog"
   topPriority={true}
   {lockedMinHeight}
   {onClose}
@@ -1090,15 +1091,23 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         <div class="grid grid-cols-2 gap-2 text-center">
           <div class="bg-black/3 dark:bg-white/5 p-2 rounded-lg">
             <div class="text-[0.6875rem] text-[var(--chat-meta-color)]">茶室发言</div>
-            <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5 tabular-nums">
-              {totalMessageCount} 条
-            </div>
+            {#if isLoading && !remoteProfile && totalMessageCount === 0}
+              <div class="h-4 bg-black/8 dark:bg-white/8 rounded w-10 mx-auto mt-1 animate-pulse"></div>
+            {:else}
+              <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5 tabular-nums">
+                {totalMessageCount} 条
+              </div>
+            {/if}
           </div>
           <div class="bg-black/3 dark:bg-white/5 p-2 rounded-lg">
             <div class="text-[0.6875rem] text-[var(--chat-meta-color)]">初次相识</div>
-            <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5 truncate">
-              {firstSeenAt ? formatJoinTime(firstSeenAt) : "本次会话"}
-            </div>
+            {#if isLoading && !remoteProfile && !firstSeenAt}
+              <div class="h-4 bg-black/8 dark:bg-white/8 rounded w-16 mx-auto mt-1 animate-pulse"></div>
+            {:else}
+              <div class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 mt-0.5 truncate">
+                {firstSeenAt ? formatJoinTime(firstSeenAt) : "本次会话"}
+              </div>
+            {/if}
           </div>
         </div>
 
@@ -1138,9 +1147,18 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           </span>
         </div>
 
-        {#if recentMsgs.length === 0}
+        {#if isLoading && !remoteProfile && recentMsgs.length === 0}
+          <div class="space-y-1.5 py-1" aria-busy="true" aria-label="正在统计历史发言">
+            {#each [1, 2, 3] as skeletonIdx (skeletonIdx)}
+              <div class="p-2 rounded-lg bg-black/3 dark:bg-white/5 animate-pulse flex items-center justify-between gap-2">
+                <div class="h-3 bg-black/8 dark:bg-white/8 rounded-md w-3/4"></div>
+                <div class="h-2.5 bg-black/6 dark:bg-white/6 rounded-md w-12 shrink-0"></div>
+              </div>
+            {/each}
+          </div>
+        {:else if recentMsgs.length === 0}
           <div class="py-4 text-center text-xs text-[var(--chat-meta-color)]">
-            {isLoading && !remoteProfile ? "正在统计历史发言..." : "该茶友暂无发言记录~"}
+            该茶友暂无发言记录~
           </div>
         {:else}
           <div class="space-y-1.5">
@@ -1707,27 +1725,43 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         <div class="grid grid-cols-2 gap-2">
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
             <span class="text-[11px] text-[var(--chat-meta-color)]">聊天发言</span>
-            <span class="text-xs font-bold text-[var(--deep-text)] tabular-nums">
-              {profile.stats.messageCount}
-            </span>
+            {#if isLoading && !remoteProfile && profile.stats.messageCount === 0}
+              <span class="inline-block w-8 h-3.5 bg-black/8 dark:bg-white/8 rounded-sm animate-pulse"></span>
+            {:else}
+              <span class="text-xs font-bold text-[var(--deep-text)] tabular-nums">
+                {profile.stats.messageCount}
+              </span>
+            {/if}
           </div>
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
             <span class="text-[11px] text-[var(--chat-meta-color)]">累计点歌</span>
-            <span class="text-xs font-bold text-[var(--deep-text)] tabular-nums">
-              {profile.stats.songRequestCount}
-            </span>
+            {#if isLoading && !remoteProfile && profile.stats.songRequestCount === 0}
+              <span class="inline-block w-8 h-3.5 bg-black/8 dark:bg-white/8 rounded-sm animate-pulse"></span>
+            {:else}
+              <span class="text-xs font-bold text-[var(--deep-text)] tabular-nums">
+                {profile.stats.songRequestCount}
+              </span>
+            {/if}
           </div>
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
             <span class="text-[11px] text-[var(--chat-meta-color)]">初次来访</span>
-            <span class="text-[11px] font-bold text-[var(--deep-text)] tabular-nums truncate">
-              {formatJoinTime(profile.firstSeenAt)}
-            </span>
+            {#if isLoading && !remoteProfile && !profile.firstSeenAt}
+              <span class="inline-block w-14 h-3.5 bg-black/8 dark:bg-white/8 rounded-sm animate-pulse"></span>
+            {:else}
+              <span class="text-[11px] font-bold text-[var(--deep-text)] tabular-nums truncate">
+                {formatJoinTime(profile.firstSeenAt)}
+              </span>
+            {/if}
           </div>
           <div class="rounded-xl bg-(--btn-regular-bg) px-3 py-2 flex items-center justify-between gap-2">
             <span class="text-[11px] text-[var(--chat-meta-color)]">最近活跃</span>
-            <span class="text-[11px] font-bold tabular-nums truncate {profileIsOnline ? (profileIsFallback ? 'text-[var(--chat-meta-color)]' : profileIsFocused ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400') : 'text-[var(--deep-text)]'}">
-              {profileIsOnline ? (profileIsFallback || profileIsFocused ? formatActiveStat(true, profile.lastSeenAt) : "离开") : formatActiveStat(false, profile.lastSeenAt)}
-            </span>
+            {#if isLoading && !remoteProfile && !profileIsOnline && !profile.lastSeenAt}
+              <span class="inline-block w-10 h-3.5 bg-black/8 dark:bg-white/8 rounded-sm animate-pulse"></span>
+            {:else}
+              <span class="text-[11px] font-bold tabular-nums truncate {profileIsOnline ? (profileIsFallback ? 'text-[var(--chat-meta-color)]' : profileIsFocused ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400') : 'text-[var(--deep-text)]'}">
+                {profileIsOnline ? (profileIsFallback || profileIsFocused ? formatActiveStat(true, profile.lastSeenAt) : "离开") : formatActiveStat(false, profile.lastSeenAt)}
+              </span>
+            {/if}
           </div>
         </div>
 
@@ -1829,7 +1863,9 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                   ? "统计未完成"
                   : remoteHasMore
                     ? "正在统计"
-                    : `共 ${totalSongCount} 首`}
+                    : isLoading && !remoteProfile
+                      ? "正在同步..."
+                      : `共 ${totalSongCount} 首`}
             </span>
           </div>
 
@@ -1860,7 +1896,22 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           onscroll={(e) => handleScrollNearBottom(e.currentTarget)}
         >
           {#if trackTab === "recent"}
-            {#if displayedTracks.length === 0}
+            {#if isLoading && !remoteProfile}
+              <div class="space-y-1.5 py-0.5" aria-busy="true" aria-label="正在同步点歌记录">
+                {#each [1, 2, 3, 4, 5] as skeletonIdx (skeletonIdx)}
+                  <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/50 animate-pulse">
+                    <span class="w-5 text-center text-[10px] text-transparent select-none shrink-0">
+                      0
+                    </span>
+                    <div class="w-9 h-9 rounded-lg bg-black/8 dark:bg-white/8 shrink-0"></div>
+                    <div class="min-w-0 flex-1 space-y-1.5">
+                      <div class="h-3.5 bg-black/8 dark:bg-white/8 rounded-md w-3/5"></div>
+                      <div class="h-2.5 bg-black/6 dark:bg-white/6 rounded-md w-2/5"></div>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else if displayedTracks.length === 0}
               <div class="flex flex-col items-center justify-center py-8 px-4 text-center rounded-xl bg-(--btn-regular-bg)/60">
                 <div class="w-9 h-9 rounded-full bg-(--primary)/12 flex items-center justify-center text-sm text-(--primary) mb-2">
                   ♪
@@ -1940,7 +1991,20 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               </div>
             {/if}
           {:else if trackTab === "top"}
-            {#if topTracks.length === 0}
+            {#if isLoading && !remoteProfile}
+              <div class="space-y-1.5 py-0.5" aria-busy="true" aria-label="正在同步点歌排行">
+                {#each [1, 2, 3, 4, 5] as skeletonIdx (skeletonIdx)}
+                  <div class="flex items-center gap-2.5 p-2 rounded-xl bg-(--btn-regular-bg)/50 animate-pulse">
+                    <span class="w-5 text-center text-[10px] text-transparent select-none shrink-0">#0</span>
+                    <div class="w-9 h-9 rounded-lg bg-black/8 dark:bg-white/8 shrink-0"></div>
+                    <div class="min-w-0 flex-1 space-y-1.5">
+                      <div class="h-3.5 bg-black/8 dark:bg-white/8 rounded-md w-3/5"></div>
+                      <div class="h-2.5 bg-black/6 dark:bg-white/6 rounded-md w-2/5"></div>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else if topTracks.length === 0}
               <div class="flex flex-col items-center justify-center py-8 px-4 text-center rounded-xl bg-(--btn-regular-bg)/60">
                 <div class="w-9 h-9 rounded-full bg-(--primary)/12 flex items-center justify-center text-sm text-(--primary) mb-2">
                   ♪
