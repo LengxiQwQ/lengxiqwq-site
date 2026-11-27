@@ -56,8 +56,8 @@
 		"isSelf": false
 	},
 	{
-		"name": "Somoe",
-		"owner": "Somoe",
+		"name": "Somoe Home",
+		"owner": "Somoe Home",
 		"siteUrl": "https://somoe.xyz/",
 		"chatUrl": "https://somoe.xyz/chat",
 		"homeserver": "chat.gbk.ink",
@@ -76,17 +76,17 @@
 		"isSelf": false
 	},
 	{
-		"name": "折腾进行时",
-		"owner": "折腾进行时",
-		"siteUrl": "https://www.9ll.uk/",
+		"name": "折腾进行中",
+		"owner": "折腾进行中",
+		"siteUrl": "https://www.0dm.cn/",
 		"chatUrl": "https://www.0dm.cn/chat/",
 		"homeserver": "matrix.0dm.cn",
-		"avatar": "https://www.9ll.uk/gallery/blog/avatar.avif",
-		"desc": "记录一些生活，爱好技术和相关的东西。",
-		"badge": "折腾进行时茶室",
-		"color": "#f2cb71",
+		"avatar": "https://www.9ll.uk/assets/images/kirino.webp",
+		"desc": "生命不息，折腾不止",
+		"badge": "折腾茶室",
+		"color": "#D98A2E",
 		"aliases": [
-			"折腾进行时茶室",
+			"折腾茶室",
 			"@heyuan:matrix.0dm.cn",
 			"hy4962",
 			"鹤渊",
@@ -132,6 +132,23 @@
 			"听雨",
 			"听雨茶室",
 			"qingwu"
+		],
+		"isSelf": false
+	},
+	{
+		"name": "里世界",
+		"owner": "里世界",
+		"siteUrl": "https://leenet.xyz",
+		"chatUrl": "https://leenet.xyz/chat",
+		"homeserver": "matrix.leenet.xyz",
+		"avatar": "https://leenet.xyz/avatar.png",
+		"desc": "Welcome To The World Of Lee",
+		"badge": "互联聊天室",
+		"color": "oklch(65% .13 260/1)",
+		"aliases": [
+			"互联聊天室",
+			"@lee:matrix.leenet.xyz",
+			"Chzxxuanzheng"
 		],
 		"isSelf": false
 	}
