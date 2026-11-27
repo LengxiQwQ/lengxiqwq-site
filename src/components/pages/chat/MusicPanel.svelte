@@ -463,10 +463,37 @@ const filteredRotationChoices = $derived(
 
 let rotationScrollTop = $state(0);
 let rotationViewportH = $state(400);
-const ROTATION_ROW_H = 62;
+let rotationRowPitch = $state(64);
 const VIRTUAL_ROTATION_THRESHOLD = 12;
 const rotationWindowMemo = createVirtualWindowMemo<PlaylistSummary>();
 let rotationScrollRaf: number | null = null;
+let rotationRowsEl: HTMLDivElement | null = $state(null);
+
+$effect(() => {
+	const el = rotationRowsEl;
+	if (!el) return;
+	const measure = () => {
+		const rows = el.querySelectorAll<HTMLElement>(".chat-rotation-row");
+		if (rows.length >= 2) {
+			const pitch = Math.round(
+				rows[1].getBoundingClientRect().top - rows[0].getBoundingClientRect().top,
+			);
+			if (pitch > 0 && pitch !== rotationRowPitch) {
+				rotationRowPitch = pitch;
+			}
+		} else if (rows.length === 1) {
+			const gap = window.innerWidth >= 640 ? 8 : 6;
+			const pitch = Math.round(rows[0].getBoundingClientRect().height + gap);
+			if (pitch > 0 && pitch !== rotationRowPitch) {
+				rotationRowPitch = pitch;
+			}
+		}
+	};
+	measure();
+	const observer = new ResizeObserver(measure);
+	observer.observe(el);
+	return () => observer.disconnect();
+});
 
 function handleRotationScroll(e: Event) {
 	const el = e.currentTarget as HTMLElement | null;
@@ -484,25 +511,26 @@ function handleRotationScroll(e: Event) {
 const rotationChoicesVirtual = $derived.by(() => {
 	const list = filteredRotationChoices;
 	const len = list.length;
+	const rowH = Math.max(48, rotationRowPitch);
 	if (len <= VIRTUAL_ROTATION_THRESHOLD) {
-		return rotationWindowMemo(list, `${len}:0:${len}`, () => ({
+		return rotationWindowMemo(list, `${len}:0:${len}:${rowH}`, () => ({
 			items: list,
 			start: 0,
 			topSpacerPx: 0,
 			bottomSpacerPx: 0,
 		}));
 	}
-	const rawStart = Math.floor(rotationScrollTop / ROTATION_ROW_H) - 6;
+	const rawStart = Math.floor(rotationScrollTop / rowH) - 6;
 	const STEP = 2;
 	const steppedStart = Math.max(0, Math.floor(rawStart / STEP) * STEP);
-	const visibleCount = Math.ceil(rotationViewportH / ROTATION_ROW_H) + 12 + STEP;
+	const visibleCount = Math.ceil(rotationViewportH / rowH) + 12 + STEP;
 	const start = steppedStart;
 	const end = Math.min(len, start + visibleCount);
-	return rotationWindowMemo(list, `${len}:${start}:${end}`, () => ({
+	return rotationWindowMemo(list, `${len}:${start}:${end}:${rowH}`, () => ({
 		items: list.slice(start, end),
 		start,
-		topSpacerPx: start * ROTATION_ROW_H,
-		bottomSpacerPx: Math.max(0, (len - end) * ROTATION_ROW_H),
+		topSpacerPx: start * rowH,
+		bottomSpacerPx: Math.max(0, (len - end) * rowH),
 	}));
 });
 function normalizeRotationPlaylistIds(setting: RoomRotation | null): string[] {
@@ -6281,7 +6309,7 @@ $effect(() => {
                   {#if rotationChoicesVirtual.topSpacerPx > 0}
                     <div style="height: {rotationChoicesVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
                   {/if}
-                  <div class="chat-rotation-rows space-y-1.5 sm:space-y-2" style="contain: layout style;">
+                  <div bind:this={rotationRowsEl} class="chat-rotation-rows space-y-1.5 sm:space-y-2" style="contain: layout style;">
                     {#each rotationChoicesVirtual.items as playlist (playlist.id)}
                       {@const isSelected = rotationPlaylistIds.includes(playlist.id)}
                       <label class="chat-rotation-row group flex items-center gap-2.5 sm:gap-3 p-2 sm:p-2.5 rounded-xl border cursor-pointer transition-all duration-150 {isSelected ? 'border-(--primary) bg-(--primary)/10 shadow-xs' : 'border-[var(--chat-divider-color)] hover:border-(--primary)/30 hover:bg-(--btn-plain-bg-hover)'}">

@@ -1162,7 +1162,6 @@ function openAuthModal() {
 	showUserDetailModal = false;
 	showProfileModal = false;
 	showRoomInfoModal = false;
-	mobileDrawer = "none";
 	closeSplitRoom();
 	showAuthModal = true;
 }
@@ -1172,19 +1171,7 @@ $effect(() => {
 		showUserDetailModal = false;
 		showProfileModal = false;
 		showRoomInfoModal = false;
-		mobileDrawer = "none";
 		closeSplitRoom();
-	}
-	if (
-		showAuthModal ||
-		showProfileModal ||
-		showUserDetailModal ||
-		showPollCreateModal ||
-		showRoomInfoModal
-	) {
-		if (mobileDrawer !== "none") {
-			mobileDrawer = "none";
-		}
 	}
 });
 let userDetailSeed = $state<ChatUserDetailSeed | null>(null);

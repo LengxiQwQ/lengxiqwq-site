@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onMount } from "svelte";
+import { onMount, tick } from "svelte";
 import Icon from "@/components/common/Icon.svelte";
 import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar, {
@@ -245,8 +245,11 @@ function measureOfflineOffset() {
 	if (!offlineListEl) return;
 	offlineSectionOffset = offlineListEl.offsetTop;
 	offlineRowPitch =
-		Number.parseFloat(getComputedStyle(offlineListEl).getPropertyValue("--chat-offline-row-pitch")) ||
-		OFFLINE_ROW_H;
+		Number.parseFloat(
+			getComputedStyle(offlineListEl).getPropertyValue(
+				"--chat-offline-row-pitch",
+			),
+		) || OFFLINE_ROW_H;
 }
 
 function maybeLoadMoreOfflineMembers(scrollEl: HTMLElement) {
@@ -300,7 +303,9 @@ $effect(() => {
 	isCurrentInterconnect;
 	connectionState;
 	offlineListEl;
-	measureOfflineOffset();
+	void tick().then(() => {
+		measureOfflineOffset();
+	});
 });
 
 $effect(() => {
@@ -671,7 +676,7 @@ function formatOfflineTime(ts?: number): string {
 
           <div
             bind:this={offlineListEl}
-            class="chat-offline-list space-y-1 mt-0.5"
+            class="chat-offline-list mt-0.5"
             style="contain: layout style;"
           >
             {#if offlineVirtual.topSpacerPx > 0}
@@ -730,7 +735,7 @@ function formatOfflineTime(ts?: number): string {
 
           <div
             bind:this={offlineListEl}
-            class="chat-offline-list space-y-1 mt-0.5"
+            class="chat-offline-list mt-0.5"
             style="contain: layout style;"
           >
             {#if offlineVirtual.topSpacerPx > 0}
@@ -1160,7 +1165,7 @@ function formatOfflineTime(ts?: number): string {
       mobile="full"
       onClose={() => (showSpectatorModal = false)}
     >
-      <div class="p-3 space-y-3 overflow-y-auto custom-scrollbar flex-1 min-h-0 md:max-h-[65vh]" onscroll={handleSpectatorScroll}>
+      <div class="p-3 space-y-3 overflow-y-auto custom-scrollbar flex-1 min-h-0 md:max-h-[65vh]" style="overflow-anchor: none;" onscroll={handleSpectatorScroll}>
         <section>
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>当前在线旁观</span>
@@ -1189,13 +1194,15 @@ function formatOfflineTime(ts?: number): string {
             </span>
           </div>
           {#if spectatorHistory.length > 0}
-            <div class="space-y-1 mt-1" style="contain: layout style;">
+            <div class="mt-1">
               {#if spectatorVirtual.topSpacerPx > 0}
                 <div style="height: {spectatorVirtual.topSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
               {/if}
-              {#each spectatorVirtual.items as item (item.id + '_' + item.connectedAt)}
-                {@render spectatorHistoryItem(item)}
-              {/each}
+              <div class="space-y-1" style="contain: layout style;">
+                {#each spectatorVirtual.items as item (item.id + '_' + item.connectedAt)}
+                  {@render spectatorHistoryItem(item)}
+                {/each}
+              </div>
               {#if spectatorVirtual.bottomSpacerPx > 0}
                 <div style="height: {spectatorVirtual.bottomSpacerPx}px; flex-shrink: 0;" aria-hidden="true"></div>
               {/if}
