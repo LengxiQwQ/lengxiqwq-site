@@ -64,7 +64,7 @@ const {
 	ariaLabel = "",
 	size = "sm",
 	dialogClass = "",
-	mobile = "compact",
+	mobile = "full",
 	fillHeightOnDesktop = false,
 	lockedMinHeight = 0,
 	topPriority = false,

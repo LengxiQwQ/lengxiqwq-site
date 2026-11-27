@@ -271,7 +271,7 @@ const modalSubtitle = $derived.by(() => {
   title={modalTitle}
   subtitle={modalSubtitle}
   size="sm"
-  mobile="compact"
+  mobile="full"
   onClose={onClose}
 >
   <div class="chat-activity-modal-content">

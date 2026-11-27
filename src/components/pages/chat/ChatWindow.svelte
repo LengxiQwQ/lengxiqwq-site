@@ -9,7 +9,6 @@ import ChatAvatar, {
 	downscaleImgElementInPlace,
 	getDownscaledAvatarUrl,
 } from "./ChatAvatar.svelte";
-import Icon from "@/components/common/Icon.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatStickerPicker from "./ChatStickerPicker.svelte";
@@ -5915,11 +5914,17 @@ function removePendingImage(index: number) {
             class="chat-header-room-dropdown chat-header-interconnect-trigger chat-desktop-only"
             class:active={showInterconnect}
             aria-expanded={showInterconnect}
-            aria-label="查看接入联邦的互联友站列表"
+            aria-label="查看接入联邦的友站列表"
             onclick={() => onToggleInterconnect?.()}
           >
-            <Icon icon="mingcute:earth-2-line" class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" />
-            <span class="font-semibold text-sm text-[var(--deep-text)] dark:text-white/90">互联友站</span>
+            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+              <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
+              <line x1="6" y1="1" x2="6" y2="4" />
+              <line x1="10" y1="1" x2="10" y2="4" />
+              <line x1="14" y1="1" x2="14" y2="4" />
+            </svg>
+            <span class="font-semibold text-sm text-[var(--deep-text)] dark:text-white/90">友站列表</span>
             <span class="chat-header-interconnect-count">{interconnectSites.length}</span>
           </button>
         {/if}
@@ -6046,6 +6051,25 @@ function removePendingImage(index: number) {
               <div class="mx-2 my-0.5 border-t border-[var(--skin-line)]"></div>
             {/if}
 
+            <button
+              type="button"
+              role="menuitem"
+              class="chat-mobile-more-item"
+              onclick={() => {
+                closeAllHeaderMenus();
+                onOpenRoomInfo?.();
+              }}
+            >
+              <span class="flex items-center gap-2.5">
+                <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                <span>房间基本信息</span>
+              </span>
+            </button>
+
             {#if isInterconnectRoom}
               <button
                 type="button"
@@ -6112,46 +6136,6 @@ function removePendingImage(index: number) {
               </span>
               <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
             </button>
-
-            <button
-              type="button"
-              role="menuitem"
-              class="chat-mobile-more-item"
-              onclick={() => {
-                closeAllHeaderMenus();
-                onOpenRoomInfo?.();
-              }}
-            >
-              <span class="flex items-center gap-2.5">
-                <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="16" x2="12" y2="12" />
-                  <line x1="12" y1="8" x2="12.01" y2="8" />
-                </svg>
-                <span>房间基本信息</span>
-              </span>
-            </button>
-
-            {#if isInterconnectRoom && interconnectSites.length > 0}
-              <button
-                type="button"
-                role="menuitem"
-                class="chat-mobile-more-item"
-                onclick={() => {
-                  closeAllHeaderMenus();
-                  onToggleInterconnect?.();
-                }}
-              >
-                <span class="flex items-center gap-2.5">
-                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="2" y1="12" x2="22" y2="12" />
-                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-                  </svg>
-                  <span>互联友站 ({interconnectSites.length})</span>
-                </span>
-              </button>
-            {/if}
           </div>
         {:else if threadInMore && showThreadListMenu}
           {@render headerThreadList(mobileMoreTrigger)}
@@ -7780,6 +7764,7 @@ function removePendingImage(index: number) {
     <ChatModal
       open={true}
       title={sourceModalMessage && !ChatMessageSourceModalComp ? "查看消息源码" : "线程回复"}
+      mobile="full"
       onClose={() => {
         if (sourceModalMessage && !ChatMessageSourceModalComp) {
           sourceModalMessage = null;

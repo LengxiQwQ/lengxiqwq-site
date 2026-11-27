@@ -337,6 +337,7 @@ async function handleSplitGuestEnter() {
   title={guestBlockedByWaline ? "验证正式账号" : "登录聊天室"}
   subtitle={guestBlockedByWaline ? "检测到该身份已绑定 Waline 正式账号" : "登录后即可发言、传图与点歌"}
   size="sm"
+  mobile="full"
   topPriority={true}
   {onClose}
 >

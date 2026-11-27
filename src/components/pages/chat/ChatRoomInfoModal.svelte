@@ -696,7 +696,7 @@ const guestInfo = $derived(describeGuestAccess(roomMeta?.guestAccess));
   title="房间信息"
   size="md"
   fillHeightOnDesktop={isAdmin && isInterconnect}
-  mobile={isAdmin && isInterconnect ? "expandable" : "compact"}
+  mobile="full"
   dialogClass="chat-room-info-dialog"
   onClose={() => {
     if (!savingField) onClose();

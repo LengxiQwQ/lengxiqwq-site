@@ -927,7 +927,7 @@ function previewAvatar(
 <ChatModal
   open={open && Boolean(profile || matrixUserId || isExternalUser || (isSpectator && currentUser?.isAdmin))}
   title="成员名片"
-  mobile="expandable"
+  mobile="full"
   ariaLabel={seed ? `${stripSiteSuffix(seed.name) || seed.name} 的个人资料` : "成员名片"}
   size={matrixUserId || isExternalUser || isSpectator ? "md" : "lg"}
   fillHeightOnDesktop={true}

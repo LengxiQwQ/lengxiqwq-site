@@ -4812,6 +4812,7 @@ onMount(() => {
       open={true}
       title={showAuthModal ? "登录" : showPollCreateModal ? "发起投票" : showProfileModal ? "编辑资料" : showRoomInfoModal ? "房间信息" : "成员名片"}
       size={showUserDetailModal ? "lg" : showProfileModal ? "md" : showRoomInfoModal ? "md" : "sm"}
+      mobile="full"
       fillHeightOnDesktop={showUserDetailModal || showRoomInfoModal}
       dialogClass={showUserDetailModal ? "chat-user-detail-dialog" : showRoomInfoModal ? "chat-room-info-dialog" : ""}
       topPriority={showAuthModal || showUserDetailModal}

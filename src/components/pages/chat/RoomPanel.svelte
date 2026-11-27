@@ -1157,9 +1157,10 @@ function formatOfflineTime(ts?: number): string {
       title="旁观者记录"
       subtitle={`当前在线 ${observerCount} 人 · 历史记录 ${spectatorHistory.length} 条`}
       size="sm"
+      mobile="full"
       onClose={() => (showSpectatorModal = false)}
     >
-      <div class="p-3 space-y-3 overflow-y-auto custom-scrollbar max-h-[65vh]" onscroll={handleSpectatorScroll}>
+      <div class="p-3 space-y-3 overflow-y-auto custom-scrollbar flex-1 min-h-0 md:max-h-[65vh]" onscroll={handleSpectatorScroll}>
         <section>
           <div class="chat-section-title flex items-center justify-between pr-1">
             <span>当前在线旁观</span>
