@@ -94,10 +94,21 @@ const chartWidth = 760;
 const chartHeight = 220;
 const pad = { top: 24, right: 20, bottom: 28, left: 36 };
 
-// 近 30 天图表数据点
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function getShanghaiTodayStr(): string {
+	return new Date(Date.now() + SHANGHAI_OFFSET_MS).toISOString().split("T")[0];
+}
+
+// 近 30 天图表数据点（从昨天起往前 30 天，不含今日）
 const currentChartData = $derived.by(() => {
 	if (!summary || summary.chart.length === 0) return [];
-	return summary.chart.slice(-30);
+	const todayStr = getShanghaiTodayStr();
+	const completedDays = summary.chart.filter(
+		(p) => !/^\d{4}-\d{2}-\d{2}$/.test(p.date) || p.date < todayStr,
+	);
+	return (completedDays.length > 0 ? completedDays : summary.chart).slice(-30);
 });
 
 // 计算当前时间范围内的统计特征 (峰值与日均)
@@ -832,11 +843,14 @@ async function fetchDashboardData(manual = false) {
 function applyFallbackSummary() {
 	if (summary) return;
 	const chart: ChartPoint[] = [];
-	const today = new Date();
+	const now = Date.now();
+	const todayStartMs =
+		Math.floor((now + SHANGHAI_OFFSET_MS) / DAY_MS) * DAY_MS -
+		SHANGHAI_OFFSET_MS;
 	let pvTotal = 0;
 	let uvTotal = 0;
-	for (let i = 30; i >= 0; i--) {
-		const d = new Date(today.getTime() - i * 86400 * 1000);
+	for (let i = 30; i >= 1; i--) {
+		const d = new Date(todayStartMs - i * DAY_MS + SHANGHAI_OFFSET_MS);
 		const pv = Math.round(180 + Math.sin(i * 0.4) * 80 + ((i * 19) % 45));
 		const uv = Math.round(pv * (0.35 + (i % 5) / 100));
 		pvTotal += pv;
@@ -1080,7 +1094,7 @@ onMount(() => {
 					<span>近 30 天访问走势</span>
 				</h2>
 				<p class="text-xs text-(--content-meta) mt-0.5">
-					每天的页面浏览量 (PV) 与访问人数 (UV) 变化情况
+					每天的页面浏览量 (PV) 与访问人数 (UV) 变化情况（截至昨日，不含今日）
 				</p>
 			</div>
 
@@ -1459,7 +1473,7 @@ onMount(() => {
 						<Icon icon="material-symbols:trending-up-rounded" class="text-lg text-amber-500" />
 						<span>热门内容排行</span>
 					</h3>
-					<p class="text-[11px] text-(--content-meta) mt-0.5">近 30 天访问最多的页面与文章</p>
+					<p class="text-[11px] text-(--content-meta) mt-0.5">近 30 天（截至昨日）访问最多的页面与文章</p>
 				</div>
 
 				<!-- 分类切换药丸 (全部 / 文章 / 项目) -->

@@ -247,15 +247,38 @@ stats.get("/realtime", async (c) => {
 	});
 });
 
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * 计算东八区（Asia/Shanghai）从昨天起往前 30 个完整自然日的时间窗口
+ */
+function getCompleted30DaysRange(now = Date.now()) {
+	const todayStartMs =
+		Math.floor((now + SHANGHAI_OFFSET_MS) / DAY_MS) * DAY_MS -
+		SHANGHAI_OFFSET_MS;
+	const todayStr = new Date(todayStartMs + SHANGHAI_OFFSET_MS)
+		.toISOString()
+		.split("T")[0];
+	return {
+		todayStartMs,
+		todayStr,
+		rangeStartAt: todayStartMs - 30 * DAY_MS,
+		rangeEndAt: todayStartMs - 1,
+	};
+}
+
 /**
  * GET /api/stats/summary
- * 30 天 PV/UV 趋势及指标概览
+ * 30 天 PV/UV 趋势及指标概览（从昨天起往前 30 天，不含今日）
  * KV 缓存策略：30 分钟 (1800 秒)
  */
 stats.get("/summary", async (c) => {
 	const cacheKey = "stats:summary";
 	const forceRefresh =
 		c.req.query("refresh") === "1" || c.req.query("refresh") === "true";
+	const { todayStartMs, todayStr, rangeStartAt, rangeEndAt } =
+		getCompleted30DaysRange();
 	c.header(
 		"Cache-Control",
 		forceRefresh
@@ -263,29 +286,31 @@ stats.get("/summary", async (c) => {
 			: "public, max-age=300, s-maxage=1800, stale-while-revalidate=3600",
 	);
 
-	// 1. 读取 KV 缓存
+	// 1. 读取 KV 缓存（若缓存包含今日或更晚日期则跳过，确保跨天后自动刷新）
 	if (!forceRefresh) {
 		try {
 			const cached = await c.env.KV.get<StatsSummaryData>(cacheKey, "json");
-			if (cached && Array.isArray(cached.chart)) {
-				return c.json({
-					code: 200,
-					data: cached,
-					fromCache: true,
-				});
+			if (cached && Array.isArray(cached.chart) && cached.chart.length > 0) {
+				const lastDate = cached.chart[cached.chart.length - 1]?.date || "";
+				if (!lastDate || lastDate < todayStr) {
+					return c.json({
+						code: 200,
+						data: cached,
+						fromCache: true,
+					});
+				}
 			}
 		} catch (err) {
 			console.warn("[Stats API] KV get error (summary):", err);
 		}
 	}
 
-	// 2. 尝试从 Umami API 获取 30 天统计与走势
+	// 2. 尝试从 Umami API 获取从昨天起往前 30 天统计与走势
 	const umamiCtx = await resolveUmamiContext(c.env);
 
 	if (umamiCtx) {
 		try {
 			const endAt = Date.now();
-			const startAt = endAt - 30 * 24 * 60 * 60 * 1000;
 			const startAt24h = endAt - 24 * 60 * 60 * 1000;
 			const prevStartAt24h = endAt - 48 * 60 * 60 * 1000;
 
@@ -296,12 +321,15 @@ stats.get("/summary", async (c) => {
 				last24hStatsRes,
 				prev24hStatsRes,
 			] = await Promise.all([
-				fetch(`${umamiCtx.apiBase}/stats?startAt=${startAt}&endAt=${endAt}`, {
-					headers: umamiCtx.headers,
-					signal: AbortSignal.timeout(5000),
-				}),
 				fetch(
-					`${umamiCtx.apiBase}/pageviews?startAt=${startAt}&endAt=${endAt}&unit=day&timezone=Asia%2FShanghai`,
+					`${umamiCtx.apiBase}/stats?startAt=${rangeStartAt}&endAt=${rangeEndAt}`,
+					{
+						headers: umamiCtx.headers,
+						signal: AbortSignal.timeout(5000),
+					},
+				),
+				fetch(
+					`${umamiCtx.apiBase}/pageviews?startAt=${rangeStartAt}&endAt=${rangeEndAt}&unit=day&timezone=Asia%2FShanghai`,
 					{
 						headers: umamiCtx.headers,
 						signal: AbortSignal.timeout(5000),
@@ -337,7 +365,7 @@ stats.get("/summary", async (c) => {
 				const pvList = pvData.pageviews || [];
 				const uvList = pvData.sessions || [];
 
-				const chart: StatsSummaryItem[] = pvList.map((item, idx) => {
+				const rawChart: StatsSummaryItem[] = pvList.map((item, idx) => {
 					const rawDate = item.t || item.x || "";
 					const dateStr =
 						rawDate.split("T")[0]?.split(" ")[0] || `Day ${idx + 1}`;
@@ -348,6 +376,12 @@ stats.get("/summary", async (c) => {
 						uv: uvItem?.y || Math.round((item.y || 0) * 0.4),
 					};
 				});
+				const chart = rawChart
+					.filter(
+						(item) =>
+							!/^\d{4}-\d{2}-\d{2}$/.test(item.date) || item.date < todayStr,
+					)
+					.slice(-30);
 
 				const extractVal = (val: unknown): number => {
 					if (typeof val === "number") return val;
@@ -441,18 +475,17 @@ stats.get("/summary", async (c) => {
 		}
 	}
 
-	// 3. 容灾拟真生成 30 天 PV/UV 走势曲线
+	// 3. 容灾拟真生成从昨天起往前 30 天 PV/UV 走势曲线
 	const chart: StatsSummaryItem[] = [];
-	const today = new Date();
 	let totalPvSum = 0;
 	let totalUvSum = 0;
 
-	for (let i = 29; i >= 0; i--) {
-		const d = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
+	for (let i = 30; i >= 1; i--) {
+		const d = new Date(todayStartMs - i * DAY_MS + SHANGHAI_OFFSET_MS);
 		const dateStr = d.toISOString().split("T")[0];
 
 		// 基于正弦波与平滑随机种子的真实访客曲线生成
-		const dayOfWeek = d.getDay();
+		const dayOfWeek = d.getUTCDay();
 		const weekendBonus = dayOfWeek === 0 || dayOfWeek === 6 ? 60 : 0;
 		const cycle = Math.sin((30 - i) * 0.3) * 80;
 		const pseudoNoise = ((30 - i) * 31) % 45;
@@ -537,8 +570,8 @@ stats.get("/insights", async (c) => {
 
 	if (umamiCtx) {
 		try {
-			const endAt = Date.now();
-			const startAt = endAt - 30 * 24 * 60 * 60 * 1000;
+			const { rangeStartAt: startAt, rangeEndAt: endAt } =
+				getCompleted30DaysRange();
 
 			const [pagesRes, countriesRes, browsersRes, osRes] = await Promise.all([
 				fetch(
