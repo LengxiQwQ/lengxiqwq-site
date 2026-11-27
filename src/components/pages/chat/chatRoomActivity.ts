@@ -1,3 +1,4 @@
+import { stripSiteSuffix } from "./chatClient";
 import type { ChatMessageRecord } from "./chatTypes";
 
 interface RecallNotice {
@@ -10,7 +11,12 @@ export function parseRecallNotice(content: string): RecallNotice | null {
 		.trim()
 		.match(/^(.+?)\s+撤回了(?:一条消息|\s+(.+?)\s+的一条消息)$/);
 	if (!match) return null;
-	return { actorName: match[1].trim(), targetName: match[2]?.trim() };
+	const actorName = stripSiteSuffix(match[1]) || match[1].trim();
+	const rawTarget = match[2]?.trim();
+	const targetName = rawTarget
+		? stripSiteSuffix(rawTarget) || rawTarget
+		: undefined;
+	return { actorName, targetName };
 }
 
 export function isRoomActivity(message: ChatMessageRecord): boolean {
@@ -73,7 +79,8 @@ export function parseRoomActivityActor(
 	storedName?: string,
 ): { name: string; detail: string; action: string } | null {
 	const parseAt = (offset: number) => {
-		const name = content.slice(0, offset);
+		const rawActor = content.slice(0, offset);
+		const name = stripSiteSuffix(rawActor) || rawActor.trim();
 		const detail = content.slice(offset).trimStart();
 		const rule = activityActions.find(([pattern]) => pattern.test(detail));
 		return name && rule ? { name, detail, action: rule[1] } : null;

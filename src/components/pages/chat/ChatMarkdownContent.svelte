@@ -3,6 +3,7 @@ import type { Token, Tokens } from "marked";
 import ChatCodeBlock from "./ChatCodeBlock.svelte";
 import ChatImagePreview from "./ChatImagePreview.svelte";
 import ChatStickerImage from "./ChatStickerImage.svelte";
+import { stripSiteSuffix } from "./chatClient";
 import type { ChatImageDimensions } from "./chatImageLayout";
 import {
 	type ChatMarkdownAst,
@@ -91,7 +92,7 @@ function stripHtmlComments(raw: string): string {
             {@render renderInlineList(linkTok.tokens)}
           {:else}
             {#each restoreTextSegments(linkTok.text, ast) as seg, sIdx (`${sIdx}-${seg.kind}`)}
-              {#if seg.kind === "text"}{seg.text}{:else if seg.kind === "mention"}{seg.text}{/if}
+              {#if seg.kind === "text"}{seg.text}{:else if seg.kind === "mention"}{stripSiteSuffix(seg.text)}{/if}
             {/each}
           {/if}
         </a>
@@ -147,18 +148,19 @@ function stripHtmlComments(raw: string): string {
               <ChatStickerImage src={seg.url} alt={seg.alt} class="chat-sticker chat-sticker--{seg.category}" loading="lazy" />
             {/if}
           {:else if seg.kind === "mention"}
+            {@const mentionDisplayText = stripSiteSuffix(seg.text)}
             {#if onMentionClick && seg.userKey !== "room"}
               <button
                 type="button"
                 class="chat-mention-pill {isSelfMention(seg.userKey) ? 'self' : ''} clickable select-none"
-                title={"查看 " + seg.text + " 的资料"}
+                title={"查看 " + mentionDisplayText + " 的资料"}
                 onclick={(event) => {
                   event.stopPropagation();
-                  onMentionClick?.(seg.userKey, seg.text);
+                  onMentionClick?.(seg.userKey, mentionDisplayText);
                 }}
-              >{seg.text}</button>
+              >{mentionDisplayText}</button>
             {:else}
-              <span class="chat-mention-pill {isSelfMention(seg.userKey) ? 'self' : ''}">{seg.text}</span>
+              <span class="chat-mention-pill {isSelfMention(seg.userKey) ? 'self' : ''}">{mentionDisplayText}</span>
             {/if}
           {:else}
             {seg.text}

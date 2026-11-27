@@ -15,6 +15,11 @@ cp "$root"/test/{interaction,interaction-fixture}.mjs "$candidate/"
   else
     git apply --reverse --check "$root/gateway-music-card.patch"
   fi
+  if git apply --check "$root/gateway-music-diagnostics.patch" 2>/dev/null; then
+    git apply "$root/gateway-music-diagnostics.patch"
+  else
+    git apply --reverse --check "$root/gateway-music-diagnostics.patch"
+  fi
   sed -i -E "s/^(const [A-Z0-9_]*(KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]* = ).*;/\1'fixture';/" server.mjs
   cat >fixture-downloader <<'DOWNLOADER'
 #!/usr/bin/env bash

@@ -111,6 +111,66 @@ describe('ChatDatabase SQLite 核心测试', () => {
     assert.equal(msgs[msgs.length - 1].content, 'Hello 10');
   });
 
+  test('撤回存档保留原文与附件并按消息时间读取', () => {
+    const original = {
+      id: 42,
+      msgUid: 'recall-archive-test',
+      kind: 'user',
+      userKey: 'user:test',
+      name: 'Tester',
+      content: '这段内容撤回后仍留在私有存档',
+      attachments: [{ type: 'image', url: 'recall-media://fixture' }],
+      createdAt: 1200
+    };
+    db.storeRecallCandidate({ roomId: 'interconnect', message: original });
+    assert.equal(db.getRecalledMessages({ roomId: 'interconnect', msgUids: [original.msgUid] }).length, 0);
+    assert.equal(db.archiveRecalledMessage({
+      roomId: 'interconnect',
+      message: original,
+      recalledByKey: 'user:owner',
+      recalledByName: 'Owner',
+      recalledAt: 1500
+    }), true);
+
+    db.insertMessage({ ...original, roomId: 'interconnect', isRedacted: true });
+    const publicMessage = db.getMessages({ roomId: 'interconnect', limit: 100 })
+      .find((message) => message.msgUid === original.msgUid);
+    assert.equal(publicMessage.content, '此消息已撤回');
+    assert.equal(publicMessage.attachments, undefined);
+
+    const [stored] = db.getRecalledMessages({ roomId: 'interconnect', msgUids: [original.msgUid] });
+    assert.equal(stored.content, original.content);
+    assert.deepEqual(stored.attachments, original.attachments);
+    assert.equal(stored.isRedacted, true);
+    assert.equal(stored.recalledByKey, 'user:owner');
+    assert.equal(stored.recalledAt, 1500);
+    assert.equal(db.getRecalledMessages({ roomId: 'chat', msgUids: [original.msgUid] }).length, 0);
+  });
+
+  test('撤回存档在关闭并重新打开数据库后仍存在', () => {
+    const archivePath = join(process.cwd(), 'chat-server/test/test_recall_restart.db');
+    for (const suffix of ['', '-wal', '-shm']) {
+      const target = archivePath + suffix;
+      if (existsSync(target)) rmSync(target);
+    }
+    let archiveDb = new ChatDatabase(archivePath);
+    archiveDb.archiveRecalledMessage({
+      roomId: 'chat',
+      message: { msgUid: 'restart-recall', createdAt: 100, content: 'persisted', attachments: [] },
+      recalledByKey: 'waline:1',
+      recalledByName: 'Owner',
+      recalledAt: 200
+    });
+    archiveDb.close();
+    archiveDb = new ChatDatabase(archivePath);
+    assert.equal(archiveDb.getRecalledMessages({ roomId: 'chat', msgUids: ['restart-recall'] })[0].content, 'persisted');
+    archiveDb.close();
+    for (const suffix of ['', '-wal', '-shm']) {
+      const target = archivePath + suffix;
+      if (existsSync(target)) rmSync(target);
+    }
+  });
+
   test('系统 KV 存储', () => {
     db.setKv('room_topic:chat', { text: '欢迎来到聊天室！', updatedBy: 'admin' });
     const val = db.getKv('room_topic:chat');

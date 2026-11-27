@@ -117,6 +117,127 @@ async function loadFancybox(): Promise<FancyboxType> {
 	return cachedFancyboxPromise;
 }
 
+function getReadyTriggerThumb(triggerEl?: HTMLElement | null): HTMLImageElement | undefined {
+	const triggerImg = triggerEl?.querySelector("img") ?? undefined;
+	return triggerImg?.complete && triggerImg.naturalWidth > 0
+		? triggerImg
+		: undefined;
+}
+
+function cleanupFancyboxImages(fb: { getContainer?: () => HTMLElement | null }): void {
+	try {
+		const container = fb.getContainer?.();
+		if (container) {
+			container.querySelectorAll("img").forEach((img) => {
+				img.src = "";
+			});
+		}
+	} catch {
+		// Ignore cleanup failure
+	}
+}
+
+/** Open a single high-resolution avatar image in the site's built-in Fancybox lightbox. */
+export async function openChatAvatarLightbox(
+	targetUrl: string,
+	options?: {
+		fallbackSrc?: string;
+		triggerEl?: HTMLElement | null;
+	},
+): Promise<void> {
+	if (typeof document === "undefined" || !targetUrl) return;
+	bindSwupCleanupOnce();
+	const currentSeq = ++openSeq;
+
+	try {
+		await ensureFancyboxStyles();
+		const Fancybox = await loadFancybox();
+		if (currentSeq !== openSeq) return;
+
+		const triggerEl = options?.triggerEl ?? undefined;
+		const readyThumb = getReadyTriggerThumb(triggerEl);
+		const fallbackSrc = options?.fallbackSrc;
+
+		Fancybox.show(
+			[
+				{
+					src: targetUrl,
+					type: "image",
+					triggerEl,
+					thumbEl: readyThumb,
+				},
+			],
+			{
+				startIndex: 0,
+				Hash: false,
+				closeExisting: true,
+				Carousel: {
+					errorTpl: `<div class="f-carousel__error"><span>头像加载失败</span>
+						<button type="button" class="underline" data-chat-image-retry>重新加载</button></div>`,
+				},
+				Thumbs: {
+					autoStart: false,
+				},
+				Toolbar: {
+					display: {
+						left: [],
+						middle: [
+							"zoomIn",
+							"zoomOut",
+							"toggle1to1",
+							"rotateCCW",
+							"rotateCW",
+							"flipX",
+							"flipY",
+						],
+						right: ["close"],
+					},
+				},
+				dragToClose: true,
+				fitToView: true,
+				preload: 1,
+				infinite: false,
+				Panzoom: {
+					maxScale: 3,
+					minScale: 1,
+				},
+				on: {
+					initLayout: (fb) => {
+						const container = fb.getContainer();
+						if (!container) return;
+						let fallbackApplied = false;
+						container.addEventListener(
+							"error",
+							(event) => {
+								const img = event.target;
+								if (!(img instanceof HTMLImageElement)) return;
+								if (!img.getAttribute("src")) return;
+								if (
+									!fallbackApplied &&
+									fallbackSrc &&
+									fallbackSrc !== targetUrl
+								) {
+									fallbackApplied = true;
+									img.src = fallbackSrc;
+								}
+							},
+							true,
+						);
+						container.addEventListener("click", (event) => {
+							if (!(event.target instanceof Element)) return;
+							if (!event.target.closest("[data-chat-image-retry]")) return;
+							void openChatAvatarLightbox(targetUrl, options);
+						});
+					},
+					destroy: cleanupFancyboxImages,
+				},
+			} as Parameters<typeof Fancybox.show>[1],
+		);
+	} catch (error) {
+		if (currentSeq === openSeq) console.warn("头像阅图窗口打开失败", error);
+	}
+}
+
 /**
  * Open the site's built-in Fancybox lightbox for chatroom images,
  * grouping all rendered chat images in DOM order for prev/next navigation.

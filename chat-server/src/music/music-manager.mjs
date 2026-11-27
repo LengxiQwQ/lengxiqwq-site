@@ -523,7 +523,7 @@ export class MusicManager {
       let result;
       try {
         result = await withTimeout(
-          this.resolveRotationSource(original, { alternatives: true, random: true, exclude, budgetMs: Math.min(remaining, 4800) }),
+          this.resolveRotationSource(original, { action: 'random', alternatives: true, random: true, exclude, budgetMs: Math.min(remaining, 4800) }),
           Math.min(remaining, 5000)
         );
       } catch {
@@ -541,7 +541,7 @@ export class MusicManager {
       : { ok: false, code: 'NO_SOURCE', error: '这次没抽到可播曲目，可以再抽一次' };
   }
 
-  async enqueueWithAlternatives(original, requester, { owner, active, offerId, choiceId, searchFallback = false, beforeCommit }) {
+  async enqueueWithAlternatives(original, requester, { owner, active, offerId, choiceId, searchFallback = false, beforeCommit, requestId, trace }) {
     const confirming = offerId !== undefined;
     const offer = this.requestOffers.get(owner);
     const choice = confirming && offer?.choices.find(option => option.track.id === choiceId);
@@ -552,17 +552,19 @@ export class MusicManager {
     const requested = confirming ? offer.original : original;
     if (!requested) return { ok: false, code: 'TRACK_CHANGED', error: '找不到这条歌单曲目，请刷新歌单后重试' };
 
+    trace?.('resolve_requested_track', { title: requested.title });
     const commitDeadline = Date.now() + 40_000;
     try {
       const result = await withTimeout(
         choice
           ? this.resolve(choice.track, { fresh: true, rejectTransient: true }).then(playable => ({ playable }))
           : this.resolveRotationSource(requested, {
-              alternatives: true, exactOnly: searchFallback, budgetMs: searchFallback ? 38_000 : undefined, preferredTrack: !searchFallback && this.getPreferredTrack(requested, requester.userKey)
+              action: 'enqueue', requestId, alternatives: true, exactOnly: searchFallback, budgetMs: searchFallback ? 38_000 : undefined, preferredTrack: !searchFallback && this.getPreferredTrack(requested, requester.userKey)
             }),
         searchFallback ? 39_000 : 11_000
       );
       if (result.playable && beforeCommit) {
+        trace?.('wait_queue_commit');
         await withTimeout(beforeCommit, Math.max(1, commitDeadline - Date.now()), '等待前一首点歌超时');
       }
       if (!active()) return { ok: false, code: 'ROOM_CHANGED', error: '聊天室已切换，请重新点歌' };
@@ -575,6 +577,7 @@ export class MusicManager {
           ? { ...result.playable, rotationReplacement: { title: requested.title, artist: requested.artist } }
           : result.playable;
         if (choice) playable = withPlaybackSelection(playable, requested, 'manual-choice');
+        trace?.('commit_queue', { track: playable.id });
         const accepted = await this.enqueueTrack(playable, requester, playable);
         if (accepted.ok && choice) this.savePreferredTrack(requested, requester.userKey, playable);
         return accepted;
@@ -1071,7 +1074,7 @@ export class MusicManager {
   async resolveRotationSource(candidate, options = {}) {
     if (this.musicRegistry.resolveRotationTrack) {
       return this.musicRegistry.resolveRotationTrack(candidate,
-        track => this.resolve(track, { rejectTransient: true }), options);
+        track => this.resolve(track, { rejectTransient: true }), { room: this.roomId, action: 'rotation', ...options });
     }
     const matched = await this.musicRegistry.resolvePlaylistTrack(candidate);
     const track = matched || (candidate.id?.startsWith('qq:') ? candidate : null);
@@ -1239,27 +1242,38 @@ export class MusicManager {
     return pending;
   }
 
-  advanceNext() {
+  advanceNext(trace) {
     const generation = this.generation;
-    if (this.advancing?.generation === generation) return this.advancing.promise;
+    const before = this.current?.uid;
+    const completed = () => trace?.('transition_finished', { before, current: this.current?.uid,
+      track: this.current?.track?.id, changed: this.current?.uid !== before, queue: this.queue.length });
+    if (this.advancing?.generation === generation) {
+      trace?.('join_transition');
+      if (trace) void this.advancing.promise.then(completed, () => trace('transition_failed'));
+      return this.advancing.promise;
+    }
     clearTimeout(this._advanceTimer);
     clearTimeout(this._refreshPreparedTimer);
     clearTimeout(this._prepareFallbackTimer);
 
-    const promise = this.selectNext(generation).finally(() => {
+    const promise = this.selectNext(generation, Date.now(), trace).then(completed, error => {
+      trace?.('transition_failed', { kind: error?.name });
+      throw error;
+    }).finally(() => {
       if (this.advancing?.promise === promise) this.advancing = null;
     });
     this.advancing = { generation, promise };
     return promise;
   }
 
-  async selectNext(generation, selectionStartedAt = Date.now()) {
+  async selectNext(generation, selectionStartedAt = Date.now(), trace) {
     while (this.queue.length) {
       const next = this.nextEligibleRequest();
       if (!next) break;
       const prepared = this.preparedQueue?.key === next.uid ? this.preparedQueue : null;
       let playable;
       try {
+        trace?.('resolve_queue_head', { track: next.track.id, prepared: Boolean(prepared) });
         playable = await this.usePrepared(prepared) || await this.resolve(next.track, {
           rejectTransient: true, fresh: Boolean(prepared?.checkedAt || next.sourceRetryAt)
         });
@@ -1267,11 +1281,13 @@ export class MusicManager {
           const cross = await this.resolveRotationSource(next.track, { budgetMs: 4500, exactOnly: true, alternatives: true }).catch(() => null);
           playable = cross?.playable || null;
         }
-      } catch {
+      } catch (error) {
+        trace?.('queue_source_failed', { track: next.track.id, kind: error?.name });
         if (generation !== this.generation) return;
         if (!this.queue.includes(next)) continue;
         next.sourceRetries = Math.min(5, (next.sourceRetries || 0) + 1);
         next.sourceRetryAt = Date.now() + 15_000 * 2 ** (next.sourceRetries - 1);
+        trace?.('scheduled_retry', { track: next.track.id, retryAt: next.sourceRetryAt });
         this.preparedQueue = null;
         this.savePlayback();
         continue;
@@ -1294,6 +1310,7 @@ export class MusicManager {
       }
       this.queue.splice(index, 1);
       this.preparedQueue = null;
+      trace?.('queue_source_unavailable', { track: next.track.id });
       this.markOutcome(next.uid, 'unavailable');
       this.onUnavailable?.(next);
     }
@@ -1301,13 +1318,14 @@ export class MusicManager {
     const fallbackGeneration = this.fallbackGeneration;
     const prepared = this.preparedFallback?.key === fallbackGeneration ? this.preparedFallback : null;
     this.preparedFallback = null;
+    trace?.('resolve_rotation', { prepared: Boolean(prepared), available: this.fallbackTracks.length });
     const known = await this.usePrepared(prepared);
     if (generation !== this.generation) return;
-    if (this.nextEligibleRequest() || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt);
+    if (this.nextEligibleRequest() || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt, trace);
     const playable = this.isRotationHead(known) ? known : await this.resolveFallbackTrackPlayable();
     if (generation !== this.generation) return;
-    if (this.nextEligibleRequest() || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt);
-    if (playable && !this.isRotationCandidatePending(playable)) return this.selectNext(generation, selectionStartedAt);
+    if (this.nextEligibleRequest() || fallbackGeneration !== this.fallbackGeneration) return this.selectNext(generation, selectionStartedAt, trace);
+    if (playable && !this.isRotationCandidatePending(playable)) return this.selectNext(generation, selectionStartedAt, trace);
     if (playable) {
       this.consumeRotationTrack(playable);
       this.lastPlayedFallbackId = playable.id;
@@ -1328,11 +1346,11 @@ export class MusicManager {
     this.onStateChanged();
   }
 
-  skip(actor, onlineCount, listeningCount = 0) {
+  skip(actor, onlineCount, listeningCount = 0, trace) {
     if (!this.current) {
       if (this.queue.length > 0 || this.fallbackTracks.length > 0) {
         clearTimeout(this._advanceTimer);
-        this.advanceNext();
+        this.advanceNext(trace);
         return { ok: true, skipped: true };
       }
       return { ok: false, error: '当前没有正在播放的歌曲' };
@@ -1347,24 +1365,24 @@ export class MusicManager {
     const canDirect = isFallback || isOwner || isAdmin || listeningCount <= 2;
 
     if (canDirect) {
-      this.advanceNext();
+      this.advanceNext(trace);
       return { ok: true, skipped: true };
     }
 
-    return this.voteSkip(actor, onlineCount, listeningCount);
+    return this.voteSkip(actor, onlineCount, listeningCount, trace);
   }
 
-  voteSkip(actor, onlineCount, listeningCount = 0) {
+  voteSkip(actor, onlineCount, listeningCount = 0, trace) {
     if (!this.current) {
       if (this.queue.length > 0 || this.fallbackTracks.length > 0) {
         clearTimeout(this._advanceTimer);
-        this.advanceNext();
+        this.advanceNext(trace);
         return { ok: true, skipped: true };
       }
       return { ok: false, error: '当前没有正在播放的歌曲' };
     }
     if (this.current.isFallback || actor.isAdmin || actor.userKey === this.current.requesterKey || listeningCount < 3) {
-      this.advanceNext();
+      this.advanceNext(trace);
       return { ok: true, skipped: true };
     }
 
@@ -1387,7 +1405,7 @@ export class MusicManager {
 
     const threshold = computeVoteThreshold(onlineCount, this.current.isFallback, true);
     if (this.current.skipVotes.length >= threshold) {
-      this.advanceNext();
+      this.advanceNext(trace);
       return { ok: true, skipped: true };
     }
 
@@ -1491,6 +1509,7 @@ export class MusicManager {
     }
     const generation = this.generation;
     const prepared = this.preparedQueue?.key === uid ? this.preparedQueue : null;
+    context.trace?.('resolve_selected_queue_item', { track: item.track.id, prepared: Boolean(prepared) });
     const playable = await this.usePrepared(prepared) || await this.resolve(item.track, { fresh: Boolean(prepared?.checkedAt) });
     if (generation !== this.generation || this.current?.uid !== (currentUid ?? undefined)) {
       return { ok: false, error: '播放状态已更新，请重试' };
@@ -1584,13 +1603,14 @@ export class MusicManager {
     const changed = () => this.rotationFailure('PLAYBACK_CHANGED', '房间播放或轮播列表已变化，请重新选择');
     if (!stillCurrent()) return changed();
 
+    context.trace?.('resolve_selected_rotation', { title: requested.title });
     this.rotationRequests.add(actor.userKey);
     try {
       const result = await withTimeout(
         selected
           ? this.resolve(selected.track, { fresh: true, rejectTransient: true }).then(playable => ({ playable }))
           : this.resolveRotationSource(requested, {
-              alternatives: Boolean(context.allowAlternatives),
+              action: 'select-rotation', requestId: context.requestId, alternatives: Boolean(context.allowAlternatives),
               exactOnly: context.searchFallback,
               budgetMs: context.searchFallback ? 38_000 : undefined,
               preferredTrack: !context.searchFallback && this.getPreferredTrack(requested, actor.userKey)

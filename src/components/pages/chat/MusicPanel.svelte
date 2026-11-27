@@ -64,7 +64,12 @@ import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import { positionChatFloating } from "./chatFloating";
-import { fetchMusicHistory, formatClockSeconds, readStoredGuestToken } from "./chatClient";
+import {
+	fetchMusicHistory,
+	formatClockSeconds,
+	readStoredGuestToken,
+	stripSiteSuffix,
+} from "./chatClient";
 import { privateMusic } from "./chatPrivateMusic.svelte";
 import type {
 	ChatMentionCandidate,
@@ -1686,7 +1691,7 @@ function formatPlaylistDate(ts: number): string {
 }
 
 function canManagePlaylist(playlist: PlaylistSummary | null): boolean {
-	if (!playlist || !personalPlaylistAuth || !currentUser) return false;
+	if (!playlist || playlist.id === "pl_collective_favorites" || !personalPlaylistAuth || !currentUser) return false;
 	return currentUser.isAdmin || playlist.ownerKey === currentUser.userKey;
 }
 
@@ -4068,16 +4073,18 @@ $effect(() => {
             <span title={'替代《' + item.track.rotationReplacement.title + '》'}>替代《{item.track.rotationReplacement.title}》 · </span>
           {/if}
           {#if item.requesterKey && onOpenUserProfile}
+            {@const cleanReqName = stripSiteSuffix(item.requesterName) || item.requesterName}
             <button
               type="button"
               class="p-0 border-none bg-transparent text-inherit hover:text-[var(--primary)] cursor-pointer text-[12px] xl:text-[11px] inline"
-              onclick={() => openRequesterProfile(item.requesterKey, item.requesterName)}
-              title={`点歌人：${item.requesterName}`}
+              onclick={() => openRequesterProfile(item.requesterKey, cleanReqName)}
+              title={`点歌人：${cleanReqName}`}
             >
-              {item.requesterName}
+              {cleanReqName}
             </button>
           {:else}
-            <span title={`点歌人：${item.requesterName}`}>{item.requesterName}</span>
+            {@const cleanReqName = stripSiteSuffix(item.requesterName) || item.requesterName}
+            <span title={`点歌人：${cleanReqName}`}>{cleanReqName}</span>
           {/if}
         </div>
       </div>
@@ -4165,19 +4172,20 @@ $effect(() => {
               {#if currentPlay}
                 {@const isSystemFallback =
                   currentPlay.isFallback || currentPlay.requesterKey === "system:fallback"}
+                {@const cleanRequesterName = stripSiteSuffix(currentPlay.requesterName) || currentPlay.requesterName}
                 {#if !isSystemFallback && currentPlay.requesterKey && onOpenUserProfile}
                   <button
                     type="button"
                     class="inline-flex items-center gap-1.5 min-w-0 max-w-[min(12rem,100%)] h-[22px] pl-[3px] pr-2 py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)] hover:bg-(--primary)/20 border-none cursor-pointer transition-colors active:scale-95"
-                    onclick={() => openRequesterProfile(currentPlay.requesterKey, currentPlay.requesterName)}
-                    title={`查看点歌人 ${currentPlay.requesterName} 的个人资料`}
+                    onclick={() => openRequesterProfile(currentPlay.requesterKey, cleanRequesterName)}
+                    title={`查看点歌人 ${cleanRequesterName} 的个人资料`}
                   >
                     <ChatAvatar
                       src={currentRequesterAvatar}
-                      name={currentPlay.requesterName}
+                      name={cleanRequesterName}
                       size="2xs"
                     />
-                    <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
+                    <span class="truncate leading-[1.2]">{cleanRequesterName}</span>
                   </button>
                 {:else if isSystemFallback}
                   {@const playlistId = currentPlay.track?.sourcePlaylistId || musicState?.fallbackPlaylistId}
@@ -4230,10 +4238,10 @@ $effect(() => {
                   <span class="inline-flex items-center gap-1.5 min-w-0 max-w-[min(12rem,100%)] h-[22px] pl-[3px] pr-2 py-0 text-xs leading-none font-medium rounded-full bg-(--primary)/12 text-[var(--chat-accent-text)]">
                     <ChatAvatar
                       src={currentRequesterAvatar}
-                      name={currentPlay.requesterName}
+                      name={cleanRequesterName}
                       size="2xs"
                     />
-                    <span class="truncate leading-[1.2]">{currentPlay.requesterName}</span>
+                    <span class="truncate leading-[1.2]">{cleanRequesterName}</span>
                   </span>
                 {/if}
               {:else}
@@ -5288,7 +5296,7 @@ $effect(() => {
 
     {#if selectedPlaylist}
       {@const safeSourceUrl = resolveSafeExternalUrl(selectedPlaylist.sourceUrl)}
-      {@const hasPlaylistMoreMenuActions = selectedPlaylist.isSystemProtected || canManagePlaylist(selectedPlaylist)}
+      {@const hasPlaylistMoreMenuActions = canManagePlaylist(selectedPlaylist)}
       {#snippet playlistActionButtons()}
         {#if selectedPlaylist}
           <div class="flex items-center gap-1.5 shrink-0">
@@ -5373,25 +5381,7 @@ $effect(() => {
                       </button>
                     {/if}
 
-                    {#if selectedPlaylist.isSystemProtected}
-                      <button
-                        type="button"
-                        role="menuitem"
-                        disabled={isLoadingPlaylistDetail}
-                        class="chat-more-action-item"
-                        onclick={() => {
-                          if (!selectedPlaylist) return;
-                          showPlaylistMoreMenu = false;
-                          void openPlaylistDetail(selectedPlaylist.id, true, undefined, collectiveFilterUserKey);
-                        }}
-                      >
-                        <svg class="w-3.5 h-3.5 shrink-0 {isLoadingPlaylistDetail ? 'animate-spin' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                          <polyline points="23 4 23 10 17 10" />
-                          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                        </svg>
-                        <span>{isLoadingPlaylistDetail ? "正在刷新..." : "刷新曲目"}</span>
-                      </button>
-                    {:else if canManagePlaylist(selectedPlaylist)}
+                    {#if canManagePlaylist(selectedPlaylist)}
                       <button
                         type="button"
                         role="menuitem"
@@ -6143,7 +6133,7 @@ $effect(() => {
             {:else if currentPlay}
               <div class="space-y-0.5">
                 <p class="m-0 truncate text-[13px] font-semibold text-[var(--deep-text)]" title={`${currentPlay.track.title} · ${currentPlay.track.artist}`}>{currentPlay.track.title} · {currentPlay.track.artist}</p>
-                <p class="m-0 truncate text-xs text-[var(--chat-meta-color)]">点播人：{currentPlay.requesterName}</p>
+                <p class="m-0 truncate text-xs text-[var(--chat-meta-color)]">点播人：{stripSiteSuffix(currentPlay.requesterName) || currentPlay.requesterName}</p>
               </div>
               <p class="m-0 text-[11px] leading-relaxed text-[var(--chat-meta-color)]">当前播放房友点播，待播队列播完后将自动切回轮播。</p>
             {:else}

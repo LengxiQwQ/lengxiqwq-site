@@ -55,7 +55,7 @@ export function syncAndSortStickers(stickerPack = "miku"): void {
 	const animatedItems = categories.groups?.animated || [];
 	const staticItems = categories.groups?.static || [];
 
-	const sortedItems = [...textItems, ...animatedItems, ...staticItems];
+	const sortedItems = [...staticItems, ...animatedItems, ...textItems];
 
 	// 1. 检查所有登记在案的图片文件是否存在
 	const missing: string[] = [];

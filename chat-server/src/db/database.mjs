@@ -85,6 +85,23 @@ export class ChatDatabase {
       CREATE INDEX IF NOT EXISTS idx_chat_messages_sender ON chat_messages (sender_key);
     `);
 
+    // 原始消息与常规时间线分开保存。该表只能通过已鉴权的站长专属接口读取。
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS chat_recall_archive (
+        room_id TEXT NOT NULL,
+        msg_uid TEXT NOT NULL,
+        original_created_at INTEGER NOT NULL DEFAULT 0,
+        original_message_json TEXT NOT NULL,
+        recalled_by_key TEXT NOT NULL DEFAULT '',
+        recalled_by_name TEXT NOT NULL DEFAULT '',
+        recalled_at INTEGER NOT NULL,
+        is_recalled INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (room_id, msg_uid)
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_recall_archive_room_time
+        ON chat_recall_archive (room_id, recalled_at DESC);
+    `);
+
     // 2. 表情回应表
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS chat_reactions (
@@ -250,7 +267,10 @@ export class ChatDatabase {
     `);
 
     this.stmtRedactMessage = this.db.prepare(`
-      UPDATE chat_messages SET is_redacted = 1, content = '此消息已撤回' WHERE event_id = ?
+      UPDATE chat_messages
+      SET is_redacted = 1, content = '此消息已撤回', reply_to_json = '', attachments_json = '',
+          mentions_json = '', mention_keys_json = ''
+      WHERE event_id = ?
     `);
 
     this.stmtUpsertTrackRequest = this.db.prepare(`
@@ -735,6 +755,74 @@ export class ChatDatabase {
     );
   }
 
+  archiveRecalledMessage({ roomId = 'chat', message, recalledByKey = '', recalledByName = '', recalledAt = Date.now() } = {}) {
+    if (!message?.msgUid) return false;
+    this.db.prepare(`
+      INSERT INTO chat_recall_archive (
+        room_id, msg_uid, original_created_at, original_message_json,
+        recalled_by_key, recalled_by_name, recalled_at, is_recalled
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      ON CONFLICT(room_id, msg_uid) DO UPDATE SET
+        original_message_json = excluded.original_message_json,
+        recalled_by_key = excluded.recalled_by_key,
+        recalled_by_name = excluded.recalled_by_name,
+        recalled_at = excluded.recalled_at,
+        is_recalled = 1
+    `).run(roomId, message.msgUid, Number(message.createdAt) || 0, JSON.stringify(message), recalledByKey, recalledByName, recalledAt);
+    return true;
+  }
+
+  storeRecallCandidate({ roomId = 'chat', message } = {}) {
+    if (!message?.msgUid) return false;
+    this.db.prepare(`
+      INSERT INTO chat_recall_archive (room_id, msg_uid, original_created_at, original_message_json, is_recalled, recalled_at)
+      VALUES (?, ?, ?, ?, 0, 0)
+      ON CONFLICT(room_id, msg_uid) DO UPDATE SET
+        original_message_json = CASE WHEN chat_recall_archive.is_recalled = 0 THEN excluded.original_message_json ELSE chat_recall_archive.original_message_json END
+    `).run(roomId, message.msgUid, Number(message.createdAt) || 0, JSON.stringify(message));
+    return true;
+  }
+
+  getRecallCandidate(roomId, msgUid) {
+    if (!roomId || !msgUid) return null;
+    const row = this.db.prepare(`SELECT original_message_json FROM chat_recall_archive
+      WHERE room_id = ? AND msg_uid = ?`).get(roomId, msgUid);
+    if (!row) return null;
+    try { return JSON.parse(row.original_message_json); } catch { return null; }
+  }
+
+  getRecalledMessages({ roomId = 'chat', beforeTime = null, msgUids = null, limit = 100 } = {}) {
+    const safeLimit = Math.min(500, Math.max(1, Math.trunc(Number(limit) || 100)));
+    let rows;
+    if (Array.isArray(msgUids) && msgUids.length > 0) {
+      const uniqueUids = [...new Set(msgUids.filter((id) => typeof id === 'string' && id))].slice(0, safeLimit);
+      const placeholders = uniqueUids.map(() => '?').join(',');
+      rows = this.db.prepare(`SELECT original_message_json, recalled_by_key, recalled_by_name, recalled_at
+        FROM chat_recall_archive WHERE room_id = ? AND is_recalled = 1 AND msg_uid IN (${placeholders})`).all(roomId, ...uniqueUids);
+    } else {
+      rows = beforeTime
+        ? this.db.prepare(`SELECT original_message_json, recalled_by_key, recalled_by_name, recalled_at
+            FROM chat_recall_archive WHERE room_id = ? AND is_recalled = 1 AND original_created_at < ? ORDER BY original_created_at DESC LIMIT ?`).all(roomId, beforeTime, safeLimit)
+        : this.db.prepare(`SELECT original_message_json, recalled_by_key, recalled_by_name, recalled_at
+            FROM chat_recall_archive WHERE room_id = ? AND is_recalled = 1 ORDER BY original_created_at DESC LIMIT ?`).all(roomId, safeLimit);
+      rows.reverse();
+    }
+    return rows.flatMap((row) => {
+      try {
+        const message = JSON.parse(row.original_message_json);
+        return [{
+          ...message,
+          isRedacted: true,
+          recalledByKey: row.recalled_by_key,
+          recalledByName: row.recalled_by_name,
+          recalledAt: row.recalled_at
+        }];
+      } catch {
+        return [];
+      }
+    });
+  }
+
   getMessages({ roomId = 'chat', limit = 50, beforeTime = null, threadRootId = null } = {}) {
     limit = Math.min(100, Math.max(1, limit));
     let sql = 'SELECT * FROM chat_messages WHERE room_id = ?';
@@ -764,13 +852,13 @@ export class ChatDatabase {
       badge: r.badge,
       badgeType: r.badge_type,
       isAdmin: Boolean(r.is_admin),
-      content: r.content,
+      content: r.is_redacted ? '此消息已撤回' : r.content,
       msgType: r.msg_type,
       threadRootId: r.thread_root_id || undefined,
-      replyTo: r.reply_to_json ? JSON.parse(r.reply_to_json) : undefined,
-      attachments: r.attachments_json ? JSON.parse(r.attachments_json) : undefined,
-      mentions: r.mentions_json ? JSON.parse(r.mentions_json) : undefined,
-      mentionKeys: r.mention_keys_json ? JSON.parse(r.mention_keys_json) : undefined,
+      replyTo: !r.is_redacted && r.reply_to_json ? JSON.parse(r.reply_to_json) : undefined,
+      attachments: !r.is_redacted && r.attachments_json ? JSON.parse(r.attachments_json) : undefined,
+      mentions: !r.is_redacted && r.mentions_json ? JSON.parse(r.mentions_json) : undefined,
+      mentionKeys: !r.is_redacted && r.mention_keys_json ? JSON.parse(r.mention_keys_json) : undefined,
       customBadges: r.custom_badges_json ? JSON.parse(r.custom_badges_json) : undefined,
       isRedacted: Boolean(r.is_redacted),
       createdAt: r.created_at

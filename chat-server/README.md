@@ -2,6 +2,12 @@
 
 线上网关入口是 `/opt/chat-server/server.mjs`。本目录保存点歌台模块和网关集成补丁。网关的 Matrix、Waline 等生产配置保存在 VPS。
 
+排查一次具体点歌时，从浏览器导出的 JSON 找到 `enqueue-sent` 和 `enqueue-result`，两条事件的 `uid` 是本次请求编号。部署 `gateway-music-diagnostics.patch`、对应音乐模块和前端后，可用该编号查 PM2 的 `[MusicCommand]`（操作结果）和 `[MusicResolution]`（曲库搜索及音频检查）。自动轮播按房间、歌曲及时间查。线路显示 `pending` 表示网关作出决定时尚未收到结果，不能据此认定上游没有音源。
+
+在 VPS 上运行 `node scripts/music-trace.mjs Yellow` 可以按歌名列出相关请求的阶段和结果；传入请求编号可以只看一次操作。第二个参数可指定归档日志路径。切歌事件在浏览器导出中有 `requestId`。后台的 `decision` 记录权限、投票或操作回执，`transition_finished` 记录切歌后房间实际播放的曲目。两者之间可看到队首取源、轮播取源、延后重试或合并已有切歌任务的记录。
+
+诊断和播放之间不设等待队列。PM2 管道积压或触及每秒记录数、字节数限制时，跳过诊断并在下一条成功写入的记录中用 `droppedBefore` 报告数量。每秒预算保留一部分给失败结果。可用 `ops/chat-server.logrotate` 和 `ops/chat-server-logrotate.cron` 每五分钟检查 PM2 文件，每天或超过 16 MiB 时轮转，保留七份归档。轮转通知 PM2 重新打开文件，不重启网关。查询脚本支持直接读取指定的 `.gz` 归档。
+
 - 模块回归用 `node --test chat-server/test/music.test.mjs chat-server/test/music-card.test.mjs`。
 - 网关回归用 `CHAT_GATEWAY_MODULES=/opt/chat-server/node_modules node test/gateway-regression.mjs <已应用补丁的网关文件> .`。测试使用临时目录和模拟上游。
 - 在 VPS 的独立发布目录运行 `bash test/run-music-interactions.sh` 可复测连续点歌、多人切歌、拖进度和分享失败。它在隔离网络中启动网关副本，使用模拟上游和真实音频文件。加上 `CHAT_INTERACTION_SOAK=1` 可让同一进程再连续运行 90 秒，交替验证切歌、音频分段读取和重连。
@@ -74,3 +80,13 @@ python3 scripts/backfill-chat-image-dimensions.py /path/to/chat-data-copy \
 ### Matrix 房间动态
 
 `gateway-matrix-room-activity.patch` 配合 `src/matrix-room-activity.mjs` 发布。补丁将 Matrix 实时事件及历史翻页中的房间动态写入互联茶室时间线。新版网关启动时检查最近三页 Matrix 历史，每页最多 100 个事件。发布候选先在当前网关入口副本校验补丁，再运行 `node --check server.mjs`。
+
+### 撤回消息站长存档
+
+`src/db/database.mjs` 新建 `chat_recall_archive` 私有表，原始消息、撤回者与时间独立保存；SQLite 初始化会自动创建该表。互联茶室新消息到达时先建立私有候选记录并异步归档 Matrix 媒体；发生撤回时等待该消息尚未完成的归档任务后再标记。站内闲聊在执行撤回前归档正文及附件。`src/matrix-recall-archive.mjs` 将允许的 Matrix 媒体和站内自有 HTTPS 附件复制到数据目录 `recall-media/`，向站长端提供短时签名媒体地址。普通消息广播仍只发撤回系统提示。
+
+Matrix 撤回处理先确定撤回者并尝试存档；存档完成或明确记录失败后，才从公开时间线移除原消息。存档异常会记录诊断并继续创建公开撤回提示。启动时近期历史恢复和按需历史回填都会识别 redacted 原事件，优先从数据库候选存档恢复原文，并幂等补入带 `recalledMsgUid` 的系统提示，使站长私有历史能关联原消息。
+
+VPS 当前入口不在仓库中。用 `node scripts/patch-recall-archive.mjs /path/to/server.mjs /path/to/server.recall-candidate.mjs` 从实际入口生成候选，确保同目录已有本模块；脚本会校验每个补丁锚点唯一，输出新候选，不覆盖原入口。默认唯一站长身份为服务端已验证的 `waline:1`，可通过 PM2 环境变量 `CHAT_RECALL_ARCHIVE_OWNER_KEY` 覆盖；媒体签名默认使用 Matrix 管理令牌，可另设 `CHAT_RECALL_MEDIA_SIGNING_SECRET`。发布前需对候选运行 `node --check`，并先备份、检查候选及回滚方式。
+
+媒体下载目前复用 Matrix 媒体端点，单附件归档上限为 256 MiB；超过上限或来源无法安全识别时，站长看到“附件未完整留存”标记。已在功能上线前撤回且 Matrix 已清除正文的消息无法追溯恢复。

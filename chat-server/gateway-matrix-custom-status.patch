@@ -1,0 +1,375 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -11,6 +11,8 @@
+ import { promisify } from 'node:util';
+ import { WebSocketServer, WebSocket } from 'ws';
+ import { createMatrixMediaHandler } from './src/matrix-media.mjs';
++import { createMatrixRecallArchive } from './src/matrix-recall-archive.mjs';
++import { createMatrixCustomStatusSync } from './src/matrix-custom-status.mjs';
+ import { parseMatrixRelayPrefix } from './src/matrix-relay-prefix.mjs';
+ import { completeMatrixMemberEvent, matrixRoomActivity } from './src/matrix-room-activity.mjs';
+ import { historicalReplyAttachmentFields, matrixReplyAttachmentFields, replyAttachmentFields } from './src/chat-attachment-kind.mjs';
+@@ -189,2 +191,89 @@
++
++const recallArchiveOwnerKey = (process.env.CHAT_RECALL_ARCHIVE_OWNER_KEY || 'waline:1').trim();
++const recallArchive = MATRIX_INTERNAL_URL && MATRIX_ADMIN_TOKEN
++  ? createMatrixRecallArchive({
++      directory: DATA_DIR,
++      baseUrl: MATRIX_INTERNAL_URL,
++      token: MATRIX_ADMIN_TOKEN,
++      signingSecret: process.env.CHAT_RECALL_MEDIA_SIGNING_SECRET || MATRIX_ADMIN_TOKEN
++    })
++  : null;
++
++function isRecallArchiveOwner(user) {
++  return Boolean(recallArchiveOwnerKey && user?.userKey === recallArchiveOwnerKey);
++}
++
++function clearPublicRecallReplies(roomMessages, msgUid) {
++  for (const message of roomMessages || []) {
++    if (message?.replyTo?.msgUid !== msgUid) continue;
++    message.replyTo = { ...message.replyTo, content: '', attachmentKind: null, hasImage: false, isRecalled: true };
++  }
++}
++
++async function archiveRecalledMessage(roomId, message, recalledBy) {
++  const pendingKey = `${roomId}:${message.msgUid}`;
++  const pending = pendingRecallArchives.get(pendingKey);
++  if (pending) await pending.catch(() => {});
++  let original = chatDb?.getRecallCandidate?.(roomId, message.msgUid) || null;
++  if (!original || original.recallArchiveIncomplete) original = await archiveMessageForRecall(roomId, original || message);
++  original = { ...original, isRedacted: true };
++  chatDb?.archiveRecalledMessage?.({
++    roomId,
++    message: original,
++    recalledByKey: recalledBy?.userKey || '',
++    recalledByName: recalledBy?.name || '',
++    recalledAt: Date.now()
++  });
++  return original;
++}
++
++async function archiveMessageForRecall(roomId, message) {
++  let original = { ...message, isRedacted: false };
++  chatDb?.storeRecallCandidate?.({ roomId, message: original });
++  if (recallArchive) {
++    original = await recallArchive.archiveMessage(original, `${roomId}:${message.msgUid}`);
++  } else if (Array.isArray(original.attachments) && original.attachments.length) {
++    original.recallArchiveIncomplete = true;
++  }
++  chatDb?.storeRecallCandidate?.({ roomId, message: original });
++  return original;
++}
++
++const pendingRecallArchives = new Map();
++function scheduleRecallArchive(roomId, message) {
++  const key = `${roomId}:${message.msgUid}`;
++  if (pendingRecallArchives.has(key)) return pendingRecallArchives.get(key);
++  const pending = archiveMessageForRecall(roomId, message).catch((error) => {
++    console.error('[RecallArchive] Media copy failed:', error?.message || 'unknown error');
++    const fallback = { ...message, recallArchiveIncomplete: Boolean(message.attachments?.length) };
++    chatDb?.storeRecallCandidate?.({ roomId, message: fallback });
++    return fallback;
++  }).finally(() => {
++    if (pendingRecallArchives.get(key) === pending) pendingRecallArchives.delete(key);
++  });
++  pendingRecallArchives.set(key, pending);
++  return pending;
++}
++
++function privateRecallMessagesFor(user, roomId, publicMessages) {
++  if (!isRecallArchiveOwner(user) || !Array.isArray(publicMessages) || !chatDb?.getRecalledMessages) return [];
++  const msgUids = publicMessages.filter((message) => message?.recalledMsgUid).map((message) => message.recalledMsgUid);
++  if (!msgUids.length) return [];
++  return chatDb.getRecalledMessages({ roomId, msgUids, limit: Math.min(500, msgUids.length) }).map((message) => recallArchive?.hydrateMessage(message) || message);
++}
++
++function sendPrivateRecallMessage(roomId, message) {
++  if (!recallArchiveOwnerKey) return;
++  const packet = JSON.stringify({
++    type: 'chat:recall_archive',
++    roomId,
++    message: recallArchive?.hydrateMessage(message) || message
++  });
++  for (const client of clients) {
++    if (client.readyState === WebSocket.OPEN && client.currentRoom === roomId && client.user?.userKey === recallArchiveOwnerKey) {
++      client.send(packet);
++    }
++  }
++}
+ 
+ const WALINE_SERVER_URL = 'https://comment.lengxiqwq.com';
+@@ -1117,26 +1206,28 @@
+     ) {
+       return;
+     }
+-    lastMatrixPresenceSyncAt.set(user.userKey, now);
+-    lastMatrixPresenceState.set(user.userKey, { presence, statusMsg: cleanStatus, at: now });
+-
+     const creds = await getOrCreateMatrixAccountForUser(user);
+     const token = creds?.token;
+     const userId = creds?.userId;
+     if (!token || !userId || (creds?.isProxy && !user.isAdmin)) return;
+ 
+-    const payload = { presence };
+-    if (cleanStatus) payload.status_msg = cleanStatus;
++    const payload = { presence, status_msg: cleanStatus };
+     if (presence === 'online') payload.currently_active = true;
+     else if (presence === 'unavailable') payload.currently_active = false;
+ 
+-    await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/presence/${encodeURIComponent(userId)}/status`, {
++    const res = await fetch(`${MATRIX_INTERNAL_URL}/_matrix/client/v3/presence/${encodeURIComponent(userId)}/status`, {
+       method: 'PUT',
+       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+       body: JSON.stringify(payload),
+       signal: AbortSignal.timeout(4000)
+     });
++    if (!res.ok) return false;
++    const syncedAt = Date.now();
++    lastMatrixPresenceSyncAt.set(user.userKey, syncedAt);
++    lastMatrixPresenceState.set(user.userKey, { presence, statusMsg: cleanStatus, at: syncedAt });
++    return true;
+   } catch {}
++  return false;
+ }
+ 
+ function isMusicNoticeContent(content) {
+@@ -1994,6 +2085,12 @@
+   }
+ }
+ 
++
++const syncMatrixCustomStatus = createMatrixCustomStatusSync({
++  baseUrl: MATRIX_INTERNAL_URL,
++  getCredentials: getOrCreateMatrixAccountForUser,
++  logger: console
++});
+ 
+ function resolveExternalStatusSnapshot(normalizedUserId, latestMsgTs = 0, now = Date.now()) {
+   const MAX_PRESENCE_CACHE_MS = 2 * 60 * 60 * 1000;
+@@ -4718,6 +4815,12 @@
+     return;
+   }
+ 
++  if (url.pathname.startsWith('/api/chat/recall-media/')) {
++    if (recallArchive && await recallArchive.handleRequest(req, res, url.pathname)) return;
++    res.writeHead(404, { 'Cache-Control': 'no-store' }).end();
++    return;
++  }
++
+   if (url.pathname.startsWith('/api/media/')) {
+     await handleMatrixMedia(req, res, url.pathname);
+     return;
+@@ -5112,6 +5215,7 @@
+         mentionMailer.clearPendingForUser(user.userKey);
+         console.log(`[WebSocket] Client authenticated as: ${user.name} (${user.userKey}) in room ${roomId}`);
+         getOrCreateMatrixAccountForUser(user).catch(() => {});
++        syncMatrixCustomStatus(user, user.status || '').catch(() => {});
+         syncMatrixPresence(user, 'online', user.status || '').catch(() => {});
+       }
+     }
+@@ -5141,6 +5245,7 @@
+     interconnectSites: getInterconnectSites(),
+     self: ws.user,
+     messages: initialMessagesWithThreads,
++    ...(isRecallArchiveOwner(ws.user) ? { privateRecallMessages: privateRecallMessagesFor(ws.user, roomId, initialMessages) } : {}),
+     activeThreads: getActiveThreads(roomId, 50, HEADER_RECENT_WINDOW_MS),
+     recentMentions: ws.user ? getRecentMentionsForUser(roomId, ws.user, 100, HEADER_RECENT_WINDOW_MS) : [],
+     recentShares: getRecentShares(roomId, 120, HEADER_RECENT_WINDOW_MS),
+@@ -5243,6 +5348,7 @@
+           interconnectSites: getInterconnectSites(),
+           self: ws.user,
+           messages: initSliceWithThreads,
++          ...(isRecallArchiveOwner(ws.user) ? { privateRecallMessages: privateRecallMessagesFor(ws.user, ws.currentRoom, initSlice) } : {}),
+           activeThreads: getActiveThreads(ws.currentRoom, 50, HEADER_RECENT_WINDOW_MS),
+           recentMentions: ws.user ? getRecentMentionsForUser(ws.currentRoom, ws.user, 100, HEADER_RECENT_WINDOW_MS) : [],
+           recentShares: getRecentShares(ws.currentRoom, 120, HEADER_RECENT_WINDOW_MS),
+@@ -5350,6 +5456,7 @@
+           type: 'chat:history_batch',
+           roomId: ws.currentRoom,
+           messages: sliceWithThreads,
++          ...(isRecallArchiveOwner(ws.user) ? { privateRecallMessages: privateRecallMessagesFor(ws.user, ws.currentRoom, slice) } : {}),
+           oldestHistoryId: slice[0]?.id || 0,
+           hasMoreHistory: hasMore,
+           jumpTarget
+@@ -5368,6 +5475,7 @@
+           tryMergeGuestHistory(user);
+           mentionMailer.clearPendingForUser(user.userKey);
+           getOrCreateMatrixAccountForUser(user).catch(() => {});
++          syncMatrixCustomStatus(user, user.status || '').catch(() => {});
+           const aggFocused = getUserAggregatedFocus(user.userKey);
+           syncMatrixPresence(user, aggFocused ? 'online' : 'unavailable', user.status || '').catch(() => {});
+         }
+@@ -5439,7 +5547,7 @@
+       // Update profile (avatar, nickname, url, bio, status)
+       if (packet.type === 'auth:update_profile' && ws.user) {
+         const bio = typeof packet.bio === 'string' ? packet.bio.trim().slice(0, 100) : undefined;
+-        const status = typeof packet.status === 'string' ? packet.status.trim().slice(0, 20) : undefined;
++        const status = typeof packet.status === 'string' ? packet.status.trim().slice(0, 16) : undefined;
+         const hasAvatarPatch = typeof packet.avatar === 'string';
+         const avatar = hasAvatarPatch ? packet.avatar.trim().slice(0, 400) : undefined;
+         const nickname = typeof packet.nickname === 'string' && packet.nickname.trim() ? packet.nickname.trim().slice(0, 16) : undefined;
+@@ -5505,6 +5613,7 @@
+           m.status = status;
+           ws.user.status = status;
+           const aggFocused = getUserAggregatedFocus(ws.user.userKey);
++          syncMatrixCustomStatus(ws.user, status).catch(() => {});
+           syncMatrixPresence(
+             ws.user,
+             aggFocused ? 'online' : 'unavailable',
+@@ -5837,6 +5946,9 @@
+         const canRecall = isAdmin || (isOwner && Date.now() - targetMsg.createdAt < 5 * 60 * 1000);
+         if (!canRecall) return;
+ 
++        const archivedOriginal = await archiveRecalledMessage(ws.currentRoom, targetMsg, ws.user);
++        clearPublicRecallReplies(roomMsgs, targetMsg.msgUid);
++
+         // 1. Remove original message from store
+         roomMsgs.splice(targetIdx, 1);
+         mentionMailer.removeMessageFromPending(packet.msgUid);
+@@ -5887,6 +5999,8 @@
+           roomId: ws.currentRoom,
+           message: noticeMsg
+         });
++
++        sendPrivateRecallMessage(ws.currentRoom, archivedOriginal);
+ 
+         // 5. If interconnect room, redact all associated Matrix events (text + attachments)
+         if (ws.currentRoom === 'interconnect') {
+@@ -8677,13 +8791,15 @@
+   let activity = matrixRoomActivity(complete, matrixActivityName);
+   let mentionKeys = [];
+   const redaction = ev.unsigned?.redacted_because;
++  let recalledMsgUid = '';
+   if (!activity && history && REDACTABLE_TIMELINE_TYPES.has(ev.type) &&
+       redaction?.sender && redaction.event_id &&
+       !messagesStore.interconnect.some((item) =>
+-        item.recalledMsgUid === ev.event_id || matchMessageById(item, ev.event_id)
++        item.recalledMsgUid === ev.event_id || item.msgUid === redaction.event_id || item.matrixEventId === redaction.event_id
+       )) {
+     actorId = redaction.sender;
+     eventId = redaction.event_id;
++    recalledMsgUid = ev.event_id;
+     const actor = matrixActivityName(actorId);
+     if (actorId === ev.sender) {
+       activity = { actor, text: actor + ' 撤回了一条消息' };
+@@ -8706,6 +8822,7 @@
+     id: ev.origin_server_ts,
+     msgUid: eventId,
+     matrixEventId: eventId,
++    ...(recalledMsgUid ? { recalledMsgUid } : {}),
+     kind: 'system',
+     source: 'matrix',
+     userKey: localKey || 'matrix:' + actorId,
+@@ -8757,8 +8874,31 @@
+     const data = await fetchMatrixHistoryPage(from, 100);
+     if (!data) return;
+     for (const ev of (data.chunk || []).slice().reverse()) {
++      if (ev.unsigned?.redacted_because && REDACTABLE_TIMELINE_TYPES.has(ev.type)) {
++        const redactionEvent = ev.unsigned.redacted_because;
++        const targetIdx = messagesStore.interconnect.findIndex((item) => matchMessageById(item, ev.event_id));
++        const targetMsg = targetIdx >= 0
++          ? messagesStore.interconnect[targetIdx]
++          : chatDb?.getRecallCandidate?.('interconnect', ev.event_id);
++        if (targetMsg) {
++          const senderKey = resolveLocalUserKey(redactionEvent.sender) || 'matrix:' + redactionEvent.sender;
++          const senderName = matrixActivityName(redactionEvent.sender);
++          try {
++            await archiveRecalledMessage('interconnect', targetMsg, { userKey: senderKey, name: senderName });
++          } catch (error) {
++            console.error('[RecallArchive] Could not recover recalled Matrix history:', error?.message || 'unknown error');
++          }
++          if (targetIdx >= 0) messagesStore.interconnect.splice(targetIdx, 1);
++          clearPublicRecallReplies(messagesStore.interconnect, targetMsg.msgUid);
++          mentionMailer.removeMessageFromPending(targetMsg.msgUid);
++          chatDb?.deleteMessage?.('interconnect', targetMsg.msgUid);
++        }
++      }
+       const notice = await roomActivityRecord(ev, true);
+-      if (!notice || !insertMatrixActivity(notice)) continue;
++      if (!notice) continue;
++      const inserted = insertMatrixActivity(notice);
++      if (notice.recalledMsgUid) chatDb?.insertMessage?.({ ...notice, roomId: 'interconnect' });
++      if (!inserted) continue;
+       saveStoreDebounced();
+       if (notice.createdAt >= visibleFloor) publishMatrixActivity(notice);
+     }
+@@ -8816,9 +8956,29 @@
+       const chrono = chunk.slice().reverse();
+       for (const ev of chrono) {
+         if (!ev?.event_id || !ev.sender) continue;
++        if (ev.unsigned?.redacted_because && REDACTABLE_TIMELINE_TYPES.has(ev.type)) {
++          const redactionEvent = ev.unsigned.redacted_because;
++          const targetIdx = existing.findIndex((item) => matchMessageById(item, ev.event_id));
++          if (targetIdx >= 0) {
++            const targetMsg = existing[targetIdx];
++            const senderKey = resolveLocalUserKey(redactionEvent.sender) || 'matrix:' + redactionEvent.sender;
++            const senderName = matrixActivityName(redactionEvent.sender);
++            try {
++              await archiveRecalledMessage('interconnect', targetMsg, { userKey: senderKey, name: senderName });
++            } catch (error) {
++              console.error('[RecallArchive] Could not recover recalled Matrix history:', error?.message || 'unknown error');
++            }
++            existing.splice(targetIdx, 1);
++            clearPublicRecallReplies(existing, targetMsg.msgUid);
++            mentionMailer.removeMessageFromPending(targetMsg.msgUid);
++            chatDb?.deleteMessage?.('interconnect', targetMsg.msgUid);
++          }
++        }
+         const activity = await roomActivityRecord(ev, true);
+         if (activity) {
+-          if (insertMatrixActivity(activity)) added++;
++          const inserted = insertMatrixActivity(activity);
++          if (activity.recalledMsgUid) chatDb?.insertMessage?.({ ...activity, roomId: 'interconnect' });
++          if (inserted) added++;
+           continue;
+         }
+         if (redactedTargets.has(ev.event_id) || ev.unsigned?.redacted_because) continue;
+@@ -8871,6 +9031,7 @@
+ 
+         const msg = await parseMatrixEvent(ev);
+         if (msg) {
++          scheduleRecallArchive('interconnect', msg);
+           existing.push(msg);
+           added++;
+         }
+@@ -9365,10 +9526,21 @@
+               if (resolvedRedact) targetIdx = interconnectMsgs.indexOf(resolvedRedact);
+             }
+             if (targetIdx >= 0) {
+-              const targetMsg = interconnectMsgs.splice(targetIdx, 1)[0];
+-              mentionMailer.removeMessageFromPending(targetMsg.msgUid);
++              const targetMsg = interconnectMsgs[targetIdx];
+               const senderKey = resolveLocalUserKey(ev.sender) || 'matrix:' + ev.sender;
+               const senderName = matrixActivityName(ev.sender);
++              let archivedOriginal = { ...targetMsg, isRedacted: true, recallArchiveIncomplete: true };
++              try {
++                archivedOriginal = await archiveRecalledMessage('interconnect', targetMsg, {
++                  userKey: senderKey,
++                  name: senderName
++                });
++              } catch (error) {
++                console.error('[RecallArchive] Could not persist recalled Matrix message:', error?.message || 'unknown error');
++              }
++              interconnectMsgs.splice(targetIdx, 1);
++              clearPublicRecallReplies(interconnectMsgs, targetMsg.msgUid);
++              mentionMailer.removeMessageFromPending(targetMsg.msgUid);
+               const isSelf = targetMsg.userKey === senderKey || targetMsg.userKey === ev.sender;
+               const content = isSelf
+                 ? `${targetMsg.name || senderName} 撤回了一条消息`
+@@ -9409,6 +9581,7 @@
+                 roomId: 'interconnect',
+                 message: noticeMsg
+               });
++              sendPrivateRecallMessage('interconnect', archivedOriginal);
+             }
+           }
+           continue;
+@@ -9547,6 +9720,7 @@
+             }
+           }
+           if (msg) {
++            scheduleRecallArchive('interconnect', msg);
+             messagesStore.interconnect.push(msg);
+             saveStoreDebounced();
+             broadcastToRoom('interconnect', { type: 'chat:message', roomId: 'interconnect', message: msg });

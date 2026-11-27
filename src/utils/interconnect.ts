@@ -70,14 +70,20 @@ export function normalizeInterconnectSites(
 		}
 
 		if (cfg.name) aliasSet.add(cfg.name);
+		if (cfg.chatName) aliasSet.add(cfg.chatName);
 		if (cfg.badge) aliasSet.add(cfg.badge);
+		if (cfg.matrixUserId) aliasSet.add(cfg.matrixUserId.trim());
+		if (cfg.matrixRelayUserId) aliasSet.add(cfg.matrixRelayUserId.trim());
+
+		const effectiveBadge = cfg.badge || cfg.chatName || cfg.name;
 
 		return {
 			...cfg,
 			url: effectiveUrl,
 			siteUrl: siteUrl || effectiveUrl,
 			chatUrl: chatUrl || effectiveUrl,
-			badge: cfg.badge || cfg.name,
+			chatName: cfg.chatName || effectiveBadge,
+			badge: effectiveBadge,
 			aliases: Array.from(aliasSet),
 		};
 	});

@@ -1,0 +1,33 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -13,5 +13,5 @@
+ import { createMatrixMediaHandler } from './src/matrix-media.mjs';
+ import { createMatrixRecallArchive } from './src/matrix-recall-archive.mjs';
+-import { createMatrixCustomStatusSync } from './src/matrix-custom-status.mjs';
++import { createMatrixCustomStatusSync, normalizeChatStatus } from './src/matrix-custom-status.mjs';
+ import { parseMatrixRelayPrefix } from './src/matrix-relay-prefix.mjs';
+ import { completeMatrixMemberEvent, matrixRoomActivity } from './src/matrix-room-activity.mjs';
+@@ -2129,7 +2129,13 @@
+     replyToStatusRequest(ws, result, 'save_failed');
+     return;
+   }
+-  const status = packet.status.trim().slice(0, 16);
++  const submittedStatus = packet.status.trim();
++  const status = normalizeChatStatus(submittedStatus);
++  if (status !== submittedStatus) {
++    console.warn('[MatrixStatus] Invalid status length', result);
++    replyToStatusRequest(ws, result, 'save_failed');
++    return;
++  }
+   const previousStatus = member.status;
+   member.status = status;
+   if (!writeJsonAtomic(join(DATA_DIR, 'members.json'), membersStore)) {
+@@ -5680,7 +5686,7 @@
+       // Update profile (avatar, nickname, url, bio, status)
+       if (packet.type === 'auth:update_profile' && ws.user) {
+         const bio = typeof packet.bio === 'string' ? packet.bio.trim().slice(0, 100) : undefined;
+-        const status = typeof packet.status === 'string' ? packet.status.trim().slice(0, 16) : undefined;
++        const status = typeof packet.status === 'string' ? normalizeChatStatus(packet.status) : undefined;
+         const hasAvatarPatch = typeof packet.avatar === 'string';
+         const avatar = hasAvatarPatch ? packet.avatar.trim().slice(0, 400) : undefined;
+         const nickname = typeof packet.nickname === 'string' && packet.nickname.trim() ? packet.nickname.trim().slice(0, 16) : undefined;

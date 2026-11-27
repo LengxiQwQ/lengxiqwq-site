@@ -1,0 +1,76 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -14,3 +14,3 @@
+ import { createMatrixRecallArchive } from './src/matrix-recall-archive.mjs';
+-import { createMatrixCustomStatusSync, normalizeChatStatus } from './src/matrix-custom-status.mjs';
++import { createMatrixCustomStatusSync, MATRIX_STATUS_PROFILE_KEY, normalizeChatStatus } from './src/matrix-custom-status.mjs';
+ import { parseMatrixRelayPrefix } from './src/matrix-relay-prefix.mjs';
+@@ -3868,3 +3868,6 @@
+     const extMatch = isMatrix ? getExternalMembers().find((em) => em.userKey === userKey || em.userKey === `matrix:${userKey}`) : null;
++    const externalStatus = targetRoom === 'interconnect' && extMatch
++      ? await readExternalMemberStatus(extMatch.userKey)
++      : undefined;
+     const isOnline = localOnline || Boolean(extMatch?.online);
+     const isFocused = localOnline ? getUserAggregatedFocus(userKey) : (extMatch ? extMatch.isFocused !== false : false);
+@@ -3888,6 +3891,6 @@
+       online: isOnline,
+       isFocused,
+       presenceMode: localOnline ? 'local' : (extMatch?.presenceMode || 'offline'),
+-      status: member?.status || extMatch?.status || '',
++      status: externalStatus ?? member?.status ?? extMatch?.status ?? '',
+       bio: member?.bio || '',
+       location: member?.location || '',
+@@ -7282,3 +7285,53 @@
++const externalMemberStatusCache = new Map();
++
++async function readExternalMemberStatus(memberKey) {
++  const userId = memberKey.replace(/^matrix:/, '');
++  // A synthetic relay identity has no independent Matrix profile.
++  if (!/^@[^:#\s]+:[^#\s]+$/.test(userId) || userId.endsWith(':matrix.lengxiqwq.com')) return;
++
++  const now = Date.now();
++  const cached = externalMemberStatusCache.get(userId);
++  if (cached && (cached.pending || cached.expiresAt > now)) return cached.result;
++  if (externalMemberStatusCache.size >= 512) {
++    const expiredKey = [...externalMemberStatusCache].find(([, entry]) => !entry.pending && entry.expiresAt <= now)?.[0];
++    if (!expiredKey) return cached?.result;
++    externalMemberStatusCache.delete(expiredKey);
++  }
++
++  const entry = { pending: true, expiresAt: 0, hadProfileStatus: cached?.hadProfileStatus };
++  entry.result = (async () => {
++    let ttl = 10_000;
++    try {
++      const encodedUser = encodeURIComponent(userId);
++      const url = `${MATRIX_INTERNAL_URL}/_matrix/client/v3/profile/${encodedUser}/${MATRIX_STATUS_PROFILE_KEY}`;
++      const response = await fetch(url, {
++        headers: { Authorization: `Bearer ${MATRIX_ADMIN_TOKEN}` },
++        redirect: 'error',
++        signal: AbortSignal.timeout(2500)
++      });
++      if (response.status === 404) {
++        ttl = 30_000;
++        return entry.hadProfileStatus ? '' : undefined;
++      }
++      if (!response.ok) return;
++      const data = await response.json();
++      const text = data?.[MATRIX_STATUS_PROFILE_KEY]?.text;
++      if (typeof text === 'string' && Buffer.byteLength(text) <= 256) {
++        entry.hadProfileStatus = true;
++        ttl = 30_000;
++        return text.trim();
++      }
++    } catch {
++      // The existing presence message remains available as a fallback.
++    } finally {
++      entry.pending = false;
++      entry.expiresAt = Date.now() + ttl;
++    }
++  })();
++  externalMemberStatusCache.set(userId, entry);
++  return entry.result;
++}
++
+ async function fetchMatrixUserProfile(userId) {
+   if (!userId || typeof userId !== 'string') return { displayname: '', avatar_url: '' };
+ 

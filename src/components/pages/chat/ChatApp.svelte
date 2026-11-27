@@ -12,7 +12,11 @@ import {
 	testChatPush,
 	updateChatPushMode,
 } from "./chatPush";
-import type { ChatRoomMeta, InterconnectSite } from "@/types/chatConfig";
+import type {
+	ChatRoomMeta,
+	InterconnectSite,
+	InterconnectSiteConfig,
+} from "@/types/chatConfig";
 import ChatWindow from "./ChatWindow.svelte";
 import ChatModal from "./ChatModal.svelte";
 import { positionChatFloating } from "./chatFloating";
@@ -37,10 +41,13 @@ import {
 	clearStoredChatUser,
 	clearWalineAuth,
 	consumeUrlWalineToken,
+	fetchInterconnectSites,
 	getOrCreateVisitorId,
 	GUEST_TOKEN_STORAGE_KEY,
 	formatClockSeconds,
+	invalidateUserDetailCache,
 	isMentionedForUser,
+	mergeInterconnectSites,
 	normalizeServerUrl,
 	persistStoredChatUser,
 	persistWalineCommentMeta,
@@ -50,12 +57,15 @@ import {
 	resolveChatAvatarUrl,
 	resolveCurrentUserEmail,
 	resolveInitialAuth,
+	stripSiteSuffix,
 	syncChatUserToWalineStorage,
 	type ServerPacket,
 	type MusicAudience,
 	saveMemberBadges,
 	searchOnlineMusic,
+	isExternalMatrixIdentity,
 } from "./chatClient";
+import { countChatStatusCharacters, fitsMatrixStatus, MAX_CHAT_STATUS_CHARACTERS } from "./chatStatus";
 import { appendTimelineMessage } from "./chatRoomActivity";
 import { privateMusic } from "./chatPrivateMusic.svelte";
 import { buildMusicSharePayload, parseLxShareCard } from "./chatShareProtocol";
@@ -73,6 +83,12 @@ import type {
 	ChatOnlineMember,
 	ChatProfileDraft,
 	ChatReadReceipt,
+	ChatRoomActionResult,
+	ChatRoomGuestAccess,
+	ChatRoomHistoryVisibility,
+	ChatRoomJoinRule,
+	ChatRoomMetaInfo,
+	ChatRoomPowerLevelPatch,
 	ChatSessionUser,
 	ChatSpectatorRecord,
 	ChatUserDetailSeed,
@@ -125,6 +141,45 @@ const {
 
 const LAST_SEEN_PREFIX = "lengxi_chat_last_seen:";
 const LAST_ROOM_STORAGE_KEY = "lengxi_chat_last_room";
+let runtimeRemoteSites = $state<InterconnectSiteConfig[] | null>(null);
+const effectiveInterconnectSites = $derived.by(() => {
+	const baseSites = mergeInterconnectSites(interconnectSites, runtimeRemoteSites);
+	const memberBadges = new Map<string, ChatCustomBadge[]>();
+	let selfAdminBadges: ChatCustomBadge[] | undefined;
+	const collectMember = (m?: {
+		userKey?: string;
+		isAdmin?: boolean;
+		customBadges?: ChatCustomBadge[];
+	} | null) => {
+		if (!m?.userKey || !Array.isArray(m.customBadges)) return;
+		memberBadges.set(m.userKey, m.customBadges);
+		if (m.userKey.startsWith("matrix:")) {
+			memberBadges.set(m.userKey.slice(7), m.customBadges);
+		} else if (m.userKey.startsWith("@")) {
+			memberBadges.set(`matrix:${m.userKey}`, m.customBadges);
+		}
+		if (m.isAdmin || m.userKey === "waline:1") {
+			selfAdminBadges = m.customBadges;
+		}
+	};
+	for (const m of globalMemberDirectory) collectMember(m);
+	for (const m of roomMentionMembers) collectMember(m);
+	for (const m of onlineMembers) collectMember(m);
+	if (currentUser) collectMember(currentUser);
+
+	return baseSites.map((site) => {
+		const liveBadges = site.isSelf
+			? selfAdminBadges
+			: site.matrixUserId
+				? (memberBadges.get(site.matrixUserId) ??
+					memberBadges.get(`matrix:${site.matrixUserId}`))
+				: undefined;
+		if (liveBadges !== undefined) {
+			return { ...site, ownerCustomBadges: liveBadges };
+		}
+		return site;
+	});
+});
 
 let mobileDrawer = $state<"none" | "room" | "music">("none");
 const roomPanelId = "chat-room-panel";
@@ -179,10 +234,23 @@ $effect(() => {
 	}
 });
 let roomOnlineMembers = $state<ChatOnlineMember[]>([]);
+const externalOnlineCount = $derived(
+	roomOnlineMembers.filter((m) => isExternalMatrixIdentity(m)).length,
+);
 let hasGlobalPresence = false;
 let roomMentionMembers = $state<ChatMentionCandidate[]>([]);
 let globalMemberDirectory = $state<ChatMentionCandidate[]>([]);
 let pendingProfileUpdate: Record<string, unknown> | null = null;
+let pendingStatusUpdate = $state.raw<{
+	requestId: string;
+	userKey: string;
+	status: string;
+	sentOn?: WebSocket;
+	saved?: boolean;
+} | null>(null);
+let profileAuthSocket: WebSocket | null = null;
+let statusSyncMessage = $state("");
+let statusResultTimer: ReturnType<typeof setTimeout> | undefined;
 const mentionMembers = $derived.by<ChatMentionCandidate[]>(() => {
 	const onlineKeys = new Set(onlineMembers.map((member) => member.userKey));
 	const merged = new Map<string, ChatMentionCandidate>();
@@ -224,6 +292,15 @@ let totalOnlineCount = $state(0);
 let messages = $state<ChatMessageRecord[]>([]);
 const MAX_CACHED_MSGS_PER_ROOM = 120;
 const roomMessageCache = new Map<string, ChatMessageRecord[]>();
+let privateRecallSessionUserKey = "";
+
+function clearPrivateRecallMessages() {
+	messages = messages.filter((message) => !message.isRedacted);
+	for (const [roomKey, cached] of roomMessageCache) {
+		roomMessageCache.set(roomKey, cached.filter((message) => !message.isRedacted));
+	}
+	privateRecallSessionUserKey = "";
+}
 
 function cacheRoomMessages(roomKey: string, list: ChatMessageRecord[]): void {
 	roomMessageCache.set(
@@ -258,6 +335,21 @@ function mergeRoomMessages(
 	return [...older, ...serverMessages].sort(
 		(a, b) => a.createdAt - b.createdAt,
 	);
+}
+
+function mergePrivateRecallMessages(
+	publicMessages: ChatMessageRecord[],
+	privateRecallMessages: ChatMessageRecord[] = [],
+): ChatMessageRecord[] {
+	if (privateRecallMessages.length === 0) return publicMessages;
+	const merged = [...publicMessages];
+	for (const original of privateRecallMessages) {
+		if (!original?.msgUid || merged.some((message) => message.msgUid === original.msgUid)) continue;
+		const noticeIndex = merged.findIndex((message) => message.recalledMsgUid === original.msgUid);
+		if (noticeIndex >= 0) merged.splice(noticeIndex, 0, { ...original, isRedacted: true });
+		else merged.push({ ...original, isRedacted: true });
+	}
+	return merged.sort((a, b) => a.createdAt - b.createdAt || Number(Boolean(b.isRedacted)) - Number(Boolean(a.isRedacted)));
 }
 let hasMoreHistory = $state(false);
 let oldestHistoryId = $state(0);
@@ -308,6 +400,11 @@ let pinnedUids = $state<string[]>([]);
 let pinnedDetails = $state<ChatMessageRecord[]>([]);
 let roomTopic = $state<string>("");
 let roomAvatars = $state<Record<string, string>>({});
+let matrixRoomNames = $state<Record<string, string>>({
+	interconnect: "互联聊天室",
+	chat: "闲聊",
+});
+let roomMetaByRoom = $state<Record<string, ChatRoomMetaInfo>>({});
 let typingUsers = $state<string[]>([]);
 const typingUserTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -929,6 +1026,7 @@ async function handleSidePanelDrop(slot: "left" | "right", e: DragEvent) {
 let showAuthModal = $state(false);
 let showUserDetailModal = $state(false);
 let showPollCreateModal = $state(false);
+let showRoomInfoModal = $state(false);
 
 // 非首屏必需的弹窗与点歌台面板按需动态加载，减小聊天页首包 JS 体积
 let MusicPanelComp = $state<
@@ -990,6 +1088,9 @@ let ChatProfileModalComp = $state<
 let ChatUserDetailModalComp = $state<
 	typeof import("./ChatUserDetailModal.svelte").default | null
 >(null);
+let ChatRoomInfoModalComp = $state<
+	typeof import("./ChatRoomInfoModal.svelte").default | null
+>(null);
 
 $effect(() => {
 	if (showAuthModal && !ChatAuthModalComp) {
@@ -1043,10 +1144,24 @@ $effect(() => {
 			});
 	}
 });
+$effect(() => {
+	if (showRoomInfoModal && !ChatRoomInfoModalComp) {
+		void import("./ChatRoomInfoModal.svelte")
+			.then((mod) => {
+				ChatRoomInfoModalComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatRoomInfoModal:", err);
+				showRoomInfoModal = false;
+				showNotice("房间信息弹窗加载失败，请检查网络后重试", "error");
+			});
+	}
+});
 
 function openAuthModal() {
 	showUserDetailModal = false;
 	showProfileModal = false;
+	showRoomInfoModal = false;
 	mobileDrawer = "none";
 	closeSplitRoom();
 	showAuthModal = true;
@@ -1056,6 +1171,7 @@ $effect(() => {
 	if (showAuthModal) {
 		showUserDetailModal = false;
 		showProfileModal = false;
+		showRoomInfoModal = false;
 		mobileDrawer = "none";
 		closeSplitRoom();
 	}
@@ -1063,7 +1179,8 @@ $effect(() => {
 		showAuthModal ||
 		showProfileModal ||
 		showUserDetailModal ||
-		showPollCreateModal
+		showPollCreateModal ||
+		showRoomInfoModal
 	) {
 		if (mobileDrawer !== "none") {
 			mobileDrawer = "none";
@@ -1156,11 +1273,20 @@ function runSecondaryStartup() {
 		if (!isUnmounted && !ChatProfileModalComp)
 			ChatProfileModalComp = mod.default;
 	}).catch(() => {});
+	void import("./ChatRoomInfoModal.svelte").then((mod) => {
+		if (!isUnmounted && !ChatRoomInfoModalComp)
+			ChatRoomInfoModalComp = mod.default;
+	}).catch(() => {});
 	void loadStickerPacks(stickerPackUrls).then((packs) => {
 		if (!isUnmounted) stickerPacks = packs;
 	});
 	void refreshGlobalPresence();
 	void refreshMemberDirectory();
+	void fetchInterconnectSites(normalizedChatServer).then((sites) => {
+		if (!isUnmounted && sites && sites.length > 0) {
+			runtimeRemoteSites = sites;
+		}
+	});
 }
 
 $effect(() => {
@@ -1213,14 +1339,21 @@ function startSkipPending() {
 	}, 4500);
 }
 
+function sendTracedMusicControl(type: string, target?: string) {
+	const requestId = createChatRequestId();
+	const playUid = musicState?.current?.uid;
+	const sent = sendPacket({ type: 'music:' + type, requestId, playUid, uid: target });
+	recordMusicEvent('command-' + type, playUid, { requestId, room: currentRoom, sent, target: target ?? '' });
+	return sent;
+}
+
 function handleSkipTrack() {
 	if (!currentUser) {
 		openAuthModal();
 		return;
 	}
 	if (isSkippingTrack) return;
-	recordMusicEvent("command-skip", musicState?.current?.uid);
-	if (sendPacket({ type: "music:skip", playUid: musicState?.current?.uid })) {
+	if (sendTracedMusicControl("skip")) {
 		startSkipPending();
 	}
 }
@@ -1231,8 +1364,7 @@ function handleVoteSkip() {
 		return;
 	}
 	if (isSkippingTrack) return;
-	recordMusicEvent("command-vote_skip", musicState?.current?.uid);
-	if (sendPacket({ type: "music:vote_skip", playUid: musicState?.current?.uid })) {
+	if (sendTracedMusicControl("vote_skip")) {
 		startSkipPending();
 	}
 }
@@ -1242,14 +1374,7 @@ function handlePlayQueued(uid: string) {
 		openAuthModal();
 		return;
 	}
-	recordMusicEvent("command-play_queued", musicState?.current?.uid);
-	if (
-		sendPacket({
-			type: "music:play_queued",
-			uid,
-			playUid: musicState?.current?.uid,
-		})
-	) {
+	if (sendTracedMusicControl("play_queued", uid)) {
 		startSkipPending();
 		pendingPlayQueuedUid = uid;
 	}
@@ -1343,7 +1468,7 @@ function clearRotationAction() {
 	rotationOfferPlayUid = "";
 }
 
-function createMusicRequestId(): string {
+function createChatRequestId(): string {
 	if (typeof crypto !== "undefined") {
 		if (typeof crypto.randomUUID === "function") {
 			return crypto.randomUUID();
@@ -1369,7 +1494,7 @@ function sendRotationRequest(track: RotationQueueItem, choiceId?: string) {
 	const entryId = track.entryId ?? track.id;
 	const offer = choiceId ? rotationAction?.offer : undefined;
 	if (choiceId && !offer) return;
-	const requestId = createMusicRequestId();
+	const requestId = createChatRequestId();
 	const playUid = musicState?.current?.uid ?? "";
 	const command = offer
 		? { type: "music:confirm_rotation", offerId: offer.token, choiceId }
@@ -1398,7 +1523,8 @@ function sendRotationRequest(track: RotationQueueItem, choiceId?: string) {
 		rotationAction = { entryId, offer, code: "SOURCE_TEMPORARY", message: "连接暂时不可用，请重试" };
 		return;
 	}
-	recordMusicEvent(choiceId ? "command-confirm_rotation" : "command-play_rotation", track.id);
+	recordMusicEvent(choiceId ? "command-confirm_rotation" : "command-play_rotation", track.id,
+		{ requestId, room: currentRoom, title: track.title, artist: track.artist ?? "" });
 	rotationOrigin = track;
 	if (!choiceId) rotationOfferPlayUid = playUid;
 	rotationAction = { entryId, offer, pending: true };
@@ -1865,6 +1991,8 @@ function connectRoom(roomId: string) {
 						syncChatUserToWalineStorage(packet.self);
 					}
 					syncMemberProfileLists(packet.self);
+					profileAuthSocket = socket;
+					flushStatusUpdate();
 					flushPendingProfileUpdate();
 				} else if (currentAuth) {
 					clearStoredChatUser();
@@ -1876,11 +2004,11 @@ function connectRoom(roomId: string) {
 					currentAuth = null;
 					walineToken = "";
 				}
-				messages = mergeRoomMessages(
+				messages = mergePrivateRecallMessages(mergeRoomMessages(
 					packet.messages,
 					isRoomReady ? messages : [],
 					Boolean(packet.hasMoreHistory),
-				);
+				), packet.privateRecallMessages);
 				hasMoreHistory = Boolean(packet.hasMoreHistory);
 				finishHistoryLoad();
 				const userKey = packet.self?.userKey || "guest";
@@ -1939,7 +2067,28 @@ function connectRoom(roomId: string) {
 							: {}),
 					};
 				}
+				if (packet.matrixRoomNames || typeof packet.matrixRoomName === "string") {
+					matrixRoomNames = {
+						...matrixRoomNames,
+						...(packet.matrixRoomNames ?? {}),
+						...(typeof packet.matrixRoomName === "string"
+							? { [packet.roomId]: packet.matrixRoomName }
+							: {}),
+					};
+				}
+				if (packet.roomMeta) {
+					roomMetaByRoom = {
+						...roomMetaByRoom,
+						[packet.roomId]: packet.roomMeta,
+					};
+				}
 				readReceipts = packet.readReceipts ?? {};
+				if (
+					Array.isArray(packet.interconnectSites) &&
+					packet.interconnectSites.length > 0
+				) {
+					runtimeRemoteSites = packet.interconnectSites;
+				}
 				clearAllTypingTimers();
 				clearSkipPending();
 				roomInitSeq += 1;
@@ -1960,11 +2109,12 @@ function connectRoom(roomId: string) {
 				if (packet.roomId === currentRoom && isRoomReady) {
 					const buffer = pendingHistoryLoad?.buffer;
 					if (buffer) {
-						const oldest = packet.messages[0];
+						const historyMessages = mergePrivateRecallMessages(packet.messages, packet.privateRecallMessages);
+						const oldest = historyMessages[0];
 						buffer.hasMore = Boolean(packet.hasMoreHistory);
 						if (oldest && oldest.msgUid !== buffer.oldest?.msgUid) {
 							buffer.oldest = oldest;
-							buffer.batches.push(packet.messages);
+							buffer.batches.push(historyMessages);
 							finishHistoryLoad(true);
 						} else if (!buffer.hasMore) {
 							finishHistoryLoad(true);
@@ -1973,7 +2123,8 @@ function connectRoom(roomId: string) {
 					}
 					const previousOldestUid = messages[0]?.msgUid;
 					hasMoreHistory = Boolean(packet.hasMoreHistory);
-					if (packet.messages.length > 0) prependHistory(packet.messages);
+					const historyMessages = mergePrivateRecallMessages(packet.messages, packet.privateRecallMessages);
+					if (historyMessages.length > 0) prependHistory(historyMessages);
 					if (messages.length > 0) {
 						oldestHistoryId = messages[0].id;
 					} else if (packet.oldestHistoryId) {
@@ -2000,7 +2151,14 @@ function connectRoom(roomId: string) {
 				}
 				break;
 			}
+			case "auth:status_result": {
+				handleStatusResult(packet);
+				break;
+			}
 			case "auth:result": {
+				if (privateRecallSessionUserKey && packet.user?.userKey !== privateRecallSessionUserKey) {
+					clearPrivateRecallMessages();
+				}
 				currentUser = packet.user;
 				if (packet.user) {
 					persistStoredChatUser(packet.user);
@@ -2008,9 +2166,12 @@ function connectRoom(roomId: string) {
 						syncChatUserToWalineStorage(packet.user);
 					}
 					syncMemberProfileLists(packet.user);
+					profileAuthSocket = socket;
+					flushStatusUpdate();
 					flushPendingProfileUpdate();
 				} else {
 					pendingProfileUpdate = null;
+					resetStatusUpdate();
 					clearStoredChatUser();
 				}
 				if (packet.user?.authType !== "waline") {
@@ -2194,31 +2355,7 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "member:badges_updated": {
-				const { userKey, customBadges } = packet;
-				if (currentUser && currentUser.userKey === userKey) {
-					currentUser = {
-						...currentUser,
-						customBadges,
-					};
-				}
-				roomOnlineMembers = roomOnlineMembers.map((m) =>
-					m.userKey === userKey ? { ...m, customBadges } : m,
-				);
-				roomMentionMembers = roomMentionMembers.map((m) =>
-					m.userKey === userKey ? { ...m, customBadges } : m,
-				);
-				globalMemberDirectory = globalMemberDirectory.map((m) =>
-					m.userKey === userKey ? { ...m, customBadges } : m,
-				);
-				messages = messages.map((m) =>
-					m.userKey === userKey ? { ...m, customBadges } : m,
-				);
-				if (userDetailSeed && userDetailSeed.userKey === userKey) {
-					userDetailSeed = {
-						...userDetailSeed,
-						customBadges,
-					};
-				}
+				applyMemberCustomBadges(packet.userKey, packet.customBadges);
 				break;
 			}
 			case "presence:update": {
@@ -2362,6 +2499,14 @@ function connectRoom(roomId: string) {
 				}
 				break;
 			}
+			case "chat:recall_archive": {
+				if (packet.roomId !== currentRoom || !currentUser?.isAdmin) break;
+				privateRecallSessionUserKey = currentUser.userKey;
+				messages = mergePrivateRecallMessages(messages, [packet.message]);
+				const cached = roomMessageCache.get(packet.roomId);
+				if (cached) roomMessageCache.set(packet.roomId, mergePrivateRecallMessages(cached, [packet.message]));
+				break;
+			}
 			case "chat:reaction_updated": {
 				if (packet.roomId === currentRoom) {
 					removeRecentFeedsByUid(packet.msgUid);
@@ -2457,6 +2602,46 @@ function connectRoom(roomId: string) {
 				}
 				break;
 			}
+			case "chat:room_name_update": {
+				if (packet.roomId) {
+					matrixRoomNames = {
+						...matrixRoomNames,
+						[packet.roomId]: packet.matrixRoomName || "",
+					};
+				}
+				break;
+			}
+			case "chat:room_meta_update": {
+				if (packet.roomId && packet.roomMeta) {
+					roomMetaByRoom = {
+						...roomMetaByRoom,
+						[packet.roomId]: packet.roomMeta,
+					};
+				}
+				break;
+			}
+			case "chat:room_action_result": {
+				if (packet.ok && packet.roomId && packet.roomMeta) {
+					roomMetaByRoom = {
+						...roomMetaByRoom,
+						[packet.roomId]: packet.roomMeta,
+					};
+				}
+				if (packet.requestId) {
+					const pending = pendingRoomActions.get(packet.requestId);
+					if (pending) {
+						clearTimeout(pending.timer);
+						pendingRoomActions.delete(packet.requestId);
+						pending.resolve({
+							ok: Boolean(packet.ok),
+							error: packet.error,
+							roomId: packet.roomId,
+							roomMeta: packet.roomMeta,
+						});
+					}
+				}
+				break;
+			}
 			case "chat:typing": {
 				if (packet.roomId === currentRoom) {
 					const myName = currentUser?.name?.trim();
@@ -2538,6 +2723,8 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "music:request_result": {
+				recordMusicEvent("enqueue-result", packet.requestId, { room: packet.roomId, ok: packet.ok,
+					code: packet.code ?? "", reason: (packet.error ?? "").slice(0, 280) });
 				const pending = songRequests.get(packet.requestId);
 				if (!pending || pending.room !== packet.roomId) break;
 				pending.finish(packet.ok);
@@ -2604,6 +2791,8 @@ function connectRoom(roomId: string) {
 				break;
 			}
 			case "music:rotation_result": {
+				recordMusicEvent("rotation-result", packet.requestId, { room: packet.roomId,
+					ok: packet.ok, code: packet.code ?? "", reason: (packet.error ?? "").slice(0, 280) });
 				if (packet.roomId !== currentRoom || packet.requestId !== rotationRequestId || !rotationAction) break;
 				clearRotationRequest();
 				if (packet.ok) {
@@ -2755,6 +2944,7 @@ function connectRoom(roomId: string) {
 		clearSkipPending();
 		clearRotationAction();
 		clearPendingSongRequests();
+		clearPendingRoomActions("连接已断开，操作未确认");
 		connectionState = "reconnecting";
 		const delay = Math.min(10000, 1000 * 2 ** Math.min(4, reconnectAttempt));
 		reconnectAttempt += 1;
@@ -2862,6 +3052,7 @@ function handleAuthenticated(
 		// 切换或确认为访客登录时清理可能失效的旧 Waline 凭证，防止刷新被拉回旁观态
 		clearWalineAuth();
 	}
+	resetStatusUpdate();
 	currentAuth = auth;
 	walineToken = auth.kind === "waline" ? auth.token : "";
 	lastMarkedServerReadAt = 0;
@@ -2909,6 +3100,7 @@ async function handleLogout() {
 		clearGuestAuth();
 	}
 	clearStoredChatUser();
+	resetStatusUpdate();
 	currentAuth = null;
 	walineToken = "";
 	currentUser = null;
@@ -2936,13 +3128,26 @@ function handleOpenUserProfile(seed: ChatUserDetailSeed) {
 		enriched.userKey.startsWith("name:") ||
 		enriched.userKey === "system:fallback";
 	if (needsKey && enriched.name) {
-		const onlineMatch = onlineMembers.find((m) => m.name === enriched.name);
-		const mentionMatch = mentionMembers.find((m) => m.name === enriched.name);
+		const targetCleanName = stripSiteSuffix(enriched.name) || enriched.name;
+		const onlineMatch = onlineMembers.find(
+			(m) => (stripSiteSuffix(m.name) || m.name) === targetCleanName,
+		);
+		const mentionMatch = mentionMembers.find(
+			(m) => (stripSiteSuffix(m.name) || m.name) === targetCleanName,
+		);
 		const selfMatch =
-			currentUser && currentUser.name === enriched.name ? currentUser : null;
+			currentUser &&
+			(stripSiteSuffix(currentUser.name) || currentUser.name) === targetCleanName
+				? currentUser
+				: null;
 		const msgMatch = [...messages]
 			.reverse()
-			.find((m) => m.kind === "user" && m.name === enriched.name && m.userKey);
+			.find(
+				(m) =>
+					m.kind === "user" &&
+					(stripSiteSuffix(m.name) || m.name) === targetCleanName &&
+					m.userKey,
+			);
 		const match = onlineMatch || mentionMatch || selfMatch || msgMatch;
 		if (match) {
 			enriched = {
@@ -3021,75 +3226,177 @@ function flushPendingProfileUpdate() {
 	}
 }
 
-function handleUpdateProfile(draft: ChatProfileDraft) {
-	if (!currentUser) return;
-	const cleanNick = draft.nickname.trim().slice(0, 16) || currentUser.name;
-	const cleanBadge = getFixedRoleBadge(currentUser);
-	const rawStatus = draft.status.trim().slice(0, 16);
-	const cleanStatus = rawStatus === "在线" ? "" : rawStatus;
-	const cleanUrl = draft.url.trim().slice(0, 200);
-	const cleanBio = (draft.bio ?? "").trim().slice(0, 80);
-	const packet: Record<string, unknown> = {
+function resetStatusUpdate() {
+	clearTimeout(statusResultTimer);
+	pendingStatusUpdate = null;
+	profileAuthSocket = null;
+	statusSyncMessage = "";
+}
+
+function flushStatusUpdate() {
+	const update = pendingStatusUpdate;
+	if (!update || !ws || ws !== profileAuthSocket || ws.readyState !== WebSocket.OPEN) return;
+	if (currentUser?.userKey !== update.userKey) {
+		resetStatusUpdate();
+		return;
+	}
+	if (update.sentOn === ws) return;
+	ws.send(JSON.stringify({
 		type: "auth:update_profile",
-		nickname: cleanNick,
-		badge: cleanBadge,
-		status: cleanStatus,
-		url: cleanUrl,
-		bio: cleanBio,
+		requestId: update.requestId,
+		expectedUserKey: update.userKey,
+		status: update.status,
+		...(update.saved ? { resumeOnly: true } : {}),
+	}));
+	pendingStatusUpdate = { ...update, sentOn: ws };
+}
+
+function handleStatusResult(packet: Extract<ServerPacket, { type: "auth:status_result" }>) {
+	const update = pendingStatusUpdate;
+	if (!update || update.requestId !== packet.requestId || currentUser?.userKey !== update.userKey) return;
+	if (packet.stage === "saved") {
+		pendingStatusUpdate = { ...update, saved: true };
+		statusSyncMessage = "网站已保存，正在同步到 Matrix…";
+		return;
+	}
+	clearTimeout(statusResultTimer);
+	pendingStatusUpdate = null;
+	if (packet.stage === "synced") {
+		statusSyncMessage = "";
+		return;
+	}
+	const messages = {
+		save_failed: "网站未能保存状态",
+		sync_failed: "网站已保存，Matrix 同步失败",
+		superseded: "状态已被较新的修改替代",
+		sync_unknown: "网站已保存，尚未收到 Matrix 同步结果",
 	};
-	if (typeof draft.avatar === "string") {
-		packet.avatar = draft.avatar.trim().slice(0, 400);
+	statusSyncMessage = messages[packet.stage];
+	if (!showProfileModal) showNotice(statusSyncMessage);
+}
+
+function requestStatusUpdate(status: string, userKey: string) {
+	clearTimeout(statusResultTimer);
+	const requestId = createChatRequestId();
+	pendingStatusUpdate = { requestId, userKey, status };
+	statusSyncMessage = "正在保存状态…";
+	flushStatusUpdate();
+	statusResultTimer = setTimeout(() => {
+		const update = pendingStatusUpdate;
+		if (update?.requestId !== requestId) return;
+		pendingStatusUpdate = null;
+		statusSyncMessage = update.saved ? "网站已保存，尚未收到 Matrix 同步结果" : "尚未收到网站保存确认";
+		if (!showProfileModal) showNotice(statusSyncMessage);
+	}, 75_000);
+}
+
+function handleUpdateProfile(draft: Partial<ChatProfileDraft>) {
+	if (!currentUser) return;
+	if (typeof draft.status === "string") {
+		const status = draft.status.trim();
+		if (countChatStatusCharacters(status) <= MAX_CHAT_STATUS_CHARACTERS && fitsMatrixStatus(status)) {
+			requestStatusUpdate(status, currentUser.userKey);
+		}
+		return;
 	}
-	if (typeof draft.notifyEmail === "boolean") {
-		packet.notifyEmail = draft.notifyEmail;
-	}
+	const fields = {
+		...(typeof draft.nickname === "string" ? { nickname: draft.nickname.trim().slice(0, 16) || currentUser.name } : {}),
+		...(typeof draft.url === "string" ? { url: draft.url.trim().slice(0, 200) } : {}),
+		...(typeof draft.bio === "string" ? { bio: draft.bio.trim().slice(0, 80) } : {}),
+		...(typeof draft.avatar === "string" ? { avatar: draft.avatar.trim().slice(0, 400) } : {}),
+		...(typeof draft.notifyEmail === "boolean" ? { notifyEmail: draft.notifyEmail } : {}),
+	};
 	const updatedUser: ChatSessionUser = {
 		...currentUser,
-		name: cleanNick,
-		badge: cleanBadge,
-		status: cleanStatus,
-		url: cleanUrl,
-		bio: cleanBio,
-		...(typeof draft.avatar === "string"
-			? { avatar: draft.avatar.trim().slice(0, 400) }
-			: {}),
-		...(typeof draft.notifyEmail === "boolean"
-			? { notifyEmail: draft.notifyEmail }
-			: {}),
+		name: fields.nickname ?? currentUser.name,
+		badge: getFixedRoleBadge(currentUser),
+		url: fields.url ?? currentUser.url,
+		bio: fields.bio ?? currentUser.bio,
+		avatar: fields.avatar ?? currentUser.avatar,
+		notifyEmail: fields.notifyEmail ?? currentUser.notifyEmail,
 	};
 	currentUser = updatedUser;
 	persistStoredChatUser(updatedUser);
 	syncMemberProfileLists(updatedUser);
+	const walineProfile = {
+		...(fields.nickname !== undefined ? { display_name: fields.nickname } : {}),
+		...(fields.url !== undefined ? { url: fields.url } : {}),
+		...(fields.avatar ? { avatar: fields.avatar } : {}),
+	};
 	if (currentUser.authType === "waline") {
 		syncChatUserToWalineStorage(updatedUser);
-		if (walineToken && walineServerUrl) {
-			const hasExplicitAvatar =
-				typeof draft.avatar === "string" && Boolean(draft.avatar.trim());
+		if (walineToken && walineServerUrl && Object.keys(walineProfile).length) {
 			void fetch(`${normalizeServerUrl(walineServerUrl)}/api/user`, {
 				method: "PUT",
 				headers: {
 					"Content-Type": "application/json",
 					Authorization: `Bearer ${walineToken}`,
 				},
-				body: JSON.stringify({
-					display_name: cleanNick,
-					url: cleanUrl,
-					...(hasExplicitAvatar ? { avatar: updatedUser.avatar } : {}),
-				}),
+				body: JSON.stringify(walineProfile),
 			}).catch(() => {});
 		}
 	} else if (currentUser.authType === "guest") {
 		persistWalineCommentMeta({
-			nickname: cleanNick,
-			email: resolveCurrentUserEmail(currentUser),
-			url: cleanUrl,
+			nickname: updatedUser.name,
+			email: resolveCurrentUserEmail(updatedUser),
+			url: updatedUser.url ?? "",
 		});
 	}
-	if (sendPacket(packet)) {
-		pendingProfileUpdate = null;
-		showNotice("个人资料已更新");
-	} else {
-		pendingProfileUpdate = packet;
+	pendingProfileUpdate = { ...pendingProfileUpdate, type: "auth:update_profile", ...fields };
+	flushPendingProfileUpdate();
+}
+
+function applyMemberCustomBadges(
+	targetUserKey: string,
+	badges: ChatCustomBadge[],
+) {
+	invalidateUserDetailCache(targetUserKey);
+	if (currentUser && currentUser.userKey === targetUserKey) {
+		currentUser = { ...currentUser, customBadges: badges };
+		persistStoredChatUser(currentUser);
+	}
+	roomOnlineMembers = roomOnlineMembers.map((m) =>
+		m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+	);
+	roomMentionMembers = roomMentionMembers.map((m) =>
+		m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+	);
+	globalMemberDirectory = globalMemberDirectory.map((m) =>
+		m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+	);
+	messages = messages.map((m) =>
+		m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+	);
+	for (const [roomKey, cached] of roomMessageCache) {
+		if (cached.some((m) => m.userKey === targetUserKey)) {
+			roomMessageCache.set(
+				roomKey,
+				cached.map((m) =>
+					m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
+				),
+			);
+		}
+	}
+	if (userDetailSeed && userDetailSeed.userKey === targetUserKey) {
+		userDetailSeed = { ...userDetailSeed, customBadges: badges };
+	}
+	if (runtimeRemoteSites) {
+		const bareTarget = targetUserKey.startsWith("matrix:")
+			? targetUserKey.slice(7)
+			: targetUserKey;
+		const isSelfAdminTarget =
+			targetUserKey === "waline:1" ||
+			(currentUser?.isAdmin && currentUser.userKey === targetUserKey);
+		runtimeRemoteSites = runtimeRemoteSites.map((site) => {
+			const matchSiteOwner = isSelfAdminTarget
+				? Boolean(site.isSelf)
+				: Boolean(
+						site.matrixUserId &&
+							(site.matrixUserId === targetUserKey ||
+								site.matrixUserId === bareTarget),
+					);
+			return matchSiteOwner ? { ...site, ownerCustomBadges: badges } : site;
+		});
 	}
 }
 
@@ -3107,25 +3414,7 @@ async function handleUpdateMemberBadges(
 		token,
 	);
 	if (httpOk) {
-		if (currentUser.userKey === targetUserKey) {
-			currentUser = { ...currentUser, customBadges: badges };
-			persistStoredChatUser(currentUser);
-		}
-		roomOnlineMembers = roomOnlineMembers.map((m) =>
-			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
-		);
-		roomMentionMembers = roomMentionMembers.map((m) =>
-			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
-		);
-		globalMemberDirectory = globalMemberDirectory.map((m) =>
-			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
-		);
-		messages = messages.map((m) =>
-			m.userKey === targetUserKey ? { ...m, customBadges: badges } : m,
-		);
-		if (userDetailSeed && userDetailSeed.userKey === targetUserKey) {
-			userDetailSeed = { ...userDetailSeed, customBadges: badges };
-		}
+		applyMemberCustomBadges(targetUserKey, badges);
 		showNotice("头衔已更新");
 		return true;
 	}
@@ -3308,11 +3597,101 @@ function handleEndPoll(pollUid: string) {
 	sendPacket({ type: "chat:poll_end", pollUid });
 }
 
-function handleSetTopic(topic: string) {
-	if (!currentUser?.isAdmin) return;
-	const clean = topic.trim();
-	if (!clean) return;
-	sendPacket({ type: "chat:set_topic", topic: clean });
+let roomActionSeq = 0;
+const pendingRoomActions = new Map<
+	string,
+	{
+		resolve: (res: ChatRoomActionResult) => void;
+		timer: ReturnType<typeof setTimeout>;
+	}
+>();
+
+function clearPendingRoomActions(reason = "操作已取消") {
+	for (const pending of pendingRoomActions.values()) {
+		clearTimeout(pending.timer);
+		pending.resolve({ ok: false, error: reason });
+	}
+	pendingRoomActions.clear();
+}
+
+function sendRoomAction(
+	type: string,
+	payload: Record<string, unknown>,
+): Promise<ChatRoomActionResult> {
+	if (!currentUser?.isAdmin) {
+		return Promise.resolve({ ok: false, error: "仅站长可执行此操作" });
+	}
+	if (!ws || ws.readyState !== WebSocket.OPEN) {
+		return Promise.resolve({
+			ok: false,
+			error: navigator.onLine
+				? "正在连接服务器，请稍候重试"
+				: "网络已断开，无法同步更改",
+		});
+	}
+	const requestId = `room_act_${Date.now()}_${++roomActionSeq}`;
+	return new Promise((resolve) => {
+		const timer = setTimeout(() => {
+			pendingRoomActions.delete(requestId);
+			resolve({ ok: false, error: "请求超时，请稍后重试" });
+		}, 15000);
+		pendingRoomActions.set(requestId, { resolve, timer });
+		ws?.send(JSON.stringify({ type, requestId, ...payload }));
+	});
+}
+
+function handleSetTopic(topic: string): Promise<ChatRoomActionResult> {
+	const clean = topic.replace(/[\r\n]+/g, " ").trim().slice(0, 160);
+	return sendRoomAction("chat:set_topic", { topic: clean });
+}
+
+function handleSetRoomName(roomName: string): Promise<ChatRoomActionResult> {
+	const clean = roomName.replace(/[\r\n]+/g, " ").trim().slice(0, 80);
+	if (!clean) {
+		return Promise.resolve({ ok: false, error: "房间名称不能为空" });
+	}
+	return sendRoomAction("chat:set_room_name", { roomName: clean });
+}
+
+function handleSetRoomAvatar(avatar: string): Promise<ChatRoomActionResult> {
+	const clean = avatar.trim().slice(0, 400);
+	return sendRoomAction("chat:set_room_avatar", { avatar: clean });
+}
+
+function handleSetRoomJoinRule(
+	joinRule: ChatRoomJoinRule,
+): Promise<ChatRoomActionResult> {
+	return sendRoomAction("chat:set_room_join_rule", { joinRule });
+}
+
+function handleSetRoomHistoryVisibility(
+	historyVisibility: ChatRoomHistoryVisibility,
+): Promise<ChatRoomActionResult> {
+	return sendRoomAction("chat:set_room_history_visibility", {
+		historyVisibility,
+	});
+}
+
+function handleSetRoomGuestAccess(
+	guestAccess: ChatRoomGuestAccess,
+): Promise<ChatRoomActionResult> {
+	return sendRoomAction("chat:set_room_guest_access", { guestAccess });
+}
+
+function handleSetRoomCanonicalAlias(
+	canonicalAlias: string,
+	altAliases?: string[],
+): Promise<ChatRoomActionResult> {
+	return sendRoomAction("chat:set_room_canonical_alias", {
+		canonicalAlias: canonicalAlias.trim(),
+		...(altAliases ? { altAliases } : {}),
+	});
+}
+
+function handleSetRoomPowerLevels(
+	patch: ChatRoomPowerLevelPatch,
+): Promise<ChatRoomActionResult> {
+	return sendRoomAction("chat:set_room_power_levels", { patch });
 }
 
 function handleCreatePoll(
@@ -3454,7 +3833,7 @@ async function sendSongRequest(
 		return false;
 	}
 	const room = currentRoom;
-	const requestId = createMusicRequestId();
+	const requestId = createChatRequestId();
 	return new Promise<boolean>((resolve) => {
 		const reportUnsent = (message: string) => {
 			if (room !== currentRoom) return;
@@ -3467,6 +3846,7 @@ async function sendSongRequest(
 			if (!waiting) timer = window.setTimeout(() => {
 				finish(false);
 				reportUnsent("点歌未收到回应，请先查看待播队列");
+				recordMusicEvent("enqueue-timeout", requestId, { room });
 			}, 43_000);
 		};
 		const finish = (ok: boolean) => {
@@ -3500,12 +3880,17 @@ async function sendSongRequest(
 			},
 		};
 		try {
-			if (sendPacket(packet)) return;
+			if (sendPacket(packet)) {
+				recordMusicEvent("enqueue-sent", requestId, { room, title: track?.title ?? "",
+					artist: track?.artist ?? "", sourceId: track?.sourceId ?? "", playlistId: track?.playlistId ?? randomPlaylistId ?? "" });
+				return;
+			}
 		} catch (error) {
 			console.warn("Unable to send song request", error);
 		}
 		finish(false);
 		reportUnsent("连接暂时不可用，请重试");
+		recordMusicEvent("enqueue-not-sent", requestId, { room });
 	});
 }
 
@@ -4040,6 +4425,7 @@ onMount(() => {
 		window.removeEventListener("touchstart", resetIdleTimer);
 		mobileLayoutQuery.removeEventListener("change", handleMobileLayoutChange);
 		clearReconnectTimer();
+		resetStatusUpdate();
 		if (noticeTimer !== null) window.clearTimeout(noticeTimer);
 		if (skipPendingTimer !== null) window.clearTimeout(skipPendingTimer);
 		clearRotationAction();
@@ -4123,7 +4509,7 @@ onMount(() => {
         selfMuted={mobilePlaybackStatus.isMuted}
         connectionState={connectionState}
         isWindowFocused={isEffectiveFocused}
-        interconnectSites={interconnectSites}
+        interconnectSites={effectiveInterconnectSites}
         desktopNotificationEnabled={desktopNotificationEnabled}
         desktopNotificationMode={desktopNotificationMode}
         desktopNotificationPermission={desktopNotificationPermission}
@@ -4222,7 +4608,7 @@ onMount(() => {
           mentionEvent={mentionEvent}
           showInterconnect={showInterconnect}
           isInterconnectRoom={currentRoom === "interconnect"}
-          interconnectSites={interconnectSites}
+          interconnectSites={effectiveInterconnectSites}
           totalChatterCount={totalChatterCount}
           pinnedUids={pinnedUids}
           pinnedDetails={pinnedDetails}
@@ -4241,6 +4627,7 @@ onMount(() => {
           onOpenPollModal={() => (showPollCreateModal = true)}
           onCreatePoll={handleCreatePoll}
           onTyping={handleTyping}
+          onOpenRoomInfo={() => (showRoomInfoModal = true)}
           onToggleInterconnect={() => {
             showInterconnect = !showInterconnect;
           }}
@@ -4276,7 +4663,7 @@ onMount(() => {
 
       <ChatInterconnectPopover
         open={showInterconnect}
-        sites={interconnectSites}
+        sites={effectiveInterconnectSites}
         onClose={() => (showInterconnect = false)}
       />
     </div>
@@ -4420,19 +4807,20 @@ onMount(() => {
     </div>
   </div>
 
-  {#if (showProfileModal && !ChatProfileModalComp) || (showUserDetailModal && !ChatUserDetailModalComp) || (showAuthModal && !ChatAuthModalComp) || (showPollCreateModal && !ChatPollCreateModalComp)}
+  {#if (showProfileModal && !ChatProfileModalComp) || (showUserDetailModal && !ChatUserDetailModalComp) || (showAuthModal && !ChatAuthModalComp) || (showPollCreateModal && !ChatPollCreateModalComp) || (showRoomInfoModal && !ChatRoomInfoModalComp)}
     <ChatModal
       open={true}
-      title={showAuthModal ? "登录" : showPollCreateModal ? "发起投票" : showProfileModal ? "编辑资料" : "成员名片"}
-      size={showUserDetailModal ? "lg" : showProfileModal ? "md" : "sm"}
-      fillHeightOnDesktop={showUserDetailModal}
-      dialogClass={showUserDetailModal ? "chat-user-detail-dialog" : ""}
+      title={showAuthModal ? "登录" : showPollCreateModal ? "发起投票" : showProfileModal ? "编辑资料" : showRoomInfoModal ? "房间信息" : "成员名片"}
+      size={showUserDetailModal ? "lg" : showProfileModal ? "md" : showRoomInfoModal ? "md" : "sm"}
+      fillHeightOnDesktop={showUserDetailModal || showRoomInfoModal}
+      dialogClass={showUserDetailModal ? "chat-user-detail-dialog" : showRoomInfoModal ? "chat-room-info-dialog" : ""}
       topPriority={showAuthModal || showUserDetailModal}
       onClose={() => {
         showAuthModal = false;
         showPollCreateModal = false;
         showProfileModal = false;
         showUserDetailModal = false;
+        showRoomInfoModal = false;
       }}
     >
       <div class="flex-1 min-h-0 flex items-center justify-center gap-2 py-10 text-sm text-[var(--chat-meta-color)]" role="status">
@@ -4564,6 +4952,8 @@ onMount(() => {
       notificationNeedsMigration={pushNeedsMigration}
       onTestNotification={sendTestPush}
       onSave={handleUpdateProfile}
+      pendingStatus={pendingStatusUpdate?.status}
+      {statusSyncMessage}
       onClose={() => (showProfileModal = false)}
       onLogout={handleLogout}
     />
@@ -4580,7 +4970,7 @@ onMount(() => {
       onlineMembers={onlineMembers}
       messages={messages}
       musicHistoryLogs={musicState?.historyLogs ?? []}
-      interconnectSites={interconnectSites}
+      interconnectSites={effectiveInterconnectSites}
       walineToken={walineToken}
       onToast={showNotice}
       onClose={() => (showUserDetailModal = false)}
@@ -4619,6 +5009,41 @@ onMount(() => {
       open={showPollCreateModal}
       onClose={() => (showPollCreateModal = false)}
       onSubmit={handleCreatePoll}
+    />
+  {/if}
+
+  <!-- 房间基本信息弹窗（顶级外层，免受 .chat-mobile-stage 高斯模糊影响） -->
+  {#if ChatRoomInfoModalComp}
+    <ChatRoomInfoModalComp
+      open={showRoomInfoModal}
+      roomId={currentRoom}
+      roomName={activeMeta.name}
+      matrixRoomName={matrixRoomNames[currentRoom] || (currentRoom === "interconnect" ? "互联聊天室" : activeMeta.name)}
+      roomAvatar={roomAvatars[currentRoom] || activeMeta.avatar || (currentRoom !== "interconnect" ? siteAvatar : "")}
+      roomTopic={roomTopic}
+      roomMeta={roomMetaByRoom[currentRoom] ?? null}
+      isAdmin={Boolean(currentUser?.isAdmin)}
+      chatServerUrl={normalizedChatServer}
+      auth={currentAuth}
+      interconnectSites={effectiveInterconnectSites}
+      roomOnlineCount={roomOnlineMembers.length}
+      externalOnlineCount={externalOnlineCount}
+      observerCount={observers.length}
+      interconnectSitesCount={effectiveInterconnectSites.length}
+      onClose={() => (showRoomInfoModal = false)}
+      onOpenInterconnectSites={() => {
+        showRoomInfoModal = false;
+        showInterconnect = true;
+      }}
+      onSetRoomName={handleSetRoomName}
+      onSetTopic={handleSetTopic}
+      onSetRoomAvatar={handleSetRoomAvatar}
+      onSetRoomJoinRule={handleSetRoomJoinRule}
+      onSetRoomHistoryVisibility={handleSetRoomHistoryVisibility}
+      onSetRoomGuestAccess={handleSetRoomGuestAccess}
+      onSetRoomCanonicalAlias={handleSetRoomCanonicalAlias}
+      onSetRoomPowerLevels={handleSetRoomPowerLevels}
+      onNotify={showNotice}
     />
   {/if}
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 import { untrack } from "svelte";
 import type { InterconnectSite } from "@/types/chatConfig";
-import ChatAvatar from "./ChatAvatar.svelte";
+import ChatAvatar, { hasAvatarLoadFailed } from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import {
 	fetchUserDetailProfile,
@@ -9,9 +9,13 @@ import {
 	isExternalMatrixIdentity,
 	readStoredWalineToken,
 	resolveExternalOrigin,
+	resolveOriginalAvatarTarget,
 	sanitizeChatUrl,
 	saveMemberBadges,
+	stripSiteSuffix,
+	userDetailCache,
 } from "./chatClient";
+import { openChatAvatarLightbox } from "./chatLightbox";
 import type {
 	ChatCustomBadge,
 	ChatMessageRecord,
@@ -57,10 +61,6 @@ interface Props {
 }
 
 const TRACK_PAGE_SIZE = 50;
-const userDetailCache = new Map<
-	string,
-	{ profile: ChatUserDetailProfile; fetchedAt: number }
->();
 
 const {
 	open,
@@ -475,6 +475,8 @@ let managedInitUserKey = "";
 let managedSyncedRemote = false;
 let managedDirty = false;
 
+const badgeTargetUserKey = $derived(profile?.userKey || seed?.userKey || "");
+
 $effect(() => {
 	if (!open) {
 		managedInitUserKey = "";
@@ -483,12 +485,13 @@ $effect(() => {
 		badgeSaveNotice = "";
 		return;
 	}
-	if (!profile) return;
-	if (managedInitUserKey !== profile.userKey) {
-		managedInitUserKey = profile.userKey;
+	if (!badgeTargetUserKey) return;
+	const sourceBadges = remoteProfile?.customBadges ?? profile?.customBadges ?? seed?.customBadges ?? [];
+	if (managedInitUserKey !== badgeTargetUserKey) {
+		managedInitUserKey = badgeTargetUserKey;
 		managedSyncedRemote = Boolean(remoteProfile);
 		managedDirty = false;
-		managedBadges = (profile.customBadges || []).map((b) => ({ ...b }));
+		managedBadges = sourceBadges.map((b) => ({ ...b }));
 		badgeSaveNotice = "";
 	} else if (remoteProfile && !managedSyncedRemote && !managedDirty) {
 		managedSyncedRemote = true;
@@ -501,20 +504,16 @@ const effectiveCustomBadges = $derived.by<ChatCustomBadge[]>(() => {
 });
 
 async function handleSaveBadges() {
-	if (
-		!profile ||
-		!currentUser?.isAdmin ||
-		isExternalUser ||
-		matrixUserId ||
-		profile.userKey.startsWith("matrix:") ||
-		profile.userKey.startsWith("@")
-	) {
+	if (!badgeTargetUserKey || !currentUser?.isAdmin) {
 		return;
 	}
 	const sanitized: ChatCustomBadge[] = managedBadges
 		.map((b) => ({
-			text: (b.text || "").trim().slice(0, 8),
-			color: b.color === "gold" ? ("gold" as const) : ("gray" as const),
+			text: (b.text || "").trim().slice(0, 20),
+			color:
+				b.color === "gold" || b.color === "site"
+					? b.color
+					: ("gray" as const),
 		}))
 		.filter((b) => Boolean(b.text))
 		.slice(0, 3);
@@ -524,13 +523,13 @@ async function handleSaveBadges() {
 	try {
 		let ok = false;
 		if (onUpdateMemberBadges) {
-			ok = await onUpdateMemberBadges(profile.userKey, sanitized);
+			ok = await onUpdateMemberBadges(badgeTargetUserKey, sanitized);
 		} else {
 			const walineToken = readStoredWalineToken();
 			ok = await saveMemberBadges(
 				chatServerUrl,
 				roomId,
-				profile.userKey,
+				badgeTargetUserKey,
 				sanitized,
 				walineToken,
 			);
@@ -542,7 +541,7 @@ async function handleSaveBadges() {
 					customBadges: sanitized,
 				};
 			}
-			userDetailCache.delete(`${roomId}:${profile.userKey}`);
+			userDetailCache.delete(`${roomId}:${badgeTargetUserKey}`);
 			managedDirty = false;
 			managedBadges = sanitized.map((b) => ({ ...b }));
 			badgeSaveNotice = "头衔已更新";
@@ -904,13 +903,32 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
 	if (text) return text;
 	return msg.hasImage ? "[发送了图片]" : "[消息]";
 }
+
+function previewAvatar(
+	src: string | undefined,
+	alternateSrc: string | undefined,
+	name: string,
+	triggerEl: HTMLElement | null,
+) {
+	const target = resolveOriginalAvatarTarget(
+		src,
+		alternateSrc,
+		name,
+		hasAvatarLoadFailed,
+	);
+	if (!target.src) return;
+	void openChatAvatarLightbox(target.src, {
+		fallbackSrc: target.fallbackSrc,
+		triggerEl,
+	});
+}
 </script>
 
 <ChatModal
   open={open && Boolean(profile || matrixUserId || isExternalUser || (isSpectator && currentUser?.isAdmin))}
   title="成员名片"
   mobile="expandable"
-  ariaLabel={seed ? `${seed.name} 的个人资料` : "成员名片"}
+  ariaLabel={seed ? `${stripSiteSuffix(seed.name) || seed.name} 的个人资料` : "成员名片"}
   size={matrixUserId || isExternalUser || isSpectator ? "md" : "lg"}
   fillHeightOnDesktop={true}
   dialogClass="chat-user-detail-dialog"
@@ -924,17 +942,171 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
     {/if}
   {/snippet}
 
+  {#snippet badgeManagerCard(fixedBadgeLabel: string, fixedBadgeType: string, isLocalOnlyHint: boolean, siteBadgeColor?: string)}
+    <div class="rounded-xl bg-(--btn-regular-bg) p-3 space-y-2.5 border border-amber-500/25 dark:border-amber-400/25">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-1.5 min-w-0">
+          <svg class="w-3.5 h-3.5 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          <span class="text-xs font-bold text-[var(--deep-text)] truncate">身份头衔管理</span>
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold shrink-0">站长视角</span>
+          {#if isLocalOnlyHint}
+            <span class="text-[10px] text-[var(--chat-meta-color)] truncate">仅在本站显示</span>
+          {/if}
+        </div>
+        <span class="text-[11px] text-[var(--chat-meta-color)] shrink-0 font-medium">
+          {managedBadges.length}/3
+        </span>
+      </div>
+
+      <!-- 系统固定头衔只读 -->
+      <div class="flex items-center justify-between text-xs py-1.5 px-2.5 rounded-lg bg-black/5 dark:bg-white/5 gap-2">
+        <span class="text-[11px] text-[var(--chat-meta-color)]">系统固定头衔：</span>
+        <div class="flex items-center gap-1.5">
+          <span class="chat-role-badge chat-role-badge--{fixedBadgeType}">
+            {fixedBadgeLabel}
+          </span>
+          <span class="text-[10px] text-[var(--chat-meta-color)] opacity-70">（固定头衔，不可修改）</span>
+        </div>
+      </div>
+
+      <!-- 自定义头衔列表编辑 -->
+      <div class="space-y-2">
+        <div class="text-[11px] font-medium text-[var(--chat-meta-color)] flex items-center justify-between">
+          <span>自定义头衔（最多 3 个）：</span>
+          {#if managedBadges.length < 3}
+            <button
+              type="button"
+              class="text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-0.5 text-[11px] font-medium bg-transparent border-none cursor-pointer p-0"
+              onclick={handleAddBadge}
+            >
+              <span>+ 添加头衔</span>
+            </button>
+          {/if}
+        </div>
+
+        {#if managedBadges.length === 0}
+          <div class="text-[11px] text-[var(--chat-meta-color)] opacity-75 italic py-2 text-center bg-black/5 dark:bg-white/5 rounded-lg">
+            暂未添加自定义头衔，点击右上角“+ 添加头衔”即可为该成员添加头衔。
+          </div>
+        {:else}
+          <div class="space-y-2">
+            {#each managedBadges as badge, idx (idx)}
+              <div class="p-2 rounded-lg bg-black/5 dark:bg-white/5 space-y-1.5 border border-black/5 dark:border-white/5">
+                <div class="flex items-center gap-2">
+                  <input
+                    type="text"
+                    bind:value={managedBadges[idx].text}
+                    maxlength={20}
+                    placeholder="输入头衔（最多 20 字）"
+                    class="flex-1 min-w-0 bg-(--card-bg) border border-black/10 dark:border-white/10 rounded-md px-2 py-1 text-xs text-[var(--deep-text)] focus:outline-none focus:border-amber-500/60"
+                    oninput={() => { managedDirty = true; }}
+                  />
+                  <button
+                    type="button"
+                    class="text-neutral-400 hover:text-red-500 p-1 rounded transition-colors bg-transparent border-none cursor-pointer shrink-0"
+                    onclick={() => handleRemoveBadge(idx)}
+                    aria-label="删除此头衔"
+                  >
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div class="flex items-center justify-between text-[11px] pt-0.5">
+                  <span class="text-[var(--chat-meta-color)]">头衔颜色：</span>
+                  <div class="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      class="px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition-all flex items-center gap-1
+                        {badge.color === 'gold'
+                          ? 'chat-role-badge--gold border-amber-500/50 shadow-xs font-semibold'
+                          : 'bg-transparent text-[var(--chat-meta-color)] border-transparent opacity-60 hover:opacity-100'}"
+                      onclick={() => {
+                        managedDirty = true;
+                        managedBadges[idx].color = 'gold';
+                      }}
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
+                      <span>金色</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition-all flex items-center gap-1
+                        {badge.color === 'gray'
+                          ? 'chat-role-badge--gray border-neutral-400/50 shadow-xs font-semibold'
+                          : 'bg-transparent text-[var(--chat-meta-color)] border-transparent opacity-60 hover:opacity-100'}"
+                      onclick={() => {
+                        managedDirty = true;
+                        managedBadges[idx].color = 'gray';
+                      }}
+                    >
+                      <span class="w-1.5 h-1.5 rounded-full bg-neutral-400 inline-block"></span>
+                      <span>灰色</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition-all flex items-center gap-1
+                        {badge.color === 'site'
+                          ? 'chat-role-badge--site shadow-xs font-semibold'
+                          : 'bg-transparent text-[var(--chat-meta-color)] border-transparent opacity-60 hover:opacity-100'}"
+                      style={siteBadgeColor ? `--site-badge-color: ${siteBadgeColor};` : undefined}
+                      onclick={() => {
+                        managedDirty = true;
+                        managedBadges[idx].color = 'site';
+                      }}
+                    >
+                      <span
+                        class="w-1.5 h-1.5 rounded-full inline-block"
+                        style="background: {siteBadgeColor || 'var(--primary)'};"
+                      ></span>
+                      <span>站点色</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <!-- 保存按钮与提示 -->
+      <div class="flex items-center justify-between pt-1 gap-2">
+        {#if badgeSaveNotice}
+          <span class="text-[11px] {badgeSaveNotice === '头衔已更新' ? 'text-emerald-500' : 'text-red-400'} font-medium truncate">
+            {badgeSaveNotice}
+          </span>
+        {:else}
+          <span></span>
+        {/if}
+        <button
+          type="button"
+          class="chat-send-btn h-7.5! px-3! rounded-lg! text-xs! font-medium cursor-pointer shrink-0 disabled:opacity-50"
+          disabled={isSavingBadges}
+          onclick={handleSaveBadges}
+        >
+          {isSavingBadges ? "保存中..." : "保存头衔修改"}
+        </button>
+      </div>
+    </div>
+  {/snippet}
+
   {#if (matrixUserId || isExternalUser) && seed}
-    {@const origin = resolveExternalOrigin({ name: seed.name, userKey: seed.userKey, badge: seed.badge, site: seed.site, siteUrl: seed.siteUrl, url: seed.url }, interconnectSites)}
-    {@const cleanName = origin.cleanName || seed.name}
+    {@const origin = resolveExternalOrigin({ name: seed.name, userKey: seed.userKey, matrixSender: (seed as { matrixSender?: string }).matrixSender, badge: seed.badge, site: seed.site, siteUrl: seed.siteUrl, url: seed.url }, interconnectSites)}
+    {@const cleanName = origin.cleanName || stripSiteSuffix(seed.name) || seed.name}
     {@const matchedSite = origin.site}
     {@const userMessages = messages.filter((m) => m.kind === "user" && m.userKey === seed.userKey)}
     {@const onlineMatch = onlineMembers.find((m) => m.userKey === seed.userKey)}
     {@const isOnline = Boolean(onlineMatch ?? seed.online)}
+    {@const isAway = (onlineMatch?.presenceMode ?? profile?.presenceMode ?? seed.presenceMode) !== "fallback" && (onlineMatch ? onlineMatch.isFocused === false : profile?.isFocused === false)}
+    {@const externalStatus = ((remoteProfile?.userKey === seed.userKey ? remoteProfile.status : undefined) ?? onlineMatch?.status ?? seed.status ?? "").trim()}
     {@const totalMessageCount = remoteProfile?.stats?.messageCount ?? userMessages.length}
     {@const firstSeenAt = remoteProfile?.firstSeenAt || userMessages[0]?.createdAt || 0}
     {@const latestMsg = userMessages[userMessages.length - 1]}
     {@const lastSeenAt = onlineMatch ? Date.now() : (remoteProfile?.lastSeenAt || latestMsg?.createdAt || 0)}
+    {@const availability = !isOnline ? formatLastSeen(lastSeenAt) : isAway ? "离开" : "在线"}
     {@const recentMsgs = remoteProfile?.recentMessages
       ? remoteProfile.recentMessages.slice(0, 5)
       : userMessages.slice(-5).reverse().map((m) => ({
@@ -950,12 +1122,24 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
       <!-- 1. 顶部身份卡片 -->
       <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-2.5">
         <div class="flex items-center gap-3">
-          <div class="relative shrink-0">
+          <button
+            type="button"
+            class="chat-avatar-zoom-btn relative shrink-0"
+            aria-label={`查看大图查看 ${cleanName} 的头像`}
+            onclick={(e) =>
+              previewAvatar(
+                seed.avatar,
+                onlineMatch?.avatar || latestMsg?.avatar,
+                cleanName,
+                e.currentTarget,
+              )}
+          >
             <ChatAvatar
               src={seed.avatar}
               alternateSrc={onlineMatch?.avatar || latestMsg?.avatar}
               name={cleanName}
               size="lg"
+              ring
             />
             {#if isOnline}
               {@const extModalFocused = onlineMatch ? onlineMatch.isFocused !== false : (profile?.isFocused !== false)}
@@ -963,31 +1147,33 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
               {@const isExtFallback = extPresenceMode === "fallback"}
               <span
                 title={isExtFallback ? "在线" : extModalFocused ? "在线" : "离开"}
-                class="chat-online-dot {isExtFallback ? 'chat-online-dot--fallback' : extModalFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
+                class="chat-online-dot {isExtFallback ? 'chat-online-dot--fallback' : extModalFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80 pointer-events-none"
               ></span>
             {/if}
-          </div>
+          </button>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-base font-bold text-[var(--deep-text)] dark:text-white/90 break-words">
                 {cleanName}
               </span>
               <span class="chat-role-badge chat-role-badge--tag">🍵 互联茶友</span>
-              {#if seed.customBadges && seed.customBadges.length > 0}
-                {#each seed.customBadges as b, idx (`${b.text}:${idx}`)}
-                  <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
+              {#if (remoteProfile?.customBadges ?? seed.customBadges)?.length}
+                {#each (remoteProfile?.customBadges ?? seed.customBadges ?? []) as b, idx (`${b.text}:${idx}`)}
+                  <span
+                    class="chat-role-badge chat-role-badge--{b.color}"
+                    style={b.color === 'site' && matchedSite?.color ? `--site-badge-color: ${matchedSite.color};` : undefined}
+                  >{b.text}</span>
                 {/each}
               {/if}
             </div>
             <div class="flex items-center gap-1.5 text-xs text-[var(--chat-meta-color)] mt-0.5 flex-wrap">
-              {#if !isOnline}
-                <span>{formatLastSeen(lastSeenAt)}</span>
-                <span>·</span>
-              {:else if (onlineMatch?.presenceMode ?? profile?.presenceMode ?? seed.presenceMode) !== "fallback" && (onlineMatch ? onlineMatch.isFocused === false : profile?.isFocused === false)}
-                <span>离开</span>
-                <span>·</span>
+              {#if !externalStatus || (!isOnline || isAway) && availability !== externalStatus}
+                <span>{availability}</span>
+                {#if externalStatus}<span aria-hidden="true">·</span>{/if}
               {/if}
-              <span>Matrix 联邦中继</span>
+              {#if externalStatus}
+                <span class="min-w-0 break-words [overflow-wrap:anywhere]">{externalStatus}</span>
+              {/if}
             </div>
           </div>
 
@@ -1020,7 +1206,12 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         </div>
       </div>
 
-      <!-- 2. 🍵 归属互联茶室 / 博客卡片 -->
+      <!-- 2. 站长专属：身份头衔管理（仅在本站显示） -->
+      {#if currentUser?.isAdmin}
+        {@render badgeManagerCard("🍵 互联茶友", "tag", true, matchedSite?.color)}
+      {/if}
+
+      <!-- 3. 🍵 归属互联茶室 / 博客卡片 -->
       <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-2">
         <div class="flex items-center justify-between text-xs font-semibold text-[var(--chat-meta-color)]">
           <span class="flex items-center gap-1.5">
@@ -1049,10 +1240,10 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             {/if}
             <div class="min-w-0">
               <div class="font-bold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
-                {origin.siteName}
+                {matchedSite?.name || origin.siteName}
               </div>
               <div class="text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
-                {matchedSite?.desc || `来自 ${origin.siteName} 互联聊天节点`}
+                {matchedSite?.desc || (matchedSite?.chatName && matchedSite.chatName !== matchedSite.name ? `${matchedSite.chatName} · 互联聊天节点` : `来自 ${origin.siteName} 互联聊天节点`)}
               </div>
             </div>
           </div>
@@ -1201,22 +1392,34 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
       <!-- 1. 顶部身份卡片 -->
       <div class="rounded-xl bg-(--btn-regular-bg) p-3 border border-black/5 dark:border-white/10 space-y-2.5">
         <div class="flex items-center gap-3">
-          <div class="relative shrink-0">
+          <button
+            type="button"
+            class="chat-avatar-zoom-btn relative shrink-0"
+            aria-label="查看大图查看头像"
+            onclick={(e) =>
+              previewAvatar(
+                seed.avatar,
+                undefined,
+                seed.userKey || seed.name || "旁观者",
+                e.currentTarget,
+              )}
+          >
             <ChatAvatar
               src={seed.avatar}
               name={seed.userKey || seed.name || "旁观者"}
               size="lg"
+              ring
             />
             {#if isOnline}
               <span
-                class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
+                class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80 pointer-events-none"
               ></span>
             {:else}
               <span
-                class="w-2.5 h-2.5 rounded-full bg-neutral-400 absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
+                class="w-2.5 h-2.5 rounded-full bg-neutral-400 absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80 pointer-events-none"
               ></span>
             {/if}
-          </div>
+          </button>
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 flex-wrap">
               <span class="text-base font-bold text-[var(--deep-text)] dark:text-white/90 break-words">
@@ -1413,6 +1616,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
       </div>
     </div>
   {:else if profile}
+    {@const localDisplayName = stripSiteSuffix(profile.name) || profile.name}
     {@const safeProfileUrl = sanitizeChatUrl(profile.url, false)}
     {@const liveProfileOnline = onlineMembers.find((m) => m.userKey === profile.userKey)}
     {@const profileIsOnline = Boolean(liveProfileOnline ?? profile.online)}
@@ -1430,30 +1634,42 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
         <!-- 头部名片与签名 -->
         <div class="rounded-xl bg-(--btn-regular-bg) p-3 space-y-2.5">
           <div class="flex items-center gap-3">
-            <div class="relative shrink-0">
+            <button
+              type="button"
+              class="chat-avatar-zoom-btn relative shrink-0"
+              aria-label={`查看大图查看 ${localDisplayName} 的头像`}
+              onclick={(e) =>
+                previewAvatar(
+                  profile.avatar,
+                  seed?.avatar || fallbackData?.profile.avatar,
+                  localDisplayName,
+                  e.currentTarget,
+                )}
+            >
               <ChatAvatar
                 src={profile.avatar}
                 alternateSrc={seed?.avatar || fallbackData?.profile.avatar}
-                name={profile.name}
+                name={localDisplayName}
                 size="lg"
+                ring
               />
               {#if profileIsOnline}
                 <span
                   title={profileIsFallback ? "在线" : profileIsFocused ? "在线" : "离开"}
-                  class="chat-online-dot {profileIsFallback ? 'chat-online-dot--fallback' : profileIsFocused ? '' : 'chat-online-dot--away'} w-3! h-3! absolute bottom-0 right-0 border-2 border-white dark:border-neutral-900"
+                  class="chat-online-dot {profileIsFallback ? 'chat-online-dot--fallback' : profileIsFocused ? '' : 'chat-online-dot--away'} w-3! h-3! absolute bottom-0 right-0 border-2 border-white dark:border-neutral-900 pointer-events-none"
                 ></span>
               {:else}
                 <span
                   title="离线"
-                  class="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-neutral-900 bg-neutral-400"
+                  class="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-white dark:border-neutral-900 bg-neutral-400 pointer-events-none"
                 ></span>
               {/if}
-            </div>
+            </button>
 
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
                 <span class="text-sm font-bold text-[var(--deep-text)] truncate">
-                  {profile.name}
+                  {stripSiteSuffix(profile.name) || profile.name}
                 </span>
                 <span class="chat-role-badge chat-role-badge--{profile.badgeType}">
                   {profile.badge}
@@ -1498,7 +1714,7 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
 
                 {#if roomId === "interconnect"}
                   <span class="opacity-40 select-none">·</span>
-                  <span>本站 Matrix 节点</span>
+                  <span>来自本站</span>
                 {/if}
               </div>
             </div>
@@ -1568,8 +1784,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
             {@const isExternalProfile = Boolean(isExternalUser || matrixUserId || isExternalMatrixIdentity(profile))}
             {@const mentionDisabled = isExternalProfile && roomId !== "interconnect"}
             {@const mentionDisplayName = isExternalProfile
-              ? resolveExternalOrigin({ name: profile.name, userKey: profile.userKey, badge: profile.badge, site: profile.site, siteUrl: profile.siteUrl, url: profile.url }, interconnectSites).cleanName || profile.name
-              : profile.name}
+              ? resolveExternalOrigin({ name: profile.name, userKey: profile.userKey, badge: profile.badge, site: profile.site, siteUrl: profile.siteUrl, url: profile.url }, interconnectSites).cleanName || stripSiteSuffix(profile.name) || profile.name
+              : stripSiteSuffix(profile.name) || profile.name}
             <button
               type="button"
               disabled={mentionDisabled}
@@ -1590,8 +1806,8 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
           {/if}
         </div>
 
-        <!-- 站长专属：身份头衔管理（严格隔离：绝不允许设置站外/互联用户） -->
-        {#if currentUser?.isAdmin && profile && !isExternalUser && !matrixUserId && !profile.userKey.startsWith("matrix:") && !profile.userKey.startsWith("@")}
+        <!-- 站长专属：身份头衔管理（站内直接生效，站外用户仅在本站显示） -->
+        {#if currentUser?.isAdmin && profile}
           <div class="rounded-xl bg-(--btn-regular-bg) p-3 space-y-2.5 border border-amber-500/25 dark:border-amber-400/25">
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-1.5 min-w-0">
@@ -1600,6 +1816,9 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                 </svg>
                 <span class="text-xs font-bold text-[var(--deep-text)] truncate">身份头衔管理</span>
                 <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold shrink-0">站长视角</span>
+                {#if isExternalUser || profile.userKey.startsWith("matrix:") || profile.userKey.startsWith("@")}
+                  <span class="text-[10px] text-[var(--chat-meta-color)] truncate">仅在本站显示</span>
+                {/if}
               </div>
               <span class="text-[11px] text-[var(--chat-meta-color)] shrink-0 font-medium">
                 {managedBadges.length}/3
@@ -1643,10 +1862,10 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                       <div class="flex items-center gap-2">
                         <input
                           type="text"
-                          maxlength={8}
+                          maxlength={20}
                           bind:value={managedBadges[idx].text}
                           oninput={() => (managedDirty = true)}
-                          placeholder="输入头衔（最多 8 字）"
+                          placeholder="输入头衔（最多 20 字）"
                           class="chat-auth-input text-xs py-1 px-2 h-7.5 flex-1 min-w-0"
                         />
                         <button
@@ -1691,6 +1910,23 @@ function formatMessageSummary(msg: ChatUserRecentMessage): string {
                           >
                             <span class="w-1.5 h-1.5 rounded-full bg-neutral-400 inline-block"></span>
                             <span>灰色</span>
+                          </button>
+                          <button
+                            type="button"
+                            class="px-2 py-0.5 rounded text-[11px] font-medium border cursor-pointer transition-all flex items-center gap-1
+                              {badge.color === 'site'
+                                ? 'chat-role-badge--site shadow-xs font-semibold'
+                                : 'bg-transparent text-[var(--chat-meta-color)] border-transparent opacity-60 hover:opacity-100'}"
+                            onclick={() => {
+                              managedDirty = true;
+                              managedBadges[idx].color = 'site';
+                            }}
+                          >
+                            <span
+                              class="w-1.5 h-1.5 rounded-full inline-block"
+                              style="background: var(--primary);"
+                            ></span>
+                            <span>站点色</span>
                           </button>
                         </div>
                       </div>

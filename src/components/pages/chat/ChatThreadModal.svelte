@@ -3,7 +3,12 @@ import { tick } from "svelte";
 import type { InterconnectSite } from "@/types/chatConfig";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatModal from "./ChatModal.svelte";
-import { fetchThreadMessages, isMentionedForUser } from "./chatClient";
+import {
+	fetchThreadMessages,
+	isChatMessageFromCurrentUser,
+	isGroupedContinuationMessage,
+	isMentionedForUser,
+} from "./chatClient";
 import {
 	deleteChatMentionBeforeCaret,
 	getChatMentionQuery,
@@ -455,7 +460,7 @@ const threadSubtitle = $derived.by(() => {
     <div bind:this={listEl} class="chat-thread-scroll custom-scrollbar">
       <!-- 原主题消息 -->
       {#if liveRootMessage}
-        {@const rootIsSelf = Boolean(currentUser && liveRootMessage.userKey === currentUser.userKey)}
+        {@const rootIsSelf = isChatMessageFromCurrentUser(liveRootMessage, currentUser)}
         <div class="chat-thread-root-card">
           <div class="chat-thread-root-label">
             <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -531,8 +536,22 @@ const threadSubtitle = $derived.by(() => {
 
       <!-- 线程回复消息列表 -->
       <div class="flex flex-col gap-1.5">
-        {#each threadReplies as reply (reply.msgUid)}
-          {@const replyIsSelf = Boolean(currentUser && reply.userKey === currentUser.userKey)}
+        {#each threadReplies as reply, idx (reply.msgUid)}
+          {@const prevReply = idx > 0 ? threadReplies[idx - 1] : undefined}
+          {@const nextReply = idx + 1 < threadReplies.length ? threadReplies[idx + 1] : undefined}
+          {@const replyIsSelf = isChatMessageFromCurrentUser(reply, currentUser)}
+          {@const prevReplyIsSelf = prevReply ? isChatMessageFromCurrentUser(prevReply, currentUser) : false}
+          {@const nextReplyIsSelf = nextReply ? isChatMessageFromCurrentUser(nextReply, currentUser) : false}
+          {@const isGroupedReply = Boolean(
+            prevReply &&
+              replyIsSelf === prevReplyIsSelf &&
+              isGroupedContinuationMessage(prevReply, reply),
+          )}
+          {@const hasNextGroupedReply = Boolean(
+            nextReply &&
+              replyIsSelf === nextReplyIsSelf &&
+              isGroupedContinuationMessage(reply, nextReply),
+          )}
           {@const canRecallReply = Boolean(
             currentUser &&
               reply.kind === "user" &&
@@ -549,6 +568,9 @@ const threadSubtitle = $derived.by(() => {
           <ChatMessage
             message={reply}
             isSelf={replyIsSelf}
+            grouped={isGroupedReply}
+            hasNextInGroup={hasNextGroupedReply}
+            showTime={!hasNextGroupedReply}
             isHighlighted={highlightedMsgUid === reply.msgUid}
             onJumpToMessage={handleJumpToReply}
             isMentionedMe={isMentionedForUser(reply, currentUser)}

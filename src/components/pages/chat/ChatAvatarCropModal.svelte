@@ -34,7 +34,6 @@ const {
 	onClose,
 }: Props = $props();
 
-let mode = $state<"crop" | "url">("crop");
 let fileInputEl = $state<HTMLInputElement | null>(null);
 let stageEl = $state<HTMLDivElement | null>(null);
 let stageSize = $state(240);
@@ -63,19 +62,22 @@ function revokeCurrentObjectUrl() {
 	}
 }
 
+function clearLocalCrop() {
+	revokeCurrentObjectUrl();
+	imgNaturalWidth = 0;
+	imgNaturalHeight = 0;
+	zoom = 1;
+	offsetX = 0;
+	offsetY = 0;
+	isDragging = false;
+	isDragOver = false;
+}
+
 $effect(() => {
 	if (!open) {
-		revokeCurrentObjectUrl();
-		imgNaturalWidth = 0;
-		imgNaturalHeight = 0;
-		zoom = 1;
-		offsetX = 0;
-		offsetY = 0;
-		isDragging = false;
-		isDragOver = false;
+		clearLocalCrop();
 		errorText = "";
 		isUploading = false;
-		mode = "crop";
 		return;
 	}
 	urlInput = currentAvatar;
@@ -168,7 +170,6 @@ function loadSelectedFile(file: File | null | undefined) {
 		zoom = 1;
 		offsetX = 0;
 		offsetY = 0;
-		mode = "crop";
 	};
 	probe.onerror = () => {
 		URL.revokeObjectURL(nextUrl);
@@ -293,39 +294,34 @@ async function handleConfirm() {
 	if (isUploading) return;
 	errorText = "";
 
-	if (mode === "url") {
-		const trimmed = urlInput.trim().slice(0, 400);
-		if (!trimmed) {
-			onResetDefault();
+	if (objectUrl) {
+		isUploading = true;
+		try {
+			const blob = await renderCroppedBlob();
+			const { url } = await uploadChatAvatar(blob, chatServerUrl, auth);
+			onApplyAvatar(url);
 			onClose();
-			return;
+		} catch (err) {
+			errorText = err instanceof Error ? err.message : "头像上传失败，请重试";
+		} finally {
+			isUploading = false;
 		}
-		const safe = sanitizeChatUrl(trimmed, false);
-		if (!safe) {
-			errorText = "请输入合法的 http:// 或 https:// 图片链接";
-			return;
-		}
-		onApplyAvatar(safe);
-		onClose();
 		return;
 	}
 
-	if (!objectUrl) {
-		errorText = "请先选择一张本地图片，或切换为使用图片链接";
+	const trimmed = urlInput.trim().slice(0, 400);
+	if (!trimmed) {
+		onResetDefault();
+		onClose();
 		return;
 	}
-
-	isUploading = true;
-	try {
-		const blob = await renderCroppedBlob();
-		const { url } = await uploadChatAvatar(blob, chatServerUrl, auth);
-		onApplyAvatar(url);
-		onClose();
-	} catch (err) {
-		errorText = err instanceof Error ? err.message : "头像上传失败，请重试";
-	} finally {
-		isUploading = false;
+	const safe = sanitizeChatUrl(trimmed, false);
+	if (!safe) {
+		errorText = "请输入合法的 http:// 或 https:// 图片链接";
+		return;
 	}
+	onApplyAvatar(safe);
+	onClose();
 }
 
 function handleResetDefault() {
@@ -333,12 +329,23 @@ function handleResetDefault() {
 	onResetDefault();
 	onClose();
 }
+
+const previewAvatarUrl = $derived.by(() => {
+	const trimmed = urlInput.trim();
+	if (!trimmed) return "";
+	return sanitizeChatUrl(trimmed, false) || currentAvatar;
+});
+
+const isConfirmDisabled = $derived(
+	isUploading ||
+		(!objectUrl && urlInput.trim() === (currentAvatar || "").trim()),
+);
 </script>
 
 <ChatModal
   {open}
   title="更换头像"
-  subtitle={mode === "crop" ? "上传本地图片并拖动裁剪区域，或改用外部图片链接" : "输入自定义头像图片链接，可实时预览效果"}
+  subtitle="点击或拖拽上传本地图片裁剪，或在下方直接输入图片链接"
   ariaLabel="更换头像"
   size="sm"
   dialogClass="chat-avatar-modal-dialog"
@@ -359,142 +366,127 @@ function handleResetDefault() {
         onchange={handleFileInputChange}
       />
 
-      {#if mode === "crop"}
-        <!-- 裁剪主工作区 -->
-        <div class="flex flex-col items-center gap-3">
-          {#if objectUrl}
-            <div
-              bind:this={stageEl}
-              class="chat-avatar-crop-stage {isDragging ? 'is-dragging' : ''}"
-              role="application"
-              aria-label="拖动调整头像裁剪位置，滚轮缩放"
-              onpointerdown={startCropDrag}
-              onpointermove={moveCropDrag}
-              onpointerup={endCropDrag}
-              onpointercancel={endCropDrag}
-              onwheel={handleWheelZoom}
-            >
-              <img
-                src={objectUrl}
-                alt="头像裁剪预览"
-                draggable="false"
-                class="chat-avatar-crop-img"
-                style:width="{renderWidth}px"
-                style:height="{renderHeight}px"
-                style:transform="translate(calc(-50% + {offsetX}px), calc(-50% + {offsetY}px))"
-              />
-              <div class="chat-avatar-crop-mask" aria-hidden="true"></div>
-            </div>
-
-            <div class="w-full max-w-[16rem] flex items-center gap-2.5">
-              <span class="text-[11px] text-[var(--chat-meta-color)] shrink-0">缩放</span>
-              <input
-                type="range"
-                min="1"
-                max="3"
-                step="0.01"
-                value={zoom}
-                aria-label="头像缩放比例"
-                class="chat-avatar-zoom-slider flex-1 min-w-0"
-                oninput={(e) => handleZoomChange(Number(e.currentTarget.value))}
-              />
-              <span class="text-[11px] text-[var(--chat-meta-color)] tabular-nums w-9 text-right shrink-0">
-                {zoom.toFixed(1)}×
-              </span>
-            </div>
-          {:else}
-            <button
-              type="button"
-              class="chat-avatar-dropzone {isDragOver ? 'is-dragover' : ''}"
-              onclick={() => fileInputEl?.click()}
-              ondragover={(e) => {
-                e.preventDefault();
-                isDragOver = true;
-              }}
-              ondragleave={() => (isDragOver = false)}
-              ondrop={handleDrop}
-            >
-              <ChatAvatar
-                src={currentAvatar}
-                name={userName}
-                alt="当前头像预览"
-                size="lg"
-                class="w-20! h-20! text-xl!"
-              />
-              <div class="space-y-0.5 text-center">
-                <div class="text-xs font-semibold text-[var(--deep-text)]">
-                  点击选择图片或拖拽到此处
-                </div>
-                <div class="text-[11px] text-[var(--chat-meta-color)]">
-                  支持 JPG / PNG / WebP，选图后可自由裁剪
-                </div>
-              </div>
-            </button>
-          {/if}
-
-          <div class="flex items-center justify-center gap-2 flex-wrap w-full">
-            <button
-              type="button"
-              disabled={isUploading}
-              class="btn-regular md:h-8 px-3.5 md:px-3 rounded-xl md:rounded-lg text-xs font-medium cursor-pointer border-none"
-              onclick={() => fileInputEl?.click()}
-            >
-              {objectUrl ? "重新选图" : "选择本地图片"}
-            </button>
-            <button
-              type="button"
-              disabled={isUploading}
-              class="chat-dialog-inline-action h-10 md:h-8 px-3 md:px-2.5 rounded-xl md:rounded-lg text-xs font-medium text-[var(--chat-accent-text)] bg-transparent border-none cursor-pointer hover:underline"
-              onclick={() => {
-                errorText = "";
-                mode = "url";
-              }}
-            >
-              改用图片链接
-            </button>
-          </div>
-        </div>
-      {:else}
-        <!-- 图片链接模式 -->
-        <div class="flex flex-col items-center gap-3 py-1">
-          <ChatAvatar
-            src={sanitizeChatUrl(urlInput, false) || currentAvatar}
-            name={userName}
-            alt="头像链接预览"
-            size="lg"
-            class="w-20! h-20! text-xl!"
-          />
-          <div class="w-full space-y-1.5">
-            <label for="avatar-modal-url-input" class="block text-xs font-medium text-[var(--chat-meta-color)]">
-              图片链接（https://...）
-            </label>
-            <input
-              id="avatar-modal-url-input"
-              type="url"
-              maxlength={400}
-              bind:value={urlInput}
-              placeholder="输入图片链接，留空即恢复默认"
-              class="chat-auth-input"
-              onkeydown={(e) => {
-                if (e.key === "Enter" && !e.isComposing) {
-                  e.preventDefault();
-                  void handleConfirm();
-                }
-              }}
+      <!-- 上传与裁剪工作区 -->
+      <div class="flex flex-col items-center gap-3">
+        {#if objectUrl}
+          <div
+            bind:this={stageEl}
+            class="chat-avatar-crop-stage {isDragging ? 'is-dragging' : ''}"
+            role="application"
+            aria-label="拖动调整头像裁剪位置，滚轮缩放"
+            onpointerdown={startCropDrag}
+            onpointermove={moveCropDrag}
+            onpointerup={endCropDrag}
+            onpointercancel={endCropDrag}
+            onwheel={handleWheelZoom}
+          >
+            <img
+              src={objectUrl}
+              alt="头像裁剪预览"
+              draggable="false"
+              class="chat-avatar-crop-img"
+              style:width="{renderWidth}px"
+              style:height="{renderHeight}px"
+              style:transform="translate(calc(-50% + {offsetX}px), calc(-50% + {offsetY}px))"
             />
+            <div class="chat-avatar-crop-mask" aria-hidden="true"></div>
           </div>
+
+          <div class="w-full max-w-[16rem] flex items-center gap-2.5">
+            <span class="text-[11px] text-[var(--chat-meta-color)] shrink-0">缩放</span>
+            <input
+              type="range"
+              min="1"
+              max="3"
+              step="0.01"
+              value={zoom}
+              aria-label="头像缩放比例"
+              class="chat-avatar-zoom-slider flex-1 min-w-0"
+              oninput={(e) => handleZoomChange(Number(e.currentTarget.value))}
+            />
+            <span class="text-[11px] text-[var(--chat-meta-color)] tabular-nums w-9 text-right shrink-0">
+              {zoom.toFixed(1)}×
+            </span>
+          </div>
+
+          <div class="flex items-center justify-center gap-3 w-full">
+            <button
+              type="button"
+              disabled={isUploading}
+              class="btn-regular md:h-8 px-3.5 md:px-3 rounded-xl md:rounded-lg text-xs font-medium cursor-pointer border-none disabled:opacity-50"
+              onclick={() => fileInputEl?.click()}
+            >
+              重新选图
+            </button>
+            <button
+              type="button"
+              disabled={isUploading}
+              class="chat-dialog-inline-action h-8 px-2.5 rounded-lg text-xs font-medium text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] bg-transparent border-none cursor-pointer hover:underline disabled:opacity-50"
+              onclick={() => {
+                clearLocalCrop();
+                errorText = "";
+              }}
+            >
+              取消选图
+            </button>
+          </div>
+        {:else}
           <button
             type="button"
-            class="chat-dialog-inline-action h-8 px-2.5 rounded-lg text-xs font-medium text-[var(--chat-accent-text)] bg-transparent border-none cursor-pointer hover:underline"
-            onclick={() => {
-              errorText = "";
-              mode = "crop";
+            class="chat-avatar-dropzone {isDragOver ? 'is-dragover' : ''}"
+            onclick={() => fileInputEl?.click()}
+            ondragover={(e) => {
+              e.preventDefault();
+              isDragOver = true;
             }}
+            ondragleave={() => (isDragOver = false)}
+            ondrop={handleDrop}
           >
-            改用本地上传裁剪
+            <ChatAvatar
+              src={previewAvatarUrl}
+              name={userName}
+              alt="当前头像预览"
+              size="lg"
+              class="w-20! h-20! text-xl!"
+            />
+            <div class="space-y-1.5 text-center">
+              <div class="text-xs font-semibold text-[var(--deep-text)]">
+                点击浏览或拖拽图片到此处
+              </div>
+              <div class="text-[11px] leading-relaxed text-[var(--chat-meta-color)]">
+                <div>支持 JPG / PNG / WebP</div>
+                <div>选图后可自由裁剪</div>
+              </div>
+            </div>
           </button>
-        </div>
-      {/if}
+        {/if}
+      </div>
+
+      <!-- 图片链接直填区 -->
+      <div class="w-full space-y-1.5 pt-2.5 border-t border-(--chat-divider-color)">
+        <label for="avatar-modal-url-input" class="block text-xs font-medium text-[var(--chat-meta-color)]">
+          或直接输入图片链接（https://...）
+        </label>
+        <input
+          id="avatar-modal-url-input"
+          type="url"
+          maxlength={400}
+          disabled={isUploading}
+          bind:value={urlInput}
+          placeholder="输入图片链接，留空即恢复默认"
+          class="chat-auth-input"
+          oninput={() => {
+            if (objectUrl) clearLocalCrop();
+            errorText = "";
+          }}
+          onkeydown={(e) => {
+            if (e.key === "Enter" && !e.isComposing) {
+              e.preventDefault();
+              void handleConfirm();
+            }
+          }}
+        />
+      </div>
 
       {#if errorText}
         <p class="m-0 text-xs text-red-500 dark:text-red-400 text-center" role="alert">
@@ -524,7 +516,7 @@ function handleResetDefault() {
         </button>
         <button
           type="button"
-          disabled={isUploading || (mode === "crop" && !objectUrl)}
+          disabled={isConfirmDisabled}
           class="chat-send-btn md:h-8.5! px-4! rounded-xl! text-xs! inline-flex items-center justify-center gap-1.5 disabled:opacity-50"
           onclick={() => void handleConfirm()}
         >

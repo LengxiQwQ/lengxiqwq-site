@@ -45,6 +45,7 @@ export interface ChatRoomMeta {
 	name: string;
 	subtitle: string;
 	avatar?: string;
+	matrixRoomName?: string;
 }
 
 /**
@@ -72,6 +73,14 @@ export interface InterconnectSiteConfig {
 	desc?: string;
 	/** 站点来源标签/徽章文案（未填时默认使用 name） */
 	badge?: string;
+	/** 互联茶室/聊天室名称（优先于站点名显示在气泡标签） */
+	chatName?: string;
+	/** 站长或主账号 Matrix ID（用于共享 Homeserver 时的精确识别） */
+	matrixUserId?: string;
+	/** Relay 中继账号 Matrix ID */
+	matrixRelayUserId?: string;
+	/** Matrix 账号类型（如 direct / relay 等） */
+	matrixAccountType?: string;
 	/** 站点主题色（用于标签边框、阴影与高亮，十六进制色值） */
 	color?: string;
 	/** 可选的历史域名、Matrix 节点域或简称别名（用于额外识别归属） */
@@ -86,6 +95,8 @@ export interface InterconnectSiteConfig {
 export interface InterconnectSite extends InterconnectSiteConfig {
 	/** 保证 url 必填，方便现有直接读取 site.url 的组件 */
 	url: string;
+	/** 站长在本站被授予的自定义头衔（运行时由服务端/前端注入，仅站长本人） */
+	ownerCustomBadges?: Array<{ text: string; color: "gold" | "gray" | "site" }>;
 }
 
 export interface ChatConfig {

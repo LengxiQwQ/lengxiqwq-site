@@ -179,3 +179,48 @@ test('a responding empty catalog cannot hide another catalog failure', async () 
   const registry = new MusicRegistry([offline, provider('netease')]);
   await assert.rejects(registry.search('紡ぎ言'), /429/);
 });
+
+test('failed request trace distinguishes a catalog timeout from a confirmed empty catalog', async t => {
+  const lines = [];
+  const write = process.stdout.write.bind(process.stdout);
+  t.mock.method(process.stdout, 'write', (data, ...args) => {
+    if (typeof data === 'string' && data.startsWith('[MusicResolution] ')) {
+      lines.push(JSON.parse(data.slice('[MusicResolution] '.length)));
+      return true;
+    }
+    return write(data, ...args);
+  });
+  const registry = new MusicRegistry([
+    { id: 'qq', search: async () => { throw Error('catalog timeout'); } }, provider('netease'),
+  ]);
+  await registry.resolveRotationTrack({ title: 'Yellow', artist: 'Coldplay', sourcePlatform: 'spotify' },
+    async () => null, { room: 'interconnect', action: 'enqueue', requestId: 'test-yellow', exactOnly: true });
+  assert.equal(lines.length, 1);
+  const [entry] = lines;
+  assert.equal(entry.requestId, 'test-yellow');
+  assert.equal(entry.attempts.qq.searchError, 'timeout');
+  assert.equal(entry.attempts.netease.catalogHits, 0);
+  assert.equal(entry.attempts.netease.status, 'no_verified_recording');
+  assert.equal(entry.verified, null);
+});
+
+test('slow or flooded trace output drops records and reports the loss after recovery', async () => {
+  const { createTraceWriter } = await import('../src/music/trace-output.mjs');
+  const lines = [];
+  let time = 0;
+  const output = { writable: true, writableNeedDrain: true, write: line => lines.push(line) };
+  const emit = createTraceWriter(output, () => time);
+  for (let i = 0; i < 100000; i++) emit('[MusicCommand]', { stage: 'received' });
+  assert.equal(lines.length, 0);
+  output.writableNeedDrain = false;
+  for (let i = 0; i < 250; i++) emit('[MusicCommand]', {});
+  assert.equal(lines.length, 200);
+  assert.match(lines[0], /"droppedBefore":100000/);
+  emit('[MusicCommand]', { ok: false });
+  assert.equal(lines.length, 201);
+  assert.match(lines.at(-1), /"droppedBefore":50/);
+  time += 1000;
+  emit('[MusicCommand]', { reason: 'x'.repeat(9000) });
+  emit('[MusicCommand]', {});
+  assert.match(lines.at(-1), /"droppedBefore":1/);
+});

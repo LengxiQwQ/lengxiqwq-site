@@ -1,5 +1,10 @@
 <script lang="ts">
 import { tick } from "svelte";
+import {
+	countChatStatusCharacters,
+	fitsMatrixStatus,
+	MAX_CHAT_STATUS_CHARACTERS,
+} from "./chatStatus";
 import Icon from "@/components/common/Icon.svelte";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatAvatarCropModal from "./ChatAvatarCropModal.svelte";
@@ -19,7 +24,6 @@ import {
 	type ChatDesktopNotificationMode,
 	type ChatProfileDraft,
 	type ChatSessionUser,
-	type ChatStatusPreset,
 } from "./chatTypes";
 
 type EditableField = "nickname" | "bio" | "url";
@@ -38,7 +42,9 @@ interface Props {
 	notificationTestSeconds?: number;
 	notificationNeedsMigration?: boolean;
 	onTestNotification?: () => void;
-	onSave: (draft: ChatProfileDraft) => void;
+	onSave: (draft: Partial<ChatProfileDraft>) => void;
+	pendingStatus?: string;
+	statusSyncMessage?: string;
 	onClose: () => void;
 	onLogout?: () => void;
 }
@@ -58,6 +64,8 @@ const {
 	notificationNeedsMigration = false,
 	onTestNotification,
 	onSave,
+	pendingStatus,
+	statusSyncMessage,
 	onClose,
 	onLogout,
 }: Props = $props();
@@ -77,6 +85,18 @@ let draftNotifyEmail = $state(true);
 let editingField = $state<EditableField | null>(null);
 let editingValue = $state("");
 let statusPickerOpen = $state(false);
+let customStatus = $state("");
+let composingStatus = $state(false);
+const customStatusId = $props.id();
+const trimmedCustomStatus = $derived(customStatus.trim());
+const customStatusLength = $derived(countChatStatusCharacters(trimmedCustomStatus));
+const customStatusFitsMatrix = $derived(fitsMatrixStatus(trimmedCustomStatus));
+const canSaveCustomStatus = $derived(
+	customStatusLength > 0 &&
+	customStatusLength <= MAX_CHAT_STATUS_CHARACTERS &&
+	customStatusFitsMatrix &&
+	!composingStatus
+);
 let avatarModalOpen = $state(false);
 let activeInputEl = $state<HTMLInputElement | null>(null);
 let heroEl = $state<HTMLElement | null>(null);
@@ -137,11 +157,6 @@ const accountOriginText = $derived.by(() => {
 	return parts.join(" · ");
 });
 
-function normalizePresetStatus(raw?: string): string {
-	if (!raw) return "";
-	return CHAT_STATUS_PRESETS.includes(raw as ChatStatusPreset) ? raw : "";
-}
-
 $effect(() => {
 	if (!open) {
 		wasOpen = false;
@@ -157,7 +172,7 @@ $effect(() => {
 	if (justOpened || editingField !== "nickname") {
 		draftNickname = currentUser.name;
 	}
-	draftStatus = normalizePresetStatus(currentUser.status);
+	draftStatus = pendingStatus ?? currentUser.status ?? "";
 	if (justOpened || editingField !== "bio") {
 		draftBio = currentUser.bio || "";
 	}
@@ -208,7 +223,7 @@ function commitProfile(patch: Partial<ChatProfileDraft>) {
 	if (!currentUser) return;
 	const nextNickname =
 		(patch.nickname ?? draftNickname).trim().slice(0, 16) || currentUser.name;
-	const nextStatus = normalizePresetStatus(patch.status ?? draftStatus);
+	const nextStatus = patch.status ?? draftStatus;
 	const nextBio = (patch.bio ?? draftBio).trim().slice(0, 80);
 	const nextUrl = (patch.url ?? draftUrl).trim().slice(0, 200);
 	const nextNotifyEmail = isNotifyDisabled
@@ -221,20 +236,8 @@ function commitProfile(patch: Partial<ChatProfileDraft>) {
 	draftUrl = nextUrl;
 	draftNotifyEmail = nextNotifyEmail;
 
-	const payload: ChatProfileDraft = {
-		nickname: nextNickname,
-		badge: roleBadge.label,
-		status: nextStatus,
-		bio: nextBio,
-		url: nextUrl,
-		notifyEmail: nextNotifyEmail,
-	};
-	if (typeof patch.avatar === "string") {
-		const nextAvatar = patch.avatar.trim().slice(0, 400);
-		draftAvatar = nextAvatar;
-		payload.avatar = nextAvatar;
-	}
-	onSave(payload);
+	if (typeof patch.avatar === "string") draftAvatar = patch.avatar.trim().slice(0, 400);
+	onSave(patch);
 }
 
 async function startEdit(field: EditableField) {
@@ -289,6 +292,22 @@ function handleInlineKeydown(event: KeyboardEvent) {
 		event.stopPropagation();
 		cancelEdit();
 	}
+}
+
+function toggleStatusPicker() {
+	if (editingField) cancelEdit();
+	if (!statusPickerOpen) {
+		customStatus = draftStatus;
+		composingStatus = false;
+	}
+	statusPickerOpen = !statusPickerOpen;
+}
+
+function saveCustomStatus(event: SubmitEvent) {
+	event.preventDefault();
+	if (!canSaveCustomStatus) return;
+	commitProfile({ status: trimmedCustomStatus });
+	statusPickerOpen = false;
 }
 
 function handleStatusSelect(preset: string) {
@@ -371,6 +390,7 @@ async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
                 name={draftNickname || currentUser.name}
                 alt="当前头像"
                 size="lg"
+                ring
                 class="w-16! h-16! text-lg!"
               />
               <span class="chat-profile-avatar-badge" aria-hidden="true">
@@ -437,15 +457,12 @@ async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
               <div class="flex items-center gap-2 flex-wrap">
                 <button
                   type="button"
-                  class="chat-profile-status-pill {draftStatus ? 'is-active' : ''}"
+                  class="chat-profile-status-pill max-w-full min-w-0 {draftStatus ? 'is-active' : ''}"
                   aria-expanded={statusPickerOpen}
-                  onclick={() => {
-                    if (editingField) cancelEdit();
-                    statusPickerOpen = !statusPickerOpen;
-                  }}
+                  onclick={toggleStatusPicker}
                 >
                   <span class="chat-profile-status-dot" aria-hidden="true"></span>
-                  <span>{draftStatus || "在线 · 设置状态"}</span>
+                  <span class="min-w-0 truncate">{draftStatus || "在线 · 设置状态"}</span>
                   <svg
                     class="size-3 opacity-70 transition-transform duration-150 {statusPickerOpen ? 'rotate-180' : ''}"
                     viewBox="0 0 24 24"
@@ -469,6 +486,10 @@ async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
             </div>
           </div>
 
+          {#if statusSyncMessage}
+            <p class="text-xs text-[var(--chat-meta-color)]" role="status">{statusSyncMessage}</p>
+          {/if}
+
           {#if statusPickerOpen}
             <div class="chat-profile-popover" role="region" aria-label="选择当前状态">
               <div class="flex items-center justify-between gap-2 mb-2">
@@ -485,6 +506,41 @@ async function handleSelectNotificationMode(mode: ChatDesktopNotificationMode) {
                   </button>
                 {/if}
               </div>
+              <form class="mb-3" onsubmit={saveCustomStatus}>
+                <label for={customStatusId} class="mb-1 block text-xs text-[var(--chat-meta-color)]">
+                  自定义状态
+                </label>
+                <div class="flex min-w-0 items-center gap-2">
+                  <input
+                    id={customStatusId}
+                    type="text"
+                    class="chat-auth-input chat-profile-inline-input min-w-0 flex-1"
+                    bind:value={customStatus}
+                    aria-describedby={customStatusId + "-length"}
+                    aria-invalid={customStatusLength > MAX_CHAT_STATUS_CHARACTERS || !customStatusFitsMatrix}
+                    oncompositionstart={() => (composingStatus = true)}
+                    oncompositionend={() => (composingStatus = false)}
+                    onkeydown={(event) => {
+                      if (event.key === "Enter" && (event.isComposing || composingStatus)) event.preventDefault();
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    class="chat-profile-status-chip shrink-0 disabled:cursor-default disabled:opacity-50"
+                    disabled={!canSaveCustomStatus}
+                  >
+                    保存
+                  </button>
+                </div>
+                <p id={customStatusId + "-length"} class="mt-1 text-xs text-[var(--chat-meta-color)]">
+                  {customStatusLength} / {MAX_CHAT_STATUS_CHARACTERS}
+                  {#if customStatusLength > MAX_CHAT_STATUS_CHARACTERS}
+                    · 最多 {MAX_CHAT_STATUS_CHARACTERS} 个字符
+                  {:else if !customStatusFitsMatrix}
+                    · 复杂表情占用空间较多，请缩短状态
+                  {/if}
+                </p>
+              </form>
               <div class="chat-profile-status-chips custom-scrollbar">
                 {#each CHAT_STATUS_PRESETS as preset (preset)}
                   <button

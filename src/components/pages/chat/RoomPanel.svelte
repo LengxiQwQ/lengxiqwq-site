@@ -6,14 +6,18 @@ import ChatAvatar, {
 	canCorsDownscaleAvatar,
 	downscaleImgElementInPlace,
 	getDownscaledAvatarUrl,
+	hasAvatarLoadFailed,
 } from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
 import ChatTooltip from "./ChatTooltip.svelte";
 import {
-	getLocalSiteName,
+	getLocalSiteChatBadge,
 	isExternalMatrixIdentity,
 	resolveExternalOrigin,
+	resolveOriginalAvatarTarget,
+	stripSiteSuffix,
 } from "./chatClient";
+import { openChatAvatarLightbox } from "./chatLightbox";
 import type {
 	ChatDesktopNotificationMode,
 	ChatMentionCandidate,
@@ -94,7 +98,7 @@ $effect(() => {
 
 /** 互联房间（跨站联邦聊天）的房间 id */
 const INTERCONNECT_ROOM_IDS = new Set(["interconnect"]);
-const localSiteName = $derived(getLocalSiteName(interconnectSites));
+const localSiteName = $derived(getLocalSiteChatBadge(interconnectSites));
 /** 互联房间内是否在成员副标题中显示在线/自定义状态（保留逻辑以便后续按需开启） */
 const SHOW_STATUS_IN_INTERCONNECT = false;
 
@@ -437,6 +441,24 @@ function isMemberFocused(member: ChatOnlineMember): boolean {
 	return member.isFocused !== false;
 }
 
+function previewAvatar(
+	avatarUrl: string | undefined,
+	name: string,
+	triggerEl: HTMLElement | null,
+) {
+	const target = resolveOriginalAvatarTarget(
+		avatarUrl,
+		undefined,
+		name,
+		hasAvatarLoadFailed,
+	);
+	if (!target.src) return;
+	void openChatAvatarLightbox(target.src, {
+		fallbackSrc: target.fallbackSrc,
+		triggerEl,
+	});
+}
+
 let now = $state(Date.now());
 $effect(() => {
 	const timer = setInterval(() => {
@@ -736,8 +758,8 @@ function formatOfflineTime(ts?: number): string {
     {@const dotClass = isFallbackOnline ? "chat-online-dot--fallback" : isFocused ? "" : "chat-online-dot--away"}
     {@const dotTitle = isFallbackOnline ? "在线" : isFocused ? "在线" : "离开"}
     {@const origin = isExternal ? resolveExternalOrigin(member, interconnectSites) : null}
-    {@const displayName = origin ? origin.cleanName : member.name}
-    {@const siteName = origin?.siteName || "外部站点"}
+    {@const displayName = origin ? origin.cleanName : (stripSiteSuffix(member.name) || member.name)}
+    {@const siteName = origin?.chatBadge || origin?.siteName || origin?.host || "外部站点"}
     {@const offlineTime = isOnline ? "" : formatOfflineTime((member as ChatMentionCandidate).lastSeenAt)}
     {@const subtitle = isCurrentInterconnect
       ? (isExternal
@@ -756,50 +778,56 @@ function formatOfflineTime(ts?: number): string {
       : (isOnline
           ? formatOnlineLine(member as ChatOnlineMember, isFocused)
           : offlineTime)}
-    <button
-      type="button"
-      class="chat-virtual-row chat-user-item group justify-between w-full text-left border-none bg-transparent {isOnline ? '' : 'opacity-75 hover:opacity-100'}"
-      aria-label={`查看 ${displayName} 的个人资料`}
-      onclick={() =>
-        onOpenUserProfile?.({
-          userKey: member.userKey,
-          authType: member.authType || (member.userKey.startsWith("waline:") ? "waline" : "guest"),
-          name: displayName,
-          avatar: member.avatar,
-          url: member.url,
-          site: member.site,
-          siteUrl: member.siteUrl,
-          badge: isExternal ? (member.badge || "互联茶友") : roleBadge.label,
-          badgeType: isExternal ? "tag" : roleBadge.type,
-          customBadges: member.customBadges,
-          isAdmin: member.isAdmin,
-          online: isOnline,
-          isFocused,
-          presenceMode,
-          status: member.status,
-          bio: isExternal ? (member.bio || `来自 ${origin?.siteName || "互联茶室"}`) : member.bio,
-          location: member.location,
-        })}
-    >
-      <div class="flex items-center gap-2.5 min-w-0 flex-1">
-        <div class="relative shrink-0">
-          <ChatAvatar
-            src={member.avatar}
-            name={displayName}
-            size="sm"
-            grayscale={!isOnline}
-            mutedTone={!isOnline}
-            lazy={lazyAvatar || isExternal}
-          />
-          {#if isOnline}
-            <span
-              aria-label={dotTitle}
-              class="chat-online-dot {dotClass} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
-            ></span>
-          {/if}
-        </div>
+    <div class="chat-virtual-row chat-user-item group justify-between w-full text-left {isOnline ? '' : 'opacity-75 hover:opacity-100'}">
+      <button
+        type="button"
+        class="chat-avatar-zoom-btn relative shrink-0"
+        aria-label={`查看大图查看 ${displayName} 的头像`}
+        onclick={(e) => previewAvatar(member.avatar, displayName, e.currentTarget)}
+      >
+        <ChatAvatar
+          src={member.avatar}
+          name={displayName}
+          size="sm"
+          grayscale={!isOnline}
+          mutedTone={!isOnline}
+          lazy={lazyAvatar || isExternal}
+          ring
+        />
+        {#if isOnline}
+          <span
+            aria-label={dotTitle}
+            class="chat-online-dot {dotClass} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80 pointer-events-none"
+          ></span>
+        {/if}
+      </button>
 
-        <div class="min-w-0 flex flex-col">
+      <button
+        type="button"
+        class="flex items-center justify-between gap-2 min-w-0 flex-1 text-left border-none bg-transparent p-0 cursor-pointer"
+        aria-label={`查看 ${displayName} 的个人资料`}
+        onclick={() =>
+          onOpenUserProfile?.({
+            userKey: member.userKey,
+            authType: member.authType || (member.userKey.startsWith("waline:") ? "waline" : "guest"),
+            name: displayName,
+            avatar: member.avatar,
+            url: member.url,
+            site: member.site,
+            siteUrl: member.siteUrl,
+            badge: isExternal ? (member.badge || "互联茶友") : roleBadge.label,
+            badgeType: isExternal ? "tag" : roleBadge.type,
+            customBadges: member.customBadges,
+            isAdmin: member.isAdmin,
+            online: isOnline,
+            isFocused,
+            presenceMode,
+            status: member.status,
+            bio: isExternal ? (member.bio || `来自 ${origin?.siteName || "互联茶室"}`) : member.bio,
+            location: member.location,
+          })}
+      >
+        <div class="min-w-0 flex flex-col flex-1">
           <div class="flex items-center gap-1.5 min-w-0">
             <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/90 group-hover:text-[var(--primary)] transition-colors">
               {displayName}
@@ -811,7 +839,10 @@ function formatOfflineTime(ts?: number): string {
             {/if}
             {#if member.customBadges && member.customBadges.length > 0}
               {#each member.customBadges as b (b.text)}
-                <span class="chat-role-badge chat-role-badge--{b.color}">
+                <span
+                  class="chat-role-badge chat-role-badge--{b.color}"
+                  style={b.color === 'site' && origin?.site?.color ? `--site-badge-color: ${origin.site.color};` : undefined}
+                >
                   {b.text}
                 </span>
               {/each}
@@ -821,45 +852,31 @@ function formatOfflineTime(ts?: number): string {
             {subtitle}
           </span>
         </div>
-      </div>
 
-      {#if muted}
-        <span
-          class="text-[var(--chat-meta-color)] opacity-65 shrink-0 inline-flex items-center justify-center pr-0.5"
-          aria-label="已静音"
-        >
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
-          </svg>
-        </span>
-      {/if}
-    </button>
+        {#if muted}
+          <span
+            class="text-[var(--chat-meta-color)] opacity-65 shrink-0 inline-flex items-center justify-center pr-0.5"
+            aria-label="已静音"
+          >
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
+            </svg>
+          </span>
+        {/if}
+      </button>
+    </div>
   {/snippet}
 
-  {#snippet observerItemInner(displayName: string, subtitle: string, isFocused: boolean, muted: boolean, clickable: boolean, obs?: ChatOnlineMember | null)}
-    <div class="flex items-center gap-2.5 min-w-0 flex-1">
-      <div class="relative shrink-0">
-        <ChatAvatar
-          src={obs?.avatar}
-          name={obs?.userKey || obs?.name || displayName}
-          size="sm"
-        />
-        <span
-          aria-label={isFocused ? "在线" : "离开"}
-          class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"
-        ></span>
-      </div>
-
-      <div class="min-w-0 flex flex-col">
-        <div class="flex items-center gap-1.5 min-w-0">
-          <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/90 {clickable ? 'group-hover:text-[var(--primary)]' : ''} transition-colors">
-            {displayName}
-          </span>
-        </div>
-        <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
-          {subtitle}
+  {#snippet observerInfoContent(displayName: string, subtitle: string, muted: boolean, clickable: boolean)}
+    <div class="min-w-0 flex flex-col flex-1">
+      <div class="flex items-center gap-1.5 min-w-0">
+        <span class="truncate font-medium text-[var(--deep-text)] dark:text-white/90 {clickable ? 'group-hover:text-[var(--primary)]' : ''} transition-colors">
+          {displayName}
         </span>
       </div>
+      <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate -mt-0.5">
+        {subtitle}
+      </span>
     </div>
 
     {#if muted}
@@ -871,6 +888,42 @@ function formatOfflineTime(ts?: number): string {
           <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51A8.796 8.796 0 0 0 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3 3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06a8.99 8.99 0 0 0 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4 9.91 6.09 12 8.18V4z" />
         </svg>
       </span>
+    {/if}
+  {/snippet}
+
+  {#snippet observerItemInner(displayName: string, subtitle: string, isFocused: boolean, muted: boolean, clickable: boolean, obs?: ChatOnlineMember | null, onOpenInfo?: () => void)}
+    {@const obsName = obs?.userKey || obs?.name || displayName}
+    <button
+      type="button"
+      class="chat-avatar-zoom-btn relative shrink-0"
+      aria-label={`查看大图查看 ${displayName} 的头像`}
+      onclick={(e) => previewAvatar(obs?.avatar, obsName, e.currentTarget)}
+    >
+      <ChatAvatar
+        src={obs?.avatar}
+        name={obsName}
+        size="sm"
+        ring
+      />
+      <span
+        aria-label={isFocused ? "在线" : "离开"}
+        class="chat-online-dot {isFocused ? '' : 'chat-online-dot--away'} absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80 pointer-events-none"
+      ></span>
+    </button>
+
+    {#if clickable && onOpenInfo}
+      <button
+        type="button"
+        class="flex items-center justify-between gap-2 min-w-0 flex-1 text-left border-none bg-transparent p-0 cursor-pointer"
+        aria-label="查看旁观者信息"
+        onclick={onOpenInfo}
+      >
+        {@render observerInfoContent(displayName, subtitle, muted, true)}
+      </button>
+    {:else}
+      <div class="flex items-center justify-between gap-2 min-w-0 flex-1">
+        {@render observerInfoContent(displayName, subtitle, muted, false)}
+      </div>
     {/if}
   {/snippet}
 
@@ -889,11 +942,8 @@ function formatOfflineTime(ts?: number): string {
     {@const muted = obs ? obs.isMuted !== false : false}
     {#if obs}
       {#if isCurrentUserAdmin}
-        <button
-          type="button"
-          class="chat-virtual-row chat-user-item group justify-between w-full text-left border-none bg-transparent cursor-pointer"
-          aria-label="查看旁观者信息"
-          onclick={() =>
+        <div class="chat-virtual-row chat-user-item group justify-between w-full text-left">
+          {@render observerItemInner(displayName, subtitle, isFocused, muted, true, obs, () =>
             onOpenUserProfile?.({
               userKey: obs.userKey,
               authType: "guest",
@@ -916,10 +966,8 @@ function formatOfflineTime(ts?: number): string {
               firstSeenAt: obs.firstSeenAt || obs.connectedAt,
               totalDurationSec: obs.totalDurationSec,
               totalDurationFormatted: obs.totalDurationFormatted,
-            })}
-        >
-          {@render observerItemInner(displayName, subtitle, isFocused, muted, true, obs)}
-        </button>
+            }))}
+        </div>
       {:else}
         <div class="chat-user-item justify-between w-full text-left select-none cursor-default">
           {@render observerItemInner(displayName, subtitle, isFocused, muted, false, obs)}
@@ -979,6 +1027,7 @@ function formatOfflineTime(ts?: number): string {
             name={`spectator-${item.id || item.userKey || "history"}`}
             size="sm"
             class="opacity-75"
+            ring
           />
           <span class="w-2 h-2 rounded-full bg-neutral-400 absolute -bottom-0.5 -right-0.5 border-[1.5px] border-white/80 dark:border-neutral-900/80"></span>
         </div>
@@ -1020,7 +1069,7 @@ function formatOfflineTime(ts?: number): string {
       {@const selfBadge = resolveMemberRoleBadge(currentUser)}
       <button
         type="button"
-        class="flex items-center gap-2.5 flex-1 min-w-0 text-left bg-transparent border-none p-1 -m-1 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+        class="flex items-center gap-2.5 flex-1 min-w-0 text-left bg-transparent border-none p-2 -m-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
         aria-label="编辑个人资料"
         onclick={() => onOpenProfile?.()}
       >
@@ -1028,7 +1077,9 @@ function formatOfflineTime(ts?: number): string {
           <ChatAvatar
             src={currentUser.avatar}
             name={currentUser.name}
-            size="md"
+            size="sm"
+            class="chat-self-avatar"
+            ring
           />
           {#if connectionState === "connected"}
             <span
@@ -1059,7 +1110,7 @@ function formatOfflineTime(ts?: number): string {
             {/if}
           </div>
           <span class="text-[12px] md:text-[0.6875rem] text-[var(--chat-meta-color)] truncate">
-            {currentUser.status && currentUser.status !== "在线" ? currentUser.status : "点击设置状态..."}
+            {currentUser.status || "点击设置状态..."}
           </span>
         </div>
       </button>

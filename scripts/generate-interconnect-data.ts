@@ -77,40 +77,43 @@ function mapRemoteMemberToConfig(member: RemoteMember): InterconnectSiteConfig {
 		(member.githubUsername || "").trim() ||
 		name;
 	const badge = (member.chatName || "").trim() || name;
+	const chatName = (member.chatName || "").trim();
+	const matrixUserId = (member.matrixUserId || "").trim();
+	const matrixRelayUserId = (member.matrixRelayUserId || "").trim();
+	const matrixAccountType = (member.matrixAccountType || "").trim();
 	const avatar = (member.siteIconUrl || "").trim();
 	const desc = (member.siteDescription || "").trim();
 	const homeserver = (member.homeserver || "").trim();
 	const color = (member.color || "").trim();
 
 	const aliasSet = new Set<string>();
-	if (member.chatName?.trim()) aliasSet.add(member.chatName.trim());
-	if (member.matrixUserId?.trim()) aliasSet.add(member.matrixUserId.trim());
-	if (member.matrixRelayUserId?.trim())
-		aliasSet.add(member.matrixRelayUserId.trim());
+	if (chatName) aliasSet.add(chatName);
+	if (matrixUserId) aliasSet.add(matrixUserId);
+	if (matrixRelayUserId) aliasSet.add(matrixRelayUserId);
 	if (member.githubUsername?.trim()) aliasSet.add(member.githubUsername.trim());
 
-	// 针对已知友站做常见口语化历史别名补充（利于 Matrix 消息精准识别）
-	if (siteUrl.includes("rainzt.cn") || homeserver.includes("rainzt.cn")) {
+	// 针对已知友站做常见口语化历史别名补充（仅按各站独有 siteUrl 匹配，避免共享 homeserver 时误串别名）
+	if (siteUrl.includes("rainzt.cn")) {
 		aliasSet.add("听雨");
 		aliasSet.add("听雨茶室");
 	}
-	if (siteUrl.includes("yybb.us") || homeserver.includes("yybb.us")) {
+	if (siteUrl.includes("yybb.us")) {
 		aliasSet.add("aiovtue");
 		aliasSet.add("雪的茶室");
 		aliasSet.add("chat.yybb.us");
 	}
-	if (siteUrl.includes("somoe.xyz") || homeserver.includes("gbk.ink")) {
+	if (siteUrl.includes("somoe.xyz")) {
 		aliasSet.add("gbk.ink");
 		aliasSet.add("gbk");
 		aliasSet.add("chat.gbk.ink");
 	}
-	if (siteUrl.includes("9ll.uk") || homeserver.includes("0dm.cn")) {
+	if (siteUrl.includes("9ll.uk") || siteUrl.includes("0dm.cn")) {
 		aliasSet.add("鹤渊");
 		aliasSet.add("9ll.uk");
 		aliasSet.add("0dm.cn");
 		aliasSet.add("matrix.0dm.cn");
 	}
-	if (siteUrl.includes("mibase.top") || homeserver.includes("mibase.top")) {
+	if (siteUrl.includes("mibase.top")) {
 		aliasSet.add("mibase.top");
 	}
 	if (siteUrl.includes("qingwu.ink")) {
@@ -127,6 +130,10 @@ function mapRemoteMemberToConfig(member: RemoteMember): InterconnectSiteConfig {
 		avatar: avatar || undefined,
 		desc: desc || undefined,
 		badge: badge || undefined,
+		chatName: chatName || undefined,
+		matrixUserId: matrixUserId || undefined,
+		matrixRelayUserId: matrixRelayUserId || undefined,
+		matrixAccountType: matrixAccountType || undefined,
 		color: color || undefined,
 		aliases: Array.from(aliasSet),
 		isSelf: false,

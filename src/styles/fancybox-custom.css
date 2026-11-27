@@ -4,6 +4,7 @@
   --fancybox-thumbs-width: 64px;
   --fancybox-thumbs-ratio: 1;
   --fancybox-thumbs-border-radius: 4px;
+  z-index: 1400;
 }
 
 .fancybox__toolbar {

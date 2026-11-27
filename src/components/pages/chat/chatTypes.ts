@@ -3,9 +3,11 @@ import type { ChatMusicTrack } from "./musicTypes";
 export type BadgeType = "host" | "accent" | "tag";
 export type ChatPresenceMode = "local" | "matrix" | "fallback" | "offline";
 
+export type ChatCustomBadgeColor = "gold" | "gray" | "site";
+
 export interface ChatCustomBadge {
 	text: string;
-	color: "gold" | "gray";
+	color: ChatCustomBadgeColor;
 }
 
 export const CHAT_STATUS_PRESETS = [
@@ -16,7 +18,6 @@ export const CHAT_STATUS_PRESETS = [
 	"学习中",
 	"工作中",
 	"忙碌中",
-	"开会中",
 	"码字中",
 	"思考中",
 	"游戏中",
@@ -34,7 +35,6 @@ export const CHAT_STATUS_PRESETS = [
 	"困困的",
 	"熬夜中",
 	"挂机中",
-	"闭关中",
 	"充电中",
 	"元气满满",
 	"emo中",
@@ -66,6 +66,7 @@ export interface ChatSessionUser {
 	matrixUser?: string | null;
 	matrixId?: string | null;
 	matrixServer?: string | null;
+	matrixSender?: string;
 }
 
 export interface ChatProfileDraft {
@@ -133,6 +134,7 @@ export interface ChatUserDetailSeed {
 	matrixUser?: string | null;
 	matrixId?: string | null;
 	matrixServer?: string | null;
+	matrixSender?: string;
 }
 
 export interface ChatUserRequestedTrackItem {
@@ -207,6 +209,7 @@ export interface ChatUserDetailProfile {
 	matrixUser?: string | null;
 	matrixId?: string | null;
 	matrixServer?: string | null;
+	matrixSender?: string;
 }
 
 export interface ChatMentionCandidate {
@@ -232,6 +235,7 @@ export interface ChatMentionCandidate {
 	matrixUser?: string | null;
 	matrixId?: string | null;
 	matrixServer?: string | null;
+	matrixSender?: string;
 }
 
 export interface ImageAttachment {
@@ -346,6 +350,7 @@ export interface ChatMessageRecord {
 	url: string;
 	site?: string;
 	siteUrl?: string;
+	matrixSender?: string;
 	badge: string;
 	badgeType: BadgeType;
 	customBadges?: ChatCustomBadge[];
@@ -359,6 +364,10 @@ export interface ChatMessageRecord {
 	threadRootUid?: string;
 	threadSummary?: ChatThreadSummary | null;
 	createdAt: number;
+	isRedacted?: boolean;
+	recalledAt?: number;
+	recalledByName?: string;
+	recallArchiveIncomplete?: boolean;
 	reactions?: Record<string, string[]>;
 	isEdited?: boolean;
 	editedAt?: number;
@@ -643,4 +652,80 @@ export interface ChatSpectatorRecord {
 	lastRoom?: string;
 	listenedMusic?: boolean;
 	userAgent?: string;
+}
+
+export interface ChatRoomEditableCaps {
+	name: boolean;
+	topic: boolean;
+	avatar: boolean;
+	joinRule: boolean;
+	historyVisibility: boolean;
+	guestAccess: boolean;
+	canonicalAlias: boolean;
+	powerLevels: boolean;
+	pinnedEvents: boolean;
+}
+
+export interface ChatRoomPowerLevels {
+	users: Record<string, number>;
+	usersDefault: number;
+	eventsDefault: number;
+	stateDefault: number;
+	ban: number;
+	kick: number;
+	invite: number;
+	redact: number;
+	notificationsRoom: number;
+	events?: Record<string, number>;
+}
+
+export interface ChatRoomMetaInfo {
+	isInterconnect: boolean;
+	matrixRoomId?: string;
+	roomVersion?: string;
+	creator?: string;
+	additionalCreators?: string[];
+	canonicalAlias?: string;
+	altAliases?: string[];
+	joinRule?: string;
+	historyVisibility?: string;
+	guestAccess?: string;
+	encrypted?: boolean;
+	joinedMemberCount?: number;
+	powerLevels?: ChatRoomPowerLevels;
+	adminUserId?: string;
+	adminPowerLevel?: number;
+	isCreator?: boolean;
+	canEdit: ChatRoomEditableCaps;
+}
+
+export interface ChatRoomActionResult {
+	ok: boolean;
+	error?: string;
+	roomId?: string;
+	roomMeta?: ChatRoomMetaInfo;
+}
+
+export type ChatRoomJoinRule = "public" | "invite" | "knock";
+export type ChatRoomHistoryVisibility =
+	| "world_readable"
+	| "shared"
+	| "invited"
+	| "joined";
+export type ChatRoomGuestAccess = "can_join" | "forbidden";
+
+export interface ChatRoomPowerLevelPatch {
+	usersDefault?: number;
+	eventsDefault?: number;
+	stateDefault?: number;
+	ban?: number;
+	kick?: number;
+	invite?: number;
+	redact?: number;
+	notificationsRoom?: number;
+	setUser?: {
+		userId: string;
+		level?: number;
+		remove?: boolean;
+	};
 }

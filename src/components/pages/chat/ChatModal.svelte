@@ -124,6 +124,7 @@ $effect(() => {
 	const handleKeydown = (e: KeyboardEvent) => {
 		if (topChatModal() !== backdrop || e.defaultPrevented || e.isComposing) return;
 		if (e.key === "Escape") {
+			if (document.querySelector(".fancybox__container")) return;
 			e.preventDefault();
 			if (open) onClose();
 			return;

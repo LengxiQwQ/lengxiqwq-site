@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { fork } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 // Run against a fresh candidate inside the private network/mount namespace.
@@ -15,7 +16,12 @@ const server = fork('./server.mjs', [], {
   silent: true,
 });
 server.stderr.resume();
-server.stdout.resume();
+const traceEvents = [];
+createInterface({ input: server.stdout }).on('line', line => {
+  if (line.startsWith('[MusicCommand] ') || line.startsWith('[MusicResolution] ')) {
+    traceEvents.push(JSON.parse(line.slice(line.indexOf(' ') + 1)));
+  }
+});
 const sockets = [];
 const deadline = AbortSignal.timeout(5000);
 async function until(fn, label, ms = 8000) {
@@ -158,7 +164,7 @@ try {
   // Double/triple-tapping the same visible song must advance exactly once.
   const old = a.state.current.uid;
   const tCut = performance.now();
-  for (let i = 0; i < 5; i++) a.send({ type: 'music:skip', playUid: old });
+  for (let i = 0; i < 5; i++) a.send({ type: 'music:skip', playUid: old, requestId: 'cut-' + i });
   await stateIs(b, 'songB');
   await stateIs(a, 'songB');
   const firstCutMs = Math.round(performance.now() - tCut);
@@ -166,9 +172,13 @@ try {
   assert.equal(current(b), 'songB');
   assert.deepEqual(queue(b), list.slice(2));
   // A second person can have a stale display; their delayed command must not skip B.
-  b.send({ type: 'music:skip', playUid: old });
+  b.send({ type: 'music:skip', playUid: old, requestId: 'stale-cut' });
   await sleep(50);
   assert.equal(current(a), 'songB');
+  assert.ok(traceEvents.some(e => e.requestId === 'stale-cut' && e.stage === 'stale_play'));
+  assert.ok(traceEvents.some(e => e.requestId === 'cut-0' && e.stage === 'transition_finished' && e.changed));
+  assert.ok(traceEvents.some(e => e.requestId === 'interaction-1' && e.attempts?.qq?.status === 'playable'));
+  assert.ok(traceEvents.some(e => e.requestId === 'interaction-1' && e.stage === 'decision' && e.ok));
   metric('repeated skip on the old song', { current: current(b), elapsedMs: firstCutMs });
   const times = [];
   for (const id of ['songC', 'songD', 'songE']) {

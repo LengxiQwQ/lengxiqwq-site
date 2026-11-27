@@ -29,7 +29,7 @@ try {
   await symlink(testModules, join(dir, 'node_modules'), 'junction');
   let source = (await readFile(docs, 'utf8'))
     .replace(/^loadEnvFile\([^\n]+\);$/m, '')
-    .replace(/^(const (?:[A-Z0-9_]*(?:KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*)) = .*$/gm, "$1 = 'fixture';")
+    .replace(/^(const (?:CYAPI_KEY|STREAM_SIGN_SECRET|MATRIX_ADMIN_TOKEN|MATRIX_REG_TOKEN|CHAT_GUEST_SECRET)) = .*$/gm, "$1 = 'fixture';")
     .replace(/const PORT = 3001;/, 'const PORT = ' + port + ';')
     .replace(/const DATA_DIR = .*;/, 'const DATA_DIR = ' + JSON.stringify(data) + ';')
     .replace(/const SERVER_ORIGIN = .*;/, 'const SERVER_ORIGIN = ' + JSON.stringify(origin) + ';')

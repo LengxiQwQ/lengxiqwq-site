@@ -2,7 +2,11 @@
 import type { InterconnectSite } from "@/types/chatConfig";
 import ChatAvatar from "./ChatAvatar.svelte";
 import ChatModal from "./ChatModal.svelte";
-import { isExternalMatrixIdentity, resolveExternalOrigin } from "./chatClient";
+import {
+	isExternalMatrixIdentity,
+	resolveExternalOrigin,
+	stripSiteSuffix,
+} from "./chatClient";
 import {
 	type ReactionDisplayInfo,
 	resolveReactionDisplay,
@@ -88,11 +92,12 @@ function resolveUserProfileSeed(
 		}
 	}
 	const isExt = isExternalMatrixIdentity(key);
-	const baseName = profile?.name || resolvedFallback || "成员";
+	const rawBaseName = profile?.name || resolvedFallback || "成员";
+	const cleanBaseName = stripSiteSuffix(rawBaseName) || rawBaseName;
 	const origin = isExt
 		? resolveExternalOrigin(
 				{
-					name: baseName,
+					name: cleanBaseName,
 					userKey: key,
 					site: profile?.site,
 					siteUrl: profile?.siteUrl,
@@ -101,9 +106,9 @@ function resolveUserProfileSeed(
 				interconnectSites,
 			)
 		: null;
-	const cleanName = origin?.cleanName || baseName;
-	const siteName = origin?.siteName || profile?.site;
-	const displayName = siteName ? `${cleanName} (${siteName})` : cleanName;
+	const cleanName = origin?.cleanName || cleanBaseName;
+	const siteName = origin?.chatBadge || origin?.siteName || origin?.host || "";
+	const displayName = cleanName;
 
 	const seed: ChatUserDetailSeed = profile
 		? {

@@ -29,7 +29,7 @@ function positionInterconnect(node: HTMLElement) {
 	if (!reference) return;
 	return positionChatFloating(node, {
 		reference,
-		placement: "bottom-start",
+		placement: "bottom-end",
 		onReferenceHidden: onClose,
 	});
 }
@@ -72,7 +72,7 @@ onMount(() => {
     use:positionInterconnect
     class="chat-settings-popover chat-interconnect-popover"
     role="dialog"
-    aria-label="互联茶室友站列表"
+    aria-label="互联友站列表"
   >
     <!-- 顶栏标题 -->
     <div class="flex items-center justify-between gap-1.5 pt-3 pb-2 mb-2 border-b border-black/5 dark:border-white/10">
@@ -84,7 +84,7 @@ onMount(() => {
           <line x1="10" y1="1" x2="10" y2="4" />
           <line x1="14" y1="1" x2="14" y2="4" />
         </svg>
-        <span>互联茶室</span>
+        <span>互联友站</span>
       </div>
       <div class="flex items-center gap-1.5 shrink-0">
         <a
@@ -157,7 +157,7 @@ onMount(() => {
                 name={site.owner || site.name}
               />
               <div class="min-w-0 flex-1 flex flex-col justify-center">
-                <div class="flex items-center gap-1.5 min-w-0">
+                <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
                   <span
                     class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate group-hover:text-[var(--site-theme)] transition-colors"
                   >
@@ -169,6 +169,16 @@ onMount(() => {
                     >
                       本站
                     </span>
+                  {/if}
+                  {#if site.ownerCustomBadges && site.ownerCustomBadges.length > 0}
+                    {#each site.ownerCustomBadges as b, idx (`${b.text}:${idx}`)}
+                      <span
+                        class="chat-role-badge chat-role-badge--{b.color} shrink-0"
+                        style={b.color === 'site' && !site.isSelf && site.color ? `--site-badge-color: ${site.color};` : undefined}
+                      >
+                        {b.text}
+                      </span>
+                    {/each}
                   {/if}
                 </div>
                 {#if site.desc}
@@ -193,9 +203,21 @@ onMount(() => {
                 name={site.owner || site.name}
               />
               <div class="min-w-0 flex-1 flex flex-col justify-center">
-                <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
-                  {site.name || site.owner}
-                </span>
+                <div class="flex items-center gap-1.5 min-w-0 flex-wrap">
+                  <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90 truncate">
+                    {site.name || site.owner}
+                  </span>
+                  {#if site.ownerCustomBadges && site.ownerCustomBadges.length > 0}
+                    {#each site.ownerCustomBadges as b, idx (`${b.text}:${idx}`)}
+                      <span
+                        class="chat-role-badge chat-role-badge--{b.color} shrink-0"
+                        style={b.color === 'site' && !site.isSelf && site.color ? `--site-badge-color: ${site.color};` : undefined}
+                      >
+                        {b.text}
+                      </span>
+                    {/each}
+                  {/if}
+                </div>
                 {#if site.desc}
                   <span class="text-[11px] text-[var(--chat-meta-color)] truncate mt-0.5 leading-snug">
                     {site.desc}

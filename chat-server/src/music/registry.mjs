@@ -1,3 +1,4 @@
+import { writeMusicTrace } from './trace-output.mjs';
 import { createHash } from 'node:crypto';
 import { signStreamProxyUrl, verifyStreamProxyToken } from './stream-signer.mjs';
 import { probeAudio } from './audio-source.mjs';
@@ -118,6 +119,14 @@ function closeSpelling(a, b) {
 
 function splitArtists(value) {
   return String(value ?? '').normalize('NFKC').split(ARTIST_SEPARATOR).map(name => name.trim()).filter(Boolean);
+}
+
+function lookupErrorKind(error) {
+  const message = String(error?.message || '');
+  if (error?.isRiskControl) return 'rate_limited';
+  if (/timeout|timed out|超时|budget exhausted/i.test(message)) return 'timeout';
+  if (/untrusted audio host/i.test(message)) return 'untrusted_audio_host';
+  return message.match(/HTTP [45]\d\d/i)?.[0] || 'upstream_error';
 }
 
 function catalogProvider(platform) {
@@ -537,10 +546,44 @@ export class MusicRegistry {
     if (!ordered.length) return { temporaryFailure: true };
     const deadline = Date.now() + budgetMs;
     const domesticDeadline = Date.now() + 10_500;
-    const lookup = (id, signal, downloadGate) => this.resolveProviderRecording(item, resolve, id, {
-      ...options, alternatives: options.alternatives || options.autoSelectAlternative, deadline: id === 'youtube' ? deadline : Math.min(deadline, domesticDeadline), signal, downloadGate
-    });
-    const result = await lookupPreferredProviders(ordered, lookup, budgetMs, options.autoSelectAlternative ? Infinity : 3);
+    const attempts = {};
+    const lookup = async (id, signal, downloadGate) => {
+      const attempt = attempts[id] = { status: 'pending' };
+      const started = performance.now();
+      try {
+        const answer = await this.resolveProviderRecording(item, resolve, id, {
+          ...options, alternatives: options.alternatives || options.autoSelectAlternative,
+          deadline: id === 'youtube' ? deadline : Math.min(deadline, domesticDeadline), signal, downloadGate,
+          diagnostic: attempt
+        });
+        attempt.status = answer.playable ? 'playable' : answer.limited ? 'limited'
+          : answer.temporaryFailure ? 'temporary' : 'no_verified_recording';
+        return answer;
+      } catch (error) {
+        attempt.status = 'temporary';
+        attempt.error = lookupErrorKind(error);
+        throw error;
+      } finally {
+        attempt.elapsedMs = Math.round(performance.now() - started);
+      }
+    };
+    const slow = options.room && options.requestId ? setTimeout(() => {
+      writeMusicTrace('[MusicResolution]', { at: new Date().toISOString(), room: options.room,
+        action: options.action, requestId: options.requestId, stage: 'still_resolving',
+        elapsedMs: Date.now() - (deadline - budgetMs), attempts });
+    }, 3000) : undefined;
+    let result;
+    try {
+      result = await lookupPreferredProviders(ordered, lookup, budgetMs, options.autoSelectAlternative ? Infinity : 3);
+    } finally {
+      clearTimeout(slow);
+    }
+    if (options.room) writeMusicTrace('[MusicResolution]', { at: new Date().toISOString(),
+      room: options.room, action: options.action, requestId: options.requestId, title: String(item.title || '').slice(0, 240),
+      artist: String(item.artist || '').slice(0, 160), platform: item.sourcePlatform || item.provider,
+      sourceId: String(item.sourceTrackId || item.sourceId || '').slice(0, 100), order: ordered,
+      elapsedMs: Date.now() - (deadline - budgetMs), attempts, verified: result.playable?.id || null,
+      channel: result.playable?.audioSource?.channel, failures: result.failures });
     if (result.verifiedMatch) {
       const track = normalizeMusicTrack(result.playable);
       if (track) this.saveMatch(this.matchStorageKey(item, track.provider), track, STORED_MATCH_TTL_MS);
@@ -567,7 +610,7 @@ export class MusicRegistry {
   }
 
   async resolveProviderRecording(item, resolve, providerId, {
-    alternatives = false, autoSelectAlternative = false, exactOnly = false, exclude = () => false, budgetMs, preferredTrack, random = false, deadline, signal, downloadGate
+    alternatives = false, autoSelectAlternative = false, exactOnly = false, exclude = () => false, budgetMs, preferredTrack, random = false, deadline, signal, downloadGate, diagnostic
   }) {
     const platform = item.sourcePlatform || item.provider;
     const sourceId = item.sourceTrackId || item.sourceId ||
@@ -585,6 +628,7 @@ export class MusicRegistry {
       const started = performance.now();
       const remaining = Math.min(maxMs, deadline - Date.now());
       if (remaining <= 0 || signal?.aborted) throw new Error('Music lookup budget exhausted');
+      if (diagnostic && stage) diagnostic.lastStage = stage;
       let timer;
       try {
         return await Promise.race([
@@ -606,12 +650,14 @@ export class MusicRegistry {
         if (downloadGate && !this.resolved.get(track.id)?.source) {
           await downloadGate;
         }
+        if (diagnostic) diagnostic.audioChecks = (diagnostic.audioChecks || 0) + 1;
         return await bounded(() => resolve(track), providerId === 'youtube' && exactOnly ? 36_000 : maxMs, 'audio');
       } catch (err) {
         temporaryFailure = true;
         uncertainSources.add(track.id);
         limited ||= Boolean(err?.isRiskControl);
         lastFailureDetail = err?.message || '音源检查超时';
+        if (diagnostic) diagnostic.audioError = lookupErrorKind(err);
         return null;
       }
     };
@@ -629,11 +675,13 @@ export class MusicRegistry {
       if (!keyword.trim()) return [];
       try {
         const result = await bounded(() => this.search(keyword, providerId === 'kugou' ? 20 : 15, providerId), budgetMs ? 2500 : 4000, 'catalog');
+        if (diagnostic) diagnostic.catalogHits = (diagnostic.catalogHits || 0) + (result.tracks?.length || 0);
         return result.tracks || [];
       } catch (err) {
         temporaryFailure = true;
         limited ||= Boolean(err?.isRiskControl);
         lastFailureDetail = err?.message || '搜索上游响应超时';
+        if (diagnostic) diagnostic.searchError = lookupErrorKind(err);
         return [];
       }
     };

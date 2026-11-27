@@ -1,6 +1,10 @@
 import { interconnectSites as defaultInterconnectSites } from "@/config/interconnectConfig";
-import type { InterconnectSite } from "@/types/chatConfig";
-import { extractCleanHostname } from "@/utils/interconnect";
+import type { InterconnectSite, InterconnectSiteConfig } from "@/types/chatConfig";
+import { getDiceBearGlassAvatar } from "@/utils/avatar-utils";
+import {
+	extractCleanHostname,
+	normalizeInterconnectSites,
+} from "@/utils/interconnect";
 import type {
 	ChatActiveThreadItem,
 	ChatCustomBadge,
@@ -10,6 +14,7 @@ import type {
 	ChatMessageSourceResponse,
 	ChatOnlineMember,
 	ChatReadReceipt,
+	ChatRoomMetaInfo,
 	ChatSessionUser,
 	ChatUserDetailProfile,
 	ChatUserTracksPage,
@@ -20,7 +25,7 @@ import type {
 } from "./chatTypes";
 import type { ChatMusicTrack } from "./musicTypes";
 
-export { getDiceBearGlassAvatar } from "@/utils/avatar-utils";
+export { getDiceBearGlassAvatar };
 export {
 	checkEmailDeliverability,
 	checkGuestRegistrationEmail,
@@ -44,6 +49,7 @@ export interface StoredGuestMeta {
 export interface RoomInitPacket {
 	type: "room:init";
 	interconnected?: boolean;
+	interconnectSites?: InterconnectSiteConfig[];
 	roomId: string;
 	self: ChatSessionUser | null;
 	mergedGuestHistory?: boolean;
@@ -61,7 +67,11 @@ export interface RoomInitPacket {
 	topic?: string;
 	roomAvatar?: string;
 	roomAvatars?: Record<string, string>;
+	matrixRoomName?: string;
+	matrixRoomNames?: Record<string, string>;
+	roomMeta?: ChatRoomMetaInfo;
 	readReceipts?: Record<string, ChatReadReceipt[]>;
+	privateRecallMessages?: ChatMessageRecord[];
 	members: ChatOnlineMember[];
 	observers?: ChatOnlineMember[];
 	mentionMembers?: ChatMentionCandidate[];
@@ -80,6 +90,11 @@ export interface MusicAudience {
 
 export type ServerPacket =
 	| RoomInitPacket
+	| {
+			type: "auth:status_result";
+			requestId: string;
+			stage: "saved" | "synced" | "save_failed" | "sync_failed" | "superseded" | "sync_unknown";
+	  }
 	| { type: "pong"; serverTime: number; id?: number }
 	| {
 			type: "auth:result";
@@ -124,6 +139,7 @@ export type ServerPacket =
 			type: "chat:history_batch";
 			roomId: string;
 			messages: ChatMessageRecord[];
+			privateRecallMessages?: ChatMessageRecord[];
 			oldestHistoryId?: number;
 			hasMoreHistory: boolean;
 			jumpTarget?: boolean;
@@ -134,6 +150,11 @@ export type ServerPacket =
 			roomId: string;
 			msgUid: string;
 			notice?: ChatMessageRecord;
+	  }
+	| {
+			type: "chat:recall_archive";
+			roomId: string;
+			message: ChatMessageRecord;
 	  }
 	| {
 			type: "chat:reaction_updated";
@@ -160,6 +181,21 @@ export type ServerPacket =
 	  }
 	| { type: "chat:topic_update"; roomId: string; topic: string }
 	| { type: "chat:room_avatar_update"; roomId: string; avatar: string }
+	| { type: "chat:room_name_update"; roomId: string; matrixRoomName: string }
+	| {
+			type: "chat:room_meta_update";
+			roomId: string;
+			roomMeta: ChatRoomMetaInfo;
+	  }
+	| {
+			type: "chat:room_action_result";
+			requestId: string;
+			action: string;
+			ok: boolean;
+			error?: string;
+			roomId?: string;
+			roomMeta?: ChatRoomMetaInfo;
+	  }
 	| {
 			type: "chat:typing";
 			roomId: string;
@@ -1567,6 +1603,127 @@ export function resolveChatAvatarFallbackUrl(raw?: string): string {
 	}
 }
 
+/** Upgrade common avatar CDN thumbnail URLs to their full-resolution original image URL. */
+export function upgradeAvatarUrlToOriginal(rawUrl: string): string {
+	const trimmed = rawUrl.trim();
+	if (!trimmed) return "";
+	if (
+		trimmed.startsWith("data:") ||
+		trimmed.startsWith("blob:")
+	) {
+		return trimmed;
+	}
+	try {
+		const origin =
+			typeof window !== "undefined"
+				? window.location.origin
+				: "https://example.invalid";
+		const parsed = new URL(trimmed, origin);
+		const isRelative = trimmed.startsWith("/");
+
+		const proxiedTarget = parsed.searchParams.get("url");
+		if (proxiedTarget) {
+			const upgradedInner = upgradeAvatarUrlToOriginal(proxiedTarget);
+			if (upgradedInner && upgradedInner !== proxiedTarget) {
+				parsed.searchParams.set("url", upgradedInner);
+				return isRelative
+					? `${parsed.pathname}${parsed.search}${parsed.hash}`
+					: parsed.toString();
+			}
+			return trimmed;
+		}
+
+		const host = parsed.hostname.toLowerCase();
+		let mutated = false;
+
+		if (host.endsWith("qlogo.cn")) {
+			if (parsed.searchParams.has("spec")) {
+				parsed.searchParams.set("spec", "640");
+				mutated = true;
+			}
+			if (parsed.searchParams.has("s") || parsed.pathname.includes("/g")) {
+				parsed.searchParams.set("s", "640");
+				mutated = true;
+			}
+		} else if (
+			host.includes("cravatar") ||
+			host.includes("gravatar") ||
+			host.includes("libravatar") ||
+			host.includes("weavatar")
+		) {
+			parsed.searchParams.set("s", "1024");
+			parsed.searchParams.delete("size");
+			mutated = true;
+		} else if (host === "avatars.githubusercontent.com") {
+			if (parsed.searchParams.has("s") || parsed.searchParams.has("size")) {
+				parsed.searchParams.delete("s");
+				parsed.searchParams.delete("size");
+				mutated = true;
+			}
+		} else if (
+			/^\/_matrix\/(?:client\/v1|media\/(?:v3|r0))\/media\/thumbnail\//i.test(
+				parsed.pathname,
+			)
+		) {
+			parsed.pathname = parsed.pathname.replace(/\/thumbnail\//i, "/download/");
+			parsed.searchParams.delete("width");
+			parsed.searchParams.delete("height");
+			parsed.searchParams.delete("method");
+			mutated = true;
+		} else if (host.endsWith("hdslb.com")) {
+			const cleanedPath = parsed.pathname.replace(
+				/(\.(?:jpg|jpeg|png|webp|gif))@[^/]+$/i,
+				"$1",
+			);
+			if (cleanedPath !== parsed.pathname) {
+				parsed.pathname = cleanedPath;
+				mutated = true;
+			}
+		}
+
+		if (!mutated) return trimmed;
+		return isRelative
+			? `${parsed.pathname}${parsed.search}${parsed.hash}`
+			: parsed.toString();
+	} catch {
+		return trimmed;
+	}
+}
+
+export function resolveOriginalAvatarTarget(
+	src?: string,
+	alternateSrc?: string,
+	name?: string,
+	isUrlFailed?: (url: string) => boolean,
+): { src: string; fallbackSrc?: string } {
+	const primary = resolveChatAvatarUrl(src);
+	const explicitAlt = resolveChatAvatarUrl(alternateSrc);
+	const gravatarAlt = resolveChatAvatarFallbackUrl(src);
+	const alternate =
+		explicitAlt && explicitAlt !== primary ? explicitAlt : gravatarAlt;
+
+	let effective = "";
+	if (primary && !isUrlFailed?.(primary)) {
+		effective = primary;
+	} else if (alternate && !isUrlFailed?.(alternate)) {
+		effective = alternate;
+	} else if (primary) {
+		effective = primary;
+	} else if (alternate) {
+		effective = alternate;
+	}
+
+	if (!effective) {
+		const clean = stripSiteSuffix((name || "").trim()) || (name || "").trim() || "spectator";
+		return { src: getDiceBearGlassAvatar(clean) };
+	}
+
+	const original = upgradeAvatarUrlToOriginal(effective);
+	return original && original !== effective
+		? { src: original, fallbackSrc: effective }
+		: { src: effective };
+}
+
 export function previewAvatarFromEmail(email: string): string {
 	const trimmed = email.trim().toLowerCase();
 	const qqMatch = trimmed.match(/^([1-9]\d{4,10})@qq\.com$/);
@@ -1574,6 +1731,24 @@ export function previewAvatarFromEmail(email: string): string {
 		return `https://q1.qlogo.cn/g?b=qq&nk=${qqMatch[1]}&s=100`;
 	}
 	return "";
+}
+
+export const userDetailCache: Map<
+	string,
+	{ profile: ChatUserDetailProfile; fetchedAt: number }
+> = new Map();
+
+export function invalidateUserDetailCache(userKey?: string): void {
+	if (!userKey) {
+		userDetailCache.clear();
+		return;
+	}
+	const suffix = `:${userKey}`;
+	for (const key of userDetailCache.keys()) {
+		if (key.endsWith(suffix)) {
+			userDetailCache.delete(key);
+		}
+	}
 }
 
 export async function fetchUserDetailProfile(
@@ -1691,8 +1866,25 @@ export async function saveMemberBadges(
 export interface ExternalOriginInfo {
 	cleanName: string;
 	siteName: string;
+	chatBadge: string;
 	site?: InterconnectSite;
 	host: string;
+}
+
+const SITE_SUFFIX_REGEX = /\s*(?:[·•・‧]\s*[^·•・‧]+|\s+\.\s+[^.]+)$/;
+
+/**
+ * 统一剥离昵称末尾的点号与站点后缀（安全保留如 Mr.Lee 等昵称内部英文点号）
+ */
+export function stripSiteSuffix(name?: string): string {
+	let current = (name || "").trim();
+	if (!current) return "";
+	for (let i = 0; i < 3; i += 1) {
+		const next = current.replace(SITE_SUFFIX_REGEX, "").trim();
+		if (!next || next === current) break;
+		current = next;
+	}
+	return current;
 }
 
 function getKnownInterconnectBadges(
@@ -1783,7 +1975,127 @@ export function isMentionedForUser(
 }
 
 export function getLocalSiteName(sites: InterconnectSite[] = []): string {
-	return sites.find((s) => s.isSelf)?.name?.trim() || "本站";
+	return sites.find((s) => s.isSelf)?.name?.trim() || "冷汐的杂货铺";
+}
+
+export function getLocalSiteChatBadge(sites: InterconnectSite[] = []): string {
+	const self = sites.find((s) => s.isSelf);
+	return (
+		self?.chatName?.trim() ||
+		self?.badge?.trim() ||
+		self?.name?.trim() ||
+		"冷汐的杂货铺"
+	);
+}
+
+function getSiteIdentityKey(site: InterconnectSiteConfig): string {
+	const siteHost = extractCleanHostname(site.siteUrl || site.url);
+	const hsHost = extractCleanHostname(site.homeserver);
+	const matrixId = (site.matrixUserId || "").trim().toLowerCase();
+	if (site.isSelf) return "__self__";
+	if (siteHost) return `site:${siteHost}`;
+	if (matrixId) return `mx:${matrixId}`;
+	if (hsHost) return `hs:${hsHost}:${(site.name || "").trim().toLowerCase()}`;
+	return `name:${(site.name || "").trim().toLowerCase()}`;
+}
+
+export function mergeInterconnectSites(
+	baseSites: InterconnectSite[] = defaultInterconnectSites,
+	remoteSites?: InterconnectSiteConfig[] | null,
+): InterconnectSite[] {
+	const normalizedBase = normalizeInterconnectSites(
+		baseSites.length > 0 ? baseSites : defaultInterconnectSites,
+	);
+	if (!Array.isArray(remoteSites) || remoteSites.length === 0) {
+		return normalizedBase;
+	}
+	const selfSite = normalizedBase.find((s) => s.isSelf);
+	const baseByKey = new Map<string, InterconnectSite>();
+	for (const s of normalizedBase) {
+		if (!s.isSelf) baseByKey.set(getSiteIdentityKey(s), s);
+	}
+
+	const mergedConfigs: InterconnectSiteConfig[] = selfSite ? [selfSite] : [];
+	const seenKeys = new Set<string>(selfSite ? ["__self__"] : []);
+
+	for (const remote of remoteSites) {
+		if (!remote || typeof remote !== "object") continue;
+		const remoteHost = extractCleanHostname(remote.siteUrl || remote.url);
+		const remoteHs = extractCleanHostname(remote.homeserver);
+		if (
+			remote.isSelf ||
+			remoteHost === "lengxiqwq.com" ||
+			remoteHost.endsWith(".lengxiqwq.com") ||
+			remoteHs === "matrix.lengxiqwq.com"
+		) {
+			continue;
+		}
+		const key = getSiteIdentityKey(remote);
+		if (seenKeys.has(key)) continue;
+		seenKeys.add(key);
+		const existing = baseByKey.get(key);
+		if (existing) {
+			const mergedAliases = Array.from(
+				new Set([...(existing.aliases ?? []), ...(remote.aliases ?? [])]),
+			);
+			mergedConfigs.push({
+				...existing,
+				...remote,
+				name: remote.name || existing.name,
+				owner: remote.owner || existing.owner,
+				siteUrl: remote.siteUrl || existing.siteUrl,
+				chatUrl: remote.chatUrl || existing.chatUrl,
+				homeserver: remote.homeserver || existing.homeserver,
+				avatar: remote.avatar || existing.avatar,
+				desc: remote.desc || existing.desc,
+				chatName: remote.chatName || remote.badge || existing.chatName,
+				badge: remote.badge || remote.chatName || existing.badge,
+				matrixUserId: remote.matrixUserId || existing.matrixUserId,
+				matrixRelayUserId:
+					remote.matrixRelayUserId || existing.matrixRelayUserId,
+				matrixAccountType:
+					remote.matrixAccountType || existing.matrixAccountType,
+				color: remote.color || existing.color,
+				aliases: mergedAliases,
+				isSelf: false,
+			});
+		} else {
+			mergedConfigs.push({ ...remote, isSelf: false });
+		}
+	}
+
+	for (const s of normalizedBase) {
+		if (s.isSelf) continue;
+		const key = getSiteIdentityKey(s);
+		if (!seenKeys.has(key)) {
+			seenKeys.add(key);
+			mergedConfigs.push(s);
+		}
+	}
+
+	return normalizeInterconnectSites(mergedConfigs);
+}
+
+export async function fetchInterconnectSites(
+	serverUrl: string,
+): Promise<InterconnectSiteConfig[] | null> {
+	const base = normalizeServerUrl(serverUrl);
+	if (!base) return null;
+	try {
+		const res = await fetch(`${base}/api/interconnect/sites`, {
+			method: "GET",
+			cache: "no-store",
+		});
+		if (!res.ok) return null;
+		const data = (await res.json().catch(() => null)) as {
+			ok?: boolean;
+			sites?: InterconnectSiteConfig[];
+		} | null;
+		if (!data?.ok || !Array.isArray(data.sites)) return null;
+		return data.sites;
+	} catch {
+		return null;
+	}
 }
 
 function extractHostname(rawUrl?: string): string {
@@ -1796,6 +2108,39 @@ function extractHostname(rawUrl?: string): string {
 	}
 }
 
+function matchSiteByMatrixId(
+	rawMatrixId: string,
+	sites: InterconnectSite[],
+): InterconnectSite | undefined {
+	const cleanId = rawMatrixId.trim().toLowerCase();
+	if (!cleanId.startsWith("@") || !cleanId.includes(":")) return undefined;
+	for (const site of sites) {
+		if (site.isSelf) continue;
+		if (site.matrixUserId && site.matrixUserId.trim().toLowerCase() === cleanId) {
+			return site;
+		}
+		if (
+			site.matrixRelayUserId &&
+			site.matrixRelayUserId.trim().toLowerCase() === cleanId
+		) {
+			return site;
+		}
+		if (Array.isArray(site.aliases)) {
+			for (const alias of site.aliases) {
+				const cleanAlias = alias.trim().toLowerCase();
+				if (
+					cleanAlias.startsWith("@") &&
+					cleanAlias.includes(":") &&
+					cleanAlias === cleanId
+				) {
+					return site;
+				}
+			}
+		}
+	}
+	return undefined;
+}
+
 function matchSiteByHostname(
 	rawHost: string,
 	sites: InterconnectSite[],
@@ -1803,8 +2148,11 @@ function matchSiteByHostname(
 	const clean = extractCleanHostname(rawHost);
 	if (!clean) return undefined;
 	for (const site of sites) {
-		if (site.isSelf && clean.includes("lengxiqwq.com")) {
-			return site;
+		if (site.isSelf) {
+			if (clean === "lengxiqwq.com" || clean.endsWith(".lengxiqwq.com")) {
+				return site;
+			}
+			continue;
 		}
 		// 1. 优先精准匹配 homeserver 域名（Matrix 原生节点）
 		if (site.homeserver) {
@@ -1841,15 +2189,16 @@ function matchSiteByHostname(
 		) {
 			return site;
 		}
-		// 3. 匹配 aliases 别名
+		// 3. 匹配 aliases 中的域名类别名（跳过 @user:host 与中文名称）
 		if (Array.isArray(site.aliases)) {
 			for (const alias of site.aliases) {
 				const cleanAlias = alias.trim().toLowerCase();
+				if (!cleanAlias || cleanAlias.startsWith("@") || !cleanAlias.includes("."))
+					continue;
 				if (
-					cleanAlias &&
-					(clean === cleanAlias ||
-						clean.includes(cleanAlias) ||
-						cleanAlias.includes(clean))
+					clean === cleanAlias ||
+					clean.endsWith(`.${cleanAlias}`) ||
+					cleanAlias.endsWith(`.${clean}`)
 				) {
 					return site;
 				}
@@ -1865,8 +2214,37 @@ function matchSiteByHint(
 ): InterconnectSite | undefined {
 	const clean = hint.trim().toLowerCase();
 	if (!clean) return undefined;
+	// 1. 精确匹配优先
 	for (const s of sites) {
+		if (s.isSelf) continue;
+		const name = (s.name || "").trim().toLowerCase();
+		const chatName = (s.chatName || "").trim().toLowerCase();
+		const badge = (s.badge || "").trim().toLowerCase();
+		const owner = (s.owner || "").trim().toLowerCase();
+		const hsHost = extractCleanHostname(s.homeserver);
+		const siteHost = extractCleanHostname(s.siteUrl || s.url);
+		const chatHost = extractCleanHostname(s.chatUrl);
+		const aliases = Array.isArray(s.aliases)
+			? s.aliases.map((a) => a.trim().toLowerCase()).filter(Boolean)
+			: [];
+		if (
+			name === clean ||
+			chatName === clean ||
+			badge === clean ||
+			owner === clean ||
+			hsHost === clean ||
+			siteHost === clean ||
+			chatHost === clean ||
+			aliases.includes(clean)
+		) {
+			return s;
+		}
+	}
+	// 2. 模糊包含匹配兜底
+	for (const s of sites) {
+		if (s.isSelf) continue;
 		const name = (s.name || "").toLowerCase();
+		const chatName = (s.chatName || "").toLowerCase();
 		const badge = (s.badge || "").toLowerCase();
 		const owner = (s.owner || "").toLowerCase();
 		const hsHost = extractCleanHostname(s.homeserver);
@@ -1877,6 +2255,7 @@ function matchSiteByHint(
 			: [];
 		if (
 			(name && (name.includes(clean) || clean.includes(name))) ||
+			(chatName && (chatName.includes(clean) || clean.includes(chatName))) ||
 			(badge && (badge.includes(clean) || clean.includes(badge))) ||
 			(owner && (owner.includes(clean) || clean.includes(owner))) ||
 			(hsHost && (hsHost.includes(clean) || clean.includes(hsHost))) ||
@@ -1907,20 +2286,14 @@ function matchSiteByUrl(
 }
 
 export function normalizeDotSpacing(name: string): string {
-	const raw = (name || "").trim();
-	if (!raw) return "";
-	const match = raw.match(/^(.+?)\s*[·•・]\s*(.+)$/);
-	if (!match) return raw;
-	const cleanName = match[1].trim();
-	const siteSuffix = match[2].trim();
-	if (!cleanName || !siteSuffix) return raw;
-	return `${cleanName} · ${siteSuffix}`;
+	return stripSiteSuffix(name);
 }
 
 export function resolveExternalOrigin(
 	member: {
 		name: string;
 		userKey?: string;
+		matrixSender?: string;
 		source?: string;
 		badge?: string;
 		site?: string;
@@ -1930,28 +2303,39 @@ export function resolveExternalOrigin(
 	sites: InterconnectSite[] = [],
 ): ExternalOriginInfo {
 	const rawName = (member.name || "").trim();
+	const cleanName = stripSiteSuffix(rawName) || rawName;
 	const rawUserKey = (member.userKey || "").trim();
 	const baseUserKey = rawUserKey.split("#")[0] || rawUserKey;
 	const relayMatch = rawUserKey.match(/#relay:([^:#]+)(?::([^#]*))?/i);
 	const relaySiteKey = relayMatch ? relayMatch[1].trim() : "";
 
-	// 1. 优先从昵称中的分隔符（· 或 • 或 ・）拆分：例如 "朝朝听雨 · 听雨茶室" -> name: "朝朝听雨", site: "听雨茶室"
-	const separatorMatch = rawName.match(/^(.+?)\s*[·•・]\s*(.+)$/);
-	let cleanName = rawName;
-	let siteFromSuffix = "";
+	// 提取真实底层 Matrix ID 与服务器地址（不再读取昵称点号后缀）
+	const senderCandidate = (member.matrixSender || "").trim();
+	const userKeyMatrixPart = baseUserKey.startsWith("matrix:")
+		? baseUserKey.slice(7)
+		: baseUserKey;
+	const baseMatrixId =
+		senderCandidate.startsWith("@") && senderCandidate.includes(":")
+			? senderCandidate
+			: userKeyMatrixPart.startsWith("@") && userKeyMatrixPart.includes(":")
+				? userKeyMatrixPart
+				: "";
 
-	if (separatorMatch) {
-		cleanName = separatorMatch[1].trim();
-		siteFromSuffix = separatorMatch[2].trim();
-	}
-
-	// 2. 提取真实底层 Matrix 节点域名（去除 #relay:... 后缀再匹配）
 	const hostMatch =
-		baseUserKey.match(/@.+?:([^/:]+)/) || baseUserKey.match(/matrix:([^/:]+)/);
+		baseMatrixId.match(/@.+?:([^/:]+)/) ||
+		baseUserKey.match(/@.+?:([^/:]+)/) ||
+		baseUserKey.match(/matrix:([^/:]+)/);
 	const host = hostMatch ? hostMatch[1].toLowerCase() : "";
 
 	let matchedSite: InterconnectSite | undefined;
-	const genericBadges = new Set(["互联茶友", "茶友", "站长", "访客", "认证"]);
+	const genericBadges = new Set([
+		"互联茶友",
+		"茶友",
+		"站长",
+		"访客",
+		"认证",
+		"外部站点",
+	]);
 	const rawExplicitSite = (member.site || "").trim();
 	const explicitSite = genericBadges.has(rawExplicitSite)
 		? ""
@@ -1962,24 +2346,28 @@ export function resolveExternalOrigin(
 			? member.badge.trim()
 			: "";
 
-	// 2.1 代发 / 显式归属站点优先（避免把借助其他站 Matrix 节点代发的用户误判到宿主站）
+	// 1. 显式代发 / 站点直链 URL 优先
 	if (explicitSiteUrl) {
 		matchedSite = matchSiteByUrl(explicitSiteUrl, sites);
 	}
 	if (!matchedSite && member.url) {
 		matchedSite = matchSiteByUrl(member.url, sites);
 	}
-	if (!matchedSite && explicitSite) {
-		matchedSite = matchSiteByHint(explicitSite, sites);
+	// 2. 精确 Matrix User ID 匹配（区分同处于 matrix.rainzt.cn 等共享节点的多个友站）
+	if (!matchedSite && baseMatrixId) {
+		matchedSite = matchSiteByMatrixId(baseMatrixId, sites);
 	}
+	// 3. 中继标识与服务端下发站点 hint
 	if (!matchedSite && relaySiteKey) {
 		matchedSite = matchSiteByHint(relaySiteKey, sites);
+	}
+	if (!matchedSite && explicitSite) {
+		matchedSite = matchSiteByHint(explicitSite, sites);
 	}
 	if (!matchedSite && explicitBadge) {
 		matchedSite = matchSiteByHint(explicitBadge, sites);
 	}
 
-	// 若消息/成员明确携带了代发归属或非宿主域名直链，即使未列入 interconnectSites 也优先构造独立站点信息
 	const hasExplicitRelaySite = Boolean(
 		explicitSite ||
 			explicitSiteUrl ||
@@ -1997,65 +2385,43 @@ export function resolveExternalOrigin(
 		}
 	}
 
-	// 3. 普通独立 Matrix 账号：按用户 Matrix 域名（含配置 aliases）匹配站点
+	// 4. 按 Matrix Homeserver 服务器地址匹配互联有站列表
 	if (!matchedSite && !hasExplicitRelaySite && host) {
-		matchedSite = matchSiteByHostname(host, sites);
-	}
-
-	if (!matchedSite && !hasExplicitRelaySite && (host === "lengxiqwq.com" || host.endsWith(".lengxiqwq.com"))) {
-		matchedSite = sites.find((s) => s.isSelf);
-	}
-
-	if (!matchedSite && siteFromSuffix) {
-		matchedSite = matchSiteByHint(siteFromSuffix, sites);
-	}
-
-	if (!matchedSite && !hasExplicitRelaySite && !host) {
-		for (const site of sites) {
-			if (
-				site.owner &&
-				cleanName.toLowerCase().includes(site.owner.toLowerCase())
-			) {
-				matchedSite = site;
-				break;
-			}
-			if (
-				cleanName.includes("雪") ||
-				cleanName.toLowerCase().includes("aiovtue")
-			) {
-				if (
-					site.name.toLowerCase().includes("aiovtue") ||
-					site.name.includes("雪") ||
-					site.owner.includes("雪")
-				) {
-					matchedSite = site;
-					break;
-				}
-			}
+		if (host === "lengxiqwq.com" || host.endsWith(".lengxiqwq.com")) {
+			matchedSite = sites.find((s) => s.isSelf);
+		} else {
+			matchedSite = matchSiteByHostname(host, sites);
 		}
 	}
 
-	// 未知站点：优先提取用户网站或 Matrix 节点的服务器域名
-	const unknownServerHost =
+	// 服务器地址兜底（未收录入互联有站时直接展示其服务器地址）
+	const serverAddress =
+		host ||
 		extractHostname(explicitSiteUrl) ||
-		(!member.url?.includes("matrix.to/") ? extractHostname(member.url) : "") ||
-		host;
+		(!member.url?.includes("matrix.to/") ? extractHostname(member.url) : "");
 
-	// 优先使用对方原本自带的规范站点后缀；没有时才使用匹配到的官方全名或域名兜底
 	const siteName =
-		siteFromSuffix ||
 		matchedSite?.name ||
+		matchedSite?.chatName ||
 		matchedSite?.badge ||
-		unknownServerHost ||
+		serverAddress ||
 		explicitSite ||
-		explicitBadge ||
 		"外部站点";
 
+	const chatBadge =
+		matchedSite?.chatName ||
+		matchedSite?.badge ||
+		matchedSite?.name ||
+		serverAddress ||
+		explicitSite ||
+		"";
+
 	return {
-		cleanName: cleanName || rawName,
+		cleanName,
 		siteName,
+		chatBadge,
 		site: matchedSite,
-		host,
+		host: serverAddress,
 	};
 }
 
@@ -2118,6 +2484,65 @@ export async function fetchThreadMessages(
 		throw new Error(data?.error || `获取线程回复失败 (${res.status})`);
 	}
 	return data;
+}
+
+const MESSAGE_GROUP_MAX_GAP_MS = 5 * 60 * 1000;
+
+function isSiteAdminIdentity(msg: Pick<ChatMessageRecord, "isAdmin" | "userKey">): boolean {
+	return Boolean(
+		msg.isAdmin ||
+			msg.userKey === "waline:1" ||
+			msg.userKey === "@lengxiqwq:matrix.lengxiqwq.com" ||
+			msg.userKey === "matrix:@lengxiqwq:matrix.lengxiqwq.com",
+	);
+}
+
+export function isChatMessageFromCurrentUser(
+	msg: Pick<ChatMessageRecord, "isAdmin" | "userKey">,
+	currentUser: Pick<ChatSessionUser, "userKey" | "isAdmin"> | null | undefined,
+): boolean {
+	if (!currentUser) return false;
+	if (msg.userKey === currentUser.userKey) return true;
+	return Boolean(currentUser.isAdmin && isSiteAdminIdentity(msg));
+}
+
+function getMessageSenderGroupKey(msg: ChatMessageRecord): string {
+	if (isSiteAdminIdentity(msg)) return "__site_admin__";
+	const raw = (msg.userKey || "").trim();
+	if (!raw) return "";
+	return raw.startsWith("matrix:") ? raw.slice(7) : raw;
+}
+
+function isSameCalendarDay(a: number, b: number): boolean {
+	const da = new Date(a);
+	const db = new Date(b);
+	return (
+		da.getFullYear() === db.getFullYear() &&
+		da.getMonth() === db.getMonth() &&
+		da.getDate() === db.getDate()
+	);
+}
+
+/** Whether `curr` continues `prev` as a consecutive message from the same sender without repeating avatar/header. */
+export function isGroupedContinuationMessage(
+	prev: ChatMessageRecord | undefined,
+	curr: ChatMessageRecord,
+	hasBreakBefore = false,
+): boolean {
+	if (hasBreakBefore || !prev) return false;
+	if (prev.kind === "system" || curr.kind === "system") return false;
+	if (prev.createdAt > 0 && curr.createdAt > 0) {
+		const gap = curr.createdAt - prev.createdAt;
+		if (gap < 0 || gap > MESSAGE_GROUP_MAX_GAP_MS) return false;
+		if (!isSameCalendarDay(prev.createdAt, curr.createdAt)) return false;
+	}
+	const prevKey = getMessageSenderGroupKey(prev);
+	const currKey = getMessageSenderGroupKey(curr);
+	if (!prevKey || !currKey || prevKey !== currKey) return false;
+	if ((prev.name || "").trim() !== (curr.name || "").trim()) return false;
+	if ((prev.avatar || "").trim() !== (curr.avatar || "").trim()) return false;
+	if ((prev.site || "").trim() !== (curr.site || "").trim()) return false;
+	return true;
 }
 
 export async function fetchActiveThreads(

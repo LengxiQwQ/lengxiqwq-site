@@ -1,0 +1,14 @@
+/root/.pm2/logs/chat-server-out.log /root/.pm2/logs/chat-server-error.log {
+    daily
+    maxsize 16M
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0600 root root
+    sharedscripts
+    postrotate
+        PM2_HOME=/root/.pm2 /usr/bin/pm2 reloadLogs >/dev/null
+    endscript
+}

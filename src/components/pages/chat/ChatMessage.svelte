@@ -15,10 +15,11 @@ import ChatVideoPreview from "./ChatVideoPreview.svelte";
 import {
 	formatChatFullDateTime,
 	formatChatMessageTime,
+	getLocalSiteChatBadge,
 	isExternalMatrixIdentity,
-	normalizeDotSpacing,
 	resolveExternalOrigin,
 	sanitizeChatUrl,
+	stripSiteSuffix,
 } from "./chatClient";
 import type { InterconnectSite } from "./chatConfig";
 import { positionChatFloating } from "./chatFloating";
@@ -55,6 +56,9 @@ import {
 interface Props {
 	message: ChatMessageRecord;
 	isSelf: boolean;
+	grouped?: boolean;
+	hasNextInGroup?: boolean;
+	showTime?: boolean;
 	isMentionedMe?: boolean;
 	isHighlighted?: boolean;
 	currentUserKey?: string;
@@ -114,6 +118,9 @@ interface Props {
 const {
 	message,
 	isSelf,
+	grouped = false,
+	hasNextInGroup = false,
+	showTime = true,
 	isMentionedMe = false,
 	isHighlighted = false,
 	currentUserKey = "",
@@ -244,20 +251,21 @@ function trackBubbleBox(node: HTMLElement, active: boolean) {
 }
 
 const mentionedBubblePath = $derived.by(() => {
-	if (!isMentionedMe) return "";
+	if (!isMentionedMe || grouped || isPrivilegedRecall || isSelf || shareData) return "";
 	const w = bubbleW;
 	const h = bubbleH;
 	if (w <= 0 || h <= 0) return "";
 	const r = Math.max(6, Math.min(18, Math.floor(Math.min(w, h) / 2)));
-	const ty = Math.min(13, Math.max(8, h - r));
+	const bl = hasNextInGroup ? Math.min(r, 6) : r;
+	const ty = Math.min(13, Math.max(8, h - bl));
 	return [
 		"M -5 0",
 		`L ${w - r} 0`,
 		`A ${r} ${r} 0 0 1 ${w} ${r}`,
 		`L ${w} ${h - r}`,
 		`A ${r} ${r} 0 0 1 ${w - r} ${h}`,
-		`L ${r} ${h}`,
-		`A ${r} ${r} 0 0 1 0 ${h - r}`,
+		`L ${bl} ${h}`,
+		`A ${bl} ${bl} 0 0 1 0 ${h - bl}`,
 		`L 0 ${ty}`,
 		`C 0 ${ty * 0.58}, -2.4 2.8, -5.8 1.3`,
 		"C -6.1 1.15, -6.2 0.7, -6.0 0.35",
@@ -415,6 +423,7 @@ const externalOrigin = $derived.by(() => {
 	return resolveExternalOrigin(
 		{
 			userKey: message.userKey,
+			matrixSender: message.matrixSender,
 			name: message.name,
 			source: message.source,
 			badge: message.badge,
@@ -428,41 +437,59 @@ const externalOrigin = $derived.by(() => {
 
 const cleanSenderName = $derived.by(() => {
 	if (externalOrigin?.cleanName) return externalOrigin.cleanName;
-	const rawName = message.name || "";
-	const match = rawName.match(/^(.+?)\s*[·•・]\s*(.+)$/);
-	return match ? match[1].trim() : rawName.trim();
+	const rawName = (message.name || "").trim();
+	return stripSiteSuffix(rawName) || rawName;
 });
 
-const senderDisplayName = $derived.by(() => {
-	const rawName = (message.name || "").trim();
-	const hasDot =
-		rawName.includes("·") || rawName.includes("•") || rawName.includes("・");
+const senderDisplayName = $derived(cleanSenderName);
 
-	if (!isExternal) {
-		return cleanSenderName || normalizeDotSpacing(rawName);
-	}
+const SHOW_LOCAL_SITE_BADGE_IN_INTERCONNECT = false;
 
-	// 1. 外部互联成员：若昵称本身已经规范化（自带点号和站点名称），完整保留
-	if (hasDot) {
-		return normalizeDotSpacing(rawName);
+const siteBadge = $derived.by<{
+	label: string;
+	color?: string;
+	url?: string;
+} | null>(() => {
+	if (!isInterconnectRoom) return null;
+	if (isExternal) {
+		const label =
+			externalOrigin?.chatBadge ||
+			externalOrigin?.siteName ||
+			externalOrigin?.host ||
+			"";
+		if (!label) return null;
+		return {
+			label,
+			color: externalOrigin?.site?.color,
+			url: sanitizeChatUrl(
+				externalOrigin?.site?.chatUrl || externalOrigin?.site?.url,
+				false,
+			),
+		};
 	}
-
-	// 2. 未带站点后缀的外部成员，补充站点后缀
-	if (externalOrigin?.siteName) {
-		return `${rawName || externalOrigin.cleanName} · ${externalOrigin.siteName}`;
-	}
-	return normalizeDotSpacing(rawName);
+	if (!SHOW_LOCAL_SITE_BADGE_IN_INTERCONNECT) return null;
+	const selfSite = interconnectSites.find((s) => s.isSelf);
+	const label = getLocalSiteChatBadge(interconnectSites);
+	if (!label) return null;
+	return {
+		label,
+		color: selfSite?.color,
+		url: undefined,
+	};
 });
 
 const effectiveSenderUrl = $derived.by(() => {
 	if (isFromOurServer || isSelf) return "https://lengxiqwq.com";
-	if (externalOrigin?.site?.url) {
-		return sanitizeChatUrl(externalOrigin.site.url, false);
+	if (externalOrigin?.site?.chatUrl || externalOrigin?.site?.url) {
+		return sanitizeChatUrl(
+			externalOrigin.site.chatUrl || externalOrigin.site.url,
+			false,
+		);
 	}
 	if (message.url && !message.url.includes("matrix.lengxiqwq.com")) {
 		return sanitizeChatUrl(message.url, false);
 	}
-	return sanitizeChatUrl(externalOrigin?.site?.url, false);
+	return "";
 });
 
 const safeAttachments = $derived.by(() => {
@@ -486,6 +513,22 @@ const roleBadge = $derived.by(() => {
 const recallNoticeParsed = $derived(
 	message.kind === "system" ? parseRecallNotice(message.content) : null,
 );
+const isPrivilegedRecall = $derived(Boolean(isAdmin && message.isRedacted));
+const visibleReadReceipts = $derived.by(() =>
+	readReceipts.filter((r) => {
+		if (r.userKey === message.userKey) return false;
+		if (isSelf && currentUserKey && r.userKey === currentUserKey) return false;
+		return true;
+	}),
+);
+const showFooterMeta = $derived(
+	Boolean(
+		(showTime && formattedTime) ||
+			message.isEdited ||
+			isPrivilegedRecall ||
+			visibleReadReceipts.length > 0,
+	),
+);
 const systemActor = $derived.by(() => {
 	if (message.kind !== "system") return null;
 	if (recallNoticeParsed) {
@@ -493,10 +536,15 @@ const systemActor = $derived.by(() => {
 	}
 	if (message.source !== "matrix" || !message.userKey || !message.name) return null;
 	const prefix = `${message.name} `;
-	return parseRoomActivityActor(message.content.trim(), message.name.trim()) ??
-		(message.content.startsWith(prefix)
-			? { name: message.name, detail: message.content.slice(prefix.length) }
-			: null);
+	const parsed = parseRoomActivityActor(message.content.trim(), message.name.trim());
+	if (parsed) return parsed;
+	if (message.content.startsWith(prefix)) {
+		return {
+			name: stripSiteSuffix(message.name) || message.name,
+			detail: message.content.slice(prefix.length),
+		};
+	}
+	return null;
 });
 const systemActorAvatar = $derived(
 	systemActor
@@ -609,27 +657,26 @@ function resolveUserProfileSeed(
 		}
 	}
 	const isExt = isExternalMatrixIdentity({ userKey: key });
-	const baseName = profile?.name || resolvedFallback || "成员";
+	const rawBaseName = profile?.name || resolvedFallback || "成员";
+	const cleanBaseName = stripSiteSuffix(rawBaseName) || rawBaseName;
 	const origin = isExt
 		? resolveExternalOrigin(
-				{ name: baseName, userKey: key, site: profile?.site, siteUrl: profile?.siteUrl, url: profile?.url },
+				{ name: cleanBaseName, userKey: key, site: profile?.site, siteUrl: profile?.siteUrl, url: profile?.url },
 				interconnectSites,
 			)
 		: null;
-	const displayName = origin?.siteName
-		? `${origin.cleanName || baseName} (${origin.siteName})`
-		: baseName;
+	const displayName = origin?.cleanName || cleanBaseName;
 
 	const seed: ChatUserDetailSeed = profile
 		? {
 				...profile,
 				userKey: profile.userKey || key,
-				name: origin?.cleanName || baseName,
+				name: displayName,
 				avatar: profile.avatar || fallbackAvatar,
 			}
 		: {
 				userKey: key,
-				name: origin?.cleanName || baseName,
+				name: displayName,
 				avatar: fallbackAvatar,
 				authType: isExt
 					? undefined
@@ -674,6 +721,7 @@ function handleOpenReadActivity(e: MouseEvent) {
 }
 
 function handleOpenReactionActivity(emoji: string) {
+	if (isPrivilegedRecall) return;
 	activityModalTab = emoji;
 	showActivityModal = true;
 }
@@ -681,6 +729,19 @@ function handleOpenReactionActivity(emoji: string) {
 let reactionPressTimer: number | null = null;
 let reactionPressPos: { x: number; y: number; id: number } | null = null;
 let didLongPressReaction = false;
+
+$effect(() => {
+	if (!isPrivilegedRecall) return;
+	closeReactionMenus();
+	showMoreActions = false;
+	showActivityModal = false;
+	actionsMounted = false;
+	if (reactionPressTimer !== null) {
+		window.clearTimeout(reactionPressTimer);
+		reactionPressTimer = null;
+	}
+	reactionPressPos = null;
+});
 
 function handleReactionPointerDown(e: PointerEvent, emoji: string) {
 	if (e.pointerType !== "touch") return;
@@ -735,6 +796,7 @@ function handleReactionContextMenu(e: MouseEvent) {
 
 function handleReactionClick(e: MouseEvent, emoji: string) {
 	e.stopPropagation();
+	if (isPrivilegedRecall) return;
 	if (didLongPressReaction) {
 		didLongPressReaction = false;
 		e.preventDefault();
@@ -771,7 +833,7 @@ function hasNonEmptySelection() {
 }
 
 function triggerMobileActions() {
-	if (!onOpenMobileActions) return;
+	if (isPrivilegedRecall || !onOpenMobileActions) return;
 	onOpenMobileActions(message, {
 		isSelf,
 		senderDisplayName: senderDisplayName || message.name || "用户",
@@ -788,6 +850,7 @@ function handleBubblePointerDown(e: PointerEvent) {
 	if (!e.isPrimary) return;
 	cancelBubblePress();
 	if (
+		isPrivilegedRecall ||
 		!onOpenMobileActions ||
 		e.button !== 0 ||
 		!isBubbleActionTarget(e.target) ||
@@ -833,6 +896,7 @@ function handleBubblePointerUp(e: PointerEvent) {
 }
 
 function handleBubbleContextMenu(e: MouseEvent) {
+	if (isPrivilegedRecall) return;
 	if (!isMobileActionMode()) return;
 	if (
 		e.target instanceof Element &&
@@ -894,7 +958,7 @@ function handleBubbleClick(e: MouseEvent) {
         }
       }}
     >
-      <span class="chat-reply-quote-author">{message.replyTo.name || "用户"}</span>
+      <span class="chat-reply-quote-author">{stripSiteSuffix(message.replyTo.name) || "用户"}</span>
       <span class="chat-reply-quote-text">{replyPreviewText}</span>
       {#if locating}
         <span class="absolute right-2.5 top-0 bottom-0 flex items-center" aria-hidden="true">
@@ -909,15 +973,15 @@ function handleBubbleClick(e: MouseEvent) {
 {/snippet}
 
 {#snippet renderFloatingActions(isSelfMsg: boolean)}
-  {@const canCopy = Boolean(message.content && message.content.trim())}
-  {@const canThreadMsg = Boolean(!inThreadView && onOpenThread && message.kind === "user")}
-  {@const canViewSource = Boolean(onViewSource)}
-  {@const canEditMsg = Boolean(onEdit && canEdit && !message.replyTo?.isRecalled)}
-  {@const canPinMsg = Boolean(isAdmin && onPin)}
-  {@const canRecallMsg = Boolean(canRecall && onRecall)}
-  {@const canDeleteMsg = Boolean(canDelete && onDelete)}
+  {@const canCopy = Boolean(!isPrivilegedRecall && message.content && message.content.trim())}
+  {@const canThreadMsg = Boolean(!isPrivilegedRecall && !inThreadView && onOpenThread && message.kind === "user")}
+  {@const canViewSource = Boolean(!isPrivilegedRecall && onViewSource)}
+  {@const canEditMsg = Boolean(!isPrivilegedRecall && onEdit && canEdit && !message.replyTo?.isRecalled)}
+  {@const canPinMsg = Boolean(!isPrivilegedRecall && isAdmin && onPin)}
+  {@const canRecallMsg = Boolean(!isPrivilegedRecall && canRecall && onRecall)}
+  {@const canDeleteMsg = Boolean(!isPrivilegedRecall && canDelete && onDelete)}
   {@const hasMoreActions = canCopy || canThreadMsg || canEditMsg || canPinMsg || canViewSource || canRecallMsg || canDeleteMsg}
-  {#if onReaction || onReply || hasMoreActions || mediaRetries.size > 0}
+  {#if (isPrivilegedRecall ? mediaRetries.size > 0 : onReaction || onReply || hasMoreActions || mediaRetries.size > 0)}
     <div
       class="chat-msg-floating-actions {isSelfMsg ? 'self' : 'other'} {showQuickReaction || showMoreActions || showReactionPicker || mediaRetries.size > 0 ? 'is-active' : ''} {mediaRetries.size > 0 ? 'has-media-retry' : ''}"
       role="toolbar"
@@ -935,7 +999,7 @@ function handleBubbleClick(e: MouseEvent) {
         </ChatTooltip>
       {/if}
       <!-- 快捷表情反应 -->
-      {#if onReaction}
+      {#if !isPrivilegedRecall && onReaction}
         <div class="relative inline-flex items-center" bind:this={reactionEl}>
           <ChatTooltip text="表情回应" disabled={showQuickReaction || showMoreActions || showReactionPicker}>
             <button
@@ -1043,7 +1107,7 @@ function handleBubbleClick(e: MouseEvent) {
       {/if}
 
       <!-- 快捷回复 -->
-      {#if onReply}
+      {#if !isPrivilegedRecall && onReply}
         <ChatTooltip text="回复" disabled={showMoreActions}>
           <button
             type="button"
@@ -1240,7 +1304,7 @@ function handleBubbleClick(e: MouseEvent) {
 
 {#snippet renderThreadSummary(alignEnd: boolean)}
   {@const effectiveSummary = !inThreadView ? (threadSummary ?? message.threadSummary ?? null) : null}
-  {#if effectiveSummary && effectiveSummary.count > 0 && onOpenThread}
+  {#if effectiveSummary && effectiveSummary.count > 0 && (onOpenThread || isPrivilegedRecall)}
     {@const latest = effectiveSummary.latestReply}
     {@const latestPreview = latest
       ? formatChatReplyPreview(latest.content, stickerMap, getChatReplyAttachmentKind(latest))
@@ -1248,10 +1312,11 @@ function handleBubbleClick(e: MouseEvent) {
     <div class="w-full flex {alignEnd ? 'justify-end' : 'justify-start'} mt-1">
       <button
         type="button"
+        disabled={isPrivilegedRecall}
         class="chat-thread-summary-pill"
         onclick={(e) => {
           e.stopPropagation();
-          onOpenThread?.(message);
+          if (!isPrivilegedRecall) onOpenThread?.(message);
         }}
       >
         <svg class="w-3.5 h-3.5 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -1262,10 +1327,11 @@ function handleBubbleClick(e: MouseEvent) {
         {#if effectiveSummary.participants && effectiveSummary.participants.length > 0}
           <span class="inline-flex items-center -space-x-1 shrink-0">
             {#each effectiveSummary.participants.slice(0, 3) as p (p.userKey || p.name)}
+              {@const cleanParticipantName = stripSiteSuffix(p.name) || p.name}
               <span class="inline-flex rounded-full ring-1 ring-[var(--card-bg)] overflow-hidden">
                 <ChatAvatar
                   src={p.avatar}
-                  name={p.name}
+                  name={cleanParticipantName}
                   size="xs"
                   class="w-4! h-4! text-[8px]!"
                 />
@@ -1277,20 +1343,21 @@ function handleBubbleClick(e: MouseEvent) {
           {effectiveSummary.count} 条线程回复
         </span>
         {#if latestPreview}
+          {@const cleanLatestName = latest?.name ? (stripSiteSuffix(latest.name) || latest.name) : ""}
           <span class="chat-thread-summary-preview truncate">
-            {latest?.name ? `${latest.name}：` : ""}{latestPreview}
+            {cleanLatestName ? `${cleanLatestName}：` : ""}{latestPreview}
           </span>
         {/if}
-        <svg class="w-3 h-3 shrink-0 opacity-55" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        {#if !isPrivilegedRecall}<svg class="w-3 h-3 shrink-0 opacity-55" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="m9 18 6-6-6-6" />
-        </svg>
+        </svg>{/if}
       </button>
     </div>
   {/if}
 {/snippet}
 
 {#snippet renderOrphanThreadChip(alignEnd: boolean)}
-  {#if !inThreadView && orphanThreadRootUid && onOpenThreadByUid}
+  {#if !isPrivilegedRecall && !inThreadView && orphanThreadRootUid && onOpenThreadByUid}
     <div class="w-full flex {alignEnd ? 'justify-end' : 'justify-start'} mb-1">
       <button
         type="button"
@@ -1322,14 +1389,15 @@ function handleBubbleClick(e: MouseEvent) {
         <div class="chat-reaction-item">
           <button
             type="button"
+            disabled={isPrivilegedRecall}
             class="chat-reaction-pill {isMine ? 'is-active' : ''}"
-            onpointerdown={(e) => handleReactionPointerDown(e, emoji)}
-            onpointermove={handleReactionPointerMove}
-            onpointerup={handleReactionPointerUp}
-            onpointercancel={handleReactionPointerCancel}
-            oncontextmenu={handleReactionContextMenu}
-            onclick={(e) => handleReactionClick(e, emoji)}
-            aria-label={`${display.alt} ${users.length} 人回应（长按查看成员）`}
+            onpointerdown={isPrivilegedRecall ? undefined : (e) => handleReactionPointerDown(e, emoji)}
+            onpointermove={isPrivilegedRecall ? undefined : handleReactionPointerMove}
+            onpointerup={isPrivilegedRecall ? undefined : handleReactionPointerUp}
+            onpointercancel={isPrivilegedRecall ? undefined : handleReactionPointerCancel}
+            oncontextmenu={isPrivilegedRecall ? undefined : handleReactionContextMenu}
+            onclick={isPrivilegedRecall ? undefined : (e) => handleReactionClick(e, emoji)}
+            aria-label={isPrivilegedRecall ? `${display.alt} ${users.length} 人回应` : `${display.alt} ${users.length} 人回应（长按查看成员）`}
           >
             {#if display.type === "image"}
               <img
@@ -1352,7 +1420,7 @@ function handleBubbleClick(e: MouseEvent) {
             {/if}
             <span class="text-[0.6875rem] font-medium opacity-85">{users.length}</span>
           </button>
-          {#if reactionUsers.length > 0}
+          {#if reactionUsers.length > 0 && !isPrivilegedRecall}
             <div
               data-chat-floating
               use:positionChatFloating={{ placement: alignEnd ? "top-end" : "top-start", hover: "card" }}
@@ -1462,9 +1530,9 @@ function handleBubbleClick(e: MouseEvent) {
           {@const isMyVote = Boolean(currentUserKey && votesList.includes(currentUserKey))}
           <button
             type="button"
-            disabled={poll.ended}
+            disabled={isPrivilegedRecall || poll.ended}
             class="chat-poll-option {isMyVote ? 'is-selected' : ''}"
-            onclick={() => onVotePoll?.(message.msgUid, ans.id)}
+            onclick={() => { if (!isPrivilegedRecall) onVotePoll?.(message.msgUid, ans.id); }}
           >
             <div class="chat-poll-progress" style="width: {percent}%"></div>
             <span class="relative z-10 truncate text-[var(--skin-text)]">{ans.text}</span>
@@ -1478,7 +1546,7 @@ function handleBubbleClick(e: MouseEvent) {
         <span>共 {totalVotes} 票</span>
         {#if poll.ended}
           <span class="text-red-400">投票已截止</span>
-        {:else if (isAdmin || isSelf) && onEndPoll}
+        {:else if !isPrivilegedRecall && (isAdmin || isSelf) && onEndPoll}
           <button
             type="button"
             class="text-[0.6875rem] px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 hover:text-red-400 transition-colors cursor-pointer"
@@ -1493,13 +1561,8 @@ function handleBubbleClick(e: MouseEvent) {
 {/snippet}
 
 {#snippet renderReadReceipts()}
-  {@const readers = readReceipts.filter((r) => {
-    if (r.userKey === message.userKey) return false;
-    if (isSelf && currentUserKey && r.userKey === currentUserKey) return false;
-    return true;
-  })}
-  {#if readers.length > 0}
-    {@const resolvedReaders = readers.map((r) => ({
+  {#if visibleReadReceipts.length > 0}
+    {@const resolvedReaders = visibleReadReceipts.map((r) => ({
       reader: r,
       resolved: resolveUserProfileSeed(r.userKey, r.name, r.avatar),
     }))}
@@ -1665,38 +1728,52 @@ function handleBubbleClick(e: MouseEvent) {
 {:else if isSelf}
   <div
     data-msg-uid={message.msgUid}
-    class="flex flex-row-reverse items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}"
-    onpointerenter={() => { actionsMounted = true; }}
-    onfocusin={() => { actionsMounted = true; }}
+    class="flex flex-row-reverse items-start gap-2.5 my-1 group {grouped ? 'chat-message-grouped' : ''} {hasNextInGroup ? 'chat-message-has-next' : ''} {isHighlighted ? 'chat-msg-jump-highlight' : ''} {isPrivilegedRecall ? 'chat-message-recalled-preserved' : ''}"
+    onpointerenter={() => { if (!isPrivilegedRecall) actionsMounted = true; }}
+    onfocusin={() => { if (!isPrivilegedRecall) actionsMounted = true; }}
     onpointerleave={() => { if (!showQuickReaction && !showMoreActions && !showReactionPicker) actionsMounted = false; }}
   >
-    <button
-      type="button"
-      class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
-      onclick={handleAvatarClick}
-    >
-      <ChatAvatar
-        src={message.avatar}
-        name={cleanSenderName || message.name}
-        fallback="我"
-        alt={cleanSenderName || message.name || "我"}
-        size="md"
-      />
-    </button>
+    {#if grouped}
+      <div class="chat-avatar-spacer shrink-0" aria-hidden="true"></div>
+    {:else}
+      <button
+        type="button"
+        class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
+        onclick={handleAvatarClick}
+      >
+        <ChatAvatar
+          src={message.avatar}
+          name={cleanSenderName || message.name}
+          fallback="我"
+          alt={cleanSenderName || message.name || "我"}
+          size="md"
+          ring
+        />
+      </button>
+    {/if}
 
     <div class="flex flex-col items-end max-w-[82%] md:max-w-[74%] min-w-0">
-      {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0)}
+      {#if !grouped && (senderDisplayName || roleBadge || siteBadge || (message.customBadges && message.customBadges.length > 0))}
         <div class="flex items-center justify-end gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
+          {#if siteBadge}
+            <span
+              class="chat-role-badge chat-role-badge--tag {siteBadge.color ? 'chat-site-origin-badge' : ''} text-[10px]! px-1.5! py-0.25! leading-tight! select-text cursor-text"
+              style={siteBadge.color ? `--site-badge-color: ${siteBadge.color};` : undefined}
+            >来自：{siteBadge.label}</span>
+          {/if}
           {#if roleBadge}
             <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
           {/if}
           {#if message.customBadges && message.customBadges.length > 0}
             {#each message.customBadges as b, idx (`${b.text}:${idx}`)}
-              <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
+              <span
+                class="chat-role-badge chat-role-badge--{b.color}"
+                style={b.color === 'site' && siteBadge?.color ? `--site-badge-color: ${siteBadge.color};` : undefined}
+              >{b.text}</span>
             {/each}
           {/if}
           {#if senderDisplayName}
-            <span class="text-[13px] md:text-xs text-[var(--chat-meta-color)] font-medium truncate">{senderDisplayName}</span>
+            <span class="text-[14px] md:text-[13px] text-[var(--chat-meta-color)] font-medium truncate select-text cursor-text">{senderDisplayName}</span>
           {/if}
         </div>
       {/if}
@@ -1715,7 +1792,7 @@ function handleBubbleClick(e: MouseEvent) {
         oncontextmenu={handleBubbleContextMenu}
         onclick={handleBubbleClick}
       >
-        {#if actionsMounted || showQuickReaction || showMoreActions || showReactionPicker || mediaRetries.size > 0}
+        {#if (!isPrivilegedRecall && (actionsMounted || showQuickReaction || showMoreActions || showReactionPicker)) || mediaRetries.size > 0}
           {@render renderFloatingActions(true)}
         {/if}
 
@@ -1725,7 +1802,7 @@ function handleBubbleClick(e: MouseEvent) {
           {@render renderStickerAttachmentOnlyBody(true)}
         {:else}
           <div class="chat-bubble chat-bubble-self {shareData ? 'chat-bubble-share' : ''}">
-            {#if !shareData}
+            {#if !grouped && !shareData && !isPrivilegedRecall}
               {@render renderBubbleTail(true)}
             {/if}
             {#if message.replyTo}
@@ -1736,18 +1813,18 @@ function handleBubbleClick(e: MouseEvent) {
                 <ChatMusicCard
                   data={shareData}
                   msgUid={message.msgUid}
-                  senderName={externalOrigin?.cleanName || message.name}
+                  senderName={cleanSenderName || message.name}
                   senderAvatar={message.avatar}
                   senderUserKey={message.userKey}
                   isSelf={true}
                   chatServerUrl={chatServerUrl}
                   currentUserKey={currentUserKey}
-                  playlistAuth={playlistAuth}
+                  playlistAuth={isPrivilegedRecall ? undefined : playlistAuth}
                   isCurrentPlaying={isSharedMusicCurrent}
                   isQueued={isSharedMusicQueued}
-                  onEnqueueTrack={onEnqueueTrack}
-                  onRequireAuth={onRequireAuth}
-                  onFavoriteChanged={onFavoriteChanged}
+                  onEnqueueTrack={isPrivilegedRecall ? undefined : onEnqueueTrack}
+                  onRequireAuth={isPrivilegedRecall ? undefined : onRequireAuth}
+                  onFavoriteChanged={isPrivilegedRecall ? undefined : onFavoriteChanged}
                   onNotify={onNotify}
                 />
               {:else}
@@ -1756,7 +1833,7 @@ function handleBubbleClick(e: MouseEvent) {
             {:else if message.content.trim().length > 0}
               <div class={message.msgType === "emote" ? "italic opacity-90" : message.isEncryptedPlaceholder ? "opacity-75 text-xs" : ""}>
                 {#if message.msgType === "emote"}
-                  <span class="font-medium mr-1">* {externalOrigin?.cleanName || message.name}</span>
+                  <span class="font-medium mr-1">* {cleanSenderName || message.name}</span>
                 {/if}
                 <ChatMarkdownContent
                   content={message.content}
@@ -1780,18 +1857,21 @@ function handleBubbleClick(e: MouseEvent) {
       {@render renderReactions(true)}
       {@render renderThreadSummary(true)}
 
-      {#if formattedTime}
+      {#if showFooterMeta}
         <div class="flex items-center gap-1 mt-1 px-1 select-none">
           {@render renderReadReceipts()}
           {#if message.isEdited}
             <span class="text-[11px] md:text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
           {/if}
-          <span
-            class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] cursor-default"
-            title={fullDateTimeTooltip}
-          >
-            {formattedTime}
-          </span>
+          {#if isPrivilegedRecall}<span class="chat-recalled-badge">已撤回{message.recallArchiveIncomplete ? " · 附件未完整留存" : ""}</span>{/if}
+          {#if showTime && formattedTime}
+            <span
+              class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] cursor-default"
+              title={fullDateTimeTooltip}
+            >
+              {formattedTime}
+            </span>
+          {/if}
         </div>
       {/if}
     </div>
@@ -1799,47 +1879,54 @@ function handleBubbleClick(e: MouseEvent) {
 {:else}
   <div
     data-msg-uid={message.msgUid}
-    class="flex items-start gap-2.5 my-1 group {isHighlighted ? 'chat-msg-jump-highlight' : ''}"
-    onpointerenter={() => { actionsMounted = true; }}
-    onfocusin={() => { actionsMounted = true; }}
+    class="flex items-start gap-2.5 my-1 group {grouped ? 'chat-message-grouped' : ''} {hasNextInGroup ? 'chat-message-has-next' : ''} {isHighlighted ? 'chat-msg-jump-highlight' : ''} {isPrivilegedRecall ? 'chat-message-recalled-preserved' : ''}"
+    onpointerenter={() => { if (!isPrivilegedRecall) actionsMounted = true; }}
+    onfocusin={() => { if (!isPrivilegedRecall) actionsMounted = true; }}
     onpointerleave={() => { if (!showQuickReaction && !showMoreActions && !showReactionPicker) actionsMounted = false; }}
   >
-    <button
-      type="button"
-      class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
-      onclick={handleAvatarClick}
-    >
-      <ChatAvatar
-        src={message.avatar}
-        name={cleanSenderName || externalOrigin?.cleanName || message.name}
-        fallback="?"
-        alt={senderDisplayName}
-        size="md"
-      />
-    </button>
+    {#if grouped}
+      <div class="chat-avatar-spacer shrink-0" aria-hidden="true"></div>
+    {:else}
+      <button
+        type="button"
+        class="p-0 border-none bg-transparent cursor-pointer shrink-0 rounded-full"
+        onclick={handleAvatarClick}
+      >
+        <ChatAvatar
+          src={message.avatar}
+          name={cleanSenderName || externalOrigin?.cleanName || message.name}
+          fallback="?"
+          alt={senderDisplayName}
+          size="md"
+          ring
+        />
+      </button>
+    {/if}
 
     <div class="flex flex-col items-start max-w-[82%] md:max-w-[74%] min-w-0">
-      {#if senderDisplayName || roleBadge || (message.customBadges && message.customBadges.length > 0) || isMentionedMe}
+      {#if (!grouped && (senderDisplayName || roleBadge || siteBadge || (message.customBadges && message.customBadges.length > 0))) || isMentionedMe}
         <div class="flex items-center gap-1.5 mb-1 px-0.5 min-w-0 max-w-full">
-          {#if effectiveSenderUrl}
-            <a
-              href={effectiveSenderUrl}
-              target="_blank"
-              rel="noopener"
-              class="text-[13px] md:text-xs text-[var(--chat-meta-color)] hover:text-[var(--primary)] font-medium truncate no-underline"
-            >
-              {senderDisplayName}
-            </a>
-          {:else if senderDisplayName}
-            <span class="text-[13px] md:text-xs text-[var(--chat-meta-color)] font-medium truncate">{senderDisplayName}</span>
-          {/if}
-          {#if roleBadge}
-            <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
-          {/if}
-          {#if message.customBadges && message.customBadges.length > 0}
-            {#each message.customBadges as b, idx (`${b.text}:${idx}`)}
-              <span class="chat-role-badge chat-role-badge--{b.color}">{b.text}</span>
-            {/each}
+          {#if !grouped}
+            {#if senderDisplayName}
+              <span class="text-[14px] md:text-[13px] text-[var(--chat-meta-color)] font-medium truncate select-text cursor-text">{senderDisplayName}</span>
+            {/if}
+            {#if roleBadge}
+              <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
+            {/if}
+            {#if siteBadge}
+              <span
+                class="chat-role-badge chat-role-badge--tag {siteBadge.color ? 'chat-site-origin-badge' : ''} text-[10px]! px-1.5! py-0.25! leading-tight! select-text cursor-text"
+                style={siteBadge.color ? `--site-badge-color: ${siteBadge.color};` : undefined}
+              >来自：{siteBadge.label}</span>
+            {/if}
+            {#if message.customBadges && message.customBadges.length > 0}
+              {#each message.customBadges as b, idx (`${b.text}:${idx}`)}
+                <span
+                  class="chat-role-badge chat-role-badge--{b.color}"
+                  style={b.color === 'site' && siteBadge?.color ? `--site-badge-color: ${siteBadge.color};` : undefined}
+                >{b.text}</span>
+              {/each}
+            {/if}
           {/if}
           {#if isMentionedMe}
             <span class="chat-mentioned-tag">提到了你</span>
@@ -1861,7 +1948,7 @@ function handleBubbleClick(e: MouseEvent) {
         oncontextmenu={handleBubbleContextMenu}
         onclick={handleBubbleClick}
       >
-        {#if actionsMounted || showQuickReaction || showMoreActions || showReactionPicker || mediaRetries.size > 0}
+        {#if (!isPrivilegedRecall && (actionsMounted || showQuickReaction || showMoreActions || showReactionPicker)) || mediaRetries.size > 0}
           {@render renderFloatingActions(false)}
         {/if}
 
@@ -1871,8 +1958,8 @@ function handleBubbleClick(e: MouseEvent) {
           {@render renderStickerAttachmentOnlyBody(false)}
         {:else}
           <div
-            use:trackBubbleBox={isMentionedMe}
-            class="chat-bubble chat-bubble-other {shareData ? 'chat-bubble-share' : ''} {isMentionedMe ? 'chat-bubble-mentioned' : ''} {mentionedBubblePath ? 'chat-bubble-svg-ready' : ''}"
+            use:trackBubbleBox={isMentionedMe && !grouped && !isPrivilegedRecall && !shareData}
+            class="chat-bubble chat-bubble-other {shareData ? 'chat-bubble-share' : ''} {isMentionedMe && !isPrivilegedRecall ? 'chat-bubble-mentioned' : ''} {mentionedBubblePath ? 'chat-bubble-svg-ready' : ''}"
           >
             {#if mentionedBubblePath}
               <svg
@@ -1885,7 +1972,7 @@ function handleBubbleClick(e: MouseEvent) {
                 <path class="chat-bubble-shadow" transform="translate(0 1)" d={mentionedBubblePath} />
                 <path class="chat-bubble-shape" d={mentionedBubblePath} />
               </svg>
-            {:else if !shareData}
+            {:else if !grouped && !shareData && !isPrivilegedRecall}
               {@render renderBubbleTail(false)}
             {/if}
             {#if message.replyTo}
@@ -1896,18 +1983,18 @@ function handleBubbleClick(e: MouseEvent) {
                 <ChatMusicCard
                   data={shareData}
                   msgUid={message.msgUid}
-                  senderName={externalOrigin?.cleanName || message.name}
+                  senderName={cleanSenderName || message.name}
                   senderAvatar={message.avatar}
                   senderUserKey={message.userKey}
                   isSelf={false}
                   chatServerUrl={chatServerUrl}
                   currentUserKey={currentUserKey}
-                  playlistAuth={playlistAuth}
+                  playlistAuth={isPrivilegedRecall ? undefined : playlistAuth}
                   isCurrentPlaying={isSharedMusicCurrent}
                   isQueued={isSharedMusicQueued}
-                  onEnqueueTrack={onEnqueueTrack}
-                  onRequireAuth={onRequireAuth}
-                  onFavoriteChanged={onFavoriteChanged}
+                  onEnqueueTrack={isPrivilegedRecall ? undefined : onEnqueueTrack}
+                  onRequireAuth={isPrivilegedRecall ? undefined : onRequireAuth}
+                  onFavoriteChanged={isPrivilegedRecall ? undefined : onFavoriteChanged}
                   onNotify={onNotify}
                 />
               {:else}
@@ -1916,7 +2003,7 @@ function handleBubbleClick(e: MouseEvent) {
             {:else if message.content.trim().length > 0}
               <div class={message.msgType === "emote" ? "italic opacity-90" : message.isEncryptedPlaceholder ? "opacity-75 text-xs" : ""}>
                 {#if message.msgType === "emote"}
-                  <span class="font-medium mr-1">* {externalOrigin?.cleanName || message.name}</span>
+                  <span class="font-medium mr-1">* {cleanSenderName || message.name}</span>
                 {/if}
                 <ChatMarkdownContent
                   content={message.content}
@@ -1940,14 +2027,17 @@ function handleBubbleClick(e: MouseEvent) {
       {@render renderReactions(false)}
       {@render renderThreadSummary(false)}
 
-      {#if formattedTime}
+      {#if showFooterMeta}
         <div class="flex items-center gap-1 mt-1 px-1 select-none">
-          <span
-            class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] cursor-default"
-            title={fullDateTimeTooltip}
-          >
-            {formattedTime}
-          </span>
+          {#if isPrivilegedRecall}<span class="chat-recalled-badge">已撤回{message.recallArchiveIncomplete ? " · 附件未完整留存" : ""}</span>{/if}
+          {#if showTime && formattedTime}
+            <span
+              class="text-xs md:text-[0.6875rem] text-[var(--chat-meta-color)] cursor-default"
+              title={fullDateTimeTooltip}
+            >
+              {formattedTime}
+            </span>
+          {/if}
           {#if message.isEdited}
             <span class="text-[11px] md:text-[0.625rem] text-[var(--chat-meta-color)] opacity-70">(已编辑)</span>
           {/if}

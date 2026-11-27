@@ -135,7 +135,7 @@ const stickerPackUrls = (commentConfig.waline?.emoji ?? []).filter(
 
     <div id="chat-page" class="chat-page-container">
         <ChatApp
-            client:load
+            client:only="svelte"
             chatServerUrl={chatConfig.serverURL}
             walineServerUrl={walineServerUrl}
             playlistOutApiUrl={chatConfig.playlistOutApiURL || "https://playlistout-api.lengxiqwq.com"}

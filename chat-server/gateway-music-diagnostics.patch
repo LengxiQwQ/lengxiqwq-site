@@ -1,0 +1,99 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -24,4 +24,5 @@
+ import { createMusicCardResolver } from './src/music/music-card.mjs';
+ import { handleSharedAudioRequest, isReadyShare, startSharedAudioCleanup } from './src/music/shared-audio.mjs';
++import { traceMusicCommand, traceCommandResult } from './src/music/command-trace.mjs';
+ import { MusicManager } from './src/music/music-manager.mjs';
+ import { findPlaylistRequestTrack, normalizeIsrc, normalizeMusicTrack, readPlaylistJson } from './src/music/music-input.mjs';
+@@ -5077,6 +5078,8 @@
+   ws.on('message', async (data) => {
+     ws.isAlive = true;
++    let trace;
+     try {
+       const packet = JSON.parse(data.toString());
++      trace = traceMusicCommand(packet, ws.currentRoom);
+ 
+       if (packet.type === 'ping') {
+@@ -5445,4 +5448,5 @@
+           ws.musicRoomRevision === revision && ws.user?.userKey === actor?.userKey;
+         const reply = result => {
++          traceCommandResult(trace, result, active());
+           if (!active()) return;
+           if (requestId) ws.send(JSON.stringify({
+@@ -5474,6 +5478,7 @@
+           if (previous && !parallel) {
+             if (requestId) ws.send(JSON.stringify({ type: 'music:request_wait', roomId: requestedRoom, requestId, waiting: true }));
++            trace?.('wait_previous');
+             await previous;
+-            if (!active()) return;
++            if (!active()) { trace?.('room_changed'); return; }
+             if (requestId) ws.send(JSON.stringify({ type: 'music:request_wait', roomId: requestedRoom, requestId, waiting: false }));
+           }
+@@ -5509,5 +5514,5 @@
+             }
+             result = await manager.enqueueWithAlternatives(original, actor, {
+-              owner: ws, active, beforeCommit: previous, searchFallback: true, offerId: packet.offerId, choiceId: packet.choiceId
++              owner: ws, active, trace, requestId, beforeCommit: previous, searchFallback: true, offerId: packet.offerId, choiceId: packet.choiceId
+             });
+           } else {
+@@ -5580,4 +5585,5 @@
+           ws.musicRoomRevision === revision && ws.user?.userKey === actor?.userKey;
+         const reply = result => {
++          traceCommandResult(trace, result, active());
+           if (active()) ws.send(JSON.stringify({
+             type: 'music:rotation_result', roomId: room, requestId: packet.requestId, ...result
+@@ -5598,4 +5604,5 @@
+         const manager = getMusicManager(room);
+         const result = await manager.playRotationTrack(packet.entryId, actor, 0, {
++          trace, requestId: packet.requestId,
+           owner: ws,
+           active,
+@@ -5643,11 +5650,14 @@
+         }
+         if (packet.type === 'music:report_error') {
++          trace?.('client_audio_error', { current: targetMgr.current?.uid, revision: packet.sourceRevision });
+           await targetMgr.reportError(packet.playUid, actor?.userKey || 'anonymous', packet.sourceRevision);
++          trace?.('report_handled', { current: targetMgr.current?.uid });
+           return;
+         }
+-        if (!actor) return;
++        if (!actor) { trace?.('auth_required'); return; }
+         let result;
+         if (packet.type === 'music:skip' || packet.type === 'music:vote_skip') {
+           if (packet.playUid && targetMgr.current?.uid && packet.playUid !== targetMgr.current.uid) {
++            trace?.('stale_play', { current: targetMgr.current.uid });
+             if (ws.readyState === 1) {
+               ws.send(JSON.stringify({ type: 'music:state', roomId: ws.currentRoom, ...targetMgr.getSnapshot(getOnlineUserKeys(ws.currentRoom)) }));
+@@ -5656,7 +5666,8 @@
+           }
+           const { onlineCount, skipAudienceCount: listeningCount } = getRoomMusicAudience(ws.currentRoom);
++          trace?.('skip_rules', { onlineCount, listeningCount, current: targetMgr.current?.uid });
+           result = packet.type === 'music:skip'
+-            ? targetMgr.skip(actor, onlineCount, listeningCount)
+-            : targetMgr.voteSkip(actor, onlineCount, listeningCount);
++            ? targetMgr.skip(actor, onlineCount, listeningCount, trace)
++            : targetMgr.voteSkip(actor, onlineCount, listeningCount, trace);
+         } else if (packet.type === 'music:remove') {
+           if (packet.uid) {
+@@ -5676,11 +5687,12 @@
+             ws.musicRoomRevision === revision && ws.user?.userKey === actor.userKey;
+           result = await targetMgr.playQueued(packet.uid, actor, listeningCount, packet.playUid, {
+-            active, getAudience: () => getRoomMusicAudience(room).skipAudienceCount
++            trace, active, getAudience: () => getRoomMusicAudience(room).skipAudienceCount
+           });
+-          if (!active()) return;
++          if (!active()) { trace?.('room_changed'); return; }
+         } else if (packet.type === 'music:play_rotation') {
+           const { skipAudienceCount: listeningCount } = getRoomMusicAudience(ws.currentRoom);
+           result = await targetMgr.playRotationTrack(packet.trackId || packet.track, actor, listeningCount);
+         }
++        traceCommandResult(trace, result, true);
+         if (result?.ok === false && ws.readyState === 1) {
+           ws.send(JSON.stringify({ type: 'error', message: result.error }));
+@@ -6809,4 +6821,5 @@
+       }
+     } catch (e) {
++      trace?.('exception', { kind: e?.name || 'Error' });
+       console.error('[WebSocket] Message handle error:', e);
+     }

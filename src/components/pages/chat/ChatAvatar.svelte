@@ -25,6 +25,10 @@ function markAvatarLoaded(url: string): void {
 	loadedAvatarUrls.add(url);
 }
 
+export function hasAvatarLoadFailed(url: string): boolean {
+	return Boolean(url && failedAvatarUrls.has(url));
+}
+
 export function getDownscaledAvatarUrl(url: string): string {
 	if (!url || !canAttemptCorsDownscale(url)) {
 		if (url && downscaledAvatarUrls.has(url)) {
@@ -62,11 +66,17 @@ export function downscaleImgElementInPlace(
 function canAttemptCorsDownscale(url: string): boolean {
 	if (!url || typeof window === "undefined") return false;
 	if (corsDisabledAvatarUrls.has(url)) return false;
-	if (url.startsWith("blob:") || url.startsWith("data:")) return false;
+	if (url.startsWith("blob:") || url.startsWith("data:")) return true;
 	if (/\.(?:gif|svg)(?:$|\?)/i.test(url)) return false;
 	try {
 		const parsed = new URL(url, window.location.href);
-		if (parsed.origin === window.location.origin) {
+		if (
+			parsed.origin === window.location.origin ||
+			parsed.hostname === "chat-server.lengxiqwq.com" ||
+			parsed.hostname.endsWith(".lengxiqwq.com") ||
+			parsed.hostname.includes("dicebear.com") ||
+			parsed.hostname.includes("githubusercontent.com")
+		) {
 			return !/\.(?:gif|svg)(?:$|\?)/i.test(parsed.pathname);
 		}
 	} catch {
@@ -156,10 +166,16 @@ function downscaleAvatarToBlobUrl(
 
 <script lang="ts">
 import {
+	type AvatarColorResult,
+	extractAvatarColor,
+	getCachedAvatarColor,
+} from "./chatAvatarColor";
+import {
 	getAvatarInitials,
 	getDiceBearGlassAvatar,
 	resolveChatAvatarFallbackUrl,
 	resolveChatAvatarUrl,
+	stripSiteSuffix,
 } from "./chatClient";
 
 type AvatarSize = "2xs" | "xs" | "sm" | "md" | "lg";
@@ -174,6 +190,7 @@ interface Props {
 	grayscale?: boolean;
 	mutedTone?: boolean;
 	lazy?: boolean;
+	ring?: boolean;
 	class?: string;
 }
 
@@ -187,6 +204,7 @@ const {
 	grayscale = false,
 	mutedTone = false,
 	lazy = false,
+	ring = false,
 	class: extraClass = "",
 }: Props = $props();
 
@@ -213,9 +231,48 @@ const resolvedSrc = $derived(
 
 const diceBearSeed = $derived.by(() => {
 	const raw = (name || fallback || "spectator").trim();
-	return raw.replace(/\s*·\s*[^·]+$/, "").trim() || raw || "spectator";
+	return stripSiteSuffix(raw) || raw || "spectator";
 });
 const diceBearUrl = $derived(getDiceBearGlassAvatar(diceBearSeed));
+
+const avatarSeed = $derived(name || fallback || "spectator");
+const colorKey = $derived(resolvedSrc || diceBearUrl || avatarSeed);
+let colorResult = $state<AvatarColorResult | null>(null);
+let colorResultKey = $state("");
+
+$effect(() => {
+	const isRing = ring;
+	const key = colorKey;
+	if (!isRing || !key) {
+		colorResult = null;
+		colorResultKey = "";
+		return;
+	}
+	const cached = getCachedAvatarColor(key);
+	if (cached) {
+		colorResult = cached;
+		colorResultKey = key;
+		return;
+	}
+	colorResult = null;
+	colorResultKey = "";
+});
+
+function tryExtractRingColor(img: HTMLImageElement): void {
+	if (!ring) return;
+	const key = colorKey;
+	if (!key) return;
+	const extracted = extractAvatarColor(img, key, (res) => {
+		if (key === colorKey) {
+			colorResult = res;
+			colorResultKey = key;
+		}
+	});
+	if (extracted) {
+		colorResult = extracted;
+		colorResultKey = key;
+	}
+}
 
 $effect(() => {
 	void primaryUrl;
@@ -242,6 +299,9 @@ const useCors = $derived(!downscaledSrc && !disableCorsForCurrent && canCorsDown
 function handleAvatarLoad(img: HTMLImageElement): void {
 	if (!resolvedSrc) return;
 	markAvatarLoaded(resolvedSrc);
+	if (ring) {
+		tryExtractRingColor(img);
+	}
 	imgLoaded = true;
 	if (size !== "lg" && useCors && (img.naturalWidth > 160 || img.naturalHeight > 160)) {
 		void downscaleAvatarToBlobUrl(img, resolvedSrc);
@@ -273,9 +333,12 @@ function handleAvatarError(): void {
 	imgError = true;
 }
 
-function handleDiceBearLoad(): void {
+function handleDiceBearLoad(img?: HTMLImageElement): void {
 	if (!diceBearUrl) return;
 	markAvatarLoaded(diceBearUrl);
+	if (ring && img) {
+		tryExtractRingColor(img);
+	}
 	diceBearLoaded = true;
 }
 
@@ -289,6 +352,10 @@ function handleDiceBearError(): void {
 
 const hasCustomAvatar = $derived(Boolean(resolvedSrc));
 const showCustomImage = $derived(hasCustomAvatar && !imgError);
+const hasLoadedVisual = $derived(
+	(showCustomImage && imgLoaded) ||
+		(!hasCustomAvatar && !diceBearError && diceBearLoaded),
+);
 const initials = $derived(getAvatarInitials(name, fallback));
 const isMultiChar = $derived(Array.from(initials).length >= 2);
 
@@ -300,8 +367,26 @@ const boxClass = $derived(
 			: size === "sm"
 				? "chat-avatar-sm"
 				: size === "lg"
-					? "w-12 h-12 rounded-full border border-black/10 dark:border-white/15"
+					? `w-12 h-12 rounded-full ${ring ? "" : "border border-black/10 dark:border-white/15"}`
 					: "chat-avatar",
+);
+
+const ringState = $derived.by(() => {
+	if (!ring) return undefined;
+	if (!hasCustomAvatar || imgError || diceBearError) return "mono";
+	if (!hasLoadedVisual || colorResultKey !== colorKey) return "mono";
+	if (grayscale) return "muted";
+	if (colorResult?.tone === "color") return "color";
+	if (colorResult?.tone === "mono") return "mono";
+	return "pending";
+});
+
+const ringClass = $derived(ring ? "chat-avatar-ring" : "");
+
+const ringStyle = $derived(
+	ringState === "color" && colorResult
+		? `--avatar-hue: ${colorResult.hue};`
+		: undefined,
 );
 
 const textSizeClass = $derived.by(() => {
@@ -340,14 +425,20 @@ const fallbackTextColorClass = $derived(
       crossorigin={useCors ? "anonymous" : undefined}
       referrerpolicy="no-referrer"
       alt={alt || name}
-      class="{boxClass} object-cover shrink-0 {grayscale ? 'grayscale-[35%]' : ''} {extraClass}"
+      data-avatar-ring={ringState}
+      data-avatar-size={size}
+      class="{boxClass} {ringClass} object-cover shrink-0 {grayscale ? 'grayscale-[35%]' : ''} {extraClass}"
+      style={ringStyle}
       onload={(event) => handleAvatarLoad(event.currentTarget)}
       onerror={handleAvatarError}
     />
   {:else if showCustomImage}
     <!-- 有头像但在加载中：显示中性灰色人头像剪影，绝不闪现奇怪头像 -->
     <span
-      class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-neutral-200/90 dark:bg-neutral-800/90 {extraClass}"
+      data-avatar-ring={ringState}
+      data-avatar-size={size}
+      class="{boxClass} {ringClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-neutral-200/90 dark:bg-neutral-800/90 {extraClass}"
+      style={ringStyle}
       aria-label={alt || name || "加载中"}
     >
       <svg
@@ -374,7 +465,10 @@ const fallbackTextColorClass = $derived(
   {:else}
     <!-- 有头像但加载失败（404/破损）：纯灰色人头像剪影，绝不替换成怪异头像 -->
     <span
-      class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-neutral-200/90 dark:bg-neutral-800/90 {extraClass}"
+      data-avatar-ring={ringState}
+      data-avatar-size={size}
+      class="{boxClass} {ringClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-neutral-200/90 dark:bg-neutral-800/90 {extraClass}"
+      style={ringStyle}
       title="头像加载失败"
       aria-label={alt || name || "默认头像"}
     >
@@ -396,15 +490,24 @@ const fallbackTextColorClass = $derived(
       loading={lazy ? "lazy" : "eager"}
       fetchpriority={lazy ? "low" : undefined}
       decoding="async"
+      crossorigin="anonymous"
       referrerpolicy="no-referrer"
       alt={alt || name}
-      class="{boxClass} object-cover shrink-0 {grayscale ? 'grayscale-[35%]' : ''} {extraClass}"
-      onload={handleDiceBearLoad}
+      data-avatar-ring={ringState}
+      data-avatar-size={size}
+      class="{boxClass} {ringClass} object-cover shrink-0 {grayscale ? 'grayscale-[35%]' : ''} {extraClass}"
+      style={ringStyle}
+      onload={(event) => handleDiceBearLoad(event.currentTarget)}
       onerror={handleDiceBearError}
     />
   {:else}
     <!-- Cutouts 正在加载中：同样以温和中性灰色人像剪影过渡 -->
-    <span class="{boxClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-neutral-200/90 dark:bg-neutral-800/90 {extraClass}">
+    <span
+      data-avatar-ring={ringState}
+      data-avatar-size={size}
+      class="{boxClass} {ringClass} relative inline-flex items-center justify-center shrink-0 overflow-hidden bg-neutral-200/90 dark:bg-neutral-800/90 {extraClass}"
+      style={ringStyle}
+    >
       <svg
         viewBox="0 0 24 24"
         fill="currentColor"
@@ -418,10 +521,11 @@ const fallbackTextColorClass = $derived(
         loading={lazy ? "lazy" : "eager"}
         fetchpriority={lazy ? "low" : undefined}
         decoding="async"
+        crossorigin="anonymous"
         referrerpolicy="no-referrer"
         alt={alt || name}
         class="absolute inset-0 w-full h-full object-cover opacity-0 transition-opacity duration-150 {grayscale ? 'grayscale-[35%]' : ''}"
-        onload={handleDiceBearLoad}
+        onload={(event) => handleDiceBearLoad(event.currentTarget)}
         onerror={handleDiceBearError}
       />
     </span>
@@ -429,7 +533,10 @@ const fallbackTextColorClass = $derived(
 {:else}
   <!-- 极端离线/不可用兜底：中性灰色人像剪影 -->
   <span
-    class="{boxClass} bg-neutral-200/90 dark:bg-neutral-800/90 inline-flex items-center justify-center shrink-0 {extraClass}"
+    data-avatar-ring={ringState}
+    data-avatar-size={size}
+    class="{boxClass} {ringClass} bg-neutral-200/90 dark:bg-neutral-800/90 inline-flex items-center justify-center shrink-0 {extraClass}"
+    style={ringStyle}
     aria-label={alt || name || "默认头像"}
   >
     <svg

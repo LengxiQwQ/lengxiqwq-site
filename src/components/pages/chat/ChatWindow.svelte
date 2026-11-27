@@ -9,6 +9,7 @@ import ChatAvatar, {
 	downscaleImgElementInPlace,
 	getDownscaledAvatarUrl,
 } from "./ChatAvatar.svelte";
+import Icon from "@/components/common/Icon.svelte";
 import ChatMarkdownContent from "./ChatMarkdownContent.svelte";
 import ChatMessage from "./ChatMessage.svelte";
 import ChatStickerPicker from "./ChatStickerPicker.svelte";
@@ -27,12 +28,14 @@ import {
 } from "./chatAppearance";
 import {
 	formatChatMessageTime,
-	getLocalSiteName,
+	getLocalSiteChatBadge,
+	isChatMessageFromCurrentUser,
 	isExternalMatrixIdentity,
+	isGroupedContinuationMessage,
 	isMentionedForUser,
-	normalizeDotSpacing,
 	resolveExternalOrigin,
 	sanitizeChatUrl,
+	stripSiteSuffix,
 	uploadChatImage,
 	uploadChatMedia,
 } from "./chatClient";
@@ -178,6 +181,7 @@ interface Props {
 	) => void;
 	onTyping?: (typing: boolean) => void;
 	onToggleInterconnect?: () => void;
+	onOpenRoomInfo?: () => void;
 	onSendMessage: (
 		content: string,
 		attachments: ImageAttachment[],
@@ -282,6 +286,7 @@ const {
 	onOpenPollModal,
 	onCreatePoll,
 	onTyping,
+	onOpenRoomInfo,
 	onToggleInterconnect,
 	onSendMessage,
 	onRecallMessage,
@@ -315,9 +320,8 @@ let isSendingAttachments = $state(false);
 let isPreviewingMarkdown = $state(false);
 let shareTriggerEl = $state<HTMLButtonElement | null>(null);
 
-const effectiveSubtitle = $derived(roomTopic ? roomTopic : roomSubtitle);
 const localSiteName = $derived(
-	getLocalSiteName(interconnectSites) || "冷汐的杂货铺",
+	getLocalSiteChatBadge(interconnectSites) || "冷汐的杂货铺",
 );
 let failedRoomAvatars = $state<Record<string, boolean>>({});
 const effectiveRoomAvatar = $derived((roomAvatar || "").trim());
@@ -561,8 +565,6 @@ let pressedActionBackdrop: HTMLButtonElement | null = null;
 let unreadMentionUids = $state<string[]>([]);
 let alertBannerUid = $state<string | null>(null);
 let highlightedMsgUid = $state("");
-let editingTopic = $state(false);
-let topicDraft = $state("");
 
 function openMobileActionDialog(dialog: HTMLDialogElement) {
 	dialog.showModal();
@@ -1064,7 +1066,9 @@ function estimateRowHeight(msg: ChatMessageRecord): number {
 			: 0;
 		return 46 + details + (hasHistoryDivider(msg.msgUid) ? 34 : 0);
 	}
-	let h = 76;
+	const isGrouped = groupedState.continuations.has(msg.msgUid);
+	const hidesTime = groupedState.hasNextInGroup.has(msg.msgUid);
+	let h = (isGrouped ? 50 : 76) - (hidesTime ? 18 : 0);
 	if (hasHistoryDivider(msg.msgUid)) h += 34;
 	if (msg.replyTo) h += 44;
 	const { imageUrls, textLength } = getChatMarkdownLayout(
@@ -1499,6 +1503,63 @@ function hasHistoryDivider(uid: string): boolean {
 	return uid === sessionDividerUid || uid === unfocusedDividerUid;
 }
 
+const groupedState = $derived.by(() => {
+	const continuations = new Set<string>();
+	const hasNextInGroup = new Set<string>();
+	for (let i = 1; i < visibleMessages.length; i++) {
+		const prev = visibleMessages[i - 1];
+		const curr = visibleMessages[i];
+		const prevSelf = isChatMessageFromCurrentUser(prev, currentUser);
+		const currSelf = isChatMessageFromCurrentUser(curr, currentUser);
+		if (
+			prevSelf === currSelf &&
+			isGroupedContinuationMessage(prev, curr, hasHistoryDivider(curr.msgUid))
+		) {
+			continuations.add(curr.msgUid);
+			hasNextInGroup.add(prev.msgUid);
+		}
+	}
+	return { continuations, hasNextInGroup };
+});
+
+let prevGroupedContinuations = new Set<string>();
+let prevGroupedHasNext = new Set<string>();
+$effect(() => {
+	const { continuations, hasNextInGroup } = groupedState;
+	let changed = false;
+	for (const uid of continuations) {
+		if (!prevGroupedContinuations.has(uid)) {
+			measuredMsgHeights.delete(uid);
+			changed = true;
+		}
+	}
+	for (const uid of prevGroupedContinuations) {
+		if (!continuations.has(uid)) {
+			measuredMsgHeights.delete(uid);
+			changed = true;
+		}
+	}
+	for (const uid of hasNextInGroup) {
+		if (!prevGroupedHasNext.has(uid)) {
+			measuredMsgHeights.delete(uid);
+			changed = true;
+		}
+	}
+	for (const uid of prevGroupedHasNext) {
+		if (!hasNextInGroup.has(uid)) {
+			measuredMsgHeights.delete(uid);
+			changed = true;
+		}
+	}
+	prevGroupedContinuations = new Set(continuations);
+	prevGroupedHasNext = new Set(hasNextInGroup);
+	if (changed) {
+		void tick().then(() => {
+			measureMountedRows();
+		});
+	}
+});
+
 const unreadBadgeCount = $derived.by(() => {
 	if (!sessionUnreadSince) return 0;
 	const loadedCount = visibleMessages.filter(
@@ -1919,6 +1980,9 @@ const hasHeaderShares = $derived(recentNonMusicShareEntries.length > 0);
 const hasHeaderSharedMusic = $derived(
 	recentMusicShareEntries.length > 0 || Boolean(activePrivateTrack),
 );
+const hasInterconnectPill = $derived(
+	isInterconnectRoom && interconnectSites.length > 0,
+);
 const compactHeaderPills = $derived.by(() => {
 	if (chatHeaderWidth <= 0 || (viewportWidth > 0 && viewportWidth < 768)) {
 		return false;
@@ -1932,12 +1996,11 @@ const compactHeaderPills = $derived.by(() => {
 	if (pillCount === 0) return false;
 	const wideDesktop = viewportWidth === 0 || viewportWidth >= 1024;
 	const hasSplitTrigger = viewportWidth > 0 && viewportWidth < 1100;
-	const isTopicVisible = wideDesktop && Boolean(effectiveSubtitle?.trim());
 	const leftEstimate =
 		(hasSplitTrigger ? 44 : 0) +
 		(wideDesktop ? 44 : 0) +
-		(isInterconnectRoom ? (wideDesktop ? 172 : 116) : 84) +
-		(isTopicVisible ? 150 : 0);
+		110 +
+		(hasInterconnectPill ? 116 : 0);
 	const rightEstimate =
 		(hasHeaderThreads ? 104 : 0) +
 		(hasHeaderMentions ? 92 : 0) +
@@ -1948,8 +2011,9 @@ const compactHeaderPills = $derived.by(() => {
 	return chatHeaderWidth < leftEstimate + rightEstimate + 48;
 });
 const mobileOnlineLabel = $derived(
-	`${onlineCount}/${totalChatterCount > 0 ? totalChatterCount : "—"} 人在线`,
+	totalChatterCount > 0 ? `${onlineCount}/${totalChatterCount}` : `${onlineCount}`,
 );
+const mobileOnlineAriaLabel = $derived(`${onlineCount} 人在线`);
 const mobileHeaderTarget = 44;
 // 扣除右端的点歌和网站菜单、更多按钮，以及顶栏的左右内边距和间距。
 const mobileRoomBudget = $derived(
@@ -1958,17 +2022,10 @@ const mobileRoomBudget = $derived(
 const mobileRoomButtonWidth = $derived(mobileRoomContentWidth + 8);
 const threadInMore = $derived(mobileHeaderEndWidth > 0 && hasHeaderThreads);
 const sharesInMore = $derived(mobileHeaderEndWidth > 0 && hasHeaderShares);
-const showMobilePlayingMusicPill = $derived(
-	mobileHeaderEndWidth > 0 && hasHeaderSharedMusic && privateMusic.isPlaying,
-);
 const musicSharesInMore = $derived(
-	mobileHeaderEndWidth > 0 &&
-		hasHeaderSharedMusic &&
-		!showMobilePlayingMusicPill,
+	mobileHeaderEndWidth > 0 && hasHeaderSharedMusic,
 );
-const mobileMusicPillReserve = $derived(
-	showMobilePlayingMusicPill ? mobileHeaderTarget : 0,
-);
+const mobileMusicPillReserve = 0;
 const mentionsInMore = $derived(
 	mobileHeaderEndWidth > 0 &&
 		hasHeaderMentions &&
@@ -2124,16 +2181,19 @@ $effect(() => {
 		nameChanged = true;
 	}
 
-	const mergeSeed = (seed: ChatUserDetailSeed) => {
+	const mergeSeed = (seed: ChatUserDetailSeed & { matrixSender?: string }) => {
 		if (!seed.userKey) return;
-		const prev = cachedProfileMap.get(seed.userKey);
-		const merged: ChatUserDetailSeed = {
+		const prev = cachedProfileMap.get(seed.userKey) as
+			| (ChatUserDetailSeed & { matrixSender?: string })
+			| undefined;
+		const merged: ChatUserDetailSeed & { matrixSender?: string } = {
 			userKey: seed.userKey,
 			name: seed.name || prev?.name || "",
 			avatar: seed.avatar || prev?.avatar,
 			url: seed.url || prev?.url,
 			site: seed.site || prev?.site,
 			siteUrl: seed.siteUrl || prev?.siteUrl,
+			matrixSender: seed.matrixSender || prev?.matrixSender,
 			badge: seed.badge || prev?.badge,
 			badgeType: seed.badgeType || prev?.badgeType,
 			isAdmin: seed.isAdmin ?? prev?.isAdmin,
@@ -2146,6 +2206,7 @@ $effect(() => {
 			prev.url === merged.url &&
 			prev.site === merged.site &&
 			prev.siteUrl === merged.siteUrl &&
+			prev.matrixSender === merged.matrixSender &&
 			prev.badge === merged.badge &&
 			prev.badgeType === merged.badgeType &&
 			prev.isAdmin === merged.isAdmin &&
@@ -2184,6 +2245,7 @@ $effect(() => {
 				url: m.url,
 				site: m.site,
 				siteUrl: m.siteUrl,
+				matrixSender: m.matrixSender,
 				badge: m.badge,
 				badgeType: m.badgeType,
 				isAdmin: m.isAdmin,
@@ -2222,6 +2284,7 @@ $effect(() => {
 				url: m.url,
 				site: m.site,
 				siteUrl: m.siteUrl,
+				matrixSender: m.matrixSender,
 				badge: m.badge,
 				badgeType: m.badgeType,
 				isAdmin: m.isAdmin,
@@ -2239,6 +2302,7 @@ $effect(() => {
 				url: m.url,
 				site: m.site,
 				siteUrl: m.siteUrl,
+				matrixSender: m.matrixSender,
 				badge: m.badge,
 				badgeType: m.badgeType,
 				isAdmin: m.isAdmin,
@@ -3041,60 +3105,10 @@ function dismissAlertBanner() {
 	}
 }
 
-function fitBalancedTopicWidth(node: HTMLElement, _dep?: unknown) {
-	let rafId = 0;
-	const measure = () => {
-		cancelAnimationFrame(rafId);
-		rafId = requestAnimationFrame(() => {
-			node.style.width = "auto";
-			const range = document.createRange();
-			range.selectNodeContents(node);
-			const rects = Array.from(range.getClientRects());
-			if (rects.length > 1) {
-				let maxW = 0;
-				for (const r of rects) {
-					if (r.width > maxW) maxW = r.width;
-				}
-				if (maxW > 0) {
-					node.style.width = `${Math.ceil(maxW) + 2}px`;
-				}
-			}
-		});
-	};
-
-	measure();
-
-	const ro = new ResizeObserver(() => {
-		measure();
-	});
-	if (node.parentElement?.parentElement) {
-		ro.observe(node.parentElement.parentElement);
-	}
-
-	return {
-		update(_nextDep?: unknown) {
-			measure();
-		},
-		destroy() {
-			cancelAnimationFrame(rafId);
-			ro.disconnect();
-		},
-	};
-}
-
 function formatShortTime(ts: number): string {
 	if (!ts) return "";
 	const d = new Date(ts);
 	return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-}
-
-function stripSiteSuffix(name?: string, userKey?: string): string {
-	const raw = (name || "").trim();
-	if (!raw) return "";
-	return (
-		resolveExternalOrigin({ name: raw, userKey }, interconnectSites).cleanName ||
-		raw
-	);
 }
 
 function handleOpenNoticeUserProfile(
@@ -3884,11 +3898,11 @@ $effect(() => {
 	if (replyingTo && !msgs.some((m) => m.msgUid === replyingTo?.msgUid)) {
 		replyingTo = null;
 	}
-	if (
-		mobileActionTarget &&
-		!msgs.some((m) => m.msgUid === mobileActionTarget?.message.msgUid)
-	) {
-		closeMobileActions();
+	if (mobileActionTarget) {
+		const activeTarget = msgs.find((m) => m.msgUid === mobileActionTarget?.message.msgUid);
+		if (!activeTarget || (currentUser?.isAdmin && activeTarget.isRedacted)) {
+			closeMobileActions();
+		}
 	}
 });
 
@@ -4233,18 +4247,7 @@ function formatCandidateMentionName(candidate: {
 }): string {
 	if (candidate.userKey === "room") return "全体成员";
 	const rawName = (candidate.name || "").trim();
-	const hasDot =
-		rawName.includes("·") || rawName.includes("•") || rawName.includes("・");
-	if (isInterconnectRoom && isExternalMatrixIdentity(candidate)) {
-		if (hasDot) {
-			return normalizeDotSpacing(rawName);
-		}
-		const extOrigin = resolveExternalOrigin(candidate, interconnectSites);
-		if (extOrigin?.cleanName && extOrigin.siteName) {
-			return `${extOrigin.cleanName} · ${extOrigin.siteName}`;
-		}
-	}
-	return stripSiteSuffix(rawName, candidate.userKey) || normalizeDotSpacing(rawName);
+	return stripSiteSuffix(rawName) || rawName;
 }
 
 $effect(() => {
@@ -4926,8 +4929,8 @@ function removePendingImage(index: number) {
         {#each mergedActiveThreads as item (item.rootUid)}
           {@const rootMsg = item.rootMessage}
           {@const latest = item.summary.latestReply}
-          {@const rootDisplayName = stripSiteSuffix(rootMsg?.name, rootMsg?.userKey) || "主题消息"}
-          {@const latestDisplayName = latest ? (stripSiteSuffix(latest.name, latest.userKey) || latest.name) : ""}
+          {@const rootDisplayName = stripSiteSuffix(rootMsg?.name) || "主题消息"}
+          {@const latestDisplayName = latest ? (stripSiteSuffix(latest.name) || latest.name) : ""}
           <button
             type="button"
             role="menuitem"
@@ -4987,7 +4990,7 @@ function removePendingImage(index: number) {
       <div class="chat-history-menu-list custom-scrollbar">
         {#each mentionsToMe.slice().reverse() as item (item.msgUid)}
           {@const isUnread = unreadMentionSet.has(item.msgUid)}
-          {@const mentionDisplayName = stripSiteSuffix(item.name, item.userKey) || item.name}
+          {@const mentionDisplayName = stripSiteSuffix(item.name) || item.name}
           <button
             type="button"
             role="menuitem"
@@ -5071,7 +5074,7 @@ function removePendingImage(index: number) {
           {@const meta = getShareCardPresentation(entry.share)}
           {@const thumbDisplayUrl = meta.thumbUrl ? resolveShareThumbUrl(meta.thumbUrl, "square-sm", getCachedShareThumbs()) : ""}
           {@const hasThumb = Boolean(thumbDisplayUrl && !shareFailedThumbs[meta.thumbUrl])}
-          {@const sharerDisplayName = stripSiteSuffix(entry.message.name, entry.message.userKey) || entry.message.name}
+          {@const sharerDisplayName = stripSiteSuffix(entry.message.name) || entry.message.name}
           <div class="chat-share-card-row group">
             <div class="chat-share-card-main">
               <div class="chat-share-card-thumb shrink-0">
@@ -5188,7 +5191,7 @@ function removePendingImage(index: number) {
     {@const hasActiveCover = Boolean(activePrivateTrack?.cover && !sharedMusicFailedCovers[activeCoverKey])}
     {@const activeSenderSource = privateMusic.activeMsgUid ? (messages.find((m) => m.msgUid === privateMusic.activeMsgUid) ?? recentShares.find((m) => m.msgUid === privateMusic.activeMsgUid) ?? null) : null}
     {@const activeSenderDisplayUserKey = privateMusic.activeSenderUserKey || activeSenderSource?.userKey || ""}
-    {@const activeSenderDisplayName = stripSiteSuffix(privateMusic.activeSenderName || activeSenderSource?.name || "", activeSenderDisplayUserKey)}
+    {@const activeSenderDisplayName = stripSiteSuffix(privateMusic.activeSenderName || activeSenderSource?.name || "")}
     {@const activeSenderDisplayAvatar = privateMusic.activeSenderAvatar || activeSenderSource?.avatar || ""}
     <div
       data-chat-floating
@@ -5493,7 +5496,7 @@ function removePendingImage(index: number) {
             {@const isRowMatched = privateMusic.isTrackMatching(entry.share, entry.message.msgUid)}
             {@const isRowPlaying = isRowMatched && privateMusic.isPlaying}
             {@const isRowLoading = isRowMatched && privateMusic.isBufferingSlow}
-            {@const musicSharerDisplayName = stripSiteSuffix(entry.message.name, entry.message.userKey) || entry.message.name}
+            {@const musicSharerDisplayName = stripSiteSuffix(entry.message.name) || entry.message.name}
             <div
               class="chat-share-card-row group cursor-pointer {isRowMatched ? 'is-active' : ''}"
               role="button"
@@ -5827,45 +5830,22 @@ function removePendingImage(index: number) {
           <span class="chat-split-room-unread-dot" aria-hidden="true"></span>
         {/if}
       </button>
-      {#if editingTopic && currentUser?.isAdmin}
-        <form
-          class="flex items-center gap-1.5 min-w-0 flex-1 max-w-md"
-          onsubmit={(e) => {
-            e.preventDefault();
-            if (topicDraft.trim()) onSetTopic?.(topicDraft.trim());
-            editingTopic = false;
-          }}
-        >
-          <input
-            type="text"
-            maxlength="160"
-            class="chat-topic-input flex-1 min-w-0 px-2.5 py-1 text-sm md:text-xs rounded-lg bg-black/5 dark:bg-white/10 text-[var(--deep-text)] dark:text-white/90 border border-[var(--chat-divider-color)] outline-none focus:border-[var(--primary)]"
-            bind:value={topicDraft}
-            placeholder="输入房间主题..."
-            onkeydown={(e) => {
-              if (e.key === "Escape") editingTopic = false;
-            }}
-          />
-          <button type="submit" class="px-2.5 py-1 rounded-lg text-xs font-medium bg-[var(--primary)] text-white hover:opacity-90 border-none cursor-pointer">保存</button>
-          <button type="button" class="px-2 py-1 rounded-lg text-xs text-[var(--chat-meta-color)] hover:bg-black/5 dark:hover:bg-white/10 border-none bg-transparent cursor-pointer" onclick={() => (editingTopic = false)}>取消</button>
-        </form>
-      {:else}
+        {#snippet roomOnlineStatus()}
+          <span class="chat-mobile-room-online chat-header-room-online">
+            <span class="chat-online-dot" aria-hidden="true"></span>
+            <span class="truncate">{mobileOnlineLabel}</span>
+          </span>
+        {/snippet}
         <button
           type="button"
           class="chat-mobile-header-room-btn chat-mobile-only"
-          aria-label={`#${roomName}，${mobileOnlineLabel}，打开房间与成员${otherRoomsUnreadCount > 0 ? `，其他房间有 ${otherRoomsUnreadCount} 条未读消息` : ""}`}
+          aria-label={`#${roomName}，${mobileOnlineAriaLabel}，打开房间与成员${otherRoomsUnreadCount > 0 ? `，其他房间有 ${otherRoomsUnreadCount} 条未读消息` : ""}`}
           onclick={() => onOpenRoomDrawer?.()}
         >
-          {#snippet onlineStatus()}
-            <span class="chat-mobile-room-online">
-              <span class="chat-online-dot" aria-hidden="true"></span>
-              <span class="truncate">{mobileOnlineLabel}</span>
-            </span>
-          {/snippet}
           <span class="chat-mobile-room-measure" aria-hidden="true">
             <span class="chat-mobile-room-measure-content" bind:offsetWidth={mobileRoomContentWidth}>
               <span class="chat-mobile-room-title">#{roomName}</span>
-              {@render onlineStatus()}
+              {@render roomOnlineStatus()}
             </span>
           </span>
           {#if hasRoomAvatar && fitsMobileRoomAvatar}
@@ -5894,90 +5874,55 @@ function removePendingImage(index: number) {
                 {/if}
               </span>
             </span>
-            {@render onlineStatus()}
+            {@render roomOnlineStatus()}
           </span>
         </button>
 
-        <!-- 桌面端 / iPad 左侧：独立房间头像框、名称（互联茶室为可下拉框）与副标题 -->
-        <div class="chat-header-room-avatar chat-desktop-only">
-          {#if hasRoomAvatar}
-            <img
-              src={getDownscaledAvatarUrl(effectiveRoomAvatar) || effectiveRoomAvatar}
-              alt={roomName}
-              class="w-full h-full object-cover"
-              decoding="async"
-              crossorigin={!getDownscaledAvatarUrl(effectiveRoomAvatar) && canCorsDownscaleAvatar(effectiveRoomAvatar) ? "anonymous" : undefined}
-              onload={(event) => downscaleImgElementInPlace(event.currentTarget, effectiveRoomAvatar)}
-
-              onerror={() => {
-                failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
-              }}
-            />
-          {:else}
-            <span class="font-mono text-sm font-bold opacity-70">#</span>
-          {/if}
-        </div>
-        {#if isInterconnectRoom}
+        <!-- 桌面端 / iPad 左侧：房间头像与名称合并为单一信息入口按钮 -->
+        <button
+          type="button"
+          class="chat-header-room-trigger chat-desktop-only"
+          aria-label={`查看 #${roomName} 房间信息，${mobileOnlineAriaLabel}`}
+          onclick={() => onOpenRoomInfo?.()}
+        >
+          <span class="chat-header-room-avatar chat-header-room-avatar--inline">
+            {#if hasRoomAvatar}
+              <img
+                src={getDownscaledAvatarUrl(effectiveRoomAvatar) || effectiveRoomAvatar}
+                alt=""
+                class="w-full h-full object-cover"
+                decoding="async"
+                crossorigin={!getDownscaledAvatarUrl(effectiveRoomAvatar) && canCorsDownscaleAvatar(effectiveRoomAvatar) ? "anonymous" : undefined}
+                onload={(event) => downscaleImgElementInPlace(event.currentTarget, effectiveRoomAvatar)}
+                onerror={() => {
+                  failedRoomAvatars = { ...failedRoomAvatars, [effectiveRoomAvatar]: true };
+                }}
+              />
+            {:else}
+              <span class="font-mono text-xs font-bold opacity-70">#</span>
+            {/if}
+          </span>
+          <span class="chat-header-room-title-text font-bold text-base text-[var(--deep-text)] dark:text-white/90 min-w-0 truncate">
+            #{roomName}
+          </span>
+          {@render roomOnlineStatus()}
+        </button>
+        {#if hasInterconnectPill}
           <button
             type="button"
             data-chat-interconnect-trigger
             data-chat-interconnect-anchor
-            class="chat-header-room-dropdown chat-desktop-only {showInterconnect ? 'active' : ''}"
-            aria-label="查看互联茶室友站列表"
+            class="chat-header-room-dropdown chat-header-interconnect-trigger chat-desktop-only"
+            class:active={showInterconnect}
             aria-expanded={showInterconnect}
+            aria-label="查看接入联邦的互联友站列表"
             onclick={() => onToggleInterconnect?.()}
           >
-            <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 min-w-0 truncate">
-              #{roomName}
-            </span>
-            {#if interconnectSites.length > 0}
-              <span class="chat-header-site-count text-[11px] font-medium px-1.5 py-0.5 rounded-md bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] tabular-nums shrink-0">
-                {interconnectSites.length} 个站点
-              </span>
-            {/if}
-            <svg class="w-3.5 h-3.5 opacity-65 transition-transform shrink-0 {showInterconnect ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
+            <Icon icon="mingcute:earth-2-line" class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" />
+            <span class="font-semibold text-sm text-[var(--deep-text)] dark:text-white/90">互联友站</span>
+            <span class="chat-header-interconnect-count">{interconnectSites.length}</span>
           </button>
-        {:else}
-          <div class="chat-header-room-badge chat-desktop-only">
-            <span class="font-bold text-sm text-[var(--deep-text)] dark:text-white/90 shrink-0">
-              #{roomName}
-            </span>
-          </div>
         {/if}
-        {#if effectiveSubtitle?.trim() || (currentUser?.isAdmin && onSetTopic)}
-          <div class="chat-header-topic-wrap">
-            {#if effectiveSubtitle?.trim()}
-              <span
-                use:fitBalancedTopicWidth={effectiveSubtitle}
-                class="chat-header-topic-text"
-                title={effectiveSubtitle}
-              >
-                {effectiveSubtitle.replace(/[\r\n]+/g, " ").trim()}
-              </span>
-            {/if}
-            {#if currentUser?.isAdmin && onSetTopic}
-              <ChatTooltip text="编辑房间主题" position="bottom" align="left">
-                <button
-                  type="button"
-                  class="chat-header-topic-edit-btn"
-                  aria-label="编辑房间主题"
-                  onclick={() => {
-                    topicDraft = effectiveSubtitle;
-                    editingTopic = true;
-                  }}
-                >
-                  <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M12 20h9" />
-                    <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                  </svg>
-                </button>
-              </ChatTooltip>
-            {/if}
-          </div>
-        {/if}
-      {/if}
     </div>
     <div class="chat-window-header-actions flex items-center gap-1.5 shrink-0">
       {#if hasHeaderThreads}
@@ -6011,9 +5956,9 @@ function removePendingImage(index: number) {
           type="button"
           data-chat-interconnect-anchor
           id="chat-site-controls-trigger"
-          class="chat-mobile-header-action"
+          class="chat-mobile-header-action relative"
           class:is-active={showInterconnect}
-          aria-label="更多聊天室选项"
+          aria-label={privateMusic.isPlaying && activePrivateTrack ? `更多聊天室选项（正在播放：${activePrivateTrack.title}）` : "更多聊天室选项"}
           aria-expanded={showMobileMoreMenu || (threadInMore && showThreadListMenu) || (mentionsInMore && showMentionHistory) || (sharesInMore && showShareHistory) || (musicSharesInMore && showSharedMusicMenu) || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu)}
           data-floating-panel-no-expanded
           bind:this={mobileMoreTrigger}
@@ -6024,6 +5969,9 @@ function removePendingImage(index: number) {
             <circle cx="19" cy="12" r="1.25" fill="currentColor" />
             <circle cx="5" cy="12" r="1.25" fill="currentColor" />
           </svg>
+          {#if privateMusic.isPlaying}
+            <span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[var(--primary)] ring-2 ring-[var(--skin-surface)] pointer-events-none" aria-hidden="true"></span>
+          {/if}
         </button>
 
         {#if showMobileMoreMenu}
@@ -6074,6 +6022,9 @@ function removePendingImage(index: number) {
                     <circle cx="18" cy="16" r="3" />
                   </svg>
                   <span>分享音乐</span>
+                  {#if privateMusic.isPlaying}
+                    <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--skin-accent)]/15 text-[var(--skin-accent)]">播放中</span>
+                  {/if}
                 </span>
                 <span class="chat-mobile-more-count">{recentMusicShareEntries.length}</span>
               </button>
@@ -6162,23 +6113,42 @@ function removePendingImage(index: number) {
               <svg class="w-4 h-4 text-[var(--chat-meta-color)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6" /></svg>
             </button>
 
-            {#if currentUser?.isAdmin && onSetTopic}
+            <button
+              type="button"
+              role="menuitem"
+              class="chat-mobile-more-item"
+              onclick={() => {
+                closeAllHeaderMenus();
+                onOpenRoomInfo?.();
+              }}
+            >
+              <span class="flex items-center gap-2.5">
+                <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="16" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12.01" y2="8" />
+                </svg>
+                <span>房间基本信息</span>
+              </span>
+            </button>
+
+            {#if isInterconnectRoom && interconnectSites.length > 0}
               <button
                 type="button"
                 role="menuitem"
                 class="chat-mobile-more-item"
                 onclick={() => {
                   closeAllHeaderMenus();
-                  topicDraft = effectiveSubtitle;
-                  editingTopic = true;
+                  onToggleInterconnect?.();
                 }}
               >
                 <span class="flex items-center gap-2.5">
                   <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M12 20h9" />
-                    <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="2" y1="12" x2="22" y2="12" />
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
                   </svg>
-                  <span>编辑房间主题</span>
+                  <span>互联友站 ({interconnectSites.length})</span>
                 </span>
               </button>
             {/if}
@@ -6360,22 +6330,6 @@ function removePendingImage(index: number) {
         </div>
       {/if}
 
-
-      <!-- 桌面端顶栏右侧控件 -->
-      <div class="chat-desktop-only">
-        <ChatTooltip
-          position="bottom"
-          align="right"
-          text={isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount} 人在线 · 累计 ${totalChatterCount} 人聊过天` : `${onlineCount} 人在线`}
-        >
-          <div
-            class="text-xs text-[var(--deep-text)] dark:text-white/85 px-2.5 py-1 rounded-full bg-[var(--card-bg)]/60 border border-[var(--chat-divider-color)] flex items-center gap-1.5 whitespace-nowrap"
-          >
-            <span class="chat-online-dot"></span>
-            <span>{isInterconnectRoom && totalChatterCount && totalChatterCount > 0 ? `${onlineCount}/${totalChatterCount}` : `${onlineCount} 人在线`}</span>
-          </div>
-        </ChatTooltip>
-      </div>
 
       <div class="chat-mobile-only flex items-center" bind:offsetWidth={mobileHeaderEndWidth}>
         <button
@@ -6742,17 +6696,9 @@ function removePendingImage(index: number) {
           {#each renderedMessages as msg (msg.msgUid)}
             {@const activity = activityTimeline.groups.get(msg.msgUid)}
             {@const activityOpen = activity?.some((event) => expandedActivity.has(event.msgUid)) ?? false}
-            {@const isSelf = Boolean(
-              currentUser && (
-                msg.userKey === currentUser.userKey ||
-                (currentUser.isAdmin && (
-                  msg.isAdmin ||
-                  msg.userKey === "waline:1" ||
-                  msg.userKey === "@lengxiqwq:matrix.lengxiqwq.com" ||
-                  msg.userKey === "matrix:@lengxiqwq:matrix.lengxiqwq.com"
-                ))
-              )
-            )}
+            {@const isSelf = isChatMessageFromCurrentUser(msg, currentUser)}
+            {@const isGrouped = groupedState.continuations.has(msg.msgUid)}
+            {@const showTime = !groupedState.hasNextInGroup.has(msg.msgUid)}
             {@const isAdmin = Boolean(currentUser?.isAdmin)}
             {@const serverNow = nowMs + clockOffsetMs}
             {@const canRecall = Boolean(
@@ -6770,7 +6716,7 @@ function removePendingImage(index: number) {
             {@const canDelete = Boolean(
               currentUser && msg.kind === "user" && isAdmin && roomId !== "interconnect",
             )}
-            <div class="chat-message-row" data-vrow-uid={msg.msgUid}>
+            <div class="chat-message-row {isGrouped ? 'chat-message-row--grouped' : ''}" data-vrow-uid={msg.msgUid}>
               {#if hasHistoryDivider(msg.msgUid)}
                 <div
                   data-unread-divider={sessionDividerUid === msg.msgUid ? "" : undefined}
@@ -6816,6 +6762,8 @@ function removePendingImage(index: number) {
                           <ChatMessage
                             message={event}
                             isSelf={false}
+                            {isInterconnectRoom}
+                            {interconnectSites}
                             {stickerMap}
                             {userProfileMap}
                             {onOpenUserProfile}
@@ -6834,6 +6782,9 @@ function removePendingImage(index: number) {
               <ChatMessage
                 message={msg}
                 isSelf={isSelf}
+                grouped={isGrouped}
+                hasNextInGroup={!showTime}
+                showTime={showTime}
                 isMentionedMe={isMentionedToMe(msg)}
                 isHighlighted={highlightedMsgUid === msg.msgUid}
                 currentUserKey={currentUser?.userKey}
@@ -7009,12 +6960,12 @@ function removePendingImage(index: number) {
             {@const displayPersonName = isRoomMention
               ? "全体成员"
               : isExt
-                ? (extOrigin?.cleanName || person.name)
-                : person.name}
+                ? (extOrigin?.cleanName || stripSiteSuffix(person.name) || person.name)
+                : (stripSiteSuffix(person.name) || person.name)}
             {@const personBadgeLabel = isRoomMention
               ? "全体成员"
               : isExt
-                ? (extOrigin?.siteName || person.badge || "互联茶友")
+                ? (extOrigin?.chatBadge || extOrigin?.siteName || extOrigin?.host || "外部站点")
                 : localSiteName}
             {@const personBadgeType = isRoomMention
               ? "host"
@@ -7064,7 +7015,10 @@ function removePendingImage(index: number) {
                 </div>
                 {#if person.customBadges && person.customBadges.length > 0}
                   {#each person.customBadges as b (b.text)}
-                    <span class="chat-role-badge chat-role-badge--{b.color} scale-90 origin-left shrink-0">
+                    <span
+                      class="chat-role-badge chat-role-badge--{b.color} scale-90 origin-left shrink-0"
+                      style={b.color === 'site' && extOrigin?.site?.color ? `--site-badge-color: ${extOrigin.site.color};` : undefined}
+                    >
                       {b.text}
                     </span>
                   {/each}
@@ -7150,7 +7104,7 @@ function removePendingImage(index: number) {
       {#if replyingTo}
         <div class="chat-reply-bar">
           <div class="chat-reply-bar-main">
-            <span class="chat-reply-bar-label">回复 {replyingTo.name || "用户"}</span>
+            <span class="chat-reply-bar-label">回复 {stripSiteSuffix(replyingTo.name) || "用户"}</span>
             <span class="chat-reply-bar-text">
               {formatChatReplyPreview(
                 replyingTo.content,
@@ -7504,6 +7458,7 @@ function removePendingImage(index: number) {
   <!-- 移动端：点击消息气泡弹出的底部大按钮操作抽屉 -->
   {#if mobileActionTarget}
     {@const activeMsg = messages.find((m) => m.msgUid === mobileActionTarget?.message.msgUid) ?? mobileActionTarget.message}
+    {@const activeIsPrivilegedRecall = Boolean(currentUser?.isAdmin && activeMsg.isRedacted)}
     {@const activeIsPinned = pinnedUids.includes(activeMsg.msgUid)}
     {@const previewText = formatChatReplyPreview(
       activeMsg.content,
@@ -7569,7 +7524,7 @@ function removePendingImage(index: number) {
         </div>
 
         <!-- 第一排：大号快捷表情回应 + 展开更多按钮 -->
-        {#if onReaction}
+        {#if !activeIsPrivilegedRecall && onReaction}
           <div class="flex items-center gap-1.5 mb-3 overflow-x-auto custom-scrollbar py-0.5">
             {#each QUICK_REACTION_PRESETS as em (em)}
               {@const isMyReaction = Boolean(currentUser?.userKey && activeMsg.reactions?.[em]?.includes(currentUser.userKey))}
@@ -7621,7 +7576,7 @@ function removePendingImage(index: number) {
 
         <!-- 第二排：带图标与中文文字的大操作按钮网格 -->
         <div class="grid grid-cols-2 gap-2">
-          {#if activeMsg.kind === "user"}
+          {#if !activeIsPrivilegedRecall && activeMsg.kind === "user"}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn"
@@ -7639,7 +7594,7 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if currentUser?.isAdmin && onPinMessage}
+          {#if !activeIsPrivilegedRecall && currentUser?.isAdmin && onPinMessage}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn"
@@ -7658,7 +7613,7 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if activeMsg.content && activeMsg.content.trim()}
+          {#if !activeIsPrivilegedRecall && activeMsg.content && activeMsg.content.trim()}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn"
@@ -7681,7 +7636,7 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if activeMsg.kind === "user"}
+          {#if !activeIsPrivilegedRecall && activeMsg.kind === "user"}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn"
@@ -7700,7 +7655,7 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if mobileActionTarget.canEdit}
+          {#if !activeIsPrivilegedRecall && mobileActionTarget.canEdit}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn"
@@ -7717,7 +7672,7 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if mobileActionTarget.canRecall && onRecallMessage}
+          {#if !activeIsPrivilegedRecall && mobileActionTarget.canRecall && onRecallMessage}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn is-warning"
@@ -7735,7 +7690,7 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if !mobileActionTarget.isSelf && activeMsg.name}
+          {#if !activeIsPrivilegedRecall && !mobileActionTarget.isSelf && activeMsg.name}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn"
@@ -7751,7 +7706,7 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
-          {#if activeMsg.userKey && onOpenUserProfile}
+          {#if !activeIsPrivilegedRecall && activeMsg.userKey && onOpenUserProfile}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn"
@@ -7780,6 +7735,7 @@ function removePendingImage(index: number) {
             </button>
           {/if}
 
+          {#if !activeIsPrivilegedRecall}
           <button
             type="button"
             class="chat-mobile-sheet-action-btn"
@@ -7795,8 +7751,9 @@ function removePendingImage(index: number) {
             </svg>
             <span>查看源码</span>
           </button>
+          {/if}
 
-          {#if mobileActionTarget.canDelete}
+          {#if !activeIsPrivilegedRecall && mobileActionTarget.canDelete}
             <button
               type="button"
               class="chat-mobile-sheet-action-btn is-danger"

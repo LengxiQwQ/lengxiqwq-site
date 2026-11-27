@@ -1,0 +1,103 @@
+--- a/server.mjs
++++ b/server.mjs
+@@ -339,6 +339,8 @@
+     renameSync(tmpPath, filePath);
++    return true;
+   } catch (err) {
+     console.error(`[Data] Failed atomic write for ${filePath}:`, err.message);
++    return false;
+   }
+ }
+ 
+@@ -2089,5 +2091,74 @@
+   getCredentials: getOrCreateMatrixAccountForUser,
+   logger: console
+ });
++const statusRequests = new Map();
++
++function replyToStatusRequest(ws, result, stage) {
++  if (ws.readyState === WebSocket.OPEN && ws.user?.userKey === result.userKey) {
++    ws.send(JSON.stringify({ type: 'auth:status_result', requestId: result.requestId, stage }));
++  }
++}
++
++function updateChatStatus(ws, packet) {
++  const { requestId, expectedUserKey } = packet;
++  if (!ws.user || typeof requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(requestId)) return;
++  const userKey = ws.user.userKey;
++  const result = { requestId, userKey };
++  if (expectedUserKey !== userKey || typeof packet.status !== 'string') {
++    replyToStatusRequest(ws, result, 'save_failed');
++    return;
++  }
++
++  const key = JSON.stringify([userKey, requestId]);
++  const existing = statusRequests.get(key);
++  if (existing) {
++    replyToStatusRequest(ws, result, 'saved');
++    existing.then(stage => replyToStatusRequest(ws, result, stage));
++    return;
++  }
++
++  if (packet.resumeOnly === true) {
++    replyToStatusRequest(ws, result, 'sync_unknown');
++    return;
++  }
++
++  console.info('[MatrixStatus] Request received', result);
++  const member = membersStore.find(m => m.userKey === userKey);
++  if (!member) {
++    console.warn('[MatrixStatus] Website save failed', result);
++    replyToStatusRequest(ws, result, 'save_failed');
++    return;
++  }
++  const status = packet.status.trim().slice(0, 16);
++  const previousStatus = member.status;
++  member.status = status;
++  if (!writeJsonAtomic(join(DATA_DIR, 'members.json'), membersStore)) {
++    member.status = previousStatus;
++    console.warn('[MatrixStatus] Website save failed', result);
++    replyToStatusRequest(ws, result, 'save_failed');
++    return;
++  }
++
++  ws.user.status = status;
++  for (const client of clients) {
++    if (client.readyState === WebSocket.OPEN && client.user?.userKey === userKey) {
++      client.user.status = status;
++      client.send(JSON.stringify({ type: 'auth:result', user: client.user }));
++    }
++  }
++  console.info('[MatrixStatus] Website saved', result);
++  replyToStatusRequest(ws, result, 'saved');
++  saveStoreDebounced();
++  broadcastPresenceAll();
++
++  const sync = syncMatrixCustomStatus(ws.user, status, { force: true }).then(matrix => {
++    console.info('[MatrixStatus] Matrix result', { ...result, ...matrix });
++    if (matrix.outcome === 'synced') return 'synced';
++    return matrix.outcome === 'superseded' ? 'superseded' : 'sync_failed';
++  });
++  statusRequests.set(key, sync);
++  if (statusRequests.size > 1024) statusRequests.delete(statusRequests.keys().next().value);
++  sync.then(stage => replyToStatusRequest(ws, result, stage));
++}
+ 
+ function resolveExternalStatusSnapshot(normalizedUserId, latestMsgTs = 0, now = Date.now()) {
+@@ -2419,5 +2490,6 @@
+   if (existingIdx >= 0) {
+     const prev = membersStore[existingIdx];
++    user.status = prev.status ?? user.status;
+     membersStore[existingIdx] = {
+       ...prev,
+       authType,
+@@ -5545,3 +5617,9 @@
++      // Status updates with a receipt are committed before starting Matrix sync.
++      if (packet.type === 'auth:update_profile' && packet.requestId !== undefined) {
++        updateChatStatus(ws, packet);
++        return;
++      }
++
+       // Update profile (avatar, nickname, url, bio, status)
+       if (packet.type === 'auth:update_profile' && ws.user) {
+         const bio = typeof packet.bio === 'string' ? packet.bio.trim().slice(0, 100) : undefined;
