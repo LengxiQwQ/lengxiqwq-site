@@ -310,6 +310,7 @@ html[data-chat-page] .chat-panel {
 
 .chat-panel-left {
 	background: var(--skin-rail) !important;
+	--chat-offline-row-pitch: 52px;
 	--panel-bg-fit: var(--chat-bg-left-fit, cover);
 	--panel-bg-opacity: var(--chat-bg-left-opacity, 0.2);
 	--panel-bg-scale: var(--chat-bg-left-scale, 1);
@@ -777,7 +778,7 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	fill: var(--skin-bubble-self);
 }
 
-/* 被提及消息气泡：单路径矢量轮廓，均匀 1.5px 细线框无缝包裹气泡与尖尖 */
+/* 带尾翼的消息气泡：单路径矢量轮廓，零拼接缝隙、零阴影缺角 */
 .chat-bubble-svg-ready {
 	background: transparent !important;
 	box-shadow: none !important;
@@ -797,12 +798,20 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	z-index: 0;
 }
 
-.chat-bubble-mentioned .chat-bubble-bg {
+.chat-bubble-svg-ready .chat-bubble-bg {
 	filter: var(--chat-bubble-drop-shadow, drop-shadow(0 2.5px 6px rgb(15 23 42 / 0.13)));
 }
 
-.chat-bubble-mentioned .chat-bubble-shadow {
+.chat-bubble-svg-ready .chat-bubble-shadow {
 	display: none;
+}
+
+.chat-bubble-other .chat-bubble-shape {
+	fill: var(--skin-bubble);
+}
+
+.chat-bubble-self .chat-bubble-shape {
+	fill: var(--skin-bubble-self);
 }
 
 .chat-bubble-mentioned .chat-bubble-shape {
@@ -1532,12 +1541,29 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
    6. 左侧房间列表与在线成员
    ========================================================================== */
 .chat-room-content {
+	position: relative;
 	display: block;
 	flex: 1 1 0%;
 	min-height: 0;
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	overflow-anchor: none;
+}
+
+/* 离线成员虚拟滚动列表：全端统一固定行高与间距，防止桌面/平板断点行高与虚拟步长不一致导致滚动抽搐 */
+.chat-panel-left .chat-offline-list {
+	display: grid;
+}
+
+.chat-panel-left .chat-offline-list > * {
+	margin-block: 0;
+}
+
+.chat-panel-left .chat-offline-list > .chat-user-item {
+	box-sizing: border-box;
+	block-size: calc(var(--chat-offline-row-pitch) - 4px);
+	margin-block-end: 4px;
+	content-visibility: visible;
 }
 
 .chat-virtual-scroll {
@@ -8466,19 +8492,7 @@ html[data-wallpaper-mode="none"] .chat-scroll-bottom-btn {
 		height: 21px;
 	}
 
-	/* 虚拟滚动与实际行高共用 50px，包含行尾 4px 间距。 */
-	.chat-panel-left .chat-offline-list {
-		display: grid;
-	}
-
-	.chat-panel-left .chat-offline-list > * {
-		margin-block: 0;
-	}
-
-	.chat-panel-left .chat-offline-list > .chat-user-item {
-		block-size: calc(var(--chat-offline-row-pitch) - 4px);
-		margin-block-end: 4px;
-	}
+	/* 移动端离线行高为 50px（含行尾 4px 间距），覆盖桌面/平板的 52px */
 
 	.chat-panel-left :is(.chat-room-content, .chat-self-footer) .text-\[12px\],
 	.chat-panel-left .chat-connection-status {

@@ -220,6 +220,7 @@ async function handleCopy(e: MouseEvent) {
 
 let bubbleW = $state(0);
 let bubbleH = $state(0);
+let bubbleRadiusCap = $state(18);
 
 function trackBubbleBox(node: HTMLElement, active: boolean) {
 	let ro: ResizeObserver | null = null;
@@ -227,8 +228,13 @@ function trackBubbleBox(node: HTMLElement, active: boolean) {
 		const rect = node.getBoundingClientRect();
 		const w = Math.round(rect.width * 100) / 100;
 		const h = Math.round(rect.height * 100) / 100;
+		const radiusCap =
+			Number.parseFloat(
+				getComputedStyle(node).getPropertyValue("--skin-bubble-radius"),
+			) || 18;
 		if (w !== bubbleW) bubbleW = w;
 		if (h !== bubbleH) bubbleH = h;
+		if (radiusCap !== bubbleRadiusCap) bubbleRadiusCap = radiusCap;
 	};
 	const start = () => {
 		sync();
@@ -249,30 +255,6 @@ function trackBubbleBox(node: HTMLElement, active: boolean) {
 		destroy: stop,
 	};
 }
-
-const mentionedBubblePath = $derived.by(() => {
-	if (!isMentionedMe || grouped || isPrivilegedRecall || isSelf || shareData) return "";
-	const w = bubbleW;
-	const h = bubbleH;
-	if (w <= 0 || h <= 0) return "";
-	const r = Math.max(6, Math.min(18, Math.floor(Math.min(w, h) / 2)));
-	const bl = hasNextInGroup ? Math.min(r, 6) : r;
-	const ty = Math.min(13, Math.max(8, h - bl));
-	return [
-		"M -5 0",
-		`L ${w - r} 0`,
-		`A ${r} ${r} 0 0 1 ${w} ${r}`,
-		`L ${w} ${h - r}`,
-		`A ${r} ${r} 0 0 1 ${w - r} ${h}`,
-		`L ${bl} ${h}`,
-		`A ${bl} ${bl} 0 0 1 0 ${h - bl}`,
-		`L 0 ${ty}`,
-		`C 0 ${ty * 0.58}, -2.4 2.8, -5.8 1.3`,
-		"C -6.1 1.15, -6.2 0.7, -6.0 0.35",
-		"C -5.8 0.08, -5.45 0, -5 0",
-		"Z",
-	].join(" ");
-});
 
 $effect(() => {
 	if (!showQuickReaction && !showMoreActions && !showReactionPicker) return;
@@ -514,6 +496,47 @@ const recallNoticeParsed = $derived(
 	message.kind === "system" ? parseRecallNotice(message.content) : null,
 );
 const isPrivilegedRecall = $derived(Boolean(isAdmin && message.isRedacted));
+const useUnifiedSvgBubble = $derived(!grouped && !isPrivilegedRecall && !shareData);
+
+const unifiedBubblePath = $derived.by(() => {
+	if (!useUnifiedSvgBubble) return "";
+	const w = bubbleW;
+	const h = bubbleH;
+	if (w <= 0 || h <= 0) return "";
+	const r = Math.max(6, Math.min(bubbleRadiusCap, Math.floor(Math.min(w, h) / 2)));
+	const tailCorner = hasNextInGroup ? Math.min(r, 6) : r;
+	const ty = Math.min(13, Math.max(8, h - tailCorner));
+	if (isSelf) {
+		return [
+			`M ${r} 0`,
+			`L ${w + 5} 0`,
+			`C ${w + 5.45} 0, ${w + 5.8} 0.08, ${w + 6.0} 0.35`,
+			`C ${w + 6.2} 0.7, ${w + 6.1} 1.15, ${w + 5.8} 1.3`,
+			`C ${w + 2.4} 2.8, ${w} ${ty * 0.58}, ${w} ${ty}`,
+			`L ${w} ${h - tailCorner}`,
+			`A ${tailCorner} ${tailCorner} 0 0 1 ${w - tailCorner} ${h}`,
+			`L ${r} ${h}`,
+			`A ${r} ${r} 0 0 1 0 ${h - r}`,
+			`L 0 ${r}`,
+			`A ${r} ${r} 0 0 1 ${r} 0`,
+			"Z",
+		].join(" ");
+	}
+	return [
+		"M -5 0",
+		`L ${w - r} 0`,
+		`A ${r} ${r} 0 0 1 ${w} ${r}`,
+		`L ${w} ${h - r}`,
+		`A ${r} ${r} 0 0 1 ${w - r} ${h}`,
+		`L ${tailCorner} ${h}`,
+		`A ${tailCorner} ${tailCorner} 0 0 1 0 ${h - tailCorner}`,
+		`L 0 ${ty}`,
+		`C 0 ${ty * 0.58}, -2.4 2.8, -5.8 1.3`,
+		"C -6.1 1.15, -6.2 0.7, -6.0 0.35",
+		"C -5.8 0.08, -5.45 0, -5 0",
+		"Z",
+	].join(" ");
+});
 const visibleReadReceipts = $derived.by(() =>
 	readReceipts.filter((r) => {
 		if (r.userKey === message.userKey) return false;
@@ -932,12 +955,24 @@ function handleBubbleClick(e: MouseEvent) {
     <path
       class="chat-bubble-tail-shadow"
       transform="translate(0 1)"
-      d="M 1 0 L 1 13 L 0 13 C 0 7.5, -2.4 2.8, -5.8 1.3 C -6.1 1.15, -6.2 0.7, -6.0 0.35 C -5.8 0.08, -5.45 0, -5 0 Z"
+      d="M 0 0 L 0 13 C 0 7.5, -2.4 2.8, -5.8 1.3 C -6.1 1.15, -6.2 0.7, -6.0 0.35 C -5.8 0.08, -5.45 0, -5 0 Z"
     />
     <path
       class="chat-bubble-tail-shape"
       d="M 1 0 L 1 13 L 0 13 C 0 7.5, -2.4 2.8, -5.8 1.3 C -6.1 1.15, -6.2 0.7, -6.0 0.35 C -5.8 0.08, -5.45 0, -5 0 Z"
     />
+  </svg>
+{/snippet}
+
+{#snippet renderUnifiedBubbleBg(path: string)}
+  <svg
+    class="chat-bubble-bg"
+    viewBox="0 0 {bubbleW} {bubbleH}"
+    style="width: {bubbleW}px; height: {bubbleH}px;"
+    shape-rendering="geometricPrecision"
+    aria-hidden="true"
+  >
+    <path class="chat-bubble-shape" d={path} />
   </svg>
 {/snippet}
 
@@ -1762,12 +1797,12 @@ function handleBubbleClick(e: MouseEvent) {
             >来自：{siteBadge.label}</span>
           {/if}
           {#if roleBadge}
-            <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
+            <span class="chat-role-badge chat-role-badge--{roleBadge.type} text-[10px]! px-1.5! py-0.25! leading-tight!">{roleBadge.label}</span>
           {/if}
           {#if message.customBadges && message.customBadges.length > 0}
             {#each message.customBadges as b, idx (`${b.text}:${idx}`)}
               <span
-                class="chat-role-badge chat-role-badge--{b.color}"
+                class="chat-role-badge chat-role-badge--{b.color} text-[10px]! px-1.5! py-0.25! leading-tight!"
                 style={b.color === 'site' && siteBadge?.color ? `--site-badge-color: ${siteBadge.color};` : undefined}
               >{b.text}</span>
             {/each}
@@ -1801,8 +1836,13 @@ function handleBubbleClick(e: MouseEvent) {
         {:else if isStickerAttachmentOnly}
           {@render renderStickerAttachmentOnlyBody(true)}
         {:else}
-          <div class="chat-bubble chat-bubble-self {shareData ? 'chat-bubble-share' : ''}">
-            {#if !grouped && !shareData && !isPrivilegedRecall}
+          <div
+            use:trackBubbleBox={useUnifiedSvgBubble}
+            class="chat-bubble chat-bubble-self {shareData ? 'chat-bubble-share' : ''} {unifiedBubblePath ? 'chat-bubble-svg-ready' : ''}"
+          >
+            {#if unifiedBubblePath}
+              {@render renderUnifiedBubbleBg(unifiedBubblePath)}
+            {:else if useUnifiedSvgBubble}
               {@render renderBubbleTail(true)}
             {/if}
             {#if message.replyTo}
@@ -1911,7 +1951,7 @@ function handleBubbleClick(e: MouseEvent) {
               <span class="text-[14px] md:text-[13px] text-[var(--chat-meta-color)] font-medium truncate select-text cursor-text">{senderDisplayName}</span>
             {/if}
             {#if roleBadge}
-              <span class="chat-role-badge chat-role-badge--{roleBadge.type}">{roleBadge.label}</span>
+              <span class="chat-role-badge chat-role-badge--{roleBadge.type} text-[10px]! px-1.5! py-0.25! leading-tight!">{roleBadge.label}</span>
             {/if}
             {#if siteBadge}
               <span
@@ -1922,7 +1962,7 @@ function handleBubbleClick(e: MouseEvent) {
             {#if message.customBadges && message.customBadges.length > 0}
               {#each message.customBadges as b, idx (`${b.text}:${idx}`)}
                 <span
-                  class="chat-role-badge chat-role-badge--{b.color}"
+                  class="chat-role-badge chat-role-badge--{b.color} text-[10px]! px-1.5! py-0.25! leading-tight!"
                   style={b.color === 'site' && siteBadge?.color ? `--site-badge-color: ${siteBadge.color};` : undefined}
                 >{b.text}</span>
               {/each}
@@ -1958,21 +1998,12 @@ function handleBubbleClick(e: MouseEvent) {
           {@render renderStickerAttachmentOnlyBody(false)}
         {:else}
           <div
-            use:trackBubbleBox={isMentionedMe && !grouped && !isPrivilegedRecall && !shareData}
-            class="chat-bubble chat-bubble-other {shareData ? 'chat-bubble-share' : ''} {isMentionedMe && !isPrivilegedRecall ? 'chat-bubble-mentioned' : ''} {mentionedBubblePath ? 'chat-bubble-svg-ready' : ''}"
+            use:trackBubbleBox={useUnifiedSvgBubble}
+            class="chat-bubble chat-bubble-other {shareData ? 'chat-bubble-share' : ''} {isMentionedMe && !isPrivilegedRecall ? 'chat-bubble-mentioned' : ''} {unifiedBubblePath ? 'chat-bubble-svg-ready' : ''}"
           >
-            {#if mentionedBubblePath}
-              <svg
-                class="chat-bubble-bg"
-                viewBox="0 0 {bubbleW} {bubbleH}"
-                style="width: {bubbleW}px; height: {bubbleH}px;"
-                shape-rendering="geometricPrecision"
-                aria-hidden="true"
-              >
-                <path class="chat-bubble-shadow" transform="translate(0 1)" d={mentionedBubblePath} />
-                <path class="chat-bubble-shape" d={mentionedBubblePath} />
-              </svg>
-            {:else if !grouped && !shareData && !isPrivilegedRecall}
+            {#if unifiedBubblePath}
+              {@render renderUnifiedBubbleBg(unifiedBubblePath)}
+            {:else if useUnifiedSvgBubble}
               {@render renderBubbleTail(false)}
             {/if}
             {#if message.replyTo}
