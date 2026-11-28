@@ -1,5 +1,6 @@
 <script lang="ts">
 import ChatTooltip from "./ChatTooltip.svelte";
+import SingleLineLyric, { type SingleLineLyricTiming } from "./SingleLineLyric.svelte";
 import { formatClockSeconds } from "./chatClient";
 import type { CurrentPlayback } from "./chatTypes";
 import { type AudioStatus, audioStatusLabel } from "./roomAudioPlayer";
@@ -18,6 +19,7 @@ interface Props {
 	voteThreshold: number;
 	isSkippingTrack?: boolean;
 	currentLyric?: string;
+	currentLyricTiming?: SingleLineLyricTiming | null;
 	variant?: "panel" | "mobile";
 	onOpenLyrics: () => void;
 	onToggleListen: () => void;
@@ -38,6 +40,7 @@ const {
 	voteThreshold,
 	isSkippingTrack = false,
 	currentLyric,
+	currentLyricTiming = null,
 	variant = "panel",
 	audioStatus = "idle",
 	onOpenLyrics,
@@ -144,11 +147,12 @@ const skipTooltipText = $derived.by(() => {
     </div>
 
     <div class="min-w-0 flex-1">
-      <div
-        class="{variant === 'mobile' ? 'text-[12.5px]' : 'text-[12px] xl:text-[11.5px]'} font-bold text-[var(--deep-text)] truncate leading-snug"
-      >
-        {displayLyric}
-      </div>
+      <SingleLineLyric
+        text={displayLyric}
+        isLyric={Boolean(currentPlay && currentLyricTiming && currentLyric && currentLyric.trim().length > 0)}
+        timing={currentLyricTiming}
+        class="{variant === 'mobile' ? 'text-[12.5px]' : 'text-[12px] xl:text-[11.5px]'} font-bold text-[var(--deep-text)] leading-snug"
+      />
       <div
         class="{variant === 'mobile' ? 'text-[12px]' : 'text-[12px] xl:text-[11.5px]'} text-[var(--chat-meta-color)] tabular-nums leading-tight mt-0.5 flex items-center min-w-0 gap-1.5"
       >

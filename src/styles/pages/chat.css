@@ -2983,12 +2983,22 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 		z-index: 55;
 		width: 280px;
 		visibility: hidden;
+		transform: translate3d(-104%, 0, 0);
+		transition:
+			transform 240ms cubic-bezier(0.22, 1, 0.36, 1),
+			visibility 240ms;
+		will-change: transform;
 	}
 
 	[data-chat-split-layout] .chat-panel.chat-panel-left.chat-split-room-open {
 		visibility: visible;
+		transform: translate3d(0, 0, 0);
 		border-right: 1px solid var(--skin-line) !important;
 		box-shadow: 12px 0 32px -12px rgb(0 0 0 / 0.42) !important;
+	}
+
+	[data-chat-split-layout] .chat-panel.chat-panel-left.chat-drawer-dragging {
+		transition: none !important;
 	}
 
 	[data-chat-split-layout] .chat-panel-center {
@@ -3103,6 +3113,11 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 		box-shadow: none;
 	}
 
+	.chat-panel-left.chat-drawer-dragging,
+	.chat-panel-right.chat-drawer-dragging {
+		transition: none !important;
+	}
+
 	.chat-mobile-drawer-backdrop {
 		position: absolute;
 		inset: 0;
@@ -3113,8 +3128,13 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 		background: rgba(15, 23, 42, 0.42);
 		-webkit-backdrop-filter: blur(3px);
 		backdrop-filter: blur(3px);
+		transition: opacity 220ms ease;
 		cursor: pointer;
 		animation: chat-backdrop-in 180ms ease-out;
+	}
+
+	.chat-mobile-drawer-backdrop.chat-drawer-dragging {
+		transition: none !important;
 	}
 
 	/* 顶栏与抽屉头部适配 */
@@ -4344,11 +4364,10 @@ html[data-chat-page] #chat-modal-layer {
 }
 
 html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-modal-backdrop:not([data-chat-modal-closing])) {
-	background-color: var(--chat-modal-shade);
-	transition-duration: 180ms;
-	transition-timing-function: ease;
-
 	@media (width >= 768px) {
+		background-color: var(--chat-modal-shade);
+		transition-duration: 180ms;
+		transition-timing-function: ease;
 		-webkit-backdrop-filter: var(--chat-modal-filter);
 		backdrop-filter: var(--chat-modal-filter);
 	}
@@ -4458,6 +4477,27 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 		overscroll-behavior: contain;
 	}
 
+	.chat-modal-backdrop::before {
+		content: "";
+		position: fixed;
+		inset: 0;
+		z-index: -1;
+		background: rgba(15, 23, 42, 0.46);
+		-webkit-backdrop-filter: blur(3px);
+		backdrop-filter: blur(3px);
+		opacity: var(--chat-sheet-backdrop-alpha, 1);
+		transition: opacity 220ms ease;
+		pointer-events: none;
+	}
+
+	.chat-modal-backdrop:has(.chat-sheet-dragging)::before {
+		transition: none !important;
+	}
+
+	.chat-modal-backdrop[data-chat-modal-closing]::before {
+		opacity: 0;
+	}
+
 	/* 废除 visibility: hidden，采用 iOS Sheet Stack 规范：底层抽屉微缩下沉垫后，两级切换零闪烁 */
 	.chat-modal-backdrop[data-chat-modal-behind] .chat-dialog-card {
 		transform: scale(0.93) translateY(12px) !important;
@@ -4477,8 +4517,18 @@ html[data-chat-page][data-chat-modal-open="true"] #chat-modal-layer:has(> .chat-
 		border-bottom: 0;
 		box-shadow: 0 -10px 30px rgb(7 12 22 / 0.16) !important;
 		animation: chat-sheet-in 220ms var(--ease-decelerate);
-		transition: transform 240ms var(--ease-decelerate), opacity 240ms ease, filter 240ms ease;
+		transition: transform 240ms var(--ease-decelerate), opacity 240ms ease, filter 240ms ease, border-radius 180ms ease;
+		transform: translateY(var(--chat-sheet-dismiss, 0px));
 		transform-origin: bottom center;
+	}
+
+	.chat-dialog-card.chat-sheet-dismissing {
+		border-top-left-radius: 16px;
+		border-top-right-radius: 16px;
+	}
+
+	.chat-dialog-card.chat-sheet-dragging {
+		transition: none !important;
 	}
 
 	.chat-dialog-card[data-chat-sheet="compact"] {
@@ -6240,6 +6290,15 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 
 html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) .chat-share-card-badge.is-friend {
 	color: #fbbf24;
+}
+
+.chat-share-card-badge.is-fcircle {
+	background: color-mix(in oklch, #0ea5e9 16%, transparent);
+	color: #0284c7;
+}
+
+html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme="dark"]) .chat-share-card-badge.is-fcircle {
+	color: #38bdf8;
 }
 
 .chat-share-card-badge.is-music {

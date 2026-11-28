@@ -36,6 +36,10 @@ function syncModalStack(): void {
 <script lang="ts">
 import type { Snippet } from "svelte";
 import { fadeChatSheetBackdrop, slideChatSheetOut } from "./chatSheetMotion";
+import {
+	attachSwipeDismiss,
+	formatSwipeBackdropAlpha,
+} from "./chatSwipeDismiss";
 
 interface Props {
 	open: boolean;
@@ -83,6 +87,8 @@ let backdropPointerDown = false;
 let expanded = $state(false);
 let dragOffset = $state(0);
 let dragStart: { id: number; y: number } | null = $state(null);
+let dismissDragY = $state(0);
+let isDismissDragging = $state(false);
 let suppressHandleClick = false;
 let isStackedChild = $state(false);
 
@@ -101,6 +107,19 @@ $effect(() => {
 	backdropEl?.toggleAttribute("data-chat-modal-closing", !open);
 });
 
+const sheetBackdropAlpha = $derived.by(() => {
+	const activeDragY =
+		dismissDragY > 0
+			? dismissDragY
+			: mobile === "expandable" && !expanded && dragOffset > 0
+				? dragOffset
+				: 0;
+	if (activeDragY <= 0) return undefined;
+	const cardH = dialogEl?.getBoundingClientRect().height || 520;
+	const progress = Math.min(1, activeDragY / Math.max(200, cardH * 0.55));
+	return formatSwipeBackdropAlpha(progress);
+});
+
 $effect(() => {
 	const backdrop = backdropEl;
 	const dialog = dialogEl;
@@ -115,6 +134,8 @@ $effect(() => {
 	expanded = false;
 	dragOffset = 0;
 	dragStart = null;
+	dismissDragY = 0;
+	isDismissDragging = false;
 	suppressHandleClick = false;
 	const focusFrame = requestAnimationFrame(() => {
 		if (open && topChatModal() === backdrop && !dialog.contains(document.activeElement)) {
@@ -163,6 +184,37 @@ $effect(() => {
 			}
 		});
 	};
+});
+
+$effect(() => {
+	const dialog = dialogEl;
+	if (!open || !dialog) return;
+
+	return attachSwipeDismiss(dialog, {
+		axis: "y",
+		direction: 1,
+		isActive: () =>
+			window.matchMedia("(width < 768px)").matches &&
+			topChatModal() === backdropEl &&
+			!document.querySelector(".fancybox__container"),
+		canStart: (target) => {
+			const el = target instanceof Element ? target : null;
+			return !(el?.closest(".chat-dialog-header") && el.closest("button, a[href]"));
+		},
+		checkScrollBoundary: true,
+		onDrag: (offsetPx) => {
+			isDismissDragging = true;
+			dismissDragY = offsetPx;
+		},
+		onDismiss: () => {
+			isDismissDragging = false;
+			onClose();
+		},
+		onCancel: () => {
+			isDismissDragging = false;
+			dismissDragY = 0;
+		},
+	});
 });
 
 function startDrag(event: PointerEvent) {
@@ -219,6 +271,7 @@ const sizeClass = $derived(
     use:placeBackdrop
     out:fadeChatSheetBackdrop
     class="chat-modal-backdrop {topPriority ? 'chat-modal-backdrop--top' : ''}"
+    style:--chat-sheet-backdrop-alpha={sheetBackdropAlpha}
     data-chat-preserve-behind={preserveBehind ? "true" : undefined}
     role="presentation"
     onpointerdown={handlePointerDown}
@@ -230,9 +283,11 @@ const sizeClass = $derived(
       class="chat-dialog-card {sizeClass} {fillHeightOnDesktop ? 'chat-dialog-card--fill-md' : ''} {dialogClass}"
       data-chat-sheet={mobile}
       class:chat-sheet-expanded={expanded}
-      class:chat-sheet-dragging={Boolean(dragStart)}
+      class:chat-sheet-dragging={Boolean(dragStart) || isDismissDragging}
+      class:chat-sheet-dismissing={dismissDragY > 0}
       style:--chat-dialog-min-height={lockedMinHeight > 0 ? `min(${lockedMinHeight}px, 100%)` : undefined}
       style:--chat-sheet-drag={dragOffset ? `${dragOffset}px` : undefined}
+      style:--chat-sheet-dismiss={dismissDragY > 0 ? `${dismissDragY}px` : undefined}
       role="dialog"
       aria-modal="true"
       aria-label={ariaLabel || title}

@@ -87,6 +87,7 @@ import type {
 	RoomMusicState,
 	RoomRotation,
 } from "./chatTypes";
+import type { SingleLineLyricTiming } from "./SingleLineLyric.svelte";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import { createVirtualWindowMemo } from "./virtualWindow";
 import { RoomAudioPlayer, audioStatusLabel, type AudioStatus, type LocalAudioDiagnostic } from "./roomAudioPlayer";
@@ -173,6 +174,7 @@ interface Props {
 		hasVotedSkip: boolean;
 		volume?: number;
 		currentLyric?: string;
+		currentLyricTiming?: SingleLineLyricTiming | null;
 	}) => void;
 	onAudioDiagnosticChange?: (diagnostic: LocalAudioDiagnostic | null) => void;
 	onNotify?: (message: string, tone?: "default" | "error" | "success" | "share") => void;
@@ -3519,6 +3521,25 @@ const currentLyricText = $derived.by(() => {
 	return "♪ ~ 伴奏中 ~ ♪";
 });
 
+const currentLyricTiming = $derived.by((): SingleLineLyricTiming | null => {
+	if (!currentPlay) return null;
+	if (currentPlay.phase === "transitioning" || audioStatus === "preparing" || currentPlay.phase === "preparing") {
+		return null;
+	}
+	if (lyricsStatus !== "ready" || activeLyricIndex < 0 || activeLyricIndex >= lyrics.length) {
+		return null;
+	}
+	const startSec = lyrics[activeLyricIndex].time;
+	const nextLine = lyrics[activeLyricIndex + 1];
+	const durationSec = nextLine ? Math.max(0.4, nextLine.time - startSec) : null;
+	return {
+		key: `${currentPlay.uid}|${activeLyricIndex}|${startSec}`,
+		durationSec,
+		elapsedSec: Math.max(0, roomElapsed - startSec),
+		isPlaying: currentPlay.phase === "playing",
+	};
+});
+
 $effect(() => {
 	onPlaybackStatusChange?.({
 		isListening,
@@ -3533,6 +3554,7 @@ $effect(() => {
 		hasVotedSkip,
 		volume,
 		currentLyric: currentLyricText,
+		currentLyricTiming,
 	});
 });
 </script>
@@ -3567,6 +3589,7 @@ $effect(() => {
       voteThreshold={musicState?.voteThreshold ?? 2}
       isSkippingTrack={isSkippingTrack}
       currentLyric={currentLyricText}
+      currentLyricTiming={currentLyricTiming}
       variant="panel"
       onOpenLyrics={() => switchMusicTab("player")}
       onToggleListen={() => toggleListen()}

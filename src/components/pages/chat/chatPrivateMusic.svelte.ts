@@ -519,6 +519,27 @@ class PrivateMusicController {
 		return idx >= 0 ? this.lyrics[idx]?.text || "" : "";
 	}
 
+	get activeLyricTiming(): {
+		key: string;
+		durationSec: number | null;
+		elapsedSec: number;
+		isPlaying: boolean;
+	} | null {
+		const idx = this.activeLyricIndex;
+		if (idx < 0 || !this.lyrics[idx]) return null;
+		const startSec = this.lyrics[idx].timeSec;
+		const nextLine = this.lyrics[idx + 1];
+		const durationSec = nextLine
+			? Math.max(0.4, nextLine.timeSec - startSec)
+			: null;
+		return {
+			key: `${this.activeTrackKey}|${idx}|${startSec}`,
+			durationSec,
+			elapsedSec: Math.max(0, this.currentTimeSec - startSec),
+			isPlaying: this.isPlaying,
+		};
+	}
+
 	isTrackMatching(data: ChatMusicShareData, msgUid?: string): boolean {
 		if (!this.activeData) return false;
 		const uid = (msgUid || "").trim();

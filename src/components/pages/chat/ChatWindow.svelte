@@ -91,6 +91,7 @@ import type {
 	ImageAttachment,
 	RoomMusicState,
 } from "./chatTypes";
+import SingleLineLyric from "./SingleLineLyric.svelte";
 import MiniPlayerBar from "./MiniPlayerBar.svelte";
 import type { ChatMusicTrack } from "./musicTypes";
 import type { PlaylistAuth } from "./playlistClient";
@@ -207,6 +208,7 @@ interface Props {
 		hasVotedSkip: boolean;
 		volume?: number;
 		currentLyric?: string;
+		currentLyricTiming?: import("./SingleLineLyric.svelte").SingleLineLyricTiming | null;
 	};
 	onOpenRoomDrawer?: () => void;
 	splitRoomPanelId: string;
@@ -483,7 +485,9 @@ let mentionActiveIndex = $state(-1);
 let showMentionHistory = $state(false);
 let showThreadListMenu = $state(false);
 let showShareHistory = $state(false);
-let shareFilterKind = $state<"all" | "article" | "moment" | "friend">("all");
+let shareFilterKind = $state<
+	"all" | "article" | "moment" | "friend" | "fcircle"
+>("all");
 let shareFailedThumbs = $state<Record<string, boolean>>({});
 let showSharedMusicMenu = $state(false);
 let sharedMusicWrapEl: HTMLDivElement | null = $state(null);
@@ -505,6 +509,7 @@ let musicNoticeWrapEl: HTMLDivElement | null = $state(null);
 let showMobileMoreMenu = $state(false);
 let mobileMoreMenuWrapEl: HTMLDivElement | null = $state(null);
 let mobileMoreTrigger: HTMLButtonElement | null = $state(null);
+let mobilePrivateMusicTrigger: HTMLButtonElement | null = $state(null);
 let chatHeaderWidth = $state(0);
 let viewportWidth = $state(0);
 let chatHeaderStackHeight = $state(54);
@@ -1747,6 +1752,7 @@ const shareKindCounts = $derived.by(() => {
 		article: 0,
 		moment: 0,
 		friend: 0,
+		fcircle: 0,
 	};
 	for (const item of recentNonMusicShareEntries) {
 		if (item.share.kind !== "music") {
@@ -1757,7 +1763,7 @@ const shareKindCounts = $derived.by(() => {
 });
 
 const effectiveShareFilter = $derived.by<
-	"all" | "article" | "moment" | "friend"
+	"all" | "article" | "moment" | "friend" | "fcircle"
 >(() => {
 	if (shareFilterKind === "all") return "all";
 	return shareKindCounts[shareFilterKind] > 0 ? shareFilterKind : "all";
@@ -2028,9 +2034,7 @@ const mobileMusicPillReserve = 0;
 const mentionsInMore = $derived(
 	mobileHeaderEndWidth > 0 &&
 		hasHeaderMentions &&
-		unreadMentionUids.length === 0 &&
-		mobileRoomButtonWidth + mobileHeaderTarget + mobileMusicPillReserve >
-			mobileRoomBudget,
+		unreadMentionUids.length === 0,
 );
 const musicNoticesInMore = $derived(
 	ENABLE_HEADER_MUSIC_NOTICES &&
@@ -2042,7 +2046,7 @@ const musicNoticesInMore = $derived(
 const fitsMobileRoomAvatar = $derived(
 	mobileHeaderEndWidth > 0 &&
 		mobileRoomButtonWidth +
-			(hasHeaderMentions ? mobileHeaderTarget : 0) +
+			(unreadMentionUids.length > 0 ? mobileHeaderTarget : 0) +
 			mobileMusicPillReserve +
 			44 <=
 			mobileRoomBudget,
@@ -2901,6 +2905,19 @@ function getShareCardPresentation(share: ChatShareData): {
 			title: share.name || "友链分享",
 			subtitle: share.description || share.host || "站点友链",
 			thumbUrl: share.avatar || "",
+			externalHref: sanitizeChatUrl(share.url, true),
+		};
+	}
+	if (share.kind === "fcircle") {
+		return {
+			kindLabel: "朋友圈",
+			kindClass: "is-fcircle",
+			title: share.title || "未命名文章",
+			subtitle:
+				[share.friendName, share.date || share.host]
+					.filter(Boolean)
+					.join(" · ") || "友链朋友圈",
+			thumbUrl: share.friendAvatar || "",
 			externalHref: sanitizeChatUrl(share.url, true),
 		};
 	}
@@ -5030,6 +5047,7 @@ function removePendingImage(index: number) {
       { id: "article" as const, label: "文章", count: shareKindCounts.article },
       { id: "moment" as const, label: "动态", count: shareKindCounts.moment },
       { id: "friend" as const, label: "友链", count: shareKindCounts.friend },
+      { id: "fcircle" as const, label: "朋友圈", count: shareKindCounts.fcircle },
     ].filter((tab) => tab.id === "all" || tab.count > 0)}
     <div
       data-chat-floating
@@ -5097,6 +5115,12 @@ function removePendingImage(index: number) {
                   <svg class="w-5 h-5 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
+                {:else if entry.share.kind === "fcircle"}
+                  <svg class="w-5 h-5 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 11a9 9 0 0 1 9 9" />
+                    <path d="M4 4a16 16 0 0 1 16 16" />
+                    <circle cx="5" cy="19" r="1" />
                   </svg>
                 {:else if entry.share.kind === "moment"}
                   <svg class="w-5 h-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -5299,17 +5323,17 @@ function removePendingImage(index: number) {
           <div class="min-w-0 flex-1 flex flex-col justify-center gap-1">
             {#if activePrivateTrack}
               {@const activeArtistText = (activePrivateTrack.artist || "").trim() || "未知歌手"}
-              <div
-                class="text-[12.5px] font-bold leading-snug truncate transition-colors duration-200 {activePrivateTopLine.tone === 'error'
+              <SingleLineLyric
+                text={activePrivateTopLine.text}
+                isLyric={activePrivateTopLine.tone === "lyric"}
+                timing={privateMusic.activeLyricTiming}
+                ariaLive="polite"
+                class="text-[12.5px] font-bold leading-snug transition-colors duration-200 {activePrivateTopLine.tone === 'error'
                   ? 'text-amber-600 dark:text-amber-400'
                   : activePrivateTopLine.tone === 'muted'
                     ? 'text-[var(--chat-meta-color)] font-medium'
                     : 'text-[var(--deep-text)] dark:text-white/92'}"
-                title={activePrivateTopLine.text}
-                aria-live="polite"
-              >
-                {activePrivateTopLine.text}
-              </div>
+              />
 
               <div class="flex items-center min-w-0 text-[12px] leading-tight overflow-hidden">
                 {#if showActivePrivateSongSubline}
@@ -5956,14 +5980,31 @@ function removePendingImage(index: number) {
         </div>
       {/if}
 
-      <div class="chat-mobile-only relative shrink-0" bind:this={mobileMoreMenuWrapEl}>
+      <div class="chat-mobile-only relative shrink-0 flex items-center" bind:this={mobileMoreMenuWrapEl}>
+        {#if privateMusic.isPlaying}
+          <button
+            type="button"
+            class="chat-mobile-header-action relative"
+            class:is-active={showSharedMusicMenu}
+            aria-label={activePrivateTrack ? `打开私有播放器（正在播放：${activePrivateTrack.title}）` : "打开私有播放器"}
+            aria-expanded={showSharedMusicMenu}
+            data-floating-panel-no-expanded
+            bind:this={mobilePrivateMusicTrigger}
+            onclick={() => toggleHeaderList("sharedMusic", true)}
+          >
+            <svg class="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M7.175 19.825Q6 18.65 6 17t1.175-2.825T10 13q.575 0 1.063.138t.937.412V4q0-.425.288-.712T13 3h4q.425 0 .713.288T18 4v2q0 .425-.288.713T17 7h-3v10q0 1.65-1.175 2.825T10 21t-2.825-1.175" />
+            </svg>
+          </button>
+        {/if}
+
         <button
           type="button"
           data-chat-interconnect-anchor
           id="chat-site-controls-trigger"
           class="chat-mobile-header-action relative"
           class:is-active={showInterconnect}
-          aria-label={privateMusic.isPlaying && activePrivateTrack ? `更多聊天室选项（正在播放：${activePrivateTrack.title}）` : "更多聊天室选项"}
+          aria-label="更多聊天室选项"
           aria-expanded={showMobileMoreMenu || (threadInMore && showThreadListMenu) || (mentionsInMore && showMentionHistory) || (sharesInMore && showShareHistory) || (musicSharesInMore && showSharedMusicMenu) || (ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu)}
           data-floating-panel-no-expanded
           bind:this={mobileMoreTrigger}
@@ -5974,9 +6015,6 @@ function removePendingImage(index: number) {
             <circle cx="19" cy="12" r="1.25" fill="currentColor" />
             <circle cx="5" cy="12" r="1.25" fill="currentColor" />
           </svg>
-          {#if privateMusic.isPlaying}
-            <span class="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[var(--primary)] ring-2 ring-[var(--skin-surface)] pointer-events-none" aria-hidden="true"></span>
-          {/if}
         </button>
 
         {#if showMobileMoreMenu}
@@ -6143,8 +6181,8 @@ function removePendingImage(index: number) {
           {@render headerMentionList(mobileMoreTrigger)}
         {:else if sharesInMore && showShareHistory}
           {@render headerShareList(mobileMoreTrigger)}
-        {:else if musicSharesInMore && showSharedMusicMenu}
-          {@render headerSharedMusicList(mobileMoreTrigger)}
+        {:else if (musicSharesInMore || privateMusic.isPlaying) && showSharedMusicMenu}
+          {@render headerSharedMusicList(mobilePrivateMusicTrigger ?? mobileMoreTrigger)}
         {:else if ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu}
           {@render headerMusicNoticeList(mobileMoreTrigger)}
         {/if}
@@ -6248,16 +6286,12 @@ function removePendingImage(index: number) {
                       sharedMusicFailedCovers = { ...sharedMusicFailedCovers, [k]: true };
                     }}
                   />
-                  <svg class="md:hidden w-5 h-5 text-[var(--primary)] block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M9 18V5l12-2v13" />
-                    <circle cx="6" cy="18" r="3" />
-                    <circle cx="18" cy="16" r="3" />
+                  <svg class="md:hidden w-5 h-5 shrink-0 block" viewBox="0 0 24 24" aria-hidden="true">
+                    <path fill="currentColor" d="M7.175 19.825Q6 18.65 6 17t1.175-2.825T10 13q.575 0 1.063.138t.937.412V4q0-.425.288-.712T13 3h4q.425 0 .713.288T18 4v2q0 .425-.288.713T17 7h-3v10q0 1.65-1.175 2.825T10 21t-2.825-1.175" />
                   </svg>
                 {:else}
-                  <svg class="w-5 h-5 md:w-3.5 md:h-3.5 text-[var(--primary)] block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M9 18V5l12-2v13" />
-                    <circle cx="6" cy="18" r="3" />
-                    <circle cx="18" cy="16" r="3" />
+                  <svg class="w-5 h-5 md:w-3.5 md:h-3.5 shrink-0 md:text-[var(--primary)] block" viewBox="0 0 24 24" aria-hidden="true">
+                    <path fill="currentColor" d="M7.175 19.825Q6 18.65 6 17t1.175-2.825T10 13q.575 0 1.063.138t.937.412V4q0-.425.288-.712T13 3h4q.425 0 .713.288T18 4v2q0 .425-.288.713T17 7h-3v10q0 1.65-1.175 2.825T10 21t-2.825-1.175" />
                   </svg>
                 {/if}
               </span>
@@ -6351,6 +6385,7 @@ function removePendingImage(index: number) {
       voteThreshold={musicState?.voteThreshold ?? 2}
       isSkippingTrack={isSkippingTrack}
       currentLyric={mobilePlaybackStatus?.currentLyric}
+      currentLyricTiming={mobilePlaybackStatus?.currentLyricTiming}
       variant="mobile"
       onOpenLyrics={() => (musicState?.current ? onOpenLyricsDrawer?.() : onOpenMusicDrawer?.())}
       onToggleListen={() => onToggleListen?.()}
@@ -7391,12 +7426,12 @@ function removePendingImage(index: number) {
               发送消息前需先登录或填写访客信息
             {/if}
           </span>
-          <ChatTooltip text="分享文章、说说与友链">
+          <ChatTooltip text="分享文章、说说、友链与朋友圈">
             <button
               bind:this={shareTriggerEl}
               type="button"
               class="chat-tool-btn {activePopover === 'share' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : 'text-[var(--skin-text)] hover:text-[var(--primary)]'} shrink-0"
-              aria-label="分享文章、说说与友链"
+              aria-label="分享文章、说说、友链与朋友圈"
               aria-expanded={activePopover === "share"}
               aria-haspopup="dialog"
               onpointerenter={() => {

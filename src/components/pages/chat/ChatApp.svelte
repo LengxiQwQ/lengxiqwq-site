@@ -20,6 +20,11 @@ import type {
 import ChatWindow from "./ChatWindow.svelte";
 import ChatModal from "./ChatModal.svelte";
 import { positionChatFloating } from "./chatFloating";
+import {
+	attachEdgeSwipeOpen,
+	attachSwipeDismiss,
+	formatSwipeBackdropAlpha,
+} from "./chatSwipeDismiss";
 import ChatInterconnectPopover from "./ChatInterconnectPopover.svelte";
 import {
 	type ChatAppearanceSettings,
@@ -534,6 +539,7 @@ let mobilePlaybackStatus = $state<{
 	hasVotedSkip: boolean;
 	volume?: number;
 	currentLyric?: string;
+	currentLyricTiming?: import("./SingleLineLyric.svelte").SingleLineLyricTiming | null;
 }>({
 	isListening: false,
 	isMuted: true,
@@ -602,7 +608,18 @@ const otherRoomsUnreadCount = $derived.by(() =>
 	),
 );
 
-let stageTouchStart: { x: number; y: number; time: number } | null = null;
+let stageEl: HTMLDivElement | null = $state(null);
+let rightPanelEl: HTMLDivElement | null = $state(null);
+let drawerDragTarget = $state<"none" | "room" | "music" | "split-room">("none");
+let drawerDragX = $state(0);
+let isDrawerDragging = $state(false);
+let drawerDragProgress = $state(0);
+const drawerBackdropOpacity = $derived(
+	isDrawerDragging &&
+		(drawerDragTarget === "room" || drawerDragTarget === "music")
+		? formatSwipeBackdropAlpha(drawerDragProgress, 0.08, 0.92)
+		: undefined,
+);
 let previousMobileDrawer: "none" | "room" | "music" = "none";
 
 $effect.pre(() => {
@@ -706,46 +723,83 @@ $effect(() => {
 	};
 });
 
-function handleStageTouchStart(e: TouchEvent) {
-	if (typeof window === "undefined" || e.touches.length !== 1) return;
-	if (!window.matchMedia("(width < 768px)").matches) return;
-	const target = e.target as HTMLElement | null;
-	if (
-		target?.closest(
-			"input, textarea, .chat-slim-slider, .chat-slider-control, .chat-picker-tabs, .chat-md-table-wrap, pre, code",
-		)
-	) {
-		stageTouchStart = null;
-		return;
-	}
-	const t = e.touches[0];
-	stageTouchStart = { x: t.clientX, y: t.clientY, time: Date.now() };
+function resetDrawerDrag() {
+	isDrawerDragging = false;
+	drawerDragTarget = "none";
+	drawerDragX = 0;
+	drawerDragProgress = 0;
 }
 
-function handleStageTouchEnd(e: TouchEvent) {
-	if (!stageTouchStart || e.changedTouches.length !== 1) return;
-	const start = stageTouchStart;
-	stageTouchStart = null;
-	const t = e.changedTouches[0];
-	const dx = t.clientX - start.x;
-	const dy = t.clientY - start.y;
-	const dt = Date.now() - start.time;
-	if (dt > 600 || Math.abs(dx) < 56 || Math.abs(dy) > Math.abs(dx) * 0.65) {
-		return;
-	}
-	const vw = window.innerWidth || 375;
-	if (mobileDrawer === "none") {
-		if (dx > 0 && start.x < Math.min(96, vw * 0.28)) {
+$effect(() => {
+	const stage = stageEl;
+	if (!stage) return;
+	return attachEdgeSwipeOpen(stage, {
+		isActive: () =>
+			isMobileLayout &&
+			mobileDrawer === "none" &&
+			!document.querySelector(".chat-modal-backdrop, .fancybox__container"),
+		onOpenLeft: () => {
 			mobileDrawer = "room";
-		} else if (dx < 0 && start.x > vw - Math.min(96, vw * 0.28)) {
+		},
+		onOpenRight: () => {
 			mobileDrawer = "music";
-		}
-	} else if (mobileDrawer === "room" && dx < -48) {
-		mobileDrawer = "none";
-	} else if (mobileDrawer === "music" && dx > 48) {
-		mobileDrawer = "none";
-	}
-}
+		},
+	});
+});
+
+$effect(() => {
+	const panel = roomPanelEl;
+	if (!panel) return;
+	return attachSwipeDismiss(panel, {
+		axis: "x",
+		direction: -1,
+		isActive: () =>
+			((isMobileLayout && mobileDrawer === "room") ||
+				(isSplitLayout && splitRoomOpen)) &&
+			!document.querySelector(".chat-modal-backdrop, .fancybox__container"),
+		onDrag: (offsetPx, progress) => {
+			isDrawerDragging = true;
+			drawerDragTarget =
+				isSplitLayout && splitRoomOpen ? "split-room" : "room";
+			drawerDragX = offsetPx;
+			drawerDragProgress = progress;
+		},
+		onDismiss: () => {
+			const wasSplit = isSplitLayout && splitRoomOpen;
+			resetDrawerDrag();
+			if (wasSplit) {
+				closeSplitRoom();
+			} else {
+				mobileDrawer = "none";
+			}
+		},
+		onCancel: resetDrawerDrag,
+	});
+});
+
+$effect(() => {
+	const panel = rightPanelEl;
+	if (!panel) return;
+	return attachSwipeDismiss(panel, {
+		axis: "x",
+		direction: 1,
+		isActive: () =>
+			isMobileLayout &&
+			mobileDrawer === "music" &&
+			!document.querySelector(".chat-modal-backdrop, .fancybox__container"),
+		onDrag: (offsetPx, progress) => {
+			isDrawerDragging = true;
+			drawerDragTarget = "music";
+			drawerDragX = offsetPx;
+			drawerDragProgress = progress;
+		},
+		onDismiss: () => {
+			resetDrawerDrag();
+			mobileDrawer = "none";
+		},
+		onCancel: resetDrawerDrag,
+	});
+});
 
 let lastMarkedServerReadAt = 0;
 let lastMarkedServerReadUid = "";
@@ -4006,7 +4060,7 @@ onMount(() => {
 	const handleMobileLayoutChange = () => {
 		isMobileLayout = mobileLayoutQuery.matches;
 		mobileDrawer = "none";
-		stageTouchStart = null;
+		resetDrawerDrag();
 	};
 	mobileLayoutQuery.addEventListener("change", handleMobileLayoutChange);
 	// 切入聊天室时立即停止全站侧栏/顶栏音乐播放器，避免与点歌台同时发声
@@ -4434,15 +4488,16 @@ onMount(() => {
 <div class="flex flex-col h-full w-full min-h-0">
   <div
     class="chat-mobile-stage flex flex-1 min-h-0 gap-0"
+    bind:this={stageEl}
     bind:contentRect={stageContentRect}
     data-chat-split-layout={isSplitLayout ? "" : undefined}
-    ontouchstart={handleStageTouchStart}
-    ontouchend={handleStageTouchEnd}
   >
     {#if mobileDrawer !== "none"}
       <button
         type="button"
         class="chat-mobile-drawer-backdrop md:hidden"
+        class:chat-drawer-dragging={isDrawerDragging}
+        style:opacity={drawerBackdropOpacity}
         aria-label="关闭侧边抽屉"
         onclick={() => (mobileDrawer = "none")}
       ></button>
@@ -4451,6 +4506,10 @@ onMount(() => {
     <div
       class="chat-panel chat-panel-left {mobileDrawer === 'room' ? 'mobile-drawer-open' : ''}"
       class:chat-split-room-open={isSplitLayout && splitRoomOpen}
+      class:chat-drawer-dragging={isDrawerDragging && (drawerDragTarget === "room" || drawerDragTarget === "split-room")}
+      style:transform={drawerDragTarget === "room" || drawerDragTarget === "split-room"
+        ? `translate3d(${drawerDragX}px, 0, 0)`
+        : undefined}
       id={roomPanelId}
       bind:this={roomPanelEl}
       inert={(isMobileLayout && mobileDrawer !== "room") || (isSplitLayout && !splitRoomOpen)}
@@ -4656,7 +4715,12 @@ onMount(() => {
     </div>
 
     <div
+      bind:this={rightPanelEl}
       class="chat-panel chat-panel-right {mobileDrawer === 'music' ? 'mobile-drawer-open' : ''}"
+      class:chat-drawer-dragging={isDrawerDragging && drawerDragTarget === "music"}
+      style:transform={drawerDragTarget === "music"
+        ? `translate3d(${drawerDragX}px, 0, 0)`
+        : undefined}
       inert={isMobileLayout && mobileDrawer !== "music"}
       ondragenter={(e) => handleSidePanelDragEnter("right", e)}
       ondragover={(e) => handleSidePanelDragOver("right", e)}

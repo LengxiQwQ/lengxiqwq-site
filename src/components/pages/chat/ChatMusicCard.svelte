@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { ChatMusicShareData } from "./chatShareProtocol";
+import SingleLineLyric from "./SingleLineLyric.svelte";
 import {
 	formatPrivateMusicSec,
 	privateMusic,
@@ -85,6 +86,9 @@ const previewVolume = $derived(privateMusic.volume);
 const isPreviewMuted = $derived(privateMusic.isMuted);
 const activeLyricText = $derived(
 	isThisCardActive ? privateMusic.activeLyricText : "",
+);
+const activeLyricTiming = $derived(
+	isThisCardActive ? privateMusic.activeLyricTiming : null,
 );
 
 const effectiveDuration = $derived(
@@ -456,15 +460,15 @@ async function handleEnqueue(event: MouseEvent) {
         onpointerdown={(e) => e.stopPropagation()}
         onclick={(e) => e.stopPropagation()}
       >
-        <div
-          class="text-[13.5px] font-bold h-5 leading-5 truncate transition-colors duration-200 {topLineContent.tone === 'error'
+        <SingleLineLyric
+          text={topLineContent.text}
+          isLyric={topLineContent.tone === "lyric" && Boolean(activeLyricText)}
+          timing={activeLyricTiming}
+          ariaLive="polite"
+          class="text-[13.5px] font-bold h-5 leading-5 transition-colors duration-200 {topLineContent.tone === 'error'
             ? 'text-amber-600 dark:text-amber-400'
             : 'text-[var(--deep-text)]'}"
-          title={topLineContent.text}
-          aria-live="polite"
-        >
-          {topLineContent.text}
-        </div>
+        />
 
         <div class="flex items-center min-w-0 h-4 text-[12px] leading-4 overflow-hidden">
           {#if sublineContent.primary}

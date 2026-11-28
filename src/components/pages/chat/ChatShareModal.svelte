@@ -37,13 +37,30 @@ export interface FriendItem {
 	order: number;
 }
 
+export interface FcirclePostItem {
+	id: string;
+	friendName: string;
+	friendAvatar: string;
+	friendUrl: string;
+	title: string;
+	link: string;
+	pubDate: number;
+	publishedDate: string;
+	excerpt: string;
+	sourceType: "friend" | "subscription";
+	tags: string[];
+	relativeTime: string;
+}
+
 let cachedArticles: ArticleItem[] | null = null;
 let cachedMoments: MomentItem[] | null = null;
 let cachedFriends: FriendItem[] | null = null;
+let cachedFcircle: FcirclePostItem[] | null = null;
 
 let inflightArticles: Promise<ArticleItem[]> | null = null;
 let inflightMoments: Promise<MomentItem[]> | null = null;
 let inflightFriends: Promise<FriendItem[]> | null = null;
+let inflightFcircle: Promise<FcirclePostItem[]> | null = null;
 
 function stripHtmlTags(html: string): string {
 	return (html || "")
@@ -246,12 +263,78 @@ async function fetchFriendsCached(force = false): Promise<FriendItem[]> {
 	return task;
 }
 
+async function fetchFcircleCached(force = false): Promise<FcirclePostItem[]> {
+	if (cachedFcircle && !force) return cachedFcircle;
+	if (inflightFcircle && !force) return inflightFcircle;
+	const task = (async () => {
+		const [resp, thumbs] = await Promise.all([
+			fetch("/api/fcircle.json"),
+			fetchShareThumbsCached(force),
+		]);
+		if (!resp.ok) {
+			throw new Error(`HTTP ${resp.status}`);
+		}
+		const fcRes = await resp.json();
+		const list = Array.isArray(fcRes) ? fcRes : [];
+		const mapped: FcirclePostItem[] = list
+			.map((item: Record<string, unknown>, idx: number) => {
+				const ts = parseTimestamp(item.pubDate);
+				return {
+					id: String(item.id || item.link || `fcircle-${idx}`),
+					friendName: String(item.friendName || "友链博主"),
+					friendAvatar: String(item.friendAvatar || ""),
+					friendUrl: String(item.friendUrl || ""),
+					title: String(item.title || "未命名文章"),
+					link: String(item.link || ""),
+					pubDate: ts,
+					publishedDate:
+						typeof item.publishedDate === "string" && item.publishedDate
+							? item.publishedDate
+							: ts
+								? formatMomentDate(ts)
+								: "",
+					excerpt: String(item.excerpt || ""),
+					sourceType:
+						item.sourceType === "subscription"
+							? ("subscription" as const)
+							: ("friend" as const),
+					tags: Array.isArray(item.tags) ? item.tags.map((t) => String(t)) : [],
+					relativeTime: getRelativeTime(ts),
+				};
+			})
+			.filter((item) => Boolean(item.link));
+		cachedFcircle = mapped;
+		if (typeof Image !== "undefined") {
+			for (const item of mapped.slice(0, 6)) {
+				if (item.friendAvatar) {
+					const thumb = resolveShareThumbUrl(
+						item.friendAvatar,
+						"square-sm",
+						thumbs,
+					);
+					if (thumb && !thumb.startsWith("data:")) {
+						const img = new Image();
+						img.decoding = "async";
+						img.src = thumb;
+					}
+				}
+			}
+		}
+		return mapped;
+	})().finally(() => {
+		if (inflightFcircle === task) inflightFcircle = null;
+	});
+	inflightFcircle = task;
+	return task;
+}
+
 export function preloadChatShareData(): void {
 	if (typeof window === "undefined") return;
 	void fetchShareThumbsCached().catch(() => {});
 	void fetchArticlesCached().catch(() => {});
 	void fetchMomentsCached().catch(() => {});
 	void fetchFriendsCached().catch(() => {});
+	void fetchFcircleCached().catch(() => {});
 }
 </script>
 
@@ -262,6 +345,7 @@ import { siteConfig } from "@/config/siteConfig";
 import {
 	extractHostname,
 	formatLxArticleShare,
+	formatLxFcircleShare,
 	formatLxFriendShare,
 	formatLxMomentShare,
 } from "./chatShareProtocol";
@@ -276,24 +360,31 @@ const { open, onClose, onShare }: Props = $props();
 
 const PAGE_SIZE = 20;
 
-let activeTab = $state<"articles" | "moments" | "friends">("articles");
+let activeTab = $state<"articles" | "moments" | "friends" | "fcircle">(
+	"articles",
+);
 let searchQuery = $state("");
 let articles = $state<ArticleItem[]>(cachedArticles ?? []);
 let moments = $state<MomentItem[]>(cachedMoments ?? []);
 let friends = $state<FriendItem[]>(cachedFriends ?? []);
+let fcirclePosts = $state<FcirclePostItem[]>(cachedFcircle ?? []);
 let articleLimit = $state(PAGE_SIZE);
 let momentLimit = $state(PAGE_SIZE);
 let friendLimit = $state(PAGE_SIZE);
+let fcircleLimit = $state(PAGE_SIZE);
 
 let isArticlesLoading = $state(false);
 let isMomentsLoading = $state(false);
 let isFriendsLoading = $state(false);
+let isFcircleLoading = $state(false);
 let articlesLoaded = $state(Boolean(cachedArticles));
 let momentsLoaded = $state(Boolean(cachedMoments));
 let friendsLoaded = $state(Boolean(cachedFriends));
+let fcircleLoaded = $state(Boolean(cachedFcircle));
 let articlesError = $state("");
 let momentsError = $state("");
 let friendsError = $state("");
+let fcircleError = $state("");
 let localThumbs = $state<Record<string, string>>(getCachedShareThumbs());
 const thumbFallbackUrls = new SvelteSet<string>();
 const failedThumbUrls = new SvelteSet<string>();
@@ -330,7 +421,7 @@ let listScrollEl = $state<HTMLDivElement | null>(null);
 let scrollRaf: number | null = null;
 let lastLoadMoreCheck = 0;
 
-function selectTab(tab: "articles" | "moments" | "friends") {
+function selectTab(tab: "articles" | "moments" | "friends" | "fcircle") {
 	activeTab = tab;
 	if (
 		typeof window !== "undefined" &&
@@ -445,6 +536,27 @@ async function loadFriends(force = false) {
 	}
 }
 
+async function loadFcircle(force = false) {
+	if (!force && cachedFcircle) {
+		fcirclePosts = cachedFcircle;
+		fcircleLoaded = true;
+		fcircleError = "";
+		return;
+	}
+	if ((fcircleLoaded && !force) || isFcircleLoading) return;
+	isFcircleLoading = true;
+	fcircleError = "";
+	try {
+		fcirclePosts = await fetchFcircleCached(force);
+		fcircleLoaded = true;
+	} catch (err) {
+		console.error("加载友链朋友圈失败", err);
+		fcircleError = "朋友圈列表加载失败，请稍后重试";
+	} finally {
+		isFcircleLoading = false;
+	}
+}
+
 function ensureDataReady() {
 	void fetchShareThumbsCached().then((map) => {
 		if (Object.keys(map).length > 0) localThumbs = map;
@@ -452,6 +564,7 @@ function ensureDataReady() {
 	void loadArticles();
 	void loadMoments();
 	void loadFriends();
+	void loadFcircle();
 }
 
 // 组件首次挂载即后台预加载（即使处于隐藏预挂载状态），确保点开即刻有数据、无加载抖动
@@ -466,6 +579,7 @@ $effect(() => {
 			articleLimit = PAGE_SIZE;
 			momentLimit = PAGE_SIZE;
 			friendLimit = PAGE_SIZE;
+			fcircleLimit = PAGE_SIZE;
 			if (listScrollEl && listScrollEl.scrollTop !== 0) {
 				listScrollEl.scrollTop = 0;
 			}
@@ -481,6 +595,7 @@ $effect(() => {
 		articleLimit = PAGE_SIZE;
 		momentLimit = PAGE_SIZE;
 		friendLimit = PAGE_SIZE;
+		fcircleLimit = PAGE_SIZE;
 		if (listScrollEl && listScrollEl.scrollTop !== 0) {
 			listScrollEl.scrollTop = 0;
 		}
@@ -488,6 +603,8 @@ $effect(() => {
 			void loadMoments(true);
 		} else if (_tab === "friends" && !friendsLoaded && !isFriendsLoading) {
 			void loadFriends(true);
+		} else if (_tab === "fcircle" && !fcircleLoaded && !isFcircleLoading) {
+			void loadFcircle(true);
 		} else if (_tab === "articles" && !articlesLoaded && !isArticlesLoading) {
 			void loadArticles(true);
 		}
@@ -536,6 +653,21 @@ const filteredFriends = $derived.by(() => {
 const displayedFriends = $derived(filteredFriends.slice(0, friendLimit));
 const hasMoreFriends = $derived(friendLimit < filteredFriends.length);
 
+const filteredFcircle = $derived.by(() => {
+	const q = searchQuery.trim().toLowerCase();
+	if (!q) return fcirclePosts;
+	return fcirclePosts.filter(
+		(item) =>
+			item.title.toLowerCase().includes(q) ||
+			item.friendName.toLowerCase().includes(q) ||
+			item.excerpt.toLowerCase().includes(q) ||
+			item.tags.some((t) => t.toLowerCase().includes(q)),
+	);
+});
+
+const displayedFcircle = $derived(filteredFcircle.slice(0, fcircleLimit));
+const hasMoreFcircle = $derived(fcircleLimit < filteredFcircle.length);
+
 function loadMoreCurrentTab() {
 	if (activeTab === "articles" && hasMoreArticles) {
 		articleLimit = Math.min(filteredArticles.length, articleLimit + PAGE_SIZE);
@@ -543,6 +675,8 @@ function loadMoreCurrentTab() {
 		momentLimit = Math.min(filteredMoments.length, momentLimit + PAGE_SIZE);
 	} else if (activeTab === "friends" && hasMoreFriends) {
 		friendLimit = Math.min(filteredFriends.length, friendLimit + PAGE_SIZE);
+	} else if (activeTab === "fcircle" && hasMoreFcircle) {
+		fcircleLimit = Math.min(filteredFcircle.length, fcircleLimit + PAGE_SIZE);
 	}
 }
 
@@ -613,13 +747,35 @@ function handlePickFriend(item: FriendItem) {
 	onShare(payload);
 	onClose();
 }
+
+function handlePickFcircle(item: FcirclePostItem) {
+	const absUrl = ensureAbsoluteUrl(item.link);
+	const absAvatar = item.friendAvatar
+		? ensureAbsoluteUrl(item.friendAvatar)
+		: undefined;
+	const absFriendUrl = item.friendUrl
+		? ensureAbsoluteUrl(item.friendUrl)
+		: undefined;
+	const payload = formatLxFcircleShare({
+		title: item.title,
+		excerpt: item.excerpt,
+		url: absUrl,
+		friendName: item.friendName,
+		friendAvatar: absAvatar,
+		friendUrl: absFriendUrl,
+		date: item.publishedDate,
+		sourceType: item.sourceType,
+	});
+	onShare(payload);
+	onClose();
+}
 </script>
 
 <div
   class="chat-share-popover-content flex flex-col flex-1 min-h-0 overflow-hidden select-none"
   role="dialog"
   tabindex="-1"
-  aria-label="分享文章、说说与友链"
+  aria-label="分享文章、说说、友链与朋友圈"
   onclick={(e) => e.stopPropagation()}
   onkeydown={(e) => {
     if (e.key === "Escape") {
@@ -631,10 +787,10 @@ function handlePickFriend(item: FriendItem) {
   <!-- 顶部固定控制栏：胶囊选项卡 + 关闭按钮 + 搜索框 -->
   <div class="chat-share-toolbar px-3 pt-2.5 pb-2 border-b border-[var(--skin-line)]/50 bg-[var(--skin-surface)] flex flex-col gap-2 shrink-0">
     <div class="flex items-center justify-between gap-2">
-      <div class="chat-share-segmented-control flex items-center p-0.5 rounded-full bg-[var(--btn-plain-bg-hover)] border border-[var(--skin-line)]/40 min-w-0">
+      <div class="chat-share-segmented-control flex items-center p-0.5 rounded-full bg-[var(--btn-plain-bg-hover)] border border-[var(--skin-line)]/40 min-w-0 overflow-x-auto no-scrollbar">
         <button
           type="button"
-          class="chat-share-tab-btn flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full text-[11.5px] font-bold transition-colors duration-150 cursor-pointer shrink-0 {activeTab === 'articles' ? 'active text-[var(--skin-text)] shadow-2xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
+          class="chat-share-tab-btn flex items-center gap-1 px-1.5 sm:px-2.5 py-1 rounded-full text-[11px] sm:text-[11.5px] font-bold transition-colors duration-150 cursor-pointer shrink-0 {activeTab === 'articles' ? 'active text-[var(--skin-text)] shadow-2xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
           onclick={() => selectTab("articles")}
         >
           <span>文章</span>
@@ -645,7 +801,7 @@ function handlePickFriend(item: FriendItem) {
 
         <button
           type="button"
-          class="chat-share-tab-btn flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full text-[11.5px] font-bold transition-colors duration-150 cursor-pointer shrink-0 {activeTab === 'moments' ? 'active text-[var(--skin-text)] shadow-2xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
+          class="chat-share-tab-btn flex items-center gap-1 px-1.5 sm:px-2.5 py-1 rounded-full text-[11px] sm:text-[11.5px] font-bold transition-colors duration-150 cursor-pointer shrink-0 {activeTab === 'moments' ? 'active text-[var(--skin-text)] shadow-2xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
           onclick={() => selectTab("moments")}
         >
           <span>说说</span>
@@ -656,12 +812,23 @@ function handlePickFriend(item: FriendItem) {
 
         <button
           type="button"
-          class="chat-share-tab-btn flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full text-[11.5px] font-bold transition-colors duration-150 cursor-pointer shrink-0 {activeTab === 'friends' ? 'active text-[var(--skin-text)] shadow-2xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
+          class="chat-share-tab-btn flex items-center gap-1 px-1.5 sm:px-2.5 py-1 rounded-full text-[11px] sm:text-[11.5px] font-bold transition-colors duration-150 cursor-pointer shrink-0 {activeTab === 'friends' ? 'active text-[var(--skin-text)] shadow-2xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
           onclick={() => selectTab("friends")}
         >
           <span>友链</span>
           <span class="min-w-4 text-center text-[10px] px-1 py-0 rounded-full font-bold tabular-nums {activeTab === 'friends' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400' : 'bg-[var(--skin-line)]/60 text-[var(--chat-meta-color)]'}">
             {friends.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          class="chat-share-tab-btn flex items-center gap-1 px-1.5 sm:px-2.5 py-1 rounded-full text-[11px] sm:text-[11.5px] font-bold transition-colors duration-150 cursor-pointer shrink-0 {activeTab === 'fcircle' ? 'active text-[var(--skin-text)] shadow-2xs' : 'text-[var(--chat-meta-color)] hover:text-[var(--skin-text)]'}"
+          onclick={() => selectTab("fcircle")}
+        >
+          <span>朋友圈</span>
+          <span class="min-w-4 text-center text-[10px] px-1 py-0 rounded-full font-bold tabular-nums {activeTab === 'fcircle' ? 'bg-sky-500/15 text-sky-600 dark:text-sky-400' : 'bg-[var(--skin-line)]/60 text-[var(--chat-meta-color)]'}">
+            {fcirclePosts.length}
           </span>
         </button>
       </div>
@@ -689,7 +856,7 @@ function handlePickFriend(item: FriendItem) {
         bind:this={searchInputEl}
         type="text"
         bind:value={searchQuery}
-        placeholder={activeTab === 'articles' ? '搜索文章标题或分类...' : activeTab === 'moments' ? '搜索说说内容或日期...' : '搜索友链名称、简介或标签...'}
+        placeholder={activeTab === 'articles' ? '搜索文章标题或分类...' : activeTab === 'moments' ? '搜索说说内容或日期...' : activeTab === 'friends' ? '搜索友链名称、简介或标签...' : '搜索朋友圈文章标题、博主或摘要...'}
         class="chat-share-search-input w-full h-8 pl-8 pr-7 text-xs bg-[var(--card-bg)] border border-[var(--skin-line)]/60 rounded-lg text-[var(--skin-text)] placeholder:text-[var(--chat-meta-color)]/60 focus:outline-none transition-colors duration-150"
       />
 
@@ -935,7 +1102,7 @@ function handlePickFriend(item: FriendItem) {
           </div>
         {/if}
       {/if}
-    {:else}
+    {:else if activeTab === "friends"}
       {#if isFriendsLoading && friends.length === 0}
         <div class="space-y-2">
           {#each [1, 2, 3, 4] as _i}
@@ -1043,20 +1210,133 @@ function handlePickFriend(item: FriendItem) {
           </div>
         {/if}
       {/if}
+    {:else}
+      {#if isFcircleLoading && fcirclePosts.length === 0}
+        <div class="space-y-2">
+          {#each [1, 2, 3, 4] as _i}
+            <div class="flex items-start gap-2.5 p-2 rounded-xl border border-[var(--skin-line)]/40 bg-[var(--card-bg)] min-h-[4.25rem] animate-pulse">
+              <div class="w-11 h-11 rounded-xl bg-[var(--skin-line)]/30 shrink-0"></div>
+              <div class="flex-1 min-w-0 space-y-1.5 py-0.5">
+                <div class="h-3.5 w-4/5 bg-[var(--skin-line)]/40 rounded"></div>
+                <div class="h-2.5 w-full bg-[var(--skin-line)]/25 rounded"></div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {:else if fcircleError && fcirclePosts.length === 0}
+        <div class="flex flex-col items-center justify-center py-10 text-center gap-2.5">
+          <p class="text-xs font-semibold text-[var(--skin-text)] m-0">{fcircleError}</p>
+          <button
+            type="button"
+            class="px-3.5 py-1 text-xs font-semibold rounded-full bg-sky-500 text-white hover:opacity-90 transition-opacity cursor-pointer border-none"
+            onclick={() => void loadFcircle(true)}
+          >
+            重新加载
+          </button>
+        </div>
+      {:else if filteredFcircle.length === 0}
+        <div class="flex flex-col items-center justify-center py-10 text-center gap-2">
+          <p class="text-xs text-[var(--skin-text)] font-semibold m-0">
+            {searchQuery ? `未找到包含「${searchQuery}」的朋友圈文章` : "暂无可分享的朋友圈文章"}
+          </p>
+          {#if searchQuery}
+            <button
+              type="button"
+              class="text-xs text-[var(--primary)] hover:underline font-medium cursor-pointer bg-transparent border-none"
+              onclick={() => { searchQuery = ""; }}
+            >
+              清空搜索词
+            </button>
+          {/if}
+        </div>
+      {:else}
+        <div class="space-y-1.5">
+          {#each displayedFcircle as item, idx (item.id)}
+            {@const avatarThumb = item.friendAvatar ? getDisplayThumb(item.friendAvatar, "square-sm") : ""}
+            <button
+              type="button"
+              class="chat-share-card group relative flex items-start gap-2.5 p-2 rounded-xl bg-[var(--card-bg)] hover:bg-[var(--btn-plain-bg-hover)]/75 border border-[var(--skin-line)]/50 hover:border-sky-500/55 text-left transition-colors duration-150 cursor-pointer w-full min-h-[4.25rem] overflow-hidden"
+              onclick={() => handlePickFcircle(item)}
+            >
+              <div class="w-11 h-11 rounded-xl overflow-hidden shrink-0 relative bg-[var(--btn-plain-bg-hover)] border border-[var(--skin-line)]/40 flex items-center justify-center">
+                {#if avatarThumb}
+                  <img
+                    src={avatarThumb}
+                    alt=""
+                    width="44"
+                    height="44"
+                    decoding="async"
+                    class="w-full h-full object-cover"
+                    loading={idx < 8 ? "eager" : "lazy"}
+                    onerror={() => handleThumbError(item.friendAvatar || "", "square-sm", avatarThumb)}
+                  />
+                {:else}
+                  <svg class="w-4.5 h-4.5 text-sky-500/75" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M4 11a9 9 0 0 1 9 9" />
+                    <path d="M4 4a16 16 0 0 1 16 16" />
+                    <circle cx="5" cy="19" r="1" />
+                  </svg>
+                {/if}
+              </div>
+
+              <div class="flex-1 min-w-0 flex flex-col justify-between gap-1 self-stretch">
+                <strong class="text-xs font-bold text-[var(--skin-text)] group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors line-clamp-1 leading-snug">
+                  {item.title}
+                </strong>
+
+                <p class="text-[11px] text-[var(--chat-meta-color)] line-clamp-1 leading-snug m-0 opacity-90 min-h-[0.95rem]">
+                  {item.excerpt || "点击分享这篇朋友圈文章"}
+                </p>
+
+                <div class="flex items-center justify-between gap-1.5 text-[10px] text-[var(--chat-meta-color)]">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="font-semibold text-[var(--skin-text)]/80 truncate max-w-[9rem]">{item.friendName}</span>
+                    {#if item.sourceType === "subscription"}
+                      <span class="px-1 py-0.5 rounded text-[8.5px] font-semibold bg-sky-500/12 text-sky-600 dark:text-sky-400 leading-none shrink-0">
+                        订阅
+                      </span>
+                    {/if}
+                    {#if item.publishedDate || item.relativeTime}
+                      <span class="truncate opacity-80">· {item.relativeTime || item.publishedDate}</span>
+                    {/if}
+                  </div>
+                  <span class="font-bold text-sky-600 dark:text-sky-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">分享 ↵</span>
+                </div>
+              </div>
+            </button>
+          {/each}
+        </div>
+
+        {#if hasMoreFcircle}
+          <button
+            type="button"
+            class="w-full py-2 mt-1 text-center text-[11px] text-[var(--chat-meta-color)] hover:text-sky-500 transition-colors cursor-pointer bg-transparent border-none"
+            onclick={loadMoreCurrentTab}
+          >
+            下滑或点击加载更多（已显示 {displayedFcircle.length} / {filteredFcircle.length} 篇）
+          </button>
+        {:else if filteredFcircle.length >= PAGE_SIZE}
+          <div class="py-2 text-center text-[11px] text-[var(--chat-meta-color)]/70">
+            已加载全部 {filteredFcircle.length} 篇朋友圈文章
+          </div>
+        {/if}
+      {/if}
     {/if}
   </div>
 
   <!-- 底部固定状态栏 -->
   <div class="chat-share-footer px-3 py-1.5 border-t border-[var(--skin-line)]/40 bg-[var(--skin-surface)]/80 text-[10.5px] text-[var(--chat-meta-color)] flex items-center justify-between shrink-0">
     <div class="flex items-center gap-1.5 tabular-nums">
-      <span class="w-1.5 h-1.5 rounded-full {activeTab === 'moments' ? 'bg-emerald-500' : activeTab === 'friends' ? 'bg-amber-500' : 'bg-[var(--primary)]'} opacity-80"></span>
+      <span class="w-1.5 h-1.5 rounded-full {activeTab === 'moments' ? 'bg-emerald-500' : activeTab === 'friends' ? 'bg-amber-500' : activeTab === 'fcircle' ? 'bg-sky-500' : 'bg-[var(--primary)]'} opacity-80"></span>
       <span>
         {#if activeTab === "articles"}
           {displayedArticles.length} / {filteredArticles.length} 篇博文
         {:else if activeTab === "moments"}
           {displayedMoments.length} / {filteredMoments.length} 条说说
-        {:else}
+        {:else if activeTab === "friends"}
           {displayedFriends.length} / {filteredFriends.length} 个友链
+        {:else}
+          {displayedFcircle.length} / {filteredFcircle.length} 篇朋友圈
         {/if}
       </span>
     </div>

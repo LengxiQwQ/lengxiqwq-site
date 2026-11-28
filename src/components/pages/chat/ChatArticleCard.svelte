@@ -1,6 +1,7 @@
 <script lang="ts">
 import type {
 	ChatArticleShareData,
+	ChatFcircleShareData,
 	ChatFriendShareData,
 	ChatMomentShareData,
 } from "./chatShareProtocol";
@@ -11,7 +12,11 @@ import {
 } from "./chatShareThumbs";
 
 interface Props {
-	data: ChatArticleShareData | ChatMomentShareData | ChatFriendShareData;
+	data:
+		| ChatArticleShareData
+		| ChatMomentShareData
+		| ChatFriendShareData
+		| ChatFcircleShareData;
 	isSelf?: boolean;
 }
 
@@ -33,7 +38,7 @@ $effect(() => {
 });
 
 const title = $derived(
-	data.kind === "article"
+	data.kind === "article" || data.kind === "fcircle"
 		? data.title || "未命名文章"
 		: data.kind === "friend"
 			? data.name || "友链分享"
@@ -43,25 +48,35 @@ const title = $derived(
 const excerpt = $derived(
 	data.kind === "article"
 		? data.description
-		: data.kind === "friend"
-			? data.description
-			: data.content,
+		: data.kind === "fcircle"
+			? data.excerpt
+			: data.kind === "friend"
+				? data.description
+				: data.content,
 );
 
 const badgeLabel = $derived(
 	data.kind === "article"
 		? "文章分享"
-		: data.kind === "friend"
-			? "友链分享"
-			: "动态分享",
+		: data.kind === "fcircle"
+			? "友链朋友圈"
+			: data.kind === "friend"
+				? "友链分享"
+				: "动态分享",
 );
 
 const rawMediaSrc = $derived(
-	data.kind === "friend" ? data.avatar || "" : data.cover || "",
+	data.kind === "friend"
+		? data.avatar || ""
+		: data.kind === "fcircle"
+			? data.friendAvatar || ""
+			: data.cover || "",
 );
 
 const thumbPreset = $derived(
-	data.kind === "friend" ? "card-avatar" : "card-cover",
+	data.kind === "friend" || data.kind === "fcircle"
+		? "card-avatar"
+		: "card-cover",
 );
 
 const mediaSrc = $derived.by(() => {
@@ -128,6 +143,67 @@ function handleMediaError() {
         <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
           <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+        </svg>
+        <span>{badgeLabel}</span>
+      </span>
+
+      {#if data.host}
+        <span class="chat-article-host text-[11px] leading-none truncate font-medium opacity-75">
+          {data.host}
+        </span>
+      {/if}
+    </div>
+  {:else if data.kind === "fcircle"}
+    <!-- 友链朋友圈：博主头像/名称/日期 + 文章标题与摘要 -->
+    <div class="chat-article-body p-3.5 pb-3 flex flex-col gap-2 min-w-0">
+      <div class="flex items-center gap-2 min-w-0">
+        <div class="w-6 h-6 rounded-lg overflow-hidden shrink-0 bg-[var(--btn-plain-bg-hover)] border border-[var(--skin-line)]/50 flex items-center justify-center">
+          {#if hasCover}
+            <img
+              src={mediaSrc}
+              alt={data.friendName}
+              width="24"
+              height="24"
+              loading="lazy"
+              decoding="async"
+              class="w-full h-full object-cover block"
+              onerror={handleMediaError}
+            />
+          {:else}
+            <svg class="w-3.5 h-3.5 text-sky-500/80" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 11a9 9 0 0 1 9 9" />
+              <path d="M4 4a16 16 0 0 1 16 16" />
+              <circle cx="5" cy="19" r="1" />
+            </svg>
+          {/if}
+        </div>
+        <span class="text-xs font-semibold text-[var(--skin-text)] truncate opacity-90">
+          {data.friendName}
+        </span>
+        {#if data.date}
+          <span class="text-[10.5px] text-[var(--chat-meta-color)] opacity-75 shrink-0 ml-auto tabular-nums">
+            {data.date}
+          </span>
+        {/if}
+      </div>
+
+      <strong class="chat-article-title text-sm md:text-[14.5px] font-bold leading-snug line-clamp-2 transition-colors">
+        {title}
+      </strong>
+
+      {#if excerpt}
+        <p class="chat-article-excerpt text-xs line-clamp-2 leading-relaxed m-0 break-words opacity-90">
+          {excerpt}
+        </p>
+      {/if}
+    </div>
+
+    <div class="px-3.5 py-2.5 border-t border-[var(--skin-line)]/40 flex items-center justify-between gap-2 min-w-0">
+      <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10.5px] font-bold leading-none tracking-wide shrink-0 bg-sky-500/15 text-sky-600 dark:text-sky-400">
+        <svg class="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 11a9 9 0 0 1 9 9" />
+          <path d="M4 4a16 16 0 0 1 16 16" />
+          <circle cx="5" cy="19" r="1" />
         </svg>
         <span>{badgeLabel}</span>
       </span>

@@ -1,6 +1,7 @@
 export const LX_ARTICLE_SHARE_TAG = "[LX:文章分享]";
 export const LX_MOMENT_SHARE_TAG = "[LX:动态分享]";
 export const LX_FRIEND_SHARE_TAG = "[LX:友链分享]";
+export const LX_FCIRCLE_SHARE_TAG = "[LX:朋友圈分享]";
 export const LX_MUSIC_SHARE_TAG = "[LX:音乐分享]";
 
 export interface ChatArticleShareData {
@@ -30,6 +31,19 @@ export interface ChatFriendShareData {
 	host: string;
 }
 
+export interface ChatFcircleShareData {
+	kind: "fcircle";
+	title: string;
+	excerpt: string;
+	url: string;
+	friendName: string;
+	friendAvatar?: string;
+	friendUrl?: string;
+	date?: string;
+	sourceType?: "friend" | "subscription";
+	host: string;
+}
+
 export interface ChatMusicShareData {
 	kind: "music";
 	id: string;
@@ -52,6 +66,7 @@ export type ChatShareData =
 	| ChatArticleShareData
 	| ChatMomentShareData
 	| ChatFriendShareData
+	| ChatFcircleShareData
 	| ChatMusicShareData;
 
 export function parseLxShareCard(raw: string): ChatShareData | null {
@@ -59,6 +74,7 @@ export function parseLxShareCard(raw: string): ChatShareData | null {
 		parseLxArticleShare(raw) ??
 		parseLxMomentShare(raw) ??
 		parseLxFriendShare(raw) ??
+		parseLxFcircleShare(raw) ??
 		parseLxMusicShare(raw)
 	);
 }
@@ -311,6 +327,159 @@ export function formatLxFriendShare(data: {
 		);
 		lines.push(`<!--lx-friend:${encoded}-->`);
 	}
+	return lines.join("\n");
+}
+
+/**
+ * 解析 [LX:朋友圈分享]
+ * 优先从末尾隐藏注释 <!--lx-fcircle:...--> 读取完整结构化字段；
+ * 兼容从 Markdown 引用行降级提取（> 标题 / > 博主 · 摘要 / > 链接 / > 头像）。
+ */
+export function parseLxFcircleShare(raw: string): ChatFcircleShareData | null {
+	const text = String(raw || "")
+		.replace(/^\uFEFF/, "")
+		.trim();
+	if (!text) return null;
+
+	const lines = text.split(/\r?\n/);
+	if (String(lines[0] || "").trim() !== LX_FCIRCLE_SHARE_TAG) return null;
+
+	const commentMatch = text.match(/<!--\s*lx-fcircle:([A-Za-z0-9_-]+)\s*-->/);
+	if (commentMatch?.[1]) {
+		try {
+			const parsed = JSON.parse(decodeBase64UrlUtf8(commentMatch[1])) as Record<
+				string,
+				unknown
+			>;
+			const url = typeof parsed.url === "string" ? parsed.url.trim() : "";
+			if (url && isHttpOrRootPath(url)) {
+				const title =
+					typeof parsed.title === "string" && parsed.title.trim()
+						? parsed.title.trim()
+						: "未命名文章";
+				const excerpt =
+					typeof parsed.excerpt === "string" ? parsed.excerpt.trim() : "";
+				const friendName =
+					typeof parsed.friendName === "string" && parsed.friendName.trim()
+						? parsed.friendName.trim()
+						: extractHostname(url) || "友链博主";
+				const avatarRaw =
+					typeof parsed.friendAvatar === "string"
+						? parsed.friendAvatar.trim()
+						: "";
+				const friendAvatar = avatarRaw
+					? cleanShareCoverUrl(avatarRaw) || undefined
+					: undefined;
+				const friendUrl =
+					typeof parsed.friendUrl === "string" && parsed.friendUrl.trim()
+						? parsed.friendUrl.trim()
+						: undefined;
+				const date =
+					typeof parsed.date === "string" && parsed.date.trim()
+						? parsed.date.trim()
+						: undefined;
+				const sourceType =
+					parsed.sourceType === "subscription" ? "subscription" : "friend";
+
+				return {
+					kind: "fcircle",
+					title,
+					excerpt,
+					url,
+					friendName,
+					friendAvatar,
+					friendUrl,
+					date,
+					sourceType,
+					host: extractHostname(url),
+				};
+			}
+		} catch {
+			// Fall back to quoted lines
+		}
+	}
+
+	const quotes = parseLxQuotedLines(raw, LX_FCIRCLE_SHARE_TAG);
+	if (!quotes || quotes.length < 3) return null;
+
+	const title = quotes[0] || "未命名文章";
+	const metaLine = quotes[1] || "";
+	const rawUrl = quotes[2] || "";
+	if (!rawUrl || !isHttpOrRootPath(rawUrl)) return null;
+
+	const sepIdx = metaLine.indexOf(" · ");
+	const friendName =
+		sepIdx > 0
+			? metaLine.slice(0, sepIdx).trim()
+			: extractHostname(rawUrl) || "友链博主";
+	const excerpt = sepIdx > 0 ? metaLine.slice(sepIdx + 3).trim() : metaLine;
+	const friendAvatar = quotes[3]
+		? cleanShareCoverUrl(quotes[3]) || undefined
+		: undefined;
+
+	return {
+		kind: "fcircle",
+		title,
+		excerpt,
+		url: rawUrl,
+		friendName,
+		friendAvatar,
+		host: extractHostname(rawUrl),
+	};
+}
+
+/**
+ * 组装 [LX:朋友圈分享] 文本
+ */
+export function formatLxFcircleShare(data: {
+	title: string;
+	excerpt?: string;
+	url: string;
+	friendName: string;
+	friendAvatar?: string;
+	friendUrl?: string;
+	date?: string;
+	sourceType?: "friend" | "subscription";
+}): string {
+	const title = (data.title || "").trim() || "未命名文章";
+	const excerpt = (data.excerpt || "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 220);
+	const url = (data.url || "").trim();
+	const friendName = (data.friendName || "").trim() || "友链博主";
+	const friendAvatar = (data.friendAvatar || "").trim();
+	const friendUrl = (data.friendUrl || "").trim();
+	const date = (data.date || "").trim();
+	const sourceType =
+		data.sourceType === "subscription" ? "subscription" : "friend";
+
+	const summaryLine = excerpt ? `${friendName} · ${excerpt}` : friendName;
+	const lines = [
+		LX_FCIRCLE_SHARE_TAG,
+		`> ${title}`,
+		`> ${summaryLine}`,
+		`> ${url}`,
+	];
+	if (friendAvatar) {
+		lines.push(`> ${friendAvatar}`);
+	}
+
+	const payload: Record<string, unknown> = {
+		title,
+		excerpt,
+		url,
+		friendName,
+		friendAvatar,
+		friendUrl,
+		date,
+		sourceType,
+	};
+	for (const key of Object.keys(payload)) {
+		if (!payload[key]) delete payload[key];
+	}
+	const encoded = encodeBase64UrlUtf8(JSON.stringify(payload));
+	lines.push(`<!--lx-fcircle:${encoded}-->`);
 	return lines.join("\n");
 }
 

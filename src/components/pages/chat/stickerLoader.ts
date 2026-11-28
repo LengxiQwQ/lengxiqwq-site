@@ -905,6 +905,7 @@ const LX_SHARE_PREVIEW_LABELS: Record<string, string> = {
 	"[LX:文章分享]": "文章分享",
 	"[LX:动态分享]": "动态分享",
 	"[LX:友链分享]": "友链分享",
+	"[LX:朋友圈分享]": "朋友圈分享",
 	"[LX:音乐分享]": "音乐分享",
 };
 
