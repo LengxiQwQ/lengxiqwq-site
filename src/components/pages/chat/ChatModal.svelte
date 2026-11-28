@@ -57,7 +57,9 @@ interface Props {
 	hideBackButton?: boolean;
 	onBack?: () => void;
 	onClose: () => void;
+	headerLeft?: Snippet;
 	headerExtra?: Snippet;
+	headerActions?: Snippet;
 	children: Snippet;
 }
 
@@ -77,7 +79,9 @@ const {
 	hideBackButton = false,
 	onBack,
 	onClose,
+	headerLeft,
 	headerExtra,
+	headerActions,
 	children,
 }: Props = $props();
 
@@ -90,7 +94,6 @@ let dragStart: { id: number; y: number } | null = $state(null);
 let dismissDragY = $state(0);
 let isDismissDragging = $state(false);
 let suppressHandleClick = false;
-let isStackedChild = $state(false);
 
 function placeBackdrop(node: HTMLDivElement) {
 	const layer = document.getElementById("chat-modal-layer") ?? document.body;
@@ -129,7 +132,6 @@ $effect(() => {
 		backgroundFocus = trigger instanceof HTMLElement ? trigger : null;
 	}
 	activeChatModals.push(backdrop);
-	isStackedChild = activeChatModals.indexOf(backdrop) > 0;
 	syncModalStack();
 	expanded = false;
 	dragOffset = 0;
@@ -312,7 +314,7 @@ const sizeClass = $derived(
       {/if}
       <header class="chat-dialog-header shrink-0 flex items-center justify-between gap-2.5 px-3.5 py-3 border-b border-(--chat-divider-color)">
         <div class="flex items-center gap-2 min-w-0 flex-1">
-          {#if !hideBackButton && (isStackedChild || showBackButton || Boolean(onBack))}
+          {#if !hideBackButton && showBackButton}
             <button
               type="button"
               class="chat-tool-btn chat-dialog-back shrink-0"
@@ -333,6 +335,9 @@ const sizeClass = $derived(
               </svg>
             </button>
           {/if}
+          {#if headerLeft}
+            {@render headerLeft()}
+          {/if}
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 min-w-0">
               <h3 class="text-base sm:text-sm font-bold text-[var(--deep-text)] m-0 truncate">
@@ -349,25 +354,30 @@ const sizeClass = $derived(
             {/if}
           </div>
         </div>
-        <button
-          type="button"
-          class="chat-tool-btn chat-dialog-close shrink-0"
-          aria-label="关闭弹窗"
-          onclick={onClose}
-        >
-          <svg
-            class="w-4 h-4"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.2"
-            stroke-linecap="round"
-            aria-hidden="true"
+        <div class="flex items-center gap-1 shrink-0">
+          {#if headerActions}
+            {@render headerActions()}
+          {/if}
+          <button
+            type="button"
+            class="chat-tool-btn chat-dialog-close shrink-0"
+            aria-label="关闭弹窗"
+            onclick={onClose}
           >
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
+            <svg
+              class="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
       </header>
 
       <div class="chat-dialog-content flex-1 min-h-0 flex flex-col overflow-hidden">

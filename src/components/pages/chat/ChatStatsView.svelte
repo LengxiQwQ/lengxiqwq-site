@@ -43,6 +43,8 @@ interface Props {
 	unreadChatCount?: number;
 	onBackToChat?: () => void;
 	onChangeLayoutMode?: (mode: ChatStatsLayoutMode) => void;
+	onRoomChange?: (room: ChatStatsRoomScope) => void;
+	onLoadingChange?: (loading: boolean) => void;
 	onOpenUserProfile?: (seed: ChatUserDetailSeed) => void;
 }
 
@@ -67,6 +69,8 @@ const {
 	unreadChatCount = 0,
 	onBackToChat,
 	onChangeLayoutMode,
+	onRoomChange,
+	onLoadingChange,
 	onOpenUserProfile,
 }: Props = $props();
 
@@ -120,6 +124,30 @@ let exprTrackEl = $state<HTMLDivElement | null>(null);
 let exprViewportWidth = $state(0);
 let exprTrackWidth = $state(0);
 let exprOffsetPx = $state(0);
+let isMobileWall = $state(false);
+
+export function refresh() {
+	void loadStats(true);
+}
+
+$effect(() => {
+	onRoomChange?.(room);
+});
+
+$effect(() => {
+	onLoadingChange?.(isLoading);
+});
+
+$effect(() => {
+	if (typeof window === "undefined") return;
+	const mq = window.matchMedia("(max-width: 767px)");
+	const sync = () => {
+		isMobileWall = mq.matches;
+	};
+	sync();
+	mq.addEventListener("change", sync);
+	return () => mq.removeEventListener("change", sync);
+});
 
 $effect(() => {
 	if (!siteDropdownOpen) return;
@@ -186,6 +214,7 @@ $effect(() => {
 let displayKpis = $state({
 	messages: 0,
 	activeUsers: 0,
+	chars: 0,
 	stickers: 0,
 	images: 0,
 	musicRequests: 0,
@@ -195,6 +224,7 @@ let countUpRaf: number | null = null;
 function animateKpis(target: {
 	messages: number;
 	activeUsers: number;
+	chars: number;
 	stickers: number;
 	images: number;
 	musicRequests: number;
@@ -223,6 +253,9 @@ function animateKpis(target: {
 			activeUsers: Math.round(
 				startVals.activeUsers +
 					(target.activeUsers - startVals.activeUsers) * eased,
+			),
+			chars: Math.round(
+				startVals.chars + (target.chars - startVals.chars) * eased,
 			),
 			stickers: Math.round(
 				startVals.stickers + (target.stickers - startVals.stickers) * eased,
@@ -678,6 +711,40 @@ function resolveUserSiteBadge(u: ChatStatsUserRow): {
 	};
 }
 
+function getLeaderboardSortUnit(sort: LeaderboardSort): string {
+	switch (sort) {
+		case "messages":
+			return "条";
+		case "chars":
+			return "字";
+		case "images":
+			return "图";
+		case "stickers":
+			return "表情";
+		case "musicRequests":
+			return "首";
+		case "interactionScore":
+			return "互动";
+	}
+}
+
+function getMobileSecondaryMetrics(
+	u: ChatStatsUserRow,
+	sort: LeaderboardSort,
+): string[] {
+	const items: string[] = [];
+	if (sort !== "messages") items.push(`${formatStatNumber(u.messages)}条`);
+	if (sort !== "chars") items.push(`${formatStatNumber(u.chars)}字`);
+	else items.push(`均${u.avgChars}字`);
+	if (sort !== "images" && u.images > 0) items.push(`${u.images}图`);
+	if (sort !== "stickers" && u.stickers > 0) items.push(`${u.stickers}表情`);
+	if (sort !== "musicRequests" && u.musicRequests > 0)
+		items.push(`${u.musicRequests}点歌`);
+	if (sort !== "interactionScore" && u.interactionScore > 0)
+		items.push(`互动${u.interactionScore}`);
+	return items;
+}
+
 function resolveStickerUrl(
 	key: string,
 	label: string,
@@ -765,194 +832,199 @@ function resolveStickerUrl(
     </header>
   {/if}
 
-  <!-- 筛选与快捷日期条 -->
-  <div class="shrink-0 px-4 sm:px-6 py-2.5 border-b border-[var(--chat-divider-color)]/80 bg-[var(--skin-surface)]/80 flex flex-wrap items-center justify-between gap-2">
-    <div class="flex items-center gap-2 flex-wrap">
-      <div class="chat-stats-segmented" role="tablist" aria-label="统计房间范围">
-        {#each ROOM_OPTIONS as opt (opt.id)}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={room === opt.id}
-            class="chat-stats-seg-btn {room === opt.id ? 'is-active' : ''}"
-            onclick={() => {
-              room = opt.id;
-              if (opt.id === "chat") selectedSite = "all";
-            }}
-          >
-            {opt.label}
-          </button>
-        {/each}
-      </div>
-
-      <div class="chat-stats-segmented" role="tablist" aria-label="统计时间周期">
-        {#each RANGE_OPTIONS as opt (opt.id)}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={range === opt.id}
-            class="chat-stats-seg-btn {range === opt.id ? 'is-active' : ''}"
-            onpointerenter={() => prefetchRange(opt.id)}
-            onclick={() => selectRange(opt.id)}
-          >
-            {opt.label}
-          </button>
-        {/each}
-      </div>
-
-      {#if room !== "chat" && dropdownSites.length > 1}
-        <div bind:this={siteDropdownEl} class="chat-stats-site-dropdown relative">
-          <button
-            type="button"
-            class="chat-stats-site-dropdown-btn {selectedSite !== 'all' ? 'is-filtered' : ''}"
-            aria-haspopup="listbox"
-            aria-expanded={siteDropdownOpen}
-            onclick={() => (siteDropdownOpen = !siteDropdownOpen)}
-          >
-            <span
-              class="w-2 h-2 rounded-sm shrink-0"
-              style="background: {selectedSiteMeta?.color || 'var(--skin-accent)'};"
-              aria-hidden="true"
-            ></span>
-            <span class="truncate max-w-[112px]">
-              {selectedSiteMeta ? selectedSiteMeta.siteName : `全部茶室 (${dropdownSites.length})`}
-            </span>
-            <svg class="w-3.5 h-3.5 opacity-65 shrink-0 transition-transform duration-150 {siteDropdownOpen ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </button>
-
-          {#if siteDropdownOpen}
-            <div class="chat-stats-site-dropdown-menu" role="listbox" aria-label="选择茶室站点">
+  <!-- 单一主垂直滚动流：移动端筛选条随页面滚动释放可视空间，桌面端吸顶固定 -->
+  <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+    <!-- 筛选与快捷日期条 -->
+    <div class="md:sticky md:top-0 md:z-20 px-4 sm:px-6 py-2.5 border-b border-[var(--chat-divider-color)]/80 bg-[var(--skin-surface)]/92 md:backdrop-blur-md flex flex-col md:flex-row md:flex-wrap md:items-center md:justify-between gap-2">
+      <div class="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full md:w-auto">
+        <div class="flex items-center justify-between gap-2 w-full sm:w-auto">
+          <div class="chat-stats-segmented shrink-0" role="tablist" aria-label="统计房间范围">
+            {#each ROOM_OPTIONS as opt (opt.id)}
               <button
                 type="button"
-                role="option"
-                aria-selected={selectedSite === "all"}
-                class="chat-stats-site-dropdown-item {selectedSite === 'all' ? 'is-active' : ''}"
+                role="tab"
+                aria-selected={room === opt.id}
+                class="chat-stats-seg-btn {room === opt.id ? 'is-active' : ''}"
                 onclick={() => {
-                  selectedSite = "all";
-                  siteDropdownOpen = false;
+                  room = opt.id;
+                  if (opt.id === "chat") selectedSite = "all";
                 }}
               >
-                <span class="flex items-center gap-2 min-w-0">
-                  <span class="w-2 h-2 rounded-sm shrink-0 bg-[var(--skin-accent)]" aria-hidden="true"></span>
-                  <span class="truncate">全部茶室</span>
-                </span>
-                <span class="text-[10.5px] font-mono opacity-70 tabular-nums shrink-0">{dropdownSites.length} 站</span>
+                {opt.label}
               </button>
-              {#each dropdownSites as s (s.siteKey)}
+            {/each}
+          </div>
+
+          {#if room !== "chat" && dropdownSites.length > 1}
+            <div bind:this={siteDropdownEl} class="chat-stats-site-dropdown relative sm:order-3">
+              <button
+                type="button"
+                class="chat-stats-site-dropdown-btn {selectedSite !== 'all' ? 'is-filtered' : ''}"
+                aria-haspopup="listbox"
+                aria-expanded={siteDropdownOpen}
+                onclick={() => (siteDropdownOpen = !siteDropdownOpen)}
+              >
+                <span
+                  class="w-2 h-2 rounded-sm shrink-0"
+                  style="background: {selectedSiteMeta?.color || 'var(--skin-accent)'};"
+                  aria-hidden="true"
+                ></span>
+                <span class="truncate max-w-[96px] sm:max-w-[112px]">
+                  {selectedSiteMeta ? selectedSiteMeta.siteName : `全部 (${dropdownSites.length})`}
+                </span>
+                <svg class="w-3.5 h-3.5 opacity-65 shrink-0 transition-transform duration-150 {siteDropdownOpen ? 'rotate-180' : ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+
+              {#if siteDropdownOpen}
+                <div class="chat-stats-site-dropdown-menu" role="listbox" aria-label="选择茶室站点">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={selectedSite === "all"}
+                    class="chat-stats-site-dropdown-item {selectedSite === 'all' ? 'is-active' : ''}"
+                    onclick={() => {
+                      selectedSite = "all";
+                      siteDropdownOpen = false;
+                    }}
+                  >
+                    <span class="flex items-center gap-2 min-w-0">
+                      <span class="w-2 h-2 rounded-sm shrink-0 bg-[var(--skin-accent)]" aria-hidden="true"></span>
+                      <span class="truncate">全部茶室</span>
+                    </span>
+                    <span class="text-xs sm:text-[10.5px] font-mono opacity-70 tabular-nums shrink-0">{dropdownSites.length} 站</span>
+                  </button>
+                  {#each dropdownSites as s (s.siteKey)}
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={selectedSite === s.siteKey}
+                      class="chat-stats-site-dropdown-item {selectedSite === s.siteKey ? 'is-active' : ''}"
+                      onclick={() => {
+                        selectedSite = s.siteKey;
+                        siteDropdownOpen = false;
+                      }}
+                    >
+                      <span class="flex items-center gap-2 min-w-0">
+                        <span class="w-2 h-2 rounded-sm shrink-0" style="background: {s.color || 'var(--skin-accent)'};" aria-hidden="true"></span>
+                        <span class="truncate">{s.siteName}</span>
+                      </span>
+                      <span class="text-xs sm:text-[10.5px] font-mono opacity-70 tabular-nums shrink-0">{s.activeUsers}人</span>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+
+        <div class="chat-stats-segmented chat-stats-segmented--range w-full sm:w-auto" role="tablist" aria-label="统计时间周期">
+          {#each RANGE_OPTIONS as opt (opt.id)}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={range === opt.id}
+              class="chat-stats-seg-btn flex-1 sm:flex-initial text-center {range === opt.id ? 'is-active' : ''}"
+              onpointerenter={() => prefetchRange(opt.id)}
+              onclick={() => selectRange(opt.id)}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      {#if drillReturnState || range !== "all" || (layoutMode === "modal" && onChangeLayoutMode)}
+        <div class="flex items-center justify-between sm:justify-start gap-1.5 flex-wrap">
+          {#if drillReturnState}
+            <button
+              type="button"
+              class="px-2.5 py-1 text-xs sm:text-[11px] font-semibold rounded-lg bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] border-none cursor-pointer hover:opacity-90"
+              onclick={exitDrillDown}
+            >
+              ← 返回周期
+            </button>
+          {/if}
+
+          {#if range === "day"}
+            <div class="hidden xl:inline-flex items-center gap-1">
+              {#each quickDatePills as qp (qp.dayKey)}
                 <button
                   type="button"
-                  role="option"
-                  aria-selected={selectedSite === s.siteKey}
-                  class="chat-stats-site-dropdown-item {selectedSite === s.siteKey ? 'is-active' : ''}"
+                  class="chat-stats-mini-tab {anchorDay === qp.dayKey ? 'is-active' : ''}"
                   onclick={() => {
-                    selectedSite = s.siteKey;
-                    siteDropdownOpen = false;
+                    drillReturnState = null;
+                    anchorDay = qp.dayKey;
                   }}
                 >
-                  <span class="flex items-center gap-2 min-w-0">
-                    <span class="w-2 h-2 rounded-sm shrink-0" style="background: {s.color || 'var(--skin-accent)'};" aria-hidden="true"></span>
-                    <span class="truncate">{s.siteName}</span>
-                  </span>
-                  <span class="text-[10.5px] font-mono opacity-70 tabular-nums shrink-0">{s.activeUsers}人</span>
+                  {qp.label}
                 </button>
               {/each}
             </div>
+          {/if}
+
+          {#if range !== "all"}
+            <div class="inline-flex items-center flex-1 sm:flex-initial justify-between sm:justify-start rounded-lg border border-[var(--skin-line)] bg-[var(--skin-surface)] p-0.5">
+              <button
+                type="button"
+                class="w-7 h-7 sm:w-6 sm:h-6 rounded-md flex items-center justify-center text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-black/5 dark:hover:bg-white/8 border-none bg-transparent cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                aria-label="前一天"
+                disabled={!canStepPrev}
+                onclick={() => stepDay(-1)}
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <input
+                type="date"
+                bind:value={anchorDay}
+                min={minDayKey || undefined}
+                max={maxDayKey}
+                aria-label="选择日期"
+                class="bg-transparent border-none text-[13px] sm:text-[11.5px] font-mono font-semibold text-[var(--deep-text)] dark:text-white/90 px-1.5 py-0.5 outline-none cursor-pointer tabular-nums"
+                onchange={() => {
+                  drillReturnState = null;
+                }}
+              />
+              <button
+                type="button"
+                class="w-7 h-7 sm:w-6 sm:h-6 rounded-md flex items-center justify-center text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-black/5 dark:hover:bg-white/8 border-none bg-transparent cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                aria-label="后一天"
+                disabled={!canStepNext}
+                onclick={() => stepDay(1)}
+              >
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+              </button>
+            </div>
+          {/if}
+
+          {#if range === "day" && anchorDay !== maxDayKey}
+            <button
+              type="button"
+              class="xl:hidden chat-stats-mini-tab"
+              onclick={() => {
+                drillReturnState = null;
+                anchorDay = maxDayKey;
+              }}
+            >
+              回到今天
+            </button>
+          {/if}
+
+          {#if layoutMode === "modal" && onChangeLayoutMode}
+            <button
+              type="button"
+              class="hidden lg:inline-flex chat-stats-mini-tab ml-1"
+              onclick={() => onChangeLayoutMode("center")}
+            >
+              嵌入中栏
+            </button>
           {/if}
         </div>
       {/if}
     </div>
 
-    <div class="flex items-center gap-1.5 flex-wrap">
-      {#if drillReturnState}
-        <button
-          type="button"
-          class="px-2 py-1 text-[11px] font-semibold rounded-lg bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] border-none cursor-pointer hover:opacity-90"
-          onclick={exitDrillDown}
-        >
-          ← 返回周期
-        </button>
-      {/if}
-
-      {#if range === "day"}
-        <div class="hidden xl:inline-flex items-center gap-1">
-          {#each quickDatePills as qp (qp.dayKey)}
-            <button
-              type="button"
-              class="chat-stats-mini-tab {anchorDay === qp.dayKey ? 'is-active' : ''}"
-              onclick={() => {
-                drillReturnState = null;
-                anchorDay = qp.dayKey;
-              }}
-            >
-              {qp.label}
-            </button>
-          {/each}
-        </div>
-        {#if anchorDay !== maxDayKey}
-          <button
-            type="button"
-            class="xl:hidden chat-stats-mini-tab"
-            onclick={() => {
-              drillReturnState = null;
-              anchorDay = maxDayKey;
-            }}
-          >
-            今天
-          </button>
-        {/if}
-      {/if}
-
-      {#if range !== "all"}
-        <div class="inline-flex items-center rounded-lg border border-[var(--skin-line)] bg-[var(--skin-surface)] p-0.5">
-          <button
-            type="button"
-            class="w-6 h-6 rounded-md flex items-center justify-center text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-black/5 dark:hover:bg-white/8 border-none bg-transparent cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-            aria-label="前一天"
-            disabled={!canStepPrev}
-            onclick={() => stepDay(-1)}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
-          </button>
-          <input
-            type="date"
-            bind:value={anchorDay}
-            min={minDayKey || undefined}
-            max={maxDayKey}
-            aria-label="选择日期"
-            class="bg-transparent border-none text-[11.5px] font-mono font-semibold text-[var(--deep-text)] dark:text-white/90 px-1.5 py-0.5 outline-none cursor-pointer tabular-nums"
-            onchange={() => {
-              drillReturnState = null;
-            }}
-          />
-          <button
-            type="button"
-            class="w-6 h-6 rounded-md flex items-center justify-center text-[var(--chat-meta-color)] hover:text-[var(--deep-text)] hover:bg-black/5 dark:hover:bg-white/8 border-none bg-transparent cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-            aria-label="后一天"
-            disabled={!canStepNext}
-            onclick={() => stepDay(1)}
-          >
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
-          </button>
-        </div>
-      {/if}
-
-      {#if layoutMode === "modal" && onChangeLayoutMode}
-        <button
-          type="button"
-          class="hidden lg:inline-flex chat-stats-mini-tab ml-1"
-          onclick={() => onChangeLayoutMode("center")}
-        >
-          嵌入中栏
-        </button>
-      {/if}
-    </div>
-  </div>
-
-  <!-- 单一主垂直滚动流：彻底告别嵌套小滚动框，一划到底 -->
-  <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-    <div class="mx-auto w-full max-w-6xl px-4 sm:px-6 py-5 space-y-6 transition-opacity duration-200 {isLoading && stats ? 'opacity-50' : 'opacity-100'}">
+    <div class="mx-auto w-full max-w-6xl px-4 sm:px-6 py-4 sm:py-5 space-y-5 sm:space-y-6 transition-opacity duration-200 {isLoading && stats ? 'opacity-50' : 'opacity-100'}">
       {#if errorMessage && stats}
         <div class="flex items-center justify-between gap-2 px-3.5 py-2 rounded-xl bg-rose-500/10 border border-rose-500/25 text-xs text-rose-600 dark:text-rose-400">
           <span class="truncate">{errorMessage}</span>
@@ -989,48 +1061,45 @@ function resolveStickerUrl(
       {:else}
         {@const prev = stats.previousSummary}
         {@const kpiItems = [
-          { label: "发言消息", value: displayKpis.messages, raw: stats.summary.messages, prev: prev?.messages },
-          { label: "活跃茶友", value: displayKpis.activeUsers, raw: stats.summary.activeUsers, prev: prev?.activeUsers },
-          { label: "表情贴纸", value: displayKpis.stickers, raw: stats.summary.stickers, prev: prev?.stickers },
-          { label: "晒图数量", value: displayKpis.images, raw: stats.summary.images, prev: prev?.images },
-          { label: "电台点歌", value: displayKpis.musicRequests, raw: stats.summary.musicRequests, prev: prev?.musicRequests },
+          { label: "发言消息", value: displayKpis.messages, raw: stats.summary.messages, prev: prev?.messages, mobileOnly: false },
+          { label: "活跃茶友", value: displayKpis.activeUsers, raw: stats.summary.activeUsers, prev: prev?.activeUsers, mobileOnly: false },
+          { label: "有效字数", value: displayKpis.chars, raw: stats.summary.chars, prev: prev?.chars, mobileOnly: true },
+          { label: "表情贴纸", value: displayKpis.stickers, raw: stats.summary.stickers, prev: prev?.stickers, mobileOnly: false },
+          { label: "晒图数量", value: displayKpis.images, raw: stats.summary.images, prev: prev?.images, mobileOnly: false },
+          { label: "电台点歌", value: displayKpis.musicRequests, raw: stats.summary.musicRequests, prev: prev?.musicRequests, mobileOnly: false },
         ]}
 
-        <!-- 1. 轻量化数字概览带（去框化大字号，清晰透气） -->
+        <!-- 1. 轻量化数字概览带（移动端整齐 2×3 均等网格，桌面端 5 列横向概览带） -->
         <section class="chat-stats-kpi-strip">
-          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-y-4 gap-x-6">
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-y-4 gap-x-4 sm:gap-x-6">
             {#each kpiItems as item (item.label)}
               {@const delta = formatDeltaBadge(item.raw, item.prev)}
-              <div class="min-w-0">
-                <div class="flex items-center gap-2">
-                  <span class="text-xs font-medium text-[var(--chat-meta-color)]">{item.label}</span>
+              <div class="min-w-0 {item.mobileOnly ? 'sm:hidden' : ''}">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="text-[13px] sm:text-xs font-medium text-[var(--chat-meta-color)] truncate">{item.label}</span>
                   {#if delta}
-                    <span class="chat-stats-delta is-{delta.direction}">{delta.text}</span>
+                    <span class="chat-stats-delta is-{delta.direction} shrink-0">{delta.text}</span>
                   {/if}
                 </div>
-                <div class="text-2xl sm:text-[26px] font-extrabold text-[var(--deep-text)] dark:text-white/95 tabular-nums tracking-tight mt-0.5 leading-none">
+                <div class="text-[24px] sm:text-[26px] font-extrabold text-[var(--deep-text)] dark:text-white/95 tabular-nums tracking-tight mt-1 sm:mt-0.5 leading-none">
                   {formatStatNumber(item.value)}
                 </div>
               </div>
             {/each}
           </div>
 
-          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--chat-meta-color)] tabular-nums mt-4 pt-3 border-t border-[var(--skin-line)]/60">
-            <span>有效输出 <strong class="text-[var(--deep-text)] dark:text-white/90">{formatStatNumber(stats.summary.chars)}</strong> 字</span>
-            <span>·</span>
+          <div class="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-center gap-x-4 gap-y-2 text-[13px] sm:text-xs text-[var(--chat-meta-color)] tabular-nums mt-4 pt-3 border-t border-[var(--skin-line)]/60">
+            <span class="hidden sm:inline">有效输出 <strong class="text-[var(--deep-text)] dark:text-white/90">{formatStatNumber(stats.summary.chars)}</strong> 字</span>
             <span>回复互动 <strong class="text-[var(--deep-text)] dark:text-white/90">{formatStatNumber(stats.summary.replies)}</strong> 次</span>
-            <span>·</span>
             <span>消息回应 <strong class="text-[var(--deep-text)] dark:text-white/90">{formatStatNumber(stats.summary.reactions)}</strong> 次</span>
-            <span>·</span>
             <span>分享卡片 <strong class="text-[var(--deep-text)] dark:text-white/90">{formatStatNumber(stats.summary.shares)}</strong> 张</span>
             {#if stats.summary.musicRotations > 0}
-              <span>·</span>
               <span>歌单轮播 <strong class="text-[var(--deep-text)] dark:text-white/90">{formatStatNumber(stats.summary.musicRotations)}</strong> 首</span>
             {/if}
           </div>
         </section>
 
-        <!-- 2. 首屏主角舞台：今日话痨、晒图王、表情王、点歌王 + 最火表情特写 -->
+        <!-- 2. 首屏主角舞台：今日话痨、晒图王、表情王、点歌王 -->
         {@const mvpDefs = [
           { id: "talk", title: "话痨王", icon: "🗣️", unit: "条消息", sub: (m: NonNullable<typeof stats.highlights.talkKing>) => `输出 ${formatStatNumber(m.chars)} 字`, data: stats.highlights.talkKing, tint: "var(--skin-accent)" },
           { id: "image", title: "晒图王", icon: "🖼️", unit: "张图片", sub: (m: NonNullable<typeof stats.highlights.imageKing>) => `共发言 ${m.messages} 条`, data: stats.highlights.imageKing, tint: "var(--chat-stats-c3)" },
@@ -1038,50 +1107,52 @@ function resolveStickerUrl(
           { id: "music", title: "点歌王", icon: "🎵", unit: "首点播", sub: () => "点歌最多", data: stats.highlights.musicKing, tint: "var(--chat-stats-c4)" },
         ]}
         <section class="space-y-3">
-          <div class="flex items-center justify-between gap-2">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--chat-meta-color)] m-0">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <h3 class="text-sm sm:text-xs font-bold uppercase tracking-wider text-[var(--chat-meta-color)] m-0">
               {range === "day" ? "当日之最" : "周期之最"}
             </h3>
-            <div class="flex items-center gap-2 flex-wrap">
-              {#if stats.highlights.morningFirst}
-                <button
-                  type="button"
-                  class="chat-stats-fun-pill"
-                  onclick={() => stats?.highlights.morningFirst && handleClickUser(stats.highlights.morningFirst)}
-                >
-                  <span>🌅</span>
-                  <span>早安:</span>
-                  <strong class="text-[var(--deep-text)] dark:text-white/90">{stats.highlights.morningFirst.name}</strong>
-                  <span class="font-mono opacity-75">{formatClock(stats.highlights.morningFirst.createdAt)}</span>
-                </button>
-              {/if}
-              {#if stats.highlights.nightOwl}
-                <button
-                  type="button"
-                  class="chat-stats-fun-pill"
-                  onclick={() => stats?.highlights.nightOwl && handleClickUser(stats.highlights.nightOwl)}
-                >
-                  <span>🌙</span>
-                  <span>夜猫:</span>
-                  <strong class="text-[var(--deep-text)] dark:text-white/90">{stats.highlights.nightOwl.name}</strong>
-                  <span class="font-mono opacity-75">凌晨{stats.highlights.nightOwl.count}条</span>
-                </button>
-              {/if}
-            </div>
+            {#if stats.highlights.morningFirst || stats.highlights.nightOwl}
+              <div class="flex items-center gap-2 flex-wrap">
+                {#if stats.highlights.morningFirst}
+                  <button
+                    type="button"
+                    class="chat-stats-fun-pill"
+                    onclick={() => stats?.highlights.morningFirst && handleClickUser(stats.highlights.morningFirst)}
+                  >
+                    <span>🌅</span>
+                    <span>早安:</span>
+                    <strong class="text-[var(--deep-text)] dark:text-white/90 truncate max-w-[110px]">{stats.highlights.morningFirst.name}</strong>
+                    <span class="font-mono opacity-75">{formatClock(stats.highlights.morningFirst.createdAt)}</span>
+                  </button>
+                {/if}
+                {#if stats.highlights.nightOwl}
+                  <button
+                    type="button"
+                    class="chat-stats-fun-pill"
+                    onclick={() => stats?.highlights.nightOwl && handleClickUser(stats.highlights.nightOwl)}
+                  >
+                    <span>🌙</span>
+                    <span>夜猫:</span>
+                    <strong class="text-[var(--deep-text)] dark:text-white/90 truncate max-w-[110px]">{stats.highlights.nightOwl.name}</strong>
+                    <span class="font-mono opacity-75">凌晨{stats.highlights.nightOwl.count}条</span>
+                  </button>
+                {/if}
+              </div>
+            {/if}
           </div>
 
           <div class="chat-stats-mvp-grid">
             {#each mvpDefs as mvp, idx (mvp.id)}
               {@const mvpBadge = mvp.data ? resolveMvpBadge(mvp.data) : null}
               <div class="chat-stats-spotlight-card" style="--stagger: {idx}; --mvp-tint: {mvp.tint};">
-                <div class="flex items-center justify-between gap-1.5 mb-2.5 min-w-0">
-                  <div class="text-[11px] font-bold text-[var(--chat-meta-color)] flex items-center gap-1.5 shrink-0">
+                <div class="flex items-center justify-between gap-1.5 mb-2 sm:mb-2.5 min-w-0">
+                  <div class="text-[13px] sm:text-[11px] font-bold text-[var(--chat-meta-color)] flex items-center gap-1 shrink-0">
                     <span>{mvp.icon}</span>
                     <span>{mvp.title}</span>
                   </div>
                   {#if mvpBadge}
                     <span
-                      class="chat-role-badge chat-role-badge--{mvpBadge.tone} text-[10px]! px-1.5! py-0! leading-4 truncate max-w-[96px]"
+                      class="chat-role-badge chat-role-badge--{mvpBadge.tone} text-[11px]! sm:text-[10px]! px-1.5! py-0! leading-4 truncate max-w-[74px] sm:max-w-[96px]"
                       style={mvpBadge.tone === "site" && mvpBadge.color ? `--site-badge-color: ${mvpBadge.color};` : undefined}
                     >
                       {mvpBadge.label}
@@ -1091,200 +1162,240 @@ function resolveStickerUrl(
                 {#if mvp.data}
                   <button
                     type="button"
-                    class="w-full flex items-center gap-2.5 text-left border-none bg-transparent p-0 cursor-pointer group"
+                    class="w-full flex items-center gap-2 sm:gap-2.5 text-left border-none bg-transparent p-0 cursor-pointer group"
                     onclick={() => mvp.data && handleClickUser(mvp.data)}
                   >
-                    <ChatAvatar src={mvp.data.avatar} name={mvp.data.name} size="md" ring />
+                    <ChatAvatar src={mvp.data.avatar} name={mvp.data.name} size="sm" ring />
                     <div class="min-w-0 flex-1">
-                      <div class="text-xs font-bold text-[var(--deep-text)] dark:text-white/95 truncate group-hover:text-[var(--skin-accent)] transition-colors">
+                      <div class="text-[13.5px] sm:text-xs font-bold text-[var(--deep-text)] dark:text-white/95 truncate group-hover:text-[var(--skin-accent)] transition-colors">
                         {mvp.data.name}
                       </div>
-                      <div class="text-sm font-extrabold font-mono tabular-nums mt-0.5" style="color: var(--mvp-tint);">
-                        {formatStatNumber(mvp.data.value)} <span class="text-[10.5px] font-sans font-normal text-[var(--chat-meta-color)]">{mvp.unit}</span>
+                      <div class="flex items-baseline gap-1 flex-wrap text-base sm:text-sm font-extrabold font-mono tabular-nums mt-0.5 leading-tight" style="color: var(--mvp-tint);">
+                        <span>{formatStatNumber(mvp.data.value)}</span>
+                        <span class="text-xs sm:text-[10.5px] font-sans font-normal text-[var(--chat-meta-color)]">{mvp.unit}</span>
                       </div>
-                      <div class="text-[10.5px] text-[var(--chat-meta-color)] truncate">
+                      <div class="text-xs sm:text-[10.5px] text-[var(--chat-meta-color)] truncate mt-0.5">
                         {mvp.sub(mvp.data)}
                       </div>
                     </div>
                   </button>
                 {:else}
-                  <div class="py-3 text-xs text-[var(--chat-meta-color)] opacity-70">暂无上榜</div>
+                  <div class="py-3 text-[13px] sm:text-xs text-[var(--chat-meta-color)] opacity-70">暂无上榜</div>
                 {/if}
               </div>
             {/each}
           </div>
         </section>
 
-        <!-- 3. 热门表情墙（单行定格展示，不滚动）+ 回应 & Emoji 流 -->
+        <!-- 3. 热门表情墙（手机端直接横向滑动，桌面端左右翻页）+ 回应 & Emoji 流 -->
         <section class="space-y-3">
-          <div class="flex items-center justify-between gap-2">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--chat-meta-color)] m-0">
+          <div class="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+            <h3 class="text-sm sm:text-xs font-bold uppercase tracking-wider text-[var(--chat-meta-color)] m-0">
               热门表情墙
             </h3>
-            <span class="text-[11px] text-[var(--chat-meta-color)] tabular-nums">
+            <span class="text-xs sm:text-[11px] text-[var(--chat-meta-color)] tabular-nums">
               贴纸 {stats.topStickers.length} · 回应 {stats.topReactions.length} · Emoji {stats.topTextEmojis.length}
             </span>
           </div>
 
-          {#if stats.topStickers.length > 0}
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                class="chat-stats-sticker-nav-btn"
-                aria-label="上一页热门表情"
-                disabled={stickerOffset <= 0}
-                onclick={() => (stickerOffset = Math.max(0, stickerOffset - stickerPageStep))}
-              >
-                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="m15 18-6-6 6-6" />
-                </svg>
-              </button>
-
-              <div bind:this={stickerViewportEl} class="flex-1 min-w-0 overflow-hidden">
-                <div
-                  class="chat-stats-sticker-grid"
-                  style="grid-template-columns: repeat({stickerCols}, minmax(0, 1fr));"
-                >
-                  {#each visibleStickers as st, idx (st.key)}
-                    {@const rank = stickerOffset + idx}
-                    {@const imgUrl = resolveStickerUrl(st.key, st.label, st.previewUrl)}
-                    <div class="chat-stats-sticker-tile {rank === 0 ? 'is-crown' : ''}">
-                      <div class="flex items-center justify-between w-full text-[10px] font-mono">
-                        <span class={rank === 0 ? "text-amber-500 font-bold" : "text-[var(--chat-meta-color)]"}>
-                          #{rank + 1}
-                        </span>
-                        <span class="font-bold text-[var(--skin-accent)] tabular-nums">{st.count}次</span>
-                      </div>
-
-                      <div class="w-12 h-12 rounded-xl bg-[var(--skin-surface)] flex items-center justify-center overflow-hidden p-1 my-1.5">
-                        {#if st.kind === "lottie" && st.lottieKey}
-                          <LottieSticker name={st.lottieKey} alt={st.label} className="w-10 h-10" chatServerUrl={chatServerUrl} />
-                        {:else if imgUrl && !failedStickerKeys[st.key]}
-                          <img
-                            src={imgUrl}
-                            alt={st.label}
-                            class="w-full h-full object-contain block"
-                            loading="lazy"
-                            onerror={() => {
-                              failedStickerKeys = { ...failedStickerKeys, [st.key]: true };
-                            }}
-                          />
-                        {:else}
-                          <span class="text-[10px] font-semibold text-[var(--chat-meta-color)] text-center line-clamp-2">{st.label}</span>
-                        {/if}
-                      </div>
-
-                      <div class="text-[11px] font-semibold text-[var(--deep-text)] dark:text-white/95 truncate w-full text-center">
-                        {st.label}
-                      </div>
-                      {#if st.topUser}
-                        <button
-                          type="button"
-                          class="mt-1 inline-flex items-center gap-1 text-[10px] text-[var(--chat-meta-color)] hover:text-[var(--skin-accent)] border-none bg-transparent p-0 cursor-pointer max-w-full"
-                          onclick={() => st.topUser && handleClickUser(st.topUser)}
-                        >
-                          <ChatAvatar src={st.topUser.avatar} name={st.topUser.name} size="2xs" />
-                          <span class="truncate">{st.topUser.name}</span>
-                        </button>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
+          {#snippet stickerTile(st: (typeof stats.topStickers)[number], rank: number)}
+            {@const imgUrl = resolveStickerUrl(st.key, st.label, st.previewUrl)}
+            <div class="chat-stats-sticker-tile {rank === 0 ? 'is-crown' : ''} {isMobileWall ? 'is-mobile-scroll-tile' : ''}">
+              <div class="flex items-center justify-between w-full text-xs sm:text-[10px] font-mono">
+                <span class={rank === 0 ? "text-amber-500 font-bold" : "text-[var(--chat-meta-color)]"}>
+                  #{rank + 1}
+                </span>
+                <span class="font-bold text-[var(--skin-accent)] tabular-nums">{st.count}次</span>
               </div>
 
-              <button
-                type="button"
-                class="chat-stats-sticker-nav-btn"
-                aria-label="下一页热门表情"
-                disabled={stickerOffset >= maxStickerOffset}
-                onclick={() => (stickerOffset = Math.min(maxStickerOffset, stickerOffset + stickerPageStep))}
-              >
-                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="m9 18 6-6-6-6" />
-                </svg>
-              </button>
+              <div class="w-12 h-12 rounded-xl bg-[var(--skin-surface)] flex items-center justify-center overflow-hidden p-1 my-1.5">
+                {#if st.kind === "lottie" && st.lottieKey}
+                  <LottieSticker name={st.lottieKey} alt={st.label} className="w-10 h-10" chatServerUrl={chatServerUrl} />
+                {:else if imgUrl && !failedStickerKeys[st.key]}
+                  <img
+                    src={imgUrl}
+                    alt={st.label}
+                    class="w-full h-full object-contain block"
+                    loading="lazy"
+                    onerror={() => {
+                      failedStickerKeys = { ...failedStickerKeys, [st.key]: true };
+                    }}
+                  />
+                {:else}
+                  <span class="text-xs sm:text-[10px] font-semibold text-[var(--chat-meta-color)] text-center line-clamp-2">{st.label}</span>
+                {/if}
+              </div>
+
+              <div class="text-xs sm:text-[11px] font-semibold text-[var(--deep-text)] dark:text-white/95 truncate w-full text-center">
+                {st.label}
+              </div>
+              {#if st.topUser}
+                <button
+                  type="button"
+                  class="mt-1 inline-flex items-center gap-1 text-xs sm:text-[10px] text-[var(--chat-meta-color)] hover:text-[var(--skin-accent)] border-none bg-transparent p-0 cursor-pointer max-w-full"
+                  onclick={() => st.topUser && handleClickUser(st.topUser)}
+                >
+                  <ChatAvatar src={st.topUser.avatar} name={st.topUser.name} size="2xs" />
+                  <span class="truncate">{st.topUser.name}</span>
+                </button>
+              {/if}
             </div>
+          {/snippet}
+
+          {#if stats.topStickers.length > 0}
+            {#if isMobileWall}
+              <div class="chat-stats-sticker-scroll-row" role="region" aria-label="热门贴纸横向滚动列表">
+                {#each stats.topStickers as st, idx (st.key)}
+                  {@render stickerTile(st, idx)}
+                {/each}
+              </div>
+            {:else}
+              <div class="flex items-center gap-2">
+                <button
+                  type="button"
+                  class="chat-stats-sticker-nav-btn"
+                  aria-label="上一页热门表情"
+                  disabled={stickerOffset <= 0}
+                  onclick={() => (stickerOffset = Math.max(0, stickerOffset - stickerPageStep))}
+                >
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                </button>
+
+                <div bind:this={stickerViewportEl} class="flex-1 min-w-0 overflow-hidden">
+                  <div
+                    class="chat-stats-sticker-grid"
+                    style="grid-template-columns: repeat({stickerCols}, minmax(0, 1fr));"
+                  >
+                    {#each visibleStickers as st, idx (st.key)}
+                      {@render stickerTile(st, stickerOffset + idx)}
+                    {/each}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  class="chat-stats-sticker-nav-btn"
+                  aria-label="下一页热门表情"
+                  disabled={stickerOffset >= maxStickerOffset}
+                  onclick={() => (stickerOffset = Math.min(maxStickerOffset, stickerOffset + stickerPageStep))}
+                >
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </div>
+            {/if}
           {:else}
-            <div class="py-4 text-xs text-[var(--chat-meta-color)]">该时间段暂无贴纸发送记录</div>
+            <div class="py-4 text-[13px] sm:text-xs text-[var(--chat-meta-color)]">该时间段暂无贴纸发送记录</div>
           {/if}
 
-          <!-- 活跃表情回应 + 文本 Emoji：单行左右翻页，不显示滚动条 -->
+          <!-- 活跃表情回应 + 文本 Emoji：手机端直接横向滚动，桌面端左右翻页 -->
+          {#snippet reactionEmojiChips()}
+            {#each stats.topReactions.slice(0, 30) as rc (rc.key)}
+              {@const disp = resolveReactionDisplay(rc.key, chatServerUrl, stickerMap)}
+              <span class="chat-stats-expr-chip shrink-0" title={rc.topUser ? `回应 ${rc.count} 次 · 最爱：${rc.topUser.name}` : `回应 ${rc.count} 次`}>
+                {#if disp.type === "image" && disp.url}
+                  <img src={disp.url} alt={disp.alt} class="w-4.5 h-4.5 sm:w-4 sm:h-4 object-contain rounded-xs" loading="lazy" />
+                {:else}
+                  <span class="text-base sm:text-sm leading-none">{disp.text}</span>
+                {/if}
+                <span class="font-mono text-[13px] sm:text-[11px] font-semibold text-[var(--deep-text)] dark:text-white/90 tabular-nums">{rc.count}</span>
+                <span class="text-[11.5px] sm:text-[9.5px] text-[var(--chat-meta-color)]">回应</span>
+              </span>
+            {/each}
+
+            {#each stats.topTextEmojis.slice(0, 30) as em (em.key)}
+              <span class="chat-stats-expr-chip shrink-0" title={em.topUser ? `发送 ${em.count} 次 · 最多：${em.topUser.name}` : `发送 ${em.count} 次`}>
+                <span class="text-base sm:text-sm leading-none">{em.key}</span>
+                <span class="font-mono text-[13px] sm:text-[11px] font-semibold text-[var(--deep-text)] dark:text-white/90 tabular-nums">{em.count}</span>
+              </span>
+            {/each}
+          {/snippet}
+
           {#if stats.topReactions.length > 0 || stats.topTextEmojis.length > 0}
-            <div class="flex items-center gap-2 pt-0.5">
-              <button
-                type="button"
-                class="chat-stats-sticker-nav-btn h-7! w-7!"
-                aria-label="上一页活跃表情回应"
-                disabled={exprOffsetPx <= 0}
-                onclick={() => (exprOffsetPx = Math.max(0, exprOffsetPx - exprPageStepPx))}
-              >
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="m15 18-6-6 6-6" />
-                </svg>
-              </button>
-
-              <div bind:this={exprViewportEl} class="flex-1 min-w-0 overflow-hidden">
-                <div
-                  bind:this={exprTrackEl}
-                  class="inline-flex flex-nowrap items-center gap-1.5 transition-transform duration-200 ease-out"
-                  style="transform: translate3d(-{Math.min(exprOffsetPx, maxExprOffsetPx)}px, 0, 0);"
-                >
-                  {#each stats.topReactions.slice(0, 30) as rc (rc.key)}
-                    {@const disp = resolveReactionDisplay(rc.key, chatServerUrl, stickerMap)}
-                    <span class="chat-stats-expr-chip shrink-0" title={rc.topUser ? `回应 ${rc.count} 次 · 最爱：${rc.topUser.name}` : `回应 ${rc.count} 次`}>
-                      {#if disp.type === "image" && disp.url}
-                        <img src={disp.url} alt={disp.alt} class="w-4 h-4 object-contain rounded-xs" loading="lazy" />
-                      {:else}
-                        <span class="text-sm leading-none">{disp.text}</span>
-                      {/if}
-                      <span class="font-mono text-[11px] font-semibold text-[var(--deep-text)] dark:text-white/90 tabular-nums">{rc.count}</span>
-                      <span class="text-[9.5px] text-[var(--chat-meta-color)]">回应</span>
-                    </span>
-                  {/each}
-
-                  {#each stats.topTextEmojis.slice(0, 30) as em (em.key)}
-                    <span class="chat-stats-expr-chip shrink-0" title={em.topUser ? `发送 ${em.count} 次 · 最多：${em.topUser.name}` : `发送 ${em.count} 次`}>
-                      <span class="text-sm leading-none">{em.key}</span>
-                      <span class="font-mono text-[11px] font-semibold text-[var(--deep-text)] dark:text-white/90 tabular-nums">{em.count}</span>
-                    </span>
-                  {/each}
-                </div>
+            {#if isMobileWall}
+              <div class="chat-stats-expr-scroll-row pt-0.5" role="region" aria-label="活跃表情回应与 Emoji 横向滚动列表">
+                {@render reactionEmojiChips()}
               </div>
+            {:else}
+              <div class="flex items-center gap-2 pt-0.5">
+                <button
+                  type="button"
+                  class="chat-stats-sticker-nav-btn h-7! w-7!"
+                  aria-label="上一页活跃表情回应"
+                  disabled={exprOffsetPx <= 0}
+                  onclick={() => (exprOffsetPx = Math.max(0, exprOffsetPx - exprPageStepPx))}
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m15 18-6-6 6-6" />
+                  </svg>
+                </button>
 
-              <button
-                type="button"
-                class="chat-stats-sticker-nav-btn h-7! w-7!"
-                aria-label="下一页活跃表情回应"
-                disabled={exprOffsetPx >= maxExprOffsetPx}
-                onclick={() => (exprOffsetPx = Math.min(maxExprOffsetPx, exprOffsetPx + exprPageStepPx))}
-              >
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="m9 18 6-6-6-6" />
-                </svg>
-              </button>
-            </div>
+                <div bind:this={exprViewportEl} class="flex-1 min-w-0 overflow-hidden">
+                  <div
+                    bind:this={exprTrackEl}
+                    class="inline-flex flex-nowrap items-center gap-1.5 transition-transform duration-200 ease-out"
+                    style="transform: translate3d(-{Math.min(exprOffsetPx, maxExprOffsetPx)}px, 0, 0);"
+                  >
+                    {@render reactionEmojiChips()}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  class="chat-stats-sticker-nav-btn h-7! w-7!"
+                  aria-label="下一页活跃表情回应"
+                  disabled={exprOffsetPx >= maxExprOffsetPx}
+                  onclick={() => (exprOffsetPx = Math.min(maxExprOffsetPx, exprOffsetPx + exprPageStepPx))}
+                >
+                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="m9 18 6-6-6-6" />
+                  </svg>
+                </button>
+              </div>
+            {/if}
           {/if}
         </section>
 
-        <!-- 4. 全维度活跃成员排行（无内部滚动条，点击列头即排序，所有指标同框扫完） -->
+        <!-- 4. 全维度活跃成员排行（移动端排序胶囊 + 双行易读行卡片；桌面端 6 列排序表） -->
         <section class="space-y-2.5">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--chat-meta-color)] m-0">
-              活跃成员排行（点击列名排序）
+            <h3 class="text-sm sm:text-xs font-bold uppercase tracking-wider text-[var(--chat-meta-color)] m-0">
+              活跃成员排行<span class="hidden sm:inline">（点击列名排序）</span>
             </h3>
-            <span class="text-[11px] text-[var(--chat-meta-color)] tabular-nums">
+            <span class="text-xs sm:text-[11px] text-[var(--chat-meta-color)] tabular-nums">
               共 {totalLeaderboardCount} 位活跃成员
             </span>
           </div>
 
           {#if sortedLeaderboard.length === 0}
-            <div class="py-8 text-center text-xs text-[var(--chat-meta-color)] rounded-2xl bg-[var(--skin-rail)]">
+            <div class="py-8 text-center text-[13px] sm:text-xs text-[var(--chat-meta-color)] rounded-2xl bg-[var(--skin-rail)]">
               当前时间段暂无活跃发言记录
             </div>
           {:else}
             <div class="chat-stats-table-wrap">
-              <!-- 表头排序栏 -->
-              <div class="chat-stats-table-head">
+              <!-- 移动端全维度排序胶囊条 -->
+              <div class="chat-stats-mobile-sort-bar sm:hidden" role="tablist" aria-label="排行榜排序维度">
+                {#each SORT_COLUMNS as col (col.id)}
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={leaderboardSort === col.id}
+                    class="chat-stats-mobile-sort-pill {leaderboardSort === col.id ? 'is-active' : ''}"
+                    onclick={() => (leaderboardSort = col.id)}
+                  >
+                    <span>{col.label}</span>
+                    {#if leaderboardSort === col.id}
+                      <span aria-hidden="true">↓</span>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+
+              <!-- 桌面端表头排序栏 -->
+              <div class="chat-stats-table-head hidden sm:flex">
                 <span class="pl-2">成员</span>
                 <div class="chat-stats-table-cols">
                   {#each SORT_COLUMNS as col (col.id)}
@@ -1308,6 +1419,7 @@ function resolveStickerUrl(
                   {@const val = u[leaderboardSort] || 0}
                   {@const barPct = Math.max(3, Math.round((val / maxLeaderboardVal) * 100))}
                   {@const siteMeta = resolveUserSiteBadge(u)}
+                  {@const mobileSubMetrics = getMobileSecondaryMetrics(u, leaderboardSort)}
                   <button
                     type="button"
                     class="chat-stats-table-row group"
@@ -1315,43 +1427,56 @@ function resolveStickerUrl(
                   >
                     <span class="chat-stats-rank-bar" style="width: {barPct}%;" aria-hidden="true"></span>
 
-                    <div class="relative z-1 flex items-center gap-2.5 min-w-0">
-                      <span class="w-5 text-center font-mono text-xs font-extrabold shrink-0 {idx === 0 ? 'text-amber-500' : idx === 1 ? 'text-slate-400' : idx === 2 ? 'text-amber-700 dark:text-amber-500/80' : 'text-[var(--chat-meta-color)]'}">
+                    <div class="relative z-1 flex items-center gap-2.5 min-w-0 flex-1">
+                      <span class="w-5 text-center font-mono text-[13px] sm:text-xs font-extrabold shrink-0 {idx === 0 ? 'text-amber-500' : idx === 1 ? 'text-slate-400' : idx === 2 ? 'text-amber-700 dark:text-amber-500/80' : 'text-[var(--chat-meta-color)]'}">
                         {idx + 1}
                       </span>
                       <ChatAvatar src={u.avatar} name={u.name} size="sm" />
                       <div class="min-w-0 flex-1">
                         <div class="flex items-center gap-1.5 min-w-0">
-                          <span class="text-xs font-semibold text-[var(--deep-text)] dark:text-white/95 truncate group-hover:text-[var(--skin-accent)] transition-colors">
+                          <span class="text-sm sm:text-xs font-semibold text-[var(--deep-text)] dark:text-white/95 truncate group-hover:text-[var(--skin-accent)] transition-colors">
                             {u.name}
                           </span>
                           {#if u.customBadges && u.customBadges.length > 0}
                             <span
-                              class="hidden sm:inline-flex chat-role-badge chat-role-badge--{u.customBadges[0].color || 'accent'} text-[9.5px]! px-1.5! py-0! leading-4 shrink-0 truncate max-w-[92px]"
+                              class="inline-flex chat-role-badge chat-role-badge--{u.customBadges[0].color || 'accent'} text-[11px]! sm:text-[9.5px]! px-1.5! py-0! leading-4 shrink-0 truncate max-w-[78px] sm:max-w-[92px]"
                               style={u.customBadges[0].color === "site" && siteMeta.color && u.siteKey !== "local" ? `--site-badge-color: ${siteMeta.color};` : undefined}
                             >
                               {u.customBadges[0].text}
                             </span>
                           {:else if u.isAdmin}
-                            <span class="hidden sm:inline-flex chat-role-badge chat-role-badge--gold text-[9.5px]! px-1.5! py-0! leading-4 shrink-0">
+                            <span class="inline-flex chat-role-badge chat-role-badge--gold text-[11px]! sm:text-[9.5px]! px-1.5! py-0! leading-4 shrink-0">
                               站长
                             </span>
                           {:else if siteMeta.label && siteMeta.label !== "成员"}
                             <span
-                              class="hidden sm:inline-flex chat-role-badge {u.siteKey === 'local' ? 'chat-role-badge--accent' : 'chat-role-badge--site'} text-[9.5px]! px-1.5! py-0! leading-4 shrink-0 truncate max-w-[92px]"
+                              class="inline-flex chat-role-badge {u.siteKey === 'local' ? 'chat-role-badge--accent' : 'chat-role-badge--site'} text-[11px]! sm:text-[9.5px]! px-1.5! py-0! leading-4 shrink-0 truncate max-w-[78px] sm:max-w-[92px]"
                               style={u.siteKey !== "local" && siteMeta.color ? `--site-badge-color: ${siteMeta.color};` : undefined}
                             >
                               {siteMeta.label}
                             </span>
                           {/if}
                         </div>
-                        <div class="text-[10px] text-[var(--chat-meta-color)] tabular-nums sm:hidden">
-                          均{u.avgChars}字
+                        <div class="sm:hidden flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-[var(--chat-meta-color)] tabular-nums mt-0.5">
+                          {#each mobileSubMetrics as metric}
+                            <span>{metric}</span>
+                          {/each}
                         </div>
                       </div>
                     </div>
 
-                    <div class="relative z-1 chat-stats-table-cols font-mono text-xs tabular-nums">
+                    <!-- 移动端右侧主排序指标 -->
+                    <div class="relative z-1 sm:hidden shrink-0 text-right pl-1.5">
+                      <div class="font-mono text-[15px] font-extrabold text-[var(--skin-accent)] tabular-nums leading-tight">
+                        {formatStatNumber(val)}
+                      </div>
+                      <div class="text-xs text-[var(--chat-meta-color)] leading-tight">
+                        {getLeaderboardSortUnit(leaderboardSort)}
+                      </div>
+                    </div>
+
+                    <!-- 桌面端 6 列全指标 -->
+                    <div class="relative z-1 hidden sm:grid chat-stats-table-cols font-mono text-xs tabular-nums">
                       <span class="chat-stats-col-val {leaderboardSort === 'messages' ? 'is-primary' : ''}">{formatStatNumber(u.messages)}</span>
                       <span class="chat-stats-col-val {leaderboardSort === 'chars' ? 'is-primary' : ''}">{formatStatNumber(u.chars)}</span>
                       <span class="chat-stats-col-val {leaderboardSort === 'images' ? 'is-primary' : ''}">{u.images}</span>
@@ -1367,7 +1492,7 @@ function resolveStickerUrl(
                 <div class="pt-2 text-center">
                   <button
                     type="button"
-                    class="px-3.5 py-1 text-xs font-semibold rounded-lg bg-black/5 dark:bg-white/8 hover:bg-black/10 dark:hover:bg-white/12 text-[var(--deep-text)] dark:text-white/90 border-none cursor-pointer transition-colors"
+                    class="px-4 py-1.5 sm:px-3.5 sm:py-1 text-[13px] sm:text-xs font-semibold rounded-lg bg-black/5 dark:bg-white/8 hover:bg-black/10 dark:hover:bg-white/12 text-[var(--deep-text)] dark:text-white/90 border-none cursor-pointer transition-colors"
                     onclick={() => (showAllMembers = !showAllMembers)}
                   >
                     {showAllMembers ? "收起榜单 ↑" : `展开全部 ${totalLeaderboardCount} 位成员 ↓`}
@@ -1381,11 +1506,11 @@ function resolveStickerUrl(
         <!-- 5. 沉底扩展区：走势折线 + 时段分布 + 友站占比 + 点歌排行 -->
         <section class="space-y-4 pt-2 border-t border-[var(--skin-line)]/70">
           <div class="flex items-center justify-between gap-2">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--chat-meta-color)] m-0">
+            <h3 class="text-sm sm:text-xs font-bold uppercase tracking-wider text-[var(--chat-meta-color)] m-0">
               趋势与分布
             </h3>
             {#if stats.highlights.peakBucket}
-              <span class="text-[11px] text-[var(--chat-meta-color)] tabular-nums">
+              <span class="text-xs sm:text-[11px] text-[var(--chat-meta-color)] tabular-nums">
                 ⚡ 峰值 {stats.highlights.peakBucket.label} ({stats.highlights.peakBucket.messages} 条)
               </span>
             {/if}

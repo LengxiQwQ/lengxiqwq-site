@@ -19,18 +19,23 @@ let hoverScreenLeftPct = $state<number>(50);
 let svgEl = $state<SVGSVGElement | null>(null);
 let chartWrapEl = $state<HTMLDivElement | null>(null);
 
-const chartHeight = 200;
 let chartWidth = $state(920);
-const pad = { top: 20, right: 14, bottom: 28, left: 36 };
+const chartHeight = $derived(chartWidth < 520 ? 176 : 200);
+const pad = $derived({
+	top: 18,
+	right: 12,
+	bottom: chartWidth < 520 ? 28 : 26,
+	left: chartWidth < 520 ? 34 : 36,
+});
 const innerW = $derived(Math.max(100, chartWidth - pad.left - pad.right));
-const innerH = chartHeight - pad.top - pad.bottom;
-const baseY = chartHeight - pad.bottom;
+const innerH = $derived(chartHeight - pad.top - pad.bottom);
+const baseY = $derived(chartHeight - pad.bottom);
 
 $effect(() => {
 	const el = chartWrapEl;
 	if (!el || typeof ResizeObserver === "undefined") return;
 	const syncWidth = (w: number) => {
-		const next = Math.max(360, Math.round(w));
+		const next = Math.max(260, Math.round(w));
 		if (next !== chartWidth) chartWidth = next;
 	};
 	syncWidth(el.clientWidth);
@@ -135,19 +140,19 @@ const rangeSummary = $derived.by(() => {
 	};
 });
 
-function handleMouseMove(e: MouseEvent) {
+function updateHoverFromClientX(clientX: number, clientY: number) {
 	if (!svgEl || !chartWrapEl || points.length === 0) return;
 	const ctm = svgEl.getScreenCTM();
 	let svgX: number;
 	if (ctm) {
 		const pt = svgEl.createSVGPoint();
-		pt.x = e.clientX;
-		pt.y = e.clientY;
+		pt.x = clientX;
+		pt.y = clientY;
 		svgX = pt.matrixTransform(ctm.inverse()).x;
 	} else {
 		const rect = svgEl.getBoundingClientRect();
 		if (rect.width <= 0) return;
-		svgX = ((e.clientX - rect.left) / rect.width) * chartWidth;
+		svgX = ((clientX - rect.left) / rect.width) * chartWidth;
 	}
 	const ratio = Math.max(0, Math.min(1, (svgX - pad.left) / innerW));
 	const idx = Math.round(ratio * Math.max(0, points.length - 1));
@@ -170,10 +175,27 @@ function handleMouseMove(e: MouseEvent) {
 	}
 }
 
-function handleClickChart() {
-	if (hoverIndex === null || !onSelectDay) return;
+function handlePointerMove(e: PointerEvent) {
+	if (e.pointerType === "touch") return;
+	updateHoverFromClientX(e.clientX, e.clientY);
+}
+
+function handlePointerDown(e: PointerEvent) {
+	if (e.pointerType !== "mouse") {
+		updateHoverFromClientX(e.clientX, e.clientY);
+	}
+}
+
+function handleClickChart(e: MouseEvent) {
+	if (!onSelectDay || range === "day") return;
+	// 触屏端（< 640px）先展示数据详情条，通过详情条上的按钮进入单日，避免误触跳转
+	if (chartWidth < 520) {
+		updateHoverFromClientX(e.clientX, e.clientY);
+		return;
+	}
+	if (hoverIndex === null) return;
 	const pt = points[hoverIndex];
-	if (pt && range !== "day" && pt.dayKey) {
+	if (pt?.dayKey) {
 		onSelectDay(pt.dayKey);
 	}
 }
@@ -183,14 +205,14 @@ function handleClickChart() {
   <!-- 头部标题与图例切换 -->
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">
     <div>
-      <h4 class="text-sm font-bold text-[var(--deep-text)] dark:text-white/95 m-0 flex items-center gap-1.5">
+      <h4 class="text-[15px] sm:text-sm font-bold text-[var(--deep-text)] dark:text-white/95 m-0 flex items-center gap-1.5">
         <svg class="w-4 h-4 text-[var(--skin-accent)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
         </svg>
         <span>{range === "day" ? "24 小时发言走势" : "周期发言走势"}</span>
       </h4>
-      <p class="text-[11px] text-[var(--chat-meta-color)] mt-0.5 mb-0">
-        {range === "day" ? "当日各时段消息与互动变化" : "按日统计消息、表情、晒图与点歌变化（点击节点可查看单日详情）"}
+      <p class="text-xs sm:text-[11px] text-[var(--chat-meta-color)] mt-0.5 mb-0">
+        {range === "day" ? "当日各时段消息与互动变化" : "按日统计消息、表情、晒图与点歌变化（点击节点可查看单日）"}
       </p>
     </div>
 
@@ -227,18 +249,16 @@ function handleClickChart() {
   </div>
 
   <!-- 周期概览行 -->
-  <div class="flex flex-wrap items-center gap-3 text-xs text-[var(--chat-meta-color)] mb-3 pb-2.5 border-b border-[var(--skin-line)]/60 tabular-nums">
+  <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] sm:text-xs text-[var(--chat-meta-color)] mb-3 pb-2.5 border-b border-[var(--skin-line)]/60 tabular-nums">
     <div>
-      合计: <strong class="font-mono text-[var(--deep-text)] dark:text-white/90">{rangeSummary.totalMsg.toLocaleString()}</strong> 条
+      合计 <strong class="font-mono text-[var(--deep-text)] dark:text-white/90">{rangeSummary.totalMsg.toLocaleString()}</strong> 条
     </div>
-    <span>·</span>
     <div>
-      {range === "day" ? "每小时均:" : "日均:"} <strong class="font-mono text-[var(--deep-text)] dark:text-white/90">{rangeSummary.avgMsg.toLocaleString()}</strong> 条
+      {range === "day" ? "小时均" : "日均"} <strong class="font-mono text-[var(--deep-text)] dark:text-white/90">{rangeSummary.avgMsg.toLocaleString()}</strong> 条
     </div>
     {#if rangeSummary.peakMsg > 0}
-      <span>·</span>
       <div>
-        最高峰值: <strong class="font-mono text-[var(--skin-accent)]">{rangeSummary.peakMsg.toLocaleString()}</strong> 条 ({rangeSummary.peakLabel})
+        峰值 <strong class="font-mono text-[var(--skin-accent)]">{rangeSummary.peakMsg.toLocaleString()}</strong> 条 ({rangeSummary.peakLabel})
       </div>
     {/if}
   </div>
@@ -254,7 +274,8 @@ function handleClickChart() {
       class="w-full block overflow-visible {range !== 'day' ? 'cursor-pointer' : ''}"
       role="img"
       aria-label="聊天室发言走势折线图"
-      onmousemove={handleMouseMove}
+      onpointerdown={handlePointerDown}
+      onpointermove={handlePointerMove}
       onmouseleave={() => (hoverIndex = null)}
       onclick={handleClickChart}
     >
@@ -303,7 +324,7 @@ function handleClickChart() {
           x={pad.left - 6}
           y={yPos + 3}
           text-anchor="end"
-          font-size="9"
+          font-size={chartWidth < 520 ? "11" : "9"}
           class="fill-neutral-400 dark:fill-neutral-500 font-mono"
         >
           {tickVal}
@@ -317,9 +338,9 @@ function handleClickChart() {
           {#if pt}
             <text
               x={getX(idx, points.length)}
-              y={chartHeight - 8}
+              y={chartHeight - 7}
               text-anchor="middle"
-              font-size="9"
+              font-size={chartWidth < 520 ? "11" : "9"}
               class="fill-neutral-400 dark:fill-neutral-500 font-mono"
             >
               {pt.label}
@@ -423,8 +444,8 @@ function handleClickChart() {
       {/if}
     </svg>
 
-    <!-- 悬浮提示卡 -->
-    {#if hoverIndex !== null && points[hoverIndex]}
+    <!-- 桌面端悬浮提示卡 -->
+    {#if hoverIndex !== null && points[hoverIndex] && chartWidth >= 520}
       {@const hp = points[hoverIndex]}
       {@const isRightHalf = hoverScreenLeftPct > 50}
       <div
@@ -483,6 +504,57 @@ function handleClickChart() {
       </div>
     {/if}
   </div>
+
+  <!-- 移动端触控点选详情条（不遮挡图表、不溢出屏幕） -->
+  {#if hoverIndex !== null && points[hoverIndex] && chartWidth < 520}
+    {@const hp = points[hoverIndex]}
+    <div class="mt-2.5 px-3 py-2.5 rounded-xl bg-[var(--skin-surface)] border border-[var(--skin-line)] text-[13px] space-y-1.5">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="font-bold font-mono text-[var(--deep-text)] dark:text-white/95">{hp.label}</span>
+          <span class="text-xs text-[var(--chat-meta-color)]">{hp.activeUsers} 人活跃</span>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          {#if range !== "day" && hp.dayKey && onSelectDay}
+            <button
+              type="button"
+              class="px-2.5 py-1 rounded-md bg-[var(--skin-accent-soft)] text-[var(--skin-accent)] text-xs font-semibold border-none cursor-pointer"
+              onclick={() => onSelectDay(hp.dayKey)}
+            >
+              查看当日 →
+            </button>
+          {/if}
+          <button
+            type="button"
+            class="w-6 h-6 rounded-md flex items-center justify-center text-[var(--chat-meta-color)] border-none bg-transparent cursor-pointer"
+            aria-label="收起节点详情"
+            onclick={() => (hoverIndex = null)}
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-mono tabular-nums">
+        <span class="text-[var(--deep-text)] dark:text-white/90">消息 <strong>{hp.messages}</strong></span>
+        {#if showStickers}
+          <span class="text-emerald-600 dark:text-emerald-400">表情 <strong>{hp.stickers}</strong></span>
+        {/if}
+        {#if showImages}
+          <span class="text-sky-600 dark:text-sky-400">晒图 <strong>{hp.images}</strong></span>
+        {/if}
+        {#if showMusic}
+          <span class="text-amber-600 dark:text-amber-400">点歌 <strong>{hp.musicRequests}</strong></span>
+        {/if}
+        {#if hp.topUser}
+          <span class="inline-flex items-center gap-1 text-[var(--chat-meta-color)] font-sans ml-auto">
+            <ChatAvatar src={hp.topUser.avatar} name={hp.topUser.name} size="2xs" />
+            <span class="truncate max-w-[90px]">{hp.topUser.name}</span>
+            <span class="font-mono">({hp.topUser.count})</span>
+          </span>
+        {/if}
+      </div>
+    </div>
+  {/if}
 </section>
 
 <style>
