@@ -1,9 +1,12 @@
 <script lang="ts">
-import { tick } from "svelte";
+import { tick, untrack } from "svelte";
 import type { InterconnectSite } from "@/types/chatConfig";
+import ChatAvatar from "./ChatAvatar.svelte";
 import ChatAvatarCropModal from "./ChatAvatarCropModal.svelte";
 import ChatModal from "./ChatModal.svelte";
 import { resolveExternalOrigin } from "./chatClient";
+import { fetchChatStats, formatStatNumber } from "./chatStatsClient";
+import type { ChatStatsResponse } from "./chatStatsTypes";
 import type {
 	ChatRoomActionResult,
 	ChatRoomEditableCaps,
@@ -49,6 +52,7 @@ interface Props {
 	observerCount?: number;
 	interconnectSitesCount?: number;
 	onClose: () => void;
+	onOpenStats?: () => void;
 	onOpenInterconnectSites?: () => void;
 	onSetRoomName?: (roomName: string) => Promise<ChatRoomActionResult>;
 	onSetTopic?: (topic: string) => Promise<ChatRoomActionResult>;
@@ -89,6 +93,7 @@ const {
 	observerCount = 0,
 	interconnectSitesCount = 0,
 	onClose,
+	onOpenStats,
 	onOpenInterconnectSites,
 	onSetRoomName,
 	onSetTopic,
@@ -175,6 +180,29 @@ let savingField = $state<InlineEditTarget | "avatar" | null>(null);
 let avatarModalOpen = $state(false);
 let avatarFailed = $state(false);
 let copiedKey = $state<"alias" | "roomId" | "">("");
+let todayPulse = $state<ChatStatsResponse | null>(null);
+let todayPulseLoading = $state(false);
+
+const pulseSparkline = $derived.by(() => {
+	const pts = todayPulse?.timeline ?? [];
+	if (pts.length === 0) return { line: "", area: "" };
+	const w = 160;
+	const h = 38;
+	const maxV = Math.max(2, ...pts.map((p) => p.messages));
+	const coords = pts.map((p, i) => ({
+		x: pts.length === 1 ? w / 2 : (i / (pts.length - 1)) * w,
+		y: h - 4 - (p.messages / maxV) * (h - 9),
+	}));
+	let line = `M ${coords[0].x.toFixed(1)} ${coords[0].y.toFixed(1)}`;
+	for (let i = 0; i < coords.length - 1; i++) {
+		const p1 = coords[i];
+		const p2 = coords[i + 1];
+		const cx = ((p1.x + p2.x) / 2).toFixed(1);
+		line += ` C ${cx} ${p1.y.toFixed(1)}, ${cx} ${p2.y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+	}
+	const area = `${line} L ${coords[coords.length - 1].x.toFixed(1)} ${h} L ${coords[0].x.toFixed(1)} ${h} Z`;
+	return { line, area };
+});
 
 let activeInputEl = $state<
 	HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null
@@ -187,6 +215,20 @@ $effect(() => {
 		avatarModalOpen = false;
 		avatarFailed = false;
 		copiedKey = "";
+		if (onOpenStats) {
+			const targetRoom = roomId === "chat" ? "chat" : "interconnect";
+			untrack(() => {
+				todayPulseLoading = true;
+				void fetchChatStats(chatServerUrl, { room: targetRoom, range: "day" })
+					.then((res) => {
+						if (open) todayPulse = res;
+					})
+					.catch(() => {})
+					.finally(() => {
+						todayPulseLoading = false;
+					});
+			});
+		}
 	}
 });
 
@@ -932,6 +974,63 @@ const guestInfo = $derived(describeGuestAccess(roomMeta?.guestAccess));
         <span class="text-sm font-bold text-[var(--deep-text)] dark:text-white/90 tabular-nums">
           {roomOnlineCount} <span class="text-xs font-normal opacity-70">人正在聊天</span>
         </span>
+      </section>
+    {/if}
+
+    <!-- 2.5 今日茶室统计微卡片（点击进入完整统计） -->
+    {#if onOpenStats}
+      <section class="chat-room-pulse-card">
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="text-xs font-bold text-[var(--deep-text)] dark:text-white/95">今日茶室统计</span>
+          </div>
+          <button
+            type="button"
+            class="px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-[var(--skin-accent)] text-[var(--skin-on-accent)] hover:opacity-90 border-none cursor-pointer transition-opacity inline-flex items-center gap-1 shrink-0"
+            onclick={() => onOpenStats?.()}
+          >
+            <span>完整统计报告</span>
+            <span aria-hidden="true">→</span>
+          </button>
+        </div>
+
+        {#if todayPulse}
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0 flex-1 space-y-1.5">
+              <div class="flex items-center gap-3 text-xs tabular-nums flex-wrap">
+                <span class="text-[var(--chat-meta-color)]">今日消息 <strong class="text-[var(--deep-text)] dark:text-white/95 font-bold">{formatStatNumber(todayPulse.summary.messages)}</strong></span>
+                <span class="text-[var(--chat-meta-color)]">表情 <strong class="text-[var(--deep-text)] dark:text-white/95 font-bold">{formatStatNumber(todayPulse.summary.stickers)}</strong></span>
+                <span class="text-[var(--chat-meta-color)]">晒图 <strong class="text-[var(--deep-text)] dark:text-white/95 font-bold">{formatStatNumber(todayPulse.summary.images)}</strong></span>
+              </div>
+              {#if todayPulse.highlights.talkKing}
+                <div class="flex items-center gap-1.5 text-[11px] text-[var(--chat-meta-color)] min-w-0">
+                  <span class="shrink-0">今日话痨：</span>
+                  <ChatAvatar src={todayPulse.highlights.talkKing.avatar} name={todayPulse.highlights.talkKing.name} size="2xs" />
+                  <span class="truncate"><strong class="text-[var(--deep-text)] dark:text-white/90">{todayPulse.highlights.talkKing.name}</strong> ({todayPulse.highlights.talkKing.messages}条)</span>
+                </div>
+              {:else}
+                <div class="text-[11px] text-[var(--chat-meta-color)]">支持按天 / 近3天 / 本周 / 本月深度查看</div>
+              {/if}
+            </div>
+
+            {#if pulseSparkline.line}
+              <svg viewBox="0 0 160 38" class="w-28 sm:w-36 h-9 shrink-0 overflow-visible" aria-hidden="true">
+                <defs>
+                  <linearGradient id="room-info-pulse-fill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="var(--skin-accent)" stop-opacity="0.34" />
+                    <stop offset="100%" stop-color="var(--skin-accent)" stop-opacity="0" />
+                  </linearGradient>
+                </defs>
+                <path d={pulseSparkline.area} fill="url(#room-info-pulse-fill)" />
+                <path d={pulseSparkline.line} fill="none" stroke="var(--skin-accent)" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            {/if}
+          </div>
+        {:else if todayPulseLoading}
+          <div class="h-10 rounded-lg bg-black/5 dark:bg-white/5 animate-pulse"></div>
+        {:else}
+          <div class="text-xs text-[var(--chat-meta-color)]">点击右上角查看话痨榜、最火表情、流动曲线与历史日历</div>
+        {/if}
       </section>
     {/if}
 

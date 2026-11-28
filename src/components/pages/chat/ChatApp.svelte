@@ -189,6 +189,7 @@ const effectiveInterconnectSites = $derived.by(() => {
 let mobileDrawer = $state<"none" | "room" | "music">("none");
 const roomPanelId = "chat-room-panel";
 let isMobileLayout = $state(false);
+let isTabletLayout = $state(false);
 const splitLayoutBreakpoint = 1100;
 let stageContentRect = $state<DOMRectReadOnly>();
 const isSplitLayout = $derived(
@@ -1145,6 +1146,25 @@ let showAuthModal = $state(false);
 let showUserDetailModal = $state(false);
 let showPollCreateModal = $state(false);
 let showRoomInfoModal = $state(false);
+let showStatsModal = $state(false);
+let statsOpenedFromRoomInfo = $state(false);
+type StatsDisplayMode = "center" | "modal";
+const STATS_MODE_STORAGE_KEY = "fireflyChatStatsMode";
+function loadStoredStatsDisplayMode(): StatsDisplayMode {
+	if (typeof window === "undefined") return "center";
+	try {
+		const raw = localStorage.getItem(STATS_MODE_STORAGE_KEY);
+		if (raw === "center" || raw === "modal") return raw;
+	} catch {}
+	return "center";
+}
+let centerViewMode = $state<"chat" | "stats">("chat");
+let statsDisplayMode = $state<StatsDisplayMode>(loadStoredStatsDisplayMode());
+let statsModeExplicitInSession = false;
+let statsUnreadCount = $state(0);
+let ChatStatsViewComp = $state<
+	typeof import("./ChatStatsView.svelte").default | null
+>(null);
 
 // 非首屏必需的弹窗与点歌台面板按需动态加载，减小聊天页首包 JS 体积
 let MusicPanelComp = $state<
@@ -1208,6 +1228,9 @@ let ChatUserDetailModalComp = $state<
 >(null);
 let ChatRoomInfoModalComp = $state<
 	typeof import("./ChatRoomInfoModal.svelte").default | null
+>(null);
+let ChatStatsModalComp = $state<
+	typeof import("./ChatStatsModal.svelte").default | null
 >(null);
 
 $effect(() => {
@@ -1275,11 +1298,84 @@ $effect(() => {
 			});
 	}
 });
+$effect(() => {
+	if (showStatsModal && !ChatStatsModalComp) {
+		void import("./ChatStatsModal.svelte")
+			.then((mod) => {
+				ChatStatsModalComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatStatsModal:", err);
+				showStatsModal = false;
+				showNotice("数据统计面板加载失败，请检查网络后重试", "error");
+			});
+	}
+});
+$effect(() => {
+	if (centerViewMode === "stats" && !ChatStatsViewComp) {
+		void import("./ChatStatsView.svelte")
+			.then((mod) => {
+				ChatStatsViewComp = mod.default;
+			})
+			.catch((err) => {
+				console.error("[chat] Failed to load ChatStatsView:", err);
+				centerViewMode = "chat";
+				showNotice("数据统计视图加载失败，请检查网络后重试", "error");
+			});
+	}
+});
+
+function openStatsView(fromRoomInfo = false) {
+	statsOpenedFromRoomInfo = fromRoomInfo;
+	const preferModal =
+		isMobileLayout ||
+		(isTabletLayout
+			? !statsModeExplicitInSession || statsDisplayMode === "modal"
+			: statsDisplayMode === "modal");
+	if (preferModal) {
+		centerViewMode = "chat";
+		statsUnreadCount = 0;
+		showStatsModal = true;
+		return;
+	}
+	showStatsModal = false;
+	if (fromRoomInfo) showRoomInfoModal = false;
+	statsUnreadCount = 0;
+	centerViewMode = "stats";
+}
+
+function handleStatsLayoutModeChange(nextMode: StatsDisplayMode) {
+	statsModeExplicitInSession = true;
+	statsDisplayMode = nextMode;
+	if (!isTabletLayout && typeof window !== "undefined") {
+		try {
+			localStorage.setItem(STATS_MODE_STORAGE_KEY, nextMode);
+		} catch {}
+	}
+	if (nextMode === "modal") {
+		centerViewMode = "chat";
+		statsUnreadCount = 0;
+		showStatsModal = true;
+	} else {
+		showStatsModal = false;
+		statsUnreadCount = 0;
+		centerViewMode = "stats";
+	}
+}
+
+function closeStatsView() {
+	centerViewMode = "chat";
+	statsUnreadCount = 0;
+	showStatsModal = false;
+	statsOpenedFromRoomInfo = false;
+}
 
 function openAuthModal() {
 	showUserDetailModal = false;
 	showProfileModal = false;
 	showRoomInfoModal = false;
+	showStatsModal = false;
+	centerViewMode = "chat";
 	closeSplitRoom();
 	showAuthModal = true;
 }
@@ -1289,6 +1385,8 @@ $effect(() => {
 		showUserDetailModal = false;
 		showProfileModal = false;
 		showRoomInfoModal = false;
+		showStatsModal = false;
+		centerViewMode = "chat";
 		closeSplitRoom();
 	}
 });
@@ -1381,6 +1479,14 @@ function runSecondaryStartup() {
 	void import("./ChatRoomInfoModal.svelte").then((mod) => {
 		if (!isUnmounted && !ChatRoomInfoModalComp)
 			ChatRoomInfoModalComp = mod.default;
+	}).catch(() => {});
+	void import("./ChatStatsModal.svelte").then((mod) => {
+		if (!isUnmounted && !ChatStatsModalComp)
+			ChatStatsModalComp = mod.default;
+	}).catch(() => {});
+	void import("./ChatStatsView.svelte").then((mod) => {
+		if (!isUnmounted && !ChatStatsViewComp)
+			ChatStatsViewComp = mod.default;
 	}).catch(() => {});
 	void loadStickerPacks(stickerPackUrls).then((packs) => {
 		if (!isUnmounted) stickerPacks = packs;
@@ -2501,6 +2607,13 @@ function connectRoom(roomId: string) {
 						messages = appendTimelineMessage(messages, packet.message);
 						syncRecentFeedsForMessage(packet.message);
 						if (
+							centerViewMode === "stats" &&
+							packet.message.kind !== "system" &&
+							packet.message.userKey !== currentUser?.userKey
+						) {
+							statsUnreadCount += 1;
+						}
+						if (
 							packet.message.kind !== "system" && isDocumentHidden() &&
 							isMentionedForUser(packet.message, currentUser)
 						) {
@@ -3073,6 +3186,7 @@ function closePendingSocket() {
 
 function handleRoomSelect(roomId: string) {
 	showInterconnect = false;
+	centerViewMode = "chat";
 	closeSplitRoom(roomPanelEl?.contains(document.activeElement));
 	if (roomUnreadUids[roomId]?.length) {
 		const nextUnread = { ...roomUnreadUids };
@@ -4117,13 +4231,26 @@ async function refreshSpectatorHistory() {
 onMount(() => {
 	isUnmounted = false;
 	const mobileLayoutQuery = window.matchMedia("(width < 768px)");
+	const tabletLayoutQuery = window.matchMedia(
+		"(768px <= width <= 1180px), (768px <= width <= 1366px) and (hover: none) and (pointer: coarse)",
+	);
 	isMobileLayout = mobileLayoutQuery.matches;
+	isTabletLayout = !mobileLayoutQuery.matches && tabletLayoutQuery.matches;
 	const handleMobileLayoutChange = () => {
 		isMobileLayout = mobileLayoutQuery.matches;
+		isTabletLayout = !mobileLayoutQuery.matches && tabletLayoutQuery.matches;
 		mobileDrawer = "none";
 		resetDrawerDrag();
+		if (
+			centerViewMode === "stats" &&
+			(isMobileLayout || (isTabletLayout && !statsModeExplicitInSession))
+		) {
+			centerViewMode = "chat";
+			showStatsModal = true;
+		}
 	};
 	mobileLayoutQuery.addEventListener("change", handleMobileLayoutChange);
+	tabletLayoutQuery.addEventListener("change", handleMobileLayoutChange);
 	// 切入聊天室时立即停止全站侧栏/顶栏音乐播放器，避免与点歌台同时发声
 	window.__fireflyMusic?.stop?.();
 	baseDocumentTitle = cleanDocumentTitle(document.title);
@@ -4657,6 +4784,7 @@ onMount(() => {
           {/if}
           <div class="chat-panel-bg-scrim"></div>
         </div>
+        <div class="flex-1 min-h-0 flex flex-col" class:hidden={centerViewMode === "stats"}>
         <ChatWindow
           roomId={currentRoom}
           roomName={activeMeta.name}
@@ -4679,7 +4807,7 @@ onMount(() => {
           roomOnlineMembers={roomOnlineMembers}
           observers={observers}
           mentionMembers={mentionMembers}
-          isChatTabActive={isChatPaneActive}
+          isChatTabActive={isChatPaneActive && centerViewMode === "chat"}
           isWindowFocused={isEffectiveFocused}
           targetMessageUid={targetMessageUid}
           clockOffsetMs={clockOffsetMs}
@@ -4735,6 +4863,7 @@ onMount(() => {
           onCreatePoll={handleCreatePoll}
           onTyping={handleTyping}
           onOpenRoomInfo={() => (showRoomInfoModal = true)}
+          onOpenStats={() => openStatsView(false)}
           onToggleInterconnect={() => {
             showInterconnect = !showInterconnect;
           }}
@@ -4766,6 +4895,33 @@ onMount(() => {
           }}
           onToggleListen={() => musicPanelRef?.toggleListenControl?.()}
         />
+        </div>
+
+        {#if centerViewMode === "stats"}
+          <div class="relative z-1 flex-1 min-h-0 flex flex-col">
+            {#if ChatStatsViewComp}
+              <ChatStatsViewComp
+                active={true}
+                layoutMode="center"
+                initialRoom={currentRoom === "chat" ? "chat" : "interconnect"}
+                initialRange="all"
+                chatServerUrl={normalizedChatServer}
+                interconnectSites={effectiveInterconnectSites}
+                stickerMap={stickerMap}
+                showBackButton={true}
+                unreadChatCount={statsUnreadCount}
+                onBackToChat={closeStatsView}
+                onChangeLayoutMode={handleStatsLayoutModeChange}
+                onOpenUserProfile={handleOpenUserProfile}
+              />
+            {:else}
+              <div class="flex-1 min-h-0 flex items-center justify-center gap-2 text-sm text-[var(--chat-meta-color)]" role="status">
+                <svg class="w-5 h-5 animate-spin text-(--primary)" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" opacity="0.25"/><path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                <span>正在载入数据看板...</span>
+              </div>
+            {/if}
+          </div>
+        {/if}
       </div>
 
       <ChatInterconnectPopover
@@ -4919,14 +5075,14 @@ onMount(() => {
     </div>
   </div>
 
-  {#if (showProfileModal && !ChatProfileModalComp) || (showUserDetailModal && !ChatUserDetailModalComp) || (showAuthModal && !ChatAuthModalComp) || (showPollCreateModal && !ChatPollCreateModalComp) || (showRoomInfoModal && !ChatRoomInfoModalComp)}
+  {#if (showProfileModal && !ChatProfileModalComp) || (showUserDetailModal && !ChatUserDetailModalComp) || (showAuthModal && !ChatAuthModalComp) || (showPollCreateModal && !ChatPollCreateModalComp) || (showRoomInfoModal && !ChatRoomInfoModalComp) || (showStatsModal && !ChatStatsModalComp)}
     <ChatModal
       open={true}
-      title={showAuthModal ? "登录" : showPollCreateModal ? "发起投票" : showProfileModal ? "编辑资料" : showRoomInfoModal ? "房间信息" : "成员名片"}
-      size={showUserDetailModal ? "lg" : showProfileModal ? "md" : showRoomInfoModal ? "md" : "sm"}
+      title={showAuthModal ? "登录" : showPollCreateModal ? "发起投票" : showProfileModal ? "编辑资料" : showRoomInfoModal ? "房间信息" : showStatsModal ? "茶室数据统计" : "成员名片"}
+      size={showUserDetailModal || showStatsModal ? "lg" : showProfileModal ? "md" : showRoomInfoModal ? "md" : "sm"}
       mobile="full"
-      fillHeightOnDesktop={showUserDetailModal || showRoomInfoModal}
-      dialogClass={showUserDetailModal ? "chat-user-detail-dialog" : showRoomInfoModal ? "chat-room-info-dialog" : ""}
+      fillHeightOnDesktop={showUserDetailModal || showRoomInfoModal || showStatsModal}
+      dialogClass={showUserDetailModal ? "chat-user-detail-dialog" : showRoomInfoModal ? "chat-room-info-dialog" : showStatsModal ? "chat-stats-dialog" : ""}
       topPriority={showAuthModal || showUserDetailModal}
       onClose={() => {
         showAuthModal = false;
@@ -4934,6 +5090,7 @@ onMount(() => {
         showProfileModal = false;
         showUserDetailModal = false;
         showRoomInfoModal = false;
+        showStatsModal = false;
       }}
     >
       <div class="flex-1 min-h-0 flex items-center justify-center gap-2 py-10 text-sm text-[var(--chat-meta-color)]" role="status">
@@ -5144,6 +5301,7 @@ onMount(() => {
       observerCount={observers.length}
       interconnectSitesCount={effectiveInterconnectSites.length}
       onClose={() => (showRoomInfoModal = false)}
+      onOpenStats={() => openStatsView(true)}
       onOpenInterconnectSites={() => {
         showRoomInfoModal = false;
         showInterconnect = true;
@@ -5157,6 +5315,30 @@ onMount(() => {
       onSetRoomCanonicalAlias={handleSetRoomCanonicalAlias}
       onSetRoomPowerLevels={handleSetRoomPowerLevels}
       onNotify={showNotice}
+    />
+  {/if}
+
+  <!-- 茶室全景数据统计弹窗（浮窗模式 / 移动端全屏 Sheet） -->
+  {#if ChatStatsModalComp}
+    <ChatStatsModalComp
+      open={showStatsModal}
+      initialRoom={currentRoom === "chat" ? "chat" : "interconnect"}
+      initialRange="all"
+      chatServerUrl={normalizedChatServer}
+      interconnectSites={effectiveInterconnectSites}
+      stickerMap={stickerMap}
+      showBackButton={statsOpenedFromRoomInfo}
+      onBack={() => {
+        showStatsModal = false;
+        statsOpenedFromRoomInfo = false;
+      }}
+      onChangeLayoutMode={handleStatsLayoutModeChange}
+      onClose={() => {
+        showStatsModal = false;
+        showRoomInfoModal = false;
+        statsOpenedFromRoomInfo = false;
+      }}
+      onOpenUserProfile={handleOpenUserProfile}
     />
   {/if}
 

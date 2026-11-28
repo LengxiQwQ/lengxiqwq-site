@@ -182,6 +182,7 @@ interface Props {
 	onTyping?: (typing: boolean) => void;
 	onToggleInterconnect?: () => void;
 	onOpenRoomInfo?: () => void;
+	onOpenStats?: () => void;
 	onSendMessage: (
 		content: string,
 		attachments: ImageAttachment[],
@@ -288,6 +289,7 @@ const {
 	onCreatePoll,
 	onTyping,
 	onOpenRoomInfo,
+	onOpenStats,
 	onToggleInterconnect,
 	onSendMessage,
 	onRecallMessage,
@@ -5970,6 +5972,24 @@ function removePendingImage(index: number) {
         {/if}
     </div>
     <div class="chat-window-header-actions flex items-center gap-1.5 shrink-0">
+      {#if onOpenStats}
+        <div class="chat-desktop-only relative shrink-0">
+          <ChatTooltip text="茶室数据统计" position="bottom" disabled={!compactHeaderPills}>
+            <button
+              type="button"
+              class="chat-header-pill-btn chat-header-stats-btn"
+              aria-label="打开茶室数据统计"
+              onclick={() => onOpenStats?.()}
+            >
+              <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 16l4-5 4 3 5-7 5 4" />
+                <path d="M3 20h18" />
+              </svg>
+              <span class="chat-header-pill-label font-bold text-[var(--primary)]">数据统计</span>
+            </button>
+          </ChatTooltip>
+        </div>
+      {/if}
       {#if hasHeaderThreads}
         <div class="chat-desktop-only relative shrink-0" bind:this={threadListWrapEl}>
           <ChatTooltip text="最近 48 小时线程" position="bottom" disabled={!compactHeaderPills || showThreadListMenu}>
@@ -6123,6 +6143,26 @@ function removePendingImage(index: number) {
                 <span>房间基本信息</span>
               </span>
             </button>
+
+            {#if onOpenStats}
+              <button
+                type="button"
+                role="menuitem"
+                class="chat-mobile-more-item"
+                onclick={() => {
+                  closeAllHeaderMenus();
+                  onOpenStats?.();
+                }}
+              >
+                <span class="flex items-center gap-2.5">
+                  <svg class="w-4.5 h-4.5 text-[var(--skin-accent)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 16l4-5 4 3 5-7 5 4" />
+                    <path d="M3 20h18" />
+                  </svg>
+                  <span>茶室数据统计</span>
+                </span>
+              </button>
+            {/if}
 
             {#if isInterconnectRoom}
               <button
@@ -6962,7 +7002,7 @@ function removePendingImage(index: number) {
         use:positionChatFloating={{
           enabled: activePopover === "share",
           reference: shareTriggerEl,
-          placement: "top-end",
+          placement: "top-start",
           gap: 8,
           canFlip: false,
           hideWhenReferenceHidden: false,
@@ -7386,6 +7426,42 @@ function removePendingImage(index: number) {
             </button>
           </ChatTooltip>
 
+          <!-- 分享文章、说说、友链与朋友圈卡片 -->
+          <ChatTooltip text="分享文章、说说、友链与朋友圈">
+            <button
+              bind:this={shareTriggerEl}
+              type="button"
+              class="chat-tool-btn {activePopover === 'share' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : ''}"
+              aria-label="分享文章、说说、友链与朋友圈"
+              aria-expanded={activePopover === "share"}
+              aria-haspopup="dialog"
+              onpointerenter={() => {
+                preloadChatShareData();
+                sharePopoverMounted = true;
+              }}
+              onfocus={() => {
+                preloadChatShareData();
+                sharePopoverMounted = true;
+              }}
+              onclick={() => {
+                if (!currentUser) {
+                  onRequireAuth();
+                  return;
+                }
+                preloadChatShareData();
+                sharePopoverMounted = true;
+                activePopover = activePopover === "share" ? "none" : "share";
+              }}
+            >
+              <svg class="w-5 h-5 md:w-[1.15rem] md:h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-4 0v-9a2 2 0 0 1 2-2h2" />
+                <path d="M18 14h-8" />
+                <path d="M15 18h-5" />
+                <rect width="8" height="4" x="10" y="6" rx="1" />
+              </svg>
+            </button>
+          </ChatTooltip>
+
           <!-- 发起投票按钮 -->
           <ChatTooltip text="发起投票">
             <button
@@ -7442,38 +7518,6 @@ function removePendingImage(index: number) {
               发送消息前需先登录或填写访客信息
             {/if}
           </span>
-          <ChatTooltip text="分享文章、说说、友链与朋友圈">
-            <button
-              bind:this={shareTriggerEl}
-              type="button"
-              class="chat-tool-btn {activePopover === 'share' ? 'text-[var(--primary)] bg-[var(--btn-plain-bg-hover)]' : 'text-[var(--skin-text)] hover:text-[var(--primary)]'} shrink-0"
-              aria-label="分享文章、说说、友链与朋友圈"
-              aria-expanded={activePopover === "share"}
-              aria-haspopup="dialog"
-              onpointerenter={() => {
-                preloadChatShareData();
-                sharePopoverMounted = true;
-              }}
-              onfocus={() => {
-                preloadChatShareData();
-                sharePopoverMounted = true;
-              }}
-              onclick={() => {
-                if (!currentUser) {
-                  onRequireAuth();
-                  return;
-                }
-                preloadChatShareData();
-                sharePopoverMounted = true;
-                activePopover = activePopover === "share" ? "none" : "share";
-              }}
-            >
-              <svg class="w-5 h-5 md:w-[1.15rem] md:h-[1.15rem]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </button>
-          </ChatTooltip>
           <button
             type="button"
             class="chat-send-btn h-9.5! md:h-8! px-4.5! md:px-4! text-[13.5px]! md:text-xs! rounded-xl! md:rounded-lg! shrink-0"
