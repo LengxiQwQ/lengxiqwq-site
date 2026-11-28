@@ -6197,8 +6197,8 @@ function removePendingImage(index: number) {
           {@render headerMentionList(mobileMoreTrigger)}
         {:else if sharesInMore && showShareHistory}
           {@render headerShareList(mobileMoreTrigger)}
-        {:else if (musicSharesInMore || (privateMusic.isPlaying && mobileHeaderEndWidth > 0)) && showSharedMusicMenu}
-          {@render headerSharedMusicList(mobilePrivateMusicTrigger ?? mobileMoreTrigger)}
+        {:else if (musicSharesInMore || (mobileHeaderEndWidth > 0 && (privateMusic.isPlaying || Boolean(activePrivateTrack)))) && showSharedMusicMenu}
+          {@render headerSharedMusicList(mobileMoreTrigger)}
         {:else if ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu}
           {@render headerMusicNoticeList(mobileMoreTrigger)}
         {/if}
@@ -6318,7 +6318,7 @@ function removePendingImage(index: number) {
             </button>
           </ChatTooltip>
 
-          {#if showSharedMusicMenu && !musicSharesInMore && !(privateMusic.isPlaying && mobileHeaderEndWidth > 0)}
+          {#if showSharedMusicMenu && !musicSharesInMore && !(mobileHeaderEndWidth > 0 && (privateMusic.isPlaying || Boolean(activePrivateTrack)))}
             {@render headerSharedMusicList()}
           {/if}
         </div>
