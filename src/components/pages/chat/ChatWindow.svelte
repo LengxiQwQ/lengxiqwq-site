@@ -1845,47 +1845,51 @@ function handleSharedMusicScrubDown(event: PointerEvent) {
 	if (!activePrivateTrack || activePrivateDuration <= 0) return;
 	event.stopPropagation();
 	event.preventDefault();
+	const targetEl = (event.currentTarget as HTMLElement | null) ?? sharedMusicScrubberEl;
 	sharedMusicSeeking = true;
 	privateMusic.setScrubbing(true);
 	try {
-		sharedMusicScrubberEl?.setPointerCapture(event.pointerId);
+		targetEl?.setPointerCapture(event.pointerId);
 	} catch {
 		// ignore
 	}
-	const ratio = getSharedRatioFromPointer(sharedMusicScrubberEl, event.clientX);
+	const ratio = getSharedRatioFromPointer(targetEl, event.clientX);
 	sharedMusicSeekPreviewSec = ratio * activePrivateDuration;
 }
 
 function handleSharedMusicScrubMove(event: PointerEvent) {
 	if (!sharedMusicSeeking || activePrivateDuration <= 0) return;
 	event.stopPropagation();
-	const ratio = getSharedRatioFromPointer(sharedMusicScrubberEl, event.clientX);
+	const targetEl = (event.currentTarget as HTMLElement | null) ?? sharedMusicScrubberEl;
+	const ratio = getSharedRatioFromPointer(targetEl, event.clientX);
 	sharedMusicSeekPreviewSec = ratio * activePrivateDuration;
 }
 
 function handleSharedMusicScrubUp(event: PointerEvent) {
 	if (!sharedMusicSeeking) return;
 	event.stopPropagation();
+	const targetEl = (event.currentTarget as HTMLElement | null) ?? sharedMusicScrubberEl;
 	sharedMusicSeeking = false;
 	sharedMusicSeekPreviewSec = null;
 	privateMusic.setScrubbing(false);
 	try {
-		sharedMusicScrubberEl?.releasePointerCapture(event.pointerId);
+		targetEl?.releasePointerCapture(event.pointerId);
 	} catch {
 		// ignore
 	}
-	const ratio = getSharedRatioFromPointer(sharedMusicScrubberEl, event.clientX);
+	const ratio = getSharedRatioFromPointer(targetEl, event.clientX);
 	privateMusic.commitScrubRatio(ratio, true);
 }
 
 function handleSharedMusicScrubCancel(event: PointerEvent) {
 	if (!sharedMusicSeeking) return;
 	event.stopPropagation();
+	const targetEl = (event.currentTarget as HTMLElement | null) ?? sharedMusicScrubberEl;
 	sharedMusicSeeking = false;
 	sharedMusicSeekPreviewSec = null;
 	privateMusic.setScrubbing(false);
 	try {
-		sharedMusicScrubberEl?.releasePointerCapture(event.pointerId);
+		targetEl?.releasePointerCapture(event.pointerId);
 	} catch {
 		// ignore
 	}
@@ -1910,45 +1914,49 @@ function handleSharedMusicVolDown(event: PointerEvent) {
 	if (event.button !== 0 && event.pointerType === "mouse") return;
 	event.stopPropagation();
 	event.preventDefault();
+	const targetEl = (event.currentTarget as HTMLElement | null) ?? sharedMusicVolEl;
 	sharedMusicDraggingVol = true;
 	try {
-		sharedMusicVolEl?.setPointerCapture(event.pointerId);
+		targetEl?.setPointerCapture(event.pointerId);
 	} catch {
 		// ignore
 	}
 	privateMusic.setVolume(
-		getSharedRatioFromPointer(sharedMusicVolEl, event.clientX),
+		getSharedRatioFromPointer(targetEl, event.clientX),
 	);
 }
 
 function handleSharedMusicVolMove(event: PointerEvent) {
 	if (!sharedMusicDraggingVol) return;
 	event.stopPropagation();
+	const targetEl = (event.currentTarget as HTMLElement | null) ?? sharedMusicVolEl;
 	privateMusic.setVolume(
-		getSharedRatioFromPointer(sharedMusicVolEl, event.clientX),
+		getSharedRatioFromPointer(targetEl, event.clientX),
 	);
 }
 
 function handleSharedMusicVolUp(event: PointerEvent) {
 	if (!sharedMusicDraggingVol) return;
 	event.stopPropagation();
+	const targetEl = (event.currentTarget as HTMLElement | null) ?? sharedMusicVolEl;
 	sharedMusicDraggingVol = false;
 	try {
-		sharedMusicVolEl?.releasePointerCapture(event.pointerId);
+		targetEl?.releasePointerCapture(event.pointerId);
 	} catch {
 		// ignore
 	}
 	privateMusic.setVolume(
-		getSharedRatioFromPointer(sharedMusicVolEl, event.clientX),
+		getSharedRatioFromPointer(targetEl, event.clientX),
 	);
 }
 
 function handleSharedMusicVolCancel(event: PointerEvent) {
 	if (!sharedMusicDraggingVol) return;
 	event.stopPropagation();
+	const targetEl = (event.currentTarget as HTMLElement | null) ?? sharedMusicVolEl;
 	sharedMusicDraggingVol = false;
 	try {
-		sharedMusicVolEl?.releasePointerCapture(event.pointerId);
+		targetEl?.releasePointerCapture(event.pointerId);
 	} catch {
 		// ignore
 	}
@@ -1998,7 +2006,7 @@ const compactHeaderPills = $derived.by(() => {
 		(hasHeaderShares ? 1 : 0) +
 		(hasHeaderSharedMusic ? 1 : 0) +
 		(ENABLE_HEADER_MUSIC_NOTICES ? 1 : 0);
-	if (pillCount === 0) return false;
+	if (pillCount === 0 && !hasInterconnectPill) return false;
 	const wideDesktop = viewportWidth === 0 || viewportWidth >= 1024;
 	const hasSplitTrigger = viewportWidth > 0 && viewportWidth < 1100;
 	const leftEstimate =
@@ -5931,26 +5939,28 @@ function removePendingImage(index: number) {
           {@render roomOnlineStatus()}
         </button>
         {#if hasInterconnectPill}
-          <button
-            type="button"
-            data-chat-interconnect-trigger
-            data-chat-interconnect-anchor
-            class="chat-header-room-dropdown chat-header-interconnect-trigger chat-desktop-only"
-            class:active={showInterconnect}
-            aria-expanded={showInterconnect}
-            aria-label="查看接入联邦的友站列表"
-            onclick={() => onToggleInterconnect?.()}
-          >
-            <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
-              <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
-              <line x1="6" y1="1" x2="6" y2="4" />
-              <line x1="10" y1="1" x2="10" y2="4" />
-              <line x1="14" y1="1" x2="14" y2="4" />
-            </svg>
-            <span class="font-semibold text-sm text-[var(--deep-text)] dark:text-white/90">友站列表</span>
-            <span class="chat-header-interconnect-count">{interconnectSites.length}</span>
-          </button>
+          <ChatTooltip text="友站列表" position="bottom" disabled={!compactHeaderPills || showInterconnect}>
+            <button
+              type="button"
+              data-chat-interconnect-trigger
+              data-chat-interconnect-anchor
+              class="chat-header-room-dropdown chat-header-interconnect-trigger chat-desktop-only"
+              class:active={showInterconnect}
+              aria-expanded={showInterconnect}
+              aria-label="查看接入联邦的友站列表"
+              onclick={() => onToggleInterconnect?.()}
+            >
+              <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+                <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
+                <line x1="6" y1="1" x2="6" y2="4" />
+                <line x1="10" y1="1" x2="10" y2="4" />
+                <line x1="14" y1="1" x2="14" y2="4" />
+              </svg>
+              <span class="chat-header-pill-label font-semibold text-sm text-[var(--deep-text)] dark:text-white/90">友站列表</span>
+              <span class="text-[11px] md:text-[10px] opacity-75 tabular-nums">{interconnectSites.length}</span>
+            </button>
+          </ChatTooltip>
         {/if}
     </div>
     <div class="chat-window-header-actions flex items-center gap-1.5 shrink-0">
@@ -6181,7 +6191,7 @@ function removePendingImage(index: number) {
           {@render headerMentionList(mobileMoreTrigger)}
         {:else if sharesInMore && showShareHistory}
           {@render headerShareList(mobileMoreTrigger)}
-        {:else if (musicSharesInMore || privateMusic.isPlaying) && showSharedMusicMenu}
+        {:else if (musicSharesInMore || (privateMusic.isPlaying && mobileHeaderEndWidth > 0)) && showSharedMusicMenu}
           {@render headerSharedMusicList(mobilePrivateMusicTrigger ?? mobileMoreTrigger)}
         {:else if ENABLE_HEADER_MUSIC_NOTICES && musicNoticesInMore && showMusicNoticeMenu}
           {@render headerMusicNoticeList(mobileMoreTrigger)}
@@ -6302,7 +6312,7 @@ function removePendingImage(index: number) {
             </button>
           </ChatTooltip>
 
-          {#if showSharedMusicMenu && !musicSharesInMore}
+          {#if showSharedMusicMenu && !musicSharesInMore && !(privateMusic.isPlaying && mobileHeaderEndWidth > 0)}
             {@render headerSharedMusicList()}
           {/if}
         </div>
