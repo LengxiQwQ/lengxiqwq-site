@@ -7593,10 +7593,6 @@ html[data-chat-page]:is(.dark:not([data-chat-scheme="light"]), [data-chat-scheme
 	color: rgba(255, 255, 255, 0.8);
 }
 
-.chat-reply-quote.recalled .chat-reply-quote-text {
-	font-style: italic;
-}
-
 /* ─── 输入框上方正在回复预览条 ───────────────────────────── */
 .chat-reply-bar {
 	display: flex;

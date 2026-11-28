@@ -3687,7 +3687,7 @@ $effect(() => {
 				seenMessageUids.add(m.msgUid);
 				if (m.createdAt >= maxKnownCreatedAt) {
 					liveIncoming.push(m);
-				} else {
+				} else if (!m.recalledMsgUid) {
 					olderBatch.push(m);
 				}
 			}
@@ -3908,7 +3908,10 @@ $effect(() => {
 					windowEnd = visLen;
 					windowStart = Math.max(0, visLen - WINDOW_TARGET_COUNT);
 				} else {
-					windowEnd = Math.min(windowEnd, visLen);
+					windowEnd = Math.min(
+						visLen,
+						windowEnd + Math.max(0, visLen - prevVisibleCount),
+					);
 					windowStart = Math.min(windowStart, windowEnd);
 				}
 			} else {
@@ -3919,7 +3922,10 @@ $effect(() => {
 		}
 	}
 
-	if (replyingTo && !msgs.some((m) => m.msgUid === replyingTo?.msgUid)) {
+	if (
+		replyingTo &&
+		!msgs.some((m) => m.msgUid === replyingTo?.msgUid && !m.isRedacted)
+	) {
 		replyingTo = null;
 	}
 	if (mobileActionTarget) {

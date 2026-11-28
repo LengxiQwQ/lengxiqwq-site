@@ -349,12 +349,76 @@ function mergePrivateRecallMessages(
 	if (privateRecallMessages.length === 0) return publicMessages;
 	const merged = [...publicMessages];
 	for (const original of privateRecallMessages) {
-		if (!original?.msgUid || merged.some((message) => message.msgUid === original.msgUid)) continue;
-		const noticeIndex = merged.findIndex((message) => message.recalledMsgUid === original.msgUid);
-		if (noticeIndex >= 0) merged.splice(noticeIndex, 0, { ...original, isRedacted: true });
-		else merged.push({ ...original, isRedacted: true });
+		if (!original?.msgUid) continue;
+		const existingIndex = merged.findIndex(
+			(message) => message.msgUid === original.msgUid,
+		);
+		if (existingIndex >= 0) {
+			const existing = merged[existingIndex];
+			merged[existingIndex] = {
+				...original,
+				...existing,
+				attachments: original.attachments ?? existing.attachments,
+				recallArchiveIncomplete: original.recallArchiveIncomplete,
+				recalledAt: original.recalledAt ?? existing.recalledAt,
+				recalledByName: original.recalledByName ?? existing.recalledByName,
+				isRedacted: true,
+			};
+			continue;
+		}
+		const noticeIndex = merged.findIndex(
+			(message) => message.recalledMsgUid === original.msgUid,
+		);
+		if (noticeIndex >= 0) {
+			merged.splice(noticeIndex, 0, { ...original, isRedacted: true });
+		} else {
+			merged.push({ ...original, isRedacted: true });
+		}
 	}
-	return merged.sort((a, b) => a.createdAt - b.createdAt || Number(Boolean(b.isRedacted)) - Number(Boolean(a.isRedacted)));
+	return merged.sort(
+		(a, b) =>
+			a.createdAt - b.createdAt ||
+			Number(Boolean(b.isRedacted)) - Number(Boolean(a.isRedacted)),
+	);
+}
+
+function applyMessageRemovalOrRecall(
+	list: ChatMessageRecord[],
+	msgUid: string,
+	preserveAsRedacted: boolean,
+	notice?: ChatMessageRecord,
+): ChatMessageRecord[] {
+	const hasNoticeAlready = Boolean(
+		notice && list.some((item) => item.msgUid === notice.msgUid),
+	);
+	const next: ChatMessageRecord[] = [];
+	for (const m of list) {
+		if (m.msgUid === msgUid) {
+			if (preserveAsRedacted) {
+				next.push(m.isRedacted ? m : { ...m, isRedacted: true });
+			}
+			if (notice && !hasNoticeAlready) {
+				next.push(notice);
+			}
+			continue;
+		}
+		if (m.replyTo?.msgUid === msgUid) {
+			next.push({
+				...m,
+				replyTo: {
+					...m.replyTo,
+					userKey: m.replyTo.userKey || "",
+					content: "",
+					attachmentKind: null,
+					hasImage: false,
+					isRecalled: true,
+				},
+			});
+			continue;
+		}
+		next.push(m);
+	}
+	return next;
 }
 let hasMoreHistory = $state(false);
 let oldestHistoryId = $state(0);
@@ -2494,27 +2558,21 @@ function connectRoom(roomId: string) {
 			case "chat:recalled": {
 				const notice =
 					packet.type === "chat:recalled" ? packet.notice : undefined;
+				// Preserve the original message in-place as redacted for admins so it never
+				// vanishes and remounts while waiting for the follow-up chat:recall_archive packet.
+				const preserveAsRedacted =
+					packet.type === "chat:recalled" && Boolean(currentUser?.isAdmin);
+				if (preserveAsRedacted && currentUser?.userKey) {
+					privateRecallSessionUserKey = currentUser.userKey;
+				}
 				if (packet.roomId === currentRoom) {
 					removeRecentFeedsByUid(packet.msgUid);
-					messages = messages
-						.flatMap((m) =>
-							m.msgUid === packet.msgUid ? (notice ? [notice] : []) : [m],
-						)
-						.map((m) =>
-							m.replyTo?.msgUid === packet.msgUid
-								? {
-										...m,
-										replyTo: {
-											...m.replyTo,
-											userKey: m.replyTo.userKey || "",
-											content: "",
-											attachmentKind: null,
-											hasImage: false,
-											isRecalled: true,
-										},
-									}
-								: m,
-						);
+					messages = applyMessageRemovalOrRecall(
+						messages,
+						packet.msgUid,
+						preserveAsRedacted,
+						notice,
+					);
 					if (readReceipts[packet.msgUid]) {
 						const nextReceipts = { ...readReceipts };
 						delete nextReceipts[packet.msgUid];
@@ -2525,8 +2583,11 @@ function connectRoom(roomId: string) {
 					if (cached) {
 						roomMessageCache.set(
 							packet.roomId,
-							cached.flatMap((m) =>
-								m.msgUid === packet.msgUid ? (notice ? [notice] : []) : [m],
+							applyMessageRemovalOrRecall(
+								cached,
+								packet.msgUid,
+								preserveAsRedacted,
+								notice,
 							),
 						);
 					}
