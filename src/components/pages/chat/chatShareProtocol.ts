@@ -802,7 +802,7 @@ export function formatLxMusicShare(data: {
 }
 
 /**
- * 调用 VPS /api/music/share 将音频缓存 7 天并生成完整分享 Markdown 消息
+ * 调用 VPS /api/music/share 将音频缓存 8 天并生成完整分享 Markdown 消息
  */
 export async function buildMusicSharePayload(params: {
 	chatServerUrl: string;

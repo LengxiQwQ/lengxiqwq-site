@@ -4944,7 +4944,7 @@ function removePendingImage(index: number) {
     </div>
   {/if}
   {#snippet headerThreadList(reference?: HTMLElement | null)}
-    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-mention-history-menu" role="menu" aria-label="最近 48 小时线程列表">
+    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-mention-history-menu" role="menu" aria-label="最近 7 天线程列表">
       <div class="chat-share-menu-head">
         <div class="flex items-center gap-1.5 min-w-0">
           <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -4952,7 +4952,7 @@ function removePendingImage(index: number) {
             <path d="M8 9h8" />
             <path d="M8 13h5" />
           </svg>
-          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">最近 48 小时线程</span>
+          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">最近 7 天线程</span>
         </div>
         <span class="chat-music-notice-pill tabular-nums">{mergedActiveThreads.length} 个</span>
       </div>
@@ -5007,14 +5007,14 @@ function removePendingImage(index: number) {
   {/snippet}
 
   {#snippet headerMentionList(reference?: HTMLElement | null)}
-    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-mention-history-menu" role="menu" aria-label="最近 48 小时提及列表">
+    <div data-chat-floating use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }} class="chat-mention-history-menu" role="menu" aria-label="最近 7 天提及列表">
       <div class="chat-share-menu-head">
         <div class="flex items-center gap-1.5 min-w-0">
           <svg class="w-4 h-4 text-[var(--primary)] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="4" />
             <path d="M16 8v5a2 2 0 0 0 4 0v-1a8 8 0 1 0-3 6.25" />
           </svg>
-          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">最近 48 小时提及</span>
+          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">最近 7 天提及</span>
         </div>
         <span class="chat-music-notice-pill tabular-nums">{mentionsToMe.length} 条</span>
       </div>
@@ -5070,7 +5070,7 @@ function removePendingImage(index: number) {
       use:positionChatFloating={{ placement: "bottom-end", gap: 8, reference }}
       class="chat-share-history-menu"
       role="menu"
-      aria-label="最近 48 小时分享卡片"
+      aria-label="最近 7 天分享卡片"
     >
       <div class="chat-share-menu-head">
         <div class="flex items-center gap-1.5 min-w-0">
@@ -5078,7 +5078,7 @@ function removePendingImage(index: number) {
             <rect x="3" y="4" width="14" height="14" rx="2.5" />
             <path d="M7 20h11a2.5 2.5 0 0 0 2.5-2.5V7" />
           </svg>
-          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">最近 48 小时分享</span>
+          <span class="font-semibold text-xs text-[var(--deep-text)] dark:text-white/90">最近 7 天分享</span>
         </div>
         <span class="chat-music-notice-pill tabular-nums">{filteredShareEntries.length} 张</span>
       </div>
@@ -5525,7 +5525,7 @@ function removePendingImage(index: number) {
 
       {#if recentMusicShareEntries.length > 0}
         <div class="shrink-0 flex items-center justify-between px-1.5 pt-2.5 pb-1.5 text-[11px] text-[var(--chat-meta-color)] font-medium">
-          <span>最近 5 天分享曲目</span>
+          <span>最近 7 天分享曲目</span>
           <span class="tabular-nums">{recentMusicShareEntries.length} 首</span>
         </div>
         <div class="chat-shared-music-list custom-scrollbar">
@@ -5992,12 +5992,12 @@ function removePendingImage(index: number) {
       {/if}
       {#if hasHeaderThreads}
         <div class="chat-desktop-only relative shrink-0" bind:this={threadListWrapEl}>
-          <ChatTooltip text="最近 48 小时线程" position="bottom" disabled={!compactHeaderPills || showThreadListMenu}>
+          <ChatTooltip text="最近 7 天线程" position="bottom" disabled={!compactHeaderPills || showThreadListMenu}>
             <button
               type="button"
               class="chat-header-pill-btn {showThreadListMenu ? 'active' : ''}"
               aria-expanded={showThreadListMenu}
-              aria-label="查看最近 48 小时线程回复"
+              aria-label="查看最近 7 天线程回复"
               onclick={() => toggleHeaderList("threads")}
             >
               <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -6251,7 +6251,7 @@ function removePendingImage(index: number) {
           bind:this={mentionHistoryWrapEl}
         >
           <ChatTooltip
-            text="最近 48 小时提及"
+            text="最近 7 天提及"
             position="bottom"
             disabled={!compactHeaderPills || (viewportWidth > 0 && viewportWidth < 768) || showMentionHistory}
           >
@@ -6259,7 +6259,7 @@ function removePendingImage(index: number) {
               type="button"
               class="chat-header-pill-btn chat-mobile-header-action {showMentionHistory ? 'active' : ''} {unreadMentionUids.length > 0 ? 'has-unread' : ''}"
               aria-expanded={showMentionHistory}
-              aria-label={unreadMentionUids.length > 0 ? `查看最近 48 小时提及，${unreadMentionUids.length} 条未读` : "查看最近 48 小时提及"}
+              aria-label={unreadMentionUids.length > 0 ? `查看最近 7 天提及，${unreadMentionUids.length} 条未读` : "查看最近 7 天提及"}
               class:chat-mobile-header-collapsed={mentionsInMore}
               onclick={() => toggleHeaderList("mentions")}
             >
@@ -6285,7 +6285,7 @@ function removePendingImage(index: number) {
           bind:this={shareHistoryWrapEl}
         >
           <ChatTooltip
-            text="最近 48 小时分享卡片"
+            text="最近 7 天分享卡片"
             position="bottom"
             disabled={!compactHeaderPills || showShareHistory}
           >
@@ -6293,7 +6293,7 @@ function removePendingImage(index: number) {
               type="button"
               class="chat-header-pill-btn {showShareHistory ? 'active' : ''}"
               aria-expanded={showShareHistory}
-              aria-label={`查看最近 48 小时分享卡片，共 ${recentNonMusicShareEntries.length} 张`}
+              aria-label={`查看最近 7 天分享卡片，共 ${recentNonMusicShareEntries.length} 张`}
               onclick={() => toggleHeaderList("shares")}
             >
               <svg class="w-3.5 h-3.5 shrink-0 text-[var(--primary)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -6327,7 +6327,7 @@ function removePendingImage(index: number) {
               class="chat-header-pill-btn chat-mobile-header-action {showSharedMusicMenu ? 'active' : ''} {privateMusic.isPlaying ? 'has-unread' : ''}"
               class:chat-mobile-header-collapsed={musicSharesInMore}
               aria-expanded={showSharedMusicMenu}
-              aria-label={privateMusic.isPlaying && activePrivateTrack ? `查看分享音乐与正在播放的 ${activePrivateTrack.title}` : `查看最近 5 天分享音乐，共 ${recentMusicShareEntries.length} 首`}
+              aria-label={privateMusic.isPlaying && activePrivateTrack ? `查看分享音乐与正在播放的 ${activePrivateTrack.title}` : `查看最近 7 天分享音乐，共 ${recentMusicShareEntries.length} 首`}
               onclick={() => toggleHeaderList("sharedMusic")}
             >
               <span class="inline-flex items-center justify-center w-5.5 h-5.5 md:w-3.5 md:h-3.5 shrink-0">

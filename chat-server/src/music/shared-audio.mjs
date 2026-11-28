@@ -9,7 +9,7 @@ import { idleWatchdog } from "./stream-timeouts.mjs";
 
 const SHARED_DIR =
 	process.env.CHAT_SHARED_MUSIC_DIR || "/opt/chat-server/data/shared_music";
-const SHARED_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const SHARED_TTL_MS = 8 * 24 * 60 * 60 * 1000; // 8 days
 const MAX_FILE_BYTES = 24 * 1024 * 1024; // 24 MB per track
 const MAX_TOTAL_BYTES = 500 * 1024 * 1024; // 500 MB total budget
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -305,7 +305,7 @@ export async function handleSharedAudioRequest(req, res, pathname) {
 			JSON.stringify({
 				ok: false,
 				expired: true,
-				error: "该分享音频已超过 7 天有效期并已清理",
+				error: "该分享音频已超过 8 天有效期并已清理",
 			}),
 		);
 		return;
